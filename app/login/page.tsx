@@ -1,0 +1,247 @@
+'use client'
+
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+import Link from 'next/link'
+
+export default function SignInPage() {
+  const router = useRouter()
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setError('')
+    setLoading(true)
+
+    try {
+      const res = await fetch('/api/auth/signin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok) {
+        setError(data.error || 'Sign in failed')
+        return
+      }
+
+      router.push('/dashboard')
+    } catch {
+      setError('Something went wrong. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div style={styles.root}>
+      {/* Left panel */}
+      <div style={styles.panel}>
+        <div style={styles.panelInner}>
+          <div style={styles.wordmark}>
+            <span style={styles.wordmarkMain}>TravelDesk</span>
+            <span style={styles.wordmarkBy}>by Amadeus</span>
+          </div>
+          <p style={styles.panelTagline}>
+            Corporate travel management built for modern teams.
+          </p>
+        </div>
+        <p style={styles.panelFooter}>© {new Date().getFullYear()} Amadeus IT Group</p>
+      </div>
+
+      {/* Right panel — form */}
+      <div style={styles.formPanel}>
+        <div style={styles.formCard}>
+          <h1 style={styles.heading}>Welcome back</h1>
+          <p style={styles.subheading}>Sign in to your company account</p>
+
+          <form onSubmit={handleSubmit} style={styles.form}>
+            <div style={styles.field}>
+              <label style={styles.label} htmlFor="email">Work email</label>
+              <input
+                id="email"
+                type="email"
+                autoComplete="email"
+                required
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                style={styles.input}
+                placeholder="you@company.com"
+              />
+            </div>
+
+            <div style={styles.field}>
+              <label style={styles.label} htmlFor="password">Password</label>
+              <input
+                id="password"
+                type="password"
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                style={styles.input}
+                placeholder="••••••••"
+              />
+            </div>
+
+            {error && <p style={styles.error}>{error}</p>}
+
+            <button
+              type="submit"
+              disabled={loading}
+              style={{ ...styles.button, opacity: loading ? 0.7 : 1 }}
+            >
+              {loading ? 'Signing in…' : 'Sign in'}
+            </button>
+          </form>
+
+          <p style={styles.footer}>
+            New to TravelDesk?{' '}
+            <Link href="/register" style={styles.link}>Register your company</Link>
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const styles: Record<string, React.CSSProperties> = {
+  root: {
+    display: 'flex',
+    minHeight: '100vh',
+    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
+    backgroundColor: '#F7F8FC',
+  },
+  // Left navy panel
+  panel: {
+    width: '420px',
+    flexShrink: 0,
+    backgroundColor: '#000835',
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'space-between',
+    padding: '48px 40px',
+  },
+  panelInner: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '24px',
+  },
+  wordmark: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+  },
+  wordmarkMain: {
+    fontSize: '28px',
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: '-0.5px',
+  },
+  wordmarkBy: {
+    fontSize: '13px',
+    fontWeight: '400',
+    color: 'rgba(255,255,255,0.45)',
+    letterSpacing: '0.5px',
+    textTransform: 'uppercase',
+  },
+  panelTagline: {
+    fontSize: '15px',
+    lineHeight: '1.6',
+    color: 'rgba(255,255,255,0.6)',
+    maxWidth: '260px',
+    margin: 0,
+  },
+  panelFooter: {
+    fontSize: '12px',
+    color: 'rgba(255,255,255,0.25)',
+    margin: 0,
+  },
+  // Right form panel
+  formPanel: {
+    flex: 1,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '40px 24px',
+  },
+  formCard: {
+    width: '100%',
+    maxWidth: '400px',
+  },
+  heading: {
+    fontSize: '24px',
+    fontWeight: '700',
+    color: '#0A0A14',
+    margin: '0 0 8px',
+    letterSpacing: '-0.3px',
+  },
+  subheading: {
+    fontSize: '14px',
+    color: '#6B7280',
+    margin: '0 0 32px',
+  },
+  form: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '20px',
+  },
+  field: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+  label: {
+    fontSize: '13px',
+    fontWeight: '500',
+    color: '#374151',
+  },
+  input: {
+    height: '42px',
+    padding: '0 12px',
+    fontSize: '14px',
+    color: '#0A0A14',
+    backgroundColor: '#FFFFFF',
+    border: '1px solid #D1D5DB',
+    borderRadius: '8px',
+    outline: 'none',
+    transition: 'border-color 0.15s',
+  },
+  error: {
+    fontSize: '13px',
+    color: '#DC2626',
+    backgroundColor: '#FEF2F2',
+    border: '1px solid #FECACA',
+    borderRadius: '6px',
+    padding: '10px 12px',
+    margin: 0,
+  },
+  button: {
+    height: '42px',
+    backgroundColor: '#000835',
+    color: '#FFFFFF',
+    fontSize: '14px',
+    fontWeight: '600',
+    border: 'none',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    marginTop: '4px',
+    transition: 'background-color 0.15s',
+  },
+  footer: {
+    fontSize: '13px',
+    color: '#6B7280',
+    textAlign: 'center',
+    marginTop: '24px',
+  },
+  link: {
+    color: '#000835',
+    fontWeight: '500',
+    textDecoration: 'none',
+  },
+}
