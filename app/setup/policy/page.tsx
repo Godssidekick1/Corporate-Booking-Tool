@@ -94,12 +94,12 @@ interface ColDef {
 
 const COLUMNS: ColDef[] = [
   { key: 'domesticFlight',      label: 'Domestic flight',       unit: '₹',   type: 'number', width: 110 },
-  { key: 'intlFlight',          label: 'Intl. flight',          unit: '₹',   type: 'number', width: 110 },
+  { key: 'intlFlight',          label: 'Intl. flight',          unit: '₹',   type: 'number', width: 140 },
   { key: 'flightClassShortHaul',label: 'Class (short haul)',    unit: '',    type: 'select',
     options: ['Economy', 'Business', 'First'], width: 120 },
   { key: 'flightClassLongHaul', label: 'Class (>8 hr)',         unit: '',    type: 'select',
     options: ['Economy', 'Business', 'First'], width: 120 },
-  { key: 'advanceBookingDays',  label: 'Advance booking',       unit: 'days',type: 'number', width: 90 },
+  { key: 'advanceBookingDays',  label: 'Advance booking',       unit: 'days',type: 'number', width: 60 },
   { key: 'hotelMajorCity',      label: 'Hotel (major city)',    unit: '₹/night',type: 'number', width: 110 },
   { key: 'hotelOtherCity',      label: 'Hotel (other city)',    unit: '₹/night',type: 'number', width: 110 },
   { key: 'hotelStars',          label: 'Hotel stars (max)',     unit: '★',   type: 'number', width: 80 },
@@ -447,14 +447,14 @@ const styles: Record<string, React.CSSProperties> = {
   },
   bandTitle: { fontSize: '12px', color: '#374151', fontWeight: '500' },
   cellInput: {
-    width: '90%', height: '30px', padding: '0 8px',
+    width: '150%', height: '30px', padding: '0 8px',
     fontSize: '13px', color: '#111827',
     backgroundColor: '#F9FAFB', border: '1px solid transparent',
     borderRadius: '5px', outline: 'none',
     transition: 'border-color 0.15s, background-color 0.15s',
   },
   cellSelect: {
-    width: '100%', height: '30px', padding: '0 6px',
+    width: '150%', height: '30px', padding: '0 6px',
     fontSize: '12px', color: '#111827',
     backgroundColor: '#F9FAFB', border: '1px solid transparent',
     borderRadius: '5px', outline: 'none', cursor: 'pointer',

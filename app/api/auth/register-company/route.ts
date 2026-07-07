@@ -32,9 +32,9 @@ export async function POST(req: NextRequest) {
 
     authUserId = authData.user.id
 
-    // ── Step 2: Create the company (tenant) ───────────────────────────
+    // ── Step 2: Create the company ────────────────────────────────────
     const { data: company, error: companyError } = await supabase
-      .from('tenants')
+      .from('companies')
       .insert({ name: companyName, status: 'active' })
       .select('id')
       .single()
@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
         { company_id: companyId, code: 'L4', label: 'Manager',   rank: 4 },
         { company_id: companyId, code: 'L5', label: 'Director',  rank: 5 },
       ])
-      .select('id, code')
+      .select('id, code, label, rank')
 
     if (bandsError) throw new Error(bandsError.message)
 
@@ -60,10 +60,14 @@ export async function POST(req: NextRequest) {
     if (!adminBand) throw new Error('Default band seeding failed')
 
     // ── Step 4: Create the admin employee ─────────────────────────────
+    // band_code and band_rank are denormalised from the bands table
+    // so dashboard/profile reads don't need a join.
     const { error: employeeError } = await supabase.from('employees').insert({
       id: authUserId,
       company_id: companyId,
       band_id: adminBand.id,
+      band_code: adminBand.code,
+      band_rank: adminBand.rank,
       full_name: fullName,
       email,
       role: 'admin',
@@ -80,7 +84,7 @@ export async function POST(req: NextRequest) {
     console.error('REGISTRATION ERROR:', err)
 
     if (companyId) {
-      await supabase.from('tenants').delete().eq('id', companyId)
+      await supabase.from('companies').delete().eq('id', companyId)
     }
     if (authUserId) {
       await supabase.auth.admin.deleteUser(authUserId)

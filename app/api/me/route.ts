@@ -9,8 +9,9 @@ export async function GET() {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const serviceClient = createServiceClient()
-  const { data: employee, error: employeeError } = await serviceClient
+  const service = createServiceClient()
+
+  const { data: employee, error: employeeError } = await service
     .from('employees')
     .select(`
       id,
@@ -19,7 +20,10 @@ export async function GET() {
       role,
       status,
       company_id,
+      tmc_id,
       band_id,
+      band_code,
+      band_rank,
       manager_id,
       department,
       cost_centre
@@ -31,5 +35,11 @@ export async function GET() {
     return Response.json({ error: 'Employee profile not found' }, { status: 404 })
   }
 
-  return Response.json({ ok: true, employee })
+  const { data: company } = await service
+    .from('companies')
+    .select('id, name, settings')
+    .eq('id', employee.company_id)
+    .single()
+
+  return Response.json({ ok: true, employee, company: company ?? null })
 }
