@@ -4,19 +4,21 @@ import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 
+// Initialise outside the component so the client exists
+// before any effect runs and before the hash is processed
+const supabase = createBrowserClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+)
+
 export default function AuthCallbackPage() {
   const router = useRouter()
 
   useEffect(() => {
-    const supabase = createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    )
-
     async function redirectByRole(userId: string) {
       const { data: employee } = await supabase
         .from('employees')
-        .select('role, status')
+        .select('role')
         .eq('id', userId)
         .single()
 
@@ -28,8 +30,6 @@ export default function AuthCallbackPage() {
     }
 
     // ── Handle ?code= param (magic link / OAuth) ──────────────────────
-    // This was previously done server-side in route.ts. Doing it
-    // client-side here so both flows live in one file.
     const code = new URLSearchParams(window.location.search).get('code')
     if (code) {
       supabase.auth.exchangeCodeForSession(code).then(({ data, error }) => {
@@ -43,22 +43,26 @@ export default function AuthCallbackPage() {
     }
 
     // ── Handle #access_token= hash (invite emails) ────────────────────
-    // Hash fragments never reach the server — Supabase client detects
-    // them automatically via onAuthStateChange.
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (event === 'SIGNED_IN' && session) {
-          subscription.unsubscribe()
-          redirectByRole(session.user.id)
-        }
-        if (event === 'TOKEN_REFRESHED') {
-          subscription.unsubscribe()
-          router.replace('/dashboard')
-        }
+    // Check if there's already an active session first —
+    // the client may have already consumed the hash before this effect ran
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        redirectByRole(session.user.id)
+        return
       }
-    )
 
-    return () => subscription.unsubscribe()
+      // No session yet — wait for the client to process the hash
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(
+        (event, session) => {
+          if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session) {
+            subscription.unsubscribe()
+            redirectByRole(session.user.id)
+          }
+        }
+      )
+
+      return () => subscription.unsubscribe()
+    })
   }, [router])
 
   return (
