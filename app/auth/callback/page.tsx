@@ -13,26 +13,47 @@ export default function AuthCallbackPage() {
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
     )
 
-    // Hash fragments (#access_token=...) are browser-only — the server
-    // route never sees them. Supabase's client detects them automatically
-    // via onAuthStateChange and establishes the session.
+    async function redirectByRole(userId: string) {
+      const { data: employee } = await supabase
+        .from('employees')
+        .select('role, status')
+        .eq('id', userId)
+        .single()
+
+      if (employee?.role === 'tmc_admin') {
+        router.replace('/tmc/dashboard')
+      } else {
+        router.replace('/dashboard')
+      }
+    }
+
+    // ── Handle ?code= param (magic link / OAuth) ──────────────────────
+    // This was previously done server-side in route.ts. Doing it
+    // client-side here so both flows live in one file.
+    const code = new URLSearchParams(window.location.search).get('code')
+    if (code) {
+      supabase.auth.exchangeCodeForSession(code).then(({ data, error }) => {
+        if (error || !data.session) {
+          router.replace('/login')
+          return
+        }
+        redirectByRole(data.session.user.id)
+      })
+      return
+    }
+
+    // ── Handle #access_token= hash (invite emails) ────────────────────
+    // Hash fragments never reach the server — Supabase client detects
+    // them automatically via onAuthStateChange.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (event === 'SIGNED_IN' && session) {
           subscription.unsubscribe()
-
-          // Look up role to redirect correctly — same logic as your server route
-          const { data: employee } = await supabase
-            .from('employees')
-            .select('role')
-            .eq('id', session.user.id)
-            .single()
-
-          if (employee?.role === 'tmc_admin') {
-            router.replace('/tmc/dashboard')
-          } else {
-            router.replace('/dashboard')
-          }
+          redirectByRole(session.user.id)
+        }
+        if (event === 'TOKEN_REFRESHED') {
+          subscription.unsubscribe()
+          router.replace('/dashboard')
         }
       }
     )
