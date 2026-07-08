@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
     // The link redirects to /tmc/dashboard after password is set.
     const { data: authData, error: inviteError } =
       await service.auth.admin.inviteUserByEmail(adminEmail, {
-        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/tmc/dashboard`,
+        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`,
       })
 
     if (inviteError) throw new Error(inviteError.message)

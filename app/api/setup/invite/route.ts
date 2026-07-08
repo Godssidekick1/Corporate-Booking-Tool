@@ -132,7 +132,7 @@ export async function POST(req: NextRequest) {
     const { data: authData, error: inviteError } = await service.auth.admin.inviteUserByEmail(
       email,
       {
-        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/login`,
+        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`,
         data: {
           // These land in user_metadata on the new auth user.
           // The employee can update their full_name on first login.
@@ -162,9 +162,7 @@ export async function POST(req: NextRequest) {
       email,
       full_name: email.split('@')[0], // placeholder until they complete their profile
       role: normalizedRole,
-      status: 'invited',             // not 'active' until they accept + set password
-      invited_by: user.id,
-      invited_at: new Date().toISOString(),
+      status: 'active'     // not 'active' until they accept + set password
     })
 
     if (employeeError) {
