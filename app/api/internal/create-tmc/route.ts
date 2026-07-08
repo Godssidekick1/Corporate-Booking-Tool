@@ -15,6 +15,8 @@ import { NextRequest } from 'next/server'
 //   }
 // ─────────────────────────────────────────────────────────────────────────────
 
+console.log('APP_URL:', process.env.NEXT_PUBLIC_APP_URL)
+
 export async function POST(req: NextRequest) {
   // Verify internal secret
   const secret = req.headers.get('x-internal-secret')
