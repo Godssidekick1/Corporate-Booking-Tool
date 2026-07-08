@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
+import { createBrowserClient } from '@supabase/ssr'
 
 export default function SignInPage() {
   const router = useRouter()
@@ -10,6 +10,39 @@ export default function SignInPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const hash = window.location.hash
+    if (!hash.includes('access_token')) return
+
+    const params = new URLSearchParams(hash.slice(1))
+    const type = params.get('type')
+    const accessToken = params.get('access_token')
+    const refreshToken = params.get('refresh_token')
+
+    if (!accessToken || !refreshToken) return
+
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    )
+
+    supabase.auth.setSession({
+      access_token: accessToken,
+      refresh_token: refreshToken,
+    }).then(({ error }) => {
+      if (error) {
+        console.error('Session set error:', error.message)
+        return
+      }
+      if (type === 'invite') {
+        router.replace('/auth/set-password')
+      } else {
+        router.replace('/dashboard')
+      }
+    })
+  }, [router])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -40,7 +73,6 @@ export default function SignInPage() {
 
   return (
     <div style={styles.root}>
-      {/* Left panel */}
       <div style={styles.panel}>
         <div style={styles.panelInner}>
           <div style={styles.wordmark}>
@@ -54,7 +86,6 @@ export default function SignInPage() {
         <p style={styles.panelFooter}>© {new Date().getFullYear()} Amadeus IT Group</p>
       </div>
 
-      {/* Right panel — form */}
       <div style={styles.formPanel}>
         <div style={styles.formCard}>
           <h1 style={styles.heading}>Welcome back</h1>
@@ -100,8 +131,7 @@ export default function SignInPage() {
             </button>
           </form>
 
-          <p style={styles.footer}>
-          </p>
+          <p style={styles.footer}></p>
         </div>
       </div>
     </div>
@@ -115,7 +145,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
     backgroundColor: '#F7F8FC',
   },
-  // Left navy panel
   panel: {
     width: '420px',
     flexShrink: 0,
@@ -160,7 +189,6 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'rgba(255,255,255,0.25)',
     margin: 0,
   },
-  // Right form panel
   formPanel: {
     flex: 1,
     display: 'flex',
@@ -236,10 +264,5 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#6B7280',
     textAlign: 'center',
     marginTop: '24px',
-  },
-  link: {
-    color: '#000835',
-    fontWeight: '500',
-    textDecoration: 'none',
   },
 }
