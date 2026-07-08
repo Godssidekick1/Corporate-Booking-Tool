@@ -132,7 +132,7 @@ export async function POST(req: NextRequest) {
     const { data: authData, error: inviteError } = await service.auth.admin.inviteUserByEmail(
       email,
       {
-        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/register`,
+        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/login`,
         data: {
           // These land in user_metadata on the new auth user.
           // The employee can update their full_name on first login.
