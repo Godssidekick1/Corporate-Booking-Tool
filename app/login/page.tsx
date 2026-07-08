@@ -101,8 +101,6 @@ export default function SignInPage() {
           </form>
 
           <p style={styles.footer}>
-            New to TravelDesk?{' '}
-            <Link href="/register" style={styles.link}>Register your company</Link>
           </p>
         </div>
       </div>
