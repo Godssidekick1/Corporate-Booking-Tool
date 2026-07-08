@@ -57,6 +57,8 @@ export async function POST(req: NextRequest) {
         redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`,
       })
 
+    console.error('REDIRECT_TO:', `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`)
+    
     if (inviteError) throw new Error(inviteError.message)
     authUserId = authData.user.id
 
