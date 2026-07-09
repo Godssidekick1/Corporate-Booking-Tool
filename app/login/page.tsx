@@ -44,6 +44,21 @@ export default function SignInPage() {
     })
   }, [router])
 
+  async function redirectByRole() {
+    const res = await fetch('/api/me')
+    const data = await res.json()
+    const role = data.employee?.role
+
+    if (role === 'tmc_admin') {
+      router.push('/tmc/dashboard')
+    } else if (role === 'admin') {
+      const setupConfirmed = data.company?.settings?.setup_confirmed ?? false
+      router.push(setupConfirmed ? '/dashboard' : '/setup')
+    } else {
+      router.push('/dashboard')
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
@@ -63,7 +78,7 @@ export default function SignInPage() {
         return
       }
 
-      router.push('/dashboard')
+      await redirectByRole()
     } catch {
       setError('Something went wrong. Please try again.')
     } finally {
@@ -89,7 +104,7 @@ export default function SignInPage() {
       <div style={styles.formPanel}>
         <div style={styles.formCard}>
           <h1 style={styles.heading}>Welcome back</h1>
-          <p style={styles.subheading}>Sign in to your company account</p>
+          <p style={styles.subheading}>Sign in to your account</p>
 
           <form onSubmit={handleSubmit} style={styles.form}>
             <div style={styles.field}>
@@ -175,7 +190,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: '400',
     color: 'rgba(255,255,255,0.45)',
     letterSpacing: '0.5px',
-    textTransform: 'uppercase',
+    textTransform: 'uppercase' as const,
   },
   panelTagline: {
     fontSize: '15px',
@@ -262,7 +277,7 @@ const styles: Record<string, React.CSSProperties> = {
   footer: {
     fontSize: '13px',
     color: '#6B7280',
-    textAlign: 'center',
+    textAlign: 'center' as const,
     marginTop: '24px',
   },
 }
