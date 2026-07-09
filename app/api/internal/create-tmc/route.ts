@@ -15,7 +15,7 @@ import { NextRequest } from 'next/server'
 //   }
 // ─────────────────────────────────────────────────────────────────────────────
 
-console.log('APP_URL:', process.env.NEXT_PUBLIC_APP_URL)
+
 
 export async function POST(req: NextRequest) {
   // Verify internal secret
@@ -54,10 +54,9 @@ export async function POST(req: NextRequest) {
     // The link redirects to /tmc/dashboard after password is set.
     const { data: authData, error: inviteError } =
       await service.auth.admin.inviteUserByEmail(adminEmail, {
-        redirectTo: `${req.nextUrl.origin}/auth/callback`,
+        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`,
       })
 
-    console.error('REDIRECT_TO:', `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`)
 
     if (inviteError) throw new Error(inviteError.message)
     authUserId = authData.user.id

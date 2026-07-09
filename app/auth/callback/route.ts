@@ -1,4 +1,5 @@
 import { createServerClient } from '@supabase/ssr'
+import { createServiceClient } from '@/utils/supabase/service'
 import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 
@@ -6,7 +7,6 @@ export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const code = searchParams.get('code')
   const next = searchParams.get('next') ?? '/'
-  const type = searchParams.get('type')  // 'invite' | 'recovery' | null
 
   if (!code) {
     return NextResponse.redirect(new URL('/login', req.url))
@@ -41,25 +41,35 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL('/login', req.url))
   }
 
-  // Invited users must set a password before accessing the app
-  if (type === 'invite') {
-    return NextResponse.redirect(new URL('/auth/set-password', req.url))
-  }
-
-  // Explicit next param
   if (next !== '/') {
     return NextResponse.redirect(new URL(next, req.url))
   }
 
-  // Look up role and send to the right dashboard
-  const { data: employee } = await supabase
+  // Use service client for employee lookup — bypasses RLS which
+  // may not be set up for a brand new invited user yet.
+  const service = createServiceClient()
+  const { data: employee } = await service
     .from('employees')
-    .select('role')
+    .select('role, company_id')
     .eq('id', user.id)
     .single()
 
   if (employee?.role === 'tmc_admin') {
     return NextResponse.redirect(new URL('/tmc/dashboard', req.url))
+  }
+
+  if (employee?.role === 'admin') {
+    // Check if this is their first login by looking at setup_confirmed
+    const { data: company } = await service
+      .from('companies')
+      .select('settings')
+      .eq('id', employee.company_id)
+      .single()
+
+    const setupConfirmed = company?.settings?.setup_confirmed ?? false
+    if (!setupConfirmed) {
+      return NextResponse.redirect(new URL('/setup', req.url))
+    }
   }
 
   return NextResponse.redirect(new URL('/dashboard', req.url))
