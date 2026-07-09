@@ -21,27 +21,56 @@ export async function proxy(request: NextRequest) {
     }
   )
 
+  // Always use getUser() — never getSession() in middleware.
+  // getSession() reads from the cookie without revalidating with Supabase,
+  // so a signed-out user with a stale cookie looks authenticated.
   const { data: { user } } = await supabase.auth.getUser()
   const { pathname } = request.nextUrl
 
-  // ── Protected routes: unauthenticated → /login ────────────────────
+  // ── Public routes — always accessible ────────────────────────────────────
+  // These never redirect regardless of auth state.
+  const isPublic =
+    pathname.startsWith('/auth/') ||       // /auth/callback, /auth/set-password
+    pathname.startsWith('/verify-email') ||
+    pathname.startsWith('/api/')            // all API routes handle their own auth
+
+  if (isPublic) return supabaseResponse
+
+  // ── Auth-only routes — redirect authenticated users away ─────────────────
+  // Signed-in users hitting /login or /register get sent to their dashboard.
+  const isAuthOnly = pathname === '/login' || pathname === '/register'
+
+  if (user && isAuthOnly) {
+    return NextResponse.redirect(new URL('/dashboard', request.url))
+  }
+
+  // ── Protected routes — redirect unauthenticated users to /login ──────────
   const isProtected =
     pathname.startsWith('/dashboard') ||
     pathname.startsWith('/setup') ||
     pathname.startsWith('/settings') ||
-    pathname.startsWith('/tmc')
+    pathname.startsWith('/tmc') ||
+    pathname.startsWith('/book') ||
+    pathname.startsWith('/bookings') ||
+    pathname.startsWith('/approvals') ||
+    pathname.startsWith('/reports')
 
   if (!user && isProtected) {
-    return NextResponse.redirect(new URL('/login', request.url))
+    const loginUrl = new URL('/login', request.url)
+    loginUrl.searchParams.set('next', pathname)
+    return NextResponse.redirect(loginUrl)
   }
 
-  // ── Auth-only routes: authenticated → appropriate dashboard ───────
-  const isAuthOnly = pathname === '/login' || pathname === '/register'
-
-  if (user && isAuthOnly) {
-    // We can't check role here without a DB call — redirect to dashboard
-    // and let the dashboard handle role-based routing if needed.
-    return NextResponse.redirect(new URL('/dashboard', request.url))
+  // ── TMC-only routes — non-TMC users get sent to their dashboard ──────────
+  // We avoid a DB call here — TMC admins have no company_id in their JWT.
+  // The tmc/dashboard page itself handles the role check via /api/me.
+  // This is just a coarse guard to prevent obvious wrong-door access.
+  if (user && pathname.startsWith('/tmc')) {
+    const companyId = user.user_metadata?.company_id
+    // If they have a company_id they're a corporate user, not a TMC admin
+    if (companyId) {
+      return NextResponse.redirect(new URL('/dashboard', request.url))
+    }
   }
 
   return supabaseResponse
@@ -49,11 +78,13 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/dashboard/:path*',
-    '/setup/:path*',
-    '/settings/:path*',
-    '/tmc/:path*',
-    '/login',
-    '/register',
+    /*
+     * Match all paths except:
+     * - _next/static  (Next.js static files)
+     * - _next/image   (Next.js image optimisation)
+     * - favicon.ico
+     * - public folder files (png, jpg, svg, etc.)
+     */
+    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }

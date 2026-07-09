@@ -79,10 +79,10 @@ export default function DashboardPage() {
       .finally(() => setLoading(false))
   }, [])
 
-  async function handleSignOut() {
-    await supabase.auth.signOut()
-    window.location.href = '/login'
-  }
+ async function handleSignOut() {
+  await fetch('/api/auth/signout', { method: 'POST' })
+  window.location.href = '/login'
+}
 
   const firstName = employee?.full_name?.split(' ')[0] ?? '…'
   const roleLabel = employee
