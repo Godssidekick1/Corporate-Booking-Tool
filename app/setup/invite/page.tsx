@@ -44,40 +44,45 @@ export default function SetupInvitePage() {
   }
 
   async function handleSendInvites() {
-    const filled = invites.filter(r => r.email.trim() !== '')
-    if (filled.length === 0) {
-      // Skip — same as hitting "Skip for now"
-      router.push('/dashboard')
-      return
-    }
-    // Basic email validation
-    const invalid = filled.find(r => !r.email.includes('@'))
-    if (invalid) {
-      setError(`"${invalid.email}" doesn't look like a valid email.`)
-      return
-    }
-    setSending(true)
-    setError('')
-    try {
-      const res = await fetch('/api/setup/invite', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ invites: filled }),
-      })
-      if (!res.ok) {
-        const d = await res.json()
-        setError(d.error || 'Something went wrong sending invites.')
-        return
-      }
-      router.push('/dashboard')
-    } finally {
-      setSending(false)
-    }
-  }
-
-  function handleSkip() {
+  const filled = invites.filter(r => r.email.trim() !== '')
+  if (filled.length === 0) {
+    await markSetupComplete()
     router.push('/dashboard')
+    return
   }
+  const invalid = filled.find(r => !r.email.includes('@'))
+  if (invalid) {
+    setError(`"${invalid.email}" doesn't look like a valid email.`)
+    return
+  }
+  setSending(true)
+  setError('')
+  try {
+    const res = await fetch('/api/setup/invite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ invites: filled }),
+    })
+    if (!res.ok) {
+      const d = await res.json()
+      setError(d.error || 'Something went wrong sending invites.')
+      return
+    }
+    await markSetupComplete()
+    router.push('/dashboard')
+  } finally {
+    setSending(false)
+  }
+}
+
+async function handleSkip() {
+  await markSetupComplete()
+  router.push('/dashboard')
+}
+
+async function markSetupComplete() {
+  await fetch('/api/setup/complete', { method: 'POST' })
+}
 
   const filledCount = invites.filter(r => r.email.trim() !== '').length
 

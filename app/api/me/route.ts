@@ -37,9 +37,19 @@ export async function GET() {
 
   const { data: company } = await service
     .from('companies')
-    .select('id, name, settings')
+    .select('id, name, settings, setup_completed, status')
     .eq('id', employee.company_id)
     .single()
 
-  return Response.json({ ok: true, employee, company: company ?? null })
+  const { count: employeeCount } = await service
+    .from('employees')
+    .select('id', { count: 'exact', head: true })
+    .eq('company_id', employee.company_id)
+
+  return Response.json({
+    ok: true,
+    employee,
+    company: company ?? null,
+    employeeCount: employeeCount ?? 0,
+  })
 }

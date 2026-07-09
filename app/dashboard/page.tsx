@@ -9,8 +9,6 @@ const supabase = createBrowserClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 )
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
 interface Employee {
   id: string
   full_name: string
@@ -26,8 +24,9 @@ interface Employee {
 interface Company {
   id: string
   name: string
+  status: string
+  setup_completed: boolean
   settings: {
-    setup_confirmed?: boolean
     approvalModel?: string
   }
 }
@@ -36,54 +35,46 @@ interface MeResponse {
   ok: boolean
   employee: Employee
   company: Company | null
+  employeeCount: number
 }
 
-// ── Checklist ─────────────────────────────────────────────────────────────────
-
-const CHECKLIST = [
-  {
-    id: 'company',
-    label: 'Company created',
-    desc: 'Your account is active.',
-    done: true,
-    href: '/settings/company',
-    cta: 'View',
-  },
-  {
-    id: 'policy',
-    label: 'Confirm your travel policy',
-    desc: 'Review and adjust band limits before your team starts booking.',
-    done: false,
-    href: '/settings/policy',
-    cta: 'Review policy',
-  },
-  {
-    id: 'employees',
-    label: 'Add your first employee',
-    desc: 'Invite team members and assign bands.',
-    done: false,
-    href: '/settings/users',
-    cta: 'Add employees',
-  },
-  {
-    id: 'payment',
-    label: 'Connect a payment method',
-    desc: 'Required before any booking can be confirmed.',
-    done: false,
-    href: '/settings/integrations',
-    cta: 'Add payment method',
-  },
-  {
-    id: 'booking',
-    label: 'Make your first booking',
-    desc: 'Search for a flight, hotel, or car rental.',
-    done: false,
-    href: '/book',
-    cta: 'Start booking',
-  },
-]
-
-// ── Nav items per role ────────────────────────────────────────────────────────
+function getChecklist(company: Company | null, employeeCount: number) {
+  const hasPolicy = !!(company?.settings?.approvalModel)
+  return [
+    {
+      id: 'company',
+      label: 'Company created',
+      desc: 'Your account is active.',
+      done: true,
+      href: '/setup',
+      cta: 'View',
+    },
+    {
+      id: 'policy',
+      label: 'Confirm your travel policy',
+      desc: 'Review and adjust band limits before your team starts booking.',
+      done: hasPolicy,
+      href: '/setup/policy',
+      cta: 'Review policy',
+    },
+    {
+      id: 'employees',
+      label: 'Add your first employee',
+      desc: 'Invite team members and assign bands.',
+      done: employeeCount > 1,
+      href: '/setup/invite',
+      cta: 'Add employees',
+    },
+    {
+      id: 'booking',
+      label: 'Make your first booking',
+      desc: 'Search for a flight, hotel, or car rental.',
+      done: false,
+      href: '/book',
+      cta: 'Start booking',
+    },
+  ]
+}
 
 function getNavItems(role: string) {
   const base = [
@@ -103,8 +94,6 @@ function getNavItems(role: string) {
   return base
 }
 
-// ── Stats per role ────────────────────────────────────────────────────────────
-
 function getStats(role: string) {
   if (role === 'admin' || role === 'finance') {
     return [
@@ -116,20 +105,17 @@ function getStats(role: string) {
   }
   if (role === 'manager') {
     return [
-      { label: 'Team bookings',      value: '0', sub: 'No bookings yet' },
-      { label: 'Pending approvals',  value: '0', sub: 'Nothing to action' },
-      { label: 'Team spend (MTD)',   value: '—', sub: 'No spend recorded' },
+      { label: 'Team bookings',     value: '0', sub: 'No bookings yet' },
+      { label: 'Pending approvals', value: '0', sub: 'Nothing to action' },
+      { label: 'Team spend (MTD)',  value: '—', sub: 'No spend recorded' },
     ]
   }
-  // employee
   return [
-    { label: 'My trips this year', value: '0',  sub: 'No trips yet' },
-    { label: 'Pending approval',   value: '0',  sub: 'Nothing pending' },
-    { label: 'Total spend (YTD)',  value: '—',  sub: 'No spend recorded' },
+    { label: 'My trips this year', value: '0', sub: 'No trips yet' },
+    { label: 'Pending approval',   value: '0', sub: 'Nothing pending' },
+    { label: 'Total spend (YTD)',  value: '—', sub: 'No spend recorded' },
   ]
 }
-
-// ── Component ─────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
   const router = useRouter()
@@ -156,16 +142,15 @@ export default function DashboardPage() {
 
   const { employee, company } = me
   const { role, full_name, band_code } = employee
-  const setupConfirmed = company?.settings?.setup_confirmed ?? false
   const navItems = getNavItems(role)
   const stats = getStats(role)
   const firstName = full_name?.split(' ')[0] ?? 'there'
-
-  const showChecklist = role === 'admin' && !setupConfirmed
+  const checklist = getChecklist(company, me.employeeCount ?? 0)
+  const completedCount = checklist.filter(i => i.done).length
+  const showChecklist = role === 'admin' && !(company?.setup_completed ?? false)
 
   return (
     <div style={s.root}>
-      {/* ── Sidebar nav ───────────────────────────────────────────── */}
       <nav style={s.nav}>
         <div>
           <div style={s.navWordmark}>
@@ -214,15 +199,10 @@ export default function DashboardPage() {
         </div>
       </nav>
 
-      {/* ── Main ──────────────────────────────────────────────────── */}
       <main style={s.main}>
-
-        {/* Top bar */}
         <div style={s.topBar}>
           <div>
-            <h1 style={s.pageTitle}>
-              {getGreeting()}, {firstName}
-            </h1>
+            <h1 style={s.pageTitle}>{getGreeting()}, {firstName}</h1>
             <p style={s.pageDate}>
               {new Date().toLocaleDateString('en-GB', {
                 weekday: 'long', day: 'numeric',
@@ -233,26 +213,18 @@ export default function DashboardPage() {
           <a href="/book" style={s.bookBtn}>+ New booking</a>
         </div>
 
-        {/* Setup checklist — admin only, hidden once setup_confirmed */}
         {showChecklist && (
           <div style={s.checklistCard}>
             <div style={s.checklistHeader}>
-              <div>
-                <h2 style={s.checklistTitle}>Finish setting up TravelDesk</h2>
-                <p style={s.checklistSub}>
-                  Complete these steps before your team starts booking.
-                </p>
-              </div>
+              <h2 style={s.checklistTitle}>Finish setting up TravelDesk</h2>
+              <p style={s.checklistSub}>Complete these steps before your team starts booking.</p>
             </div>
             <div style={s.progressTrack}>
-              <div style={{ ...s.progressFill, width: '20%' }} />
+              <div style={{ ...s.progressFill, width: `${(completedCount / checklist.length) * 100}%` }} />
             </div>
             <div style={s.checklistItems}>
-              {CHECKLIST.map(item => (
-                <div key={item.id} style={{
-                  ...s.checklistItem,
-                  opacity: item.done ? 0.5 : 1,
-                }}>
+              {checklist.map(item => (
+                <div key={item.id} style={{ ...s.checklistItem, opacity: item.done ? 0.5 : 1 }}>
                   <div style={{
                     ...s.checkDot,
                     background: item.done ? '#22C55E' : '#fff',
@@ -277,7 +249,6 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Role context banner — non-admin users */}
         {role === 'employee' && (
           <div style={s.infoBanner}>
             <span style={s.infoBannerText}>
@@ -297,11 +268,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Stats */}
-        <div style={{
-          ...s.statsRow,
-          gridTemplateColumns: `repeat(${stats.length}, 1fr)`,
-        }}>
+        <div style={{ ...s.statsRow, gridTemplateColumns: `repeat(${stats.length}, 1fr)` }}>
           {stats.map(stat => (
             <div key={stat.label} style={s.statCard}>
               <p style={s.statLabel}>{stat.label}</p>
@@ -311,7 +278,6 @@ export default function DashboardPage() {
           ))}
         </div>
 
-        {/* Recent bookings */}
         <Section title="Recent bookings" linkLabel="View all" linkHref="/bookings">
           <EmptyState
             icon="✈"
@@ -326,7 +292,6 @@ export default function DashboardPage() {
           />
         </Section>
 
-        {/* Pending approvals — managers, finance, admins only */}
         {(role === 'admin' || role === 'manager' || role === 'finance') && (
           <Section title="Pending approvals" linkLabel="View all" linkHref="/approvals">
             <EmptyState
@@ -336,17 +301,12 @@ export default function DashboardPage() {
             />
           </Section>
         )}
-
       </main>
     </div>
   )
 }
 
-// ── Sub-components ────────────────────────────────────────────────────────────
-
-function Section({
-  title, linkLabel, linkHref, children,
-}: {
+function Section({ title, linkLabel, linkHref, children }: {
   title: string
   linkLabel: string
   linkHref: string
@@ -363,9 +323,7 @@ function Section({
   )
 }
 
-function EmptyState({
-  icon, title, desc, cta, ctaHref,
-}: {
+function EmptyState({ icon, title, desc, cta, ctaHref }: {
   icon: string
   title: string
   desc: string
@@ -377,9 +335,7 @@ function EmptyState({
       <div style={s.emptyIcon}>{icon}</div>
       <p style={s.emptyTitle}>{title}</p>
       <p style={s.emptyDesc}>{desc}</p>
-      {cta && ctaHref && (
-        <a href={ctaHref} style={s.emptyCta}>{cta}</a>
-      )}
+      {cta && ctaHref && <a href={ctaHref} style={s.emptyCta}>{cta}</a>}
     </div>
   )
 }
@@ -389,8 +345,7 @@ function LoadingScreen() {
     <div style={{
       minHeight: '100vh', display: 'flex',
       alignItems: 'center', justifyContent: 'center',
-      background: '#F7F8FC',
-      fontFamily: "'Inter', sans-serif",
+      background: '#F7F8FC', fontFamily: "'Inter', sans-serif",
     }}>
       <p style={{ fontSize: '13px', color: '#9CA3AF' }}>Loading…</p>
     </div>
@@ -404,16 +359,12 @@ function getGreeting() {
   return 'Good evening'
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
-
 const s: Record<string, React.CSSProperties> = {
   root: {
     display: 'flex', minHeight: '100vh',
     fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
     background: '#F7F8FC',
   },
-
-  // Nav
   nav: {
     width: '220px', flexShrink: 0, background: '#000835',
     display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
@@ -427,16 +378,10 @@ const s: Record<string, React.CSSProperties> = {
     padding: '7px 10px', marginBottom: '20px',
     background: 'rgba(255,255,255,0.06)', borderRadius: '6px',
   },
-  companyDot: {
-    width: '6px', height: '6px', borderRadius: '50%',
-    background: '#22C55E', flexShrink: 0,
-  },
+  companyDot: { width: '6px', height: '6px', borderRadius: '50%', background: '#22C55E', flexShrink: 0 },
   companyName: { fontSize: '12px', color: 'rgba(255,255,255,0.7)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
   navItems: { display: 'flex', flexDirection: 'column', gap: '1px' },
-  navItem: {
-    display: 'block', padding: '8px 10px', borderRadius: '6px',
-    fontSize: '13px', textDecoration: 'none', transition: 'all 0.15s',
-  },
+  navItem: { display: 'block', padding: '8px 10px', borderRadius: '6px', fontSize: '13px', textDecoration: 'none', transition: 'all 0.15s' },
   navFooter: { borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: '14px' },
   userInfo: { display: 'flex', alignItems: 'center', gap: '9px', marginBottom: '10px' },
   userAvatar: {
@@ -447,98 +392,39 @@ const s: Record<string, React.CSSProperties> = {
   },
   userName: { fontSize: '12px', fontWeight: 500, color: '#fff', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
   userMeta: { fontSize: '10px', color: 'rgba(255,255,255,0.38)', margin: 0 },
-  signOutBtn: {
-    width: '100%', height: '30px',
-    background: 'rgba(255,255,255,0.05)',
-    color: 'rgba(255,255,255,0.4)', fontSize: '11px',
-    border: 'none', borderRadius: '5px', cursor: 'pointer',
-  },
-
-  // Main
+  signOutBtn: { width: '100%', height: '30px', background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.4)', fontSize: '11px', border: 'none', borderRadius: '5px', cursor: 'pointer' },
   main: { flex: 1, overflowY: 'auto' as const, padding: '32px 36px' },
-  topBar: {
-    display: 'flex', justifyContent: 'space-between',
-    alignItems: 'flex-start', marginBottom: '24px',
-  },
-  pageTitle: {
-    fontSize: '20px', fontWeight: 600, color: '#0A0A14',
-    margin: '0 0 3px', letterSpacing: '-0.3px',
-  },
+  topBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' },
+  pageTitle: { fontSize: '20px', fontWeight: 600, color: '#0A0A14', margin: '0 0 3px', letterSpacing: '-0.3px' },
   pageDate: { fontSize: '12px', color: '#9CA3AF', margin: 0 },
-  bookBtn: {
-    display: 'inline-block', height: '34px', lineHeight: '34px',
-    padding: '0 14px', background: '#000835', color: '#fff',
-    fontSize: '12px', fontWeight: 600, borderRadius: '7px',
-    textDecoration: 'none', flexShrink: 0,
-  },
-
-  // Checklist
-  checklistCard: {
-    background: '#fff', border: '1px solid #E5E7EB',
-    borderRadius: '10px', padding: '20px', marginBottom: '20px',
-  },
+  bookBtn: { display: 'inline-block', height: '34px', lineHeight: '34px', padding: '0 14px', background: '#000835', color: '#fff', fontSize: '12px', fontWeight: 600, borderRadius: '7px', textDecoration: 'none', flexShrink: 0 },
+  checklistCard: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '10px', padding: '20px', marginBottom: '20px' },
   checklistHeader: { marginBottom: '12px' },
   checklistTitle: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: '0 0 3px' },
   checklistSub: { fontSize: '12px', color: '#6B7280', margin: 0 },
-  progressTrack: {
-    height: '3px', background: '#F3F4F6',
-    borderRadius: '2px', marginBottom: '16px', overflow: 'hidden',
-  },
+  progressTrack: { height: '3px', background: '#F3F4F6', borderRadius: '2px', marginBottom: '16px', overflow: 'hidden' },
   progressFill: { height: '100%', background: '#22C55E', borderRadius: '2px' },
   checklistItems: { display: 'flex', flexDirection: 'column', gap: '10px' },
   checklistItem: { display: 'flex', alignItems: 'flex-start', gap: '10px' },
-  checkDot: {
-    width: '18px', height: '18px', borderRadius: '50%',
-    border: '2px solid', flexShrink: 0, marginTop: '1px',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-  },
+  checkDot: { width: '18px', height: '18px', borderRadius: '50%', border: '2px solid', flexShrink: 0, marginTop: '1px', display: 'flex', alignItems: 'center', justifyContent: 'center' },
   checkMark: { fontSize: '10px', color: '#fff', fontWeight: 700 },
   checkContent: { flex: 1 },
   checkLabel: { fontSize: '12px', fontWeight: 500, margin: '0 0 1px' },
   checkDesc: { fontSize: '11px', color: '#6B7280', margin: 0 },
   checkCta: { fontSize: '11px', fontWeight: 600, color: '#000835', textDecoration: 'none', flexShrink: 0, marginTop: '1px' },
-
-  // Info banner
-  infoBanner: {
-    background: '#EEF2FF', border: '1px solid #C7D2FE',
-    borderRadius: '8px', padding: '11px 14px', marginBottom: '20px',
-  },
+  infoBanner: { background: '#EEF2FF', border: '1px solid #C7D2FE', borderRadius: '8px', padding: '11px 14px', marginBottom: '20px' },
   infoBannerText: { fontSize: '12px', color: '#3730A3', lineHeight: '1.55' },
-
-  // Stats
-  statsRow: {
-    display: 'grid', gap: '14px', marginBottom: '20px',
-  },
-  statCard: {
-    background: '#fff', border: '1px solid #E5E7EB',
-    borderRadius: '9px', padding: '16px 18px',
-  },
+  statsRow: { display: 'grid', gap: '14px', marginBottom: '20px' },
+  statCard: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '9px', padding: '16px 18px' },
   statLabel: { fontSize: '10px', fontWeight: 600, color: '#9CA3AF', margin: '0 0 6px', textTransform: 'uppercase' as const, letterSpacing: '0.4px' },
   statValue: { fontSize: '24px', fontWeight: 700, color: '#111827', margin: '0 0 3px' },
   statSub: { fontSize: '10px', color: '#9CA3AF', margin: 0 },
-
-  // Sections
-  section: {
-    background: '#fff', border: '1px solid #E5E7EB',
-    borderRadius: '9px', padding: '18px', marginBottom: '16px',
-  },
-  sectionHeader: {
-    display: 'flex', justifyContent: 'space-between',
-    alignItems: 'center', marginBottom: '14px',
-  },
+  section: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '9px', padding: '18px', marginBottom: '16px' },
+  sectionHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' },
   sectionTitle: { fontSize: '13px', fontWeight: 600, color: '#111827', margin: 0 },
   sectionLink: { fontSize: '11px', color: '#000835', textDecoration: 'none', fontWeight: 500 },
-
-  // Empty state
-  emptyState: {
-    display: 'flex', flexDirection: 'column',
-    alignItems: 'center', padding: '24px 0', textAlign: 'center' as const,
-  },
-  emptyIcon: {
-    fontSize: '22px', width: '48px', height: '48px', borderRadius: '50%',
-    background: '#F9FAFB', display: 'flex', alignItems: 'center',
-    justifyContent: 'center', marginBottom: '10px',
-  },
+  emptyState: { display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '24px 0', textAlign: 'center' as const },
+  emptyIcon: { fontSize: '22px', width: '48px', height: '48px', borderRadius: '50%', background: '#F9FAFB', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '10px' },
   emptyTitle: { fontSize: '13px', fontWeight: 600, color: '#374151', margin: '0 0 4px' },
   emptyDesc: { fontSize: '12px', color: '#9CA3AF', maxWidth: '300px', margin: '0 0 12px', lineHeight: '1.5' },
   emptyCta: { fontSize: '12px', fontWeight: 600, color: '#000835', textDecoration: 'none' },

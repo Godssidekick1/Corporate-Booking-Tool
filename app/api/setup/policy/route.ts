@@ -51,8 +51,6 @@ export async function POST(req: NextRequest) {
     const bandId = bandMap[row.band]
     if (!bandId) continue
 
-    // Each frontend row maps to multiple policy_rules rows — one per limit_key.
-    // flight_class encoded as 0=Economy, 1=Business, 2=First for numeric storage.
     const limits: Array<{ limit_key: string; travel_type: string; value: number }> = [
       { limit_key: 'max_fare',                  travel_type: 'flight_domestic',      value: row.domesticFlight },
       { limit_key: 'intl_max_fare',             travel_type: 'flight_international', value: row.intlFlight },
@@ -81,7 +79,6 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Delete existing version 1 rules before reinserting — idempotent
   const { error: deleteError } = await service
     .from('policy_rules')
     .delete()
@@ -100,19 +97,26 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: insertError.message }, { status: 500 })
   }
 
-  // Save approval model into company settings
+  // Fetch current settings before merging
   const { data: company } = await service
     .from('companies')
     .select('settings')
     .eq('id', companyId)
     .single()
 
-  await service
+  const { error: updateError } = await service
     .from('companies')
     .update({
-      settings: { ...(company?.settings ?? {}), approvalModel },
+      settings: {
+        ...(company?.settings ?? {}),
+        approvalModel,
+      },
     })
     .eq('id', companyId)
+
+  if (updateError) {
+    return Response.json({ error: updateError.message }, { status: 500 })
+  }
 
   return Response.json({ ok: true })
 }

@@ -101,12 +101,18 @@ export default function TmcDashboardPage() {
           ))}
         </div>
         <div style={s.navFooter}>
-          <p style={s.userName}>{loading ? '…' : employee?.full_name ?? '—'}</p>
-          <p style={s.userRole}>TMC Admin</p>
-          <form action="/api/auth/signout" method="POST" style={{ marginTop: '10px' }}>
-            <button type="submit" style={s.signOutBtn}>Sign out</button>
-          </form>
-        </div>
+  <p style={s.userName}>{loading ? '…' : employee?.full_name ?? '—'}</p>
+  <p style={s.userRole}>TMC Admin</p>
+  <button
+    onClick={async () => {
+      await fetch('/api/auth/signout', { method: 'POST' })
+      window.location.href = '/login'
+    }}
+    style={{ ...s.signOutBtn, marginTop: '10px' }}
+  >
+    Sign out
+  </button>
+</div>
       </nav>
 
       {/* Main */}
