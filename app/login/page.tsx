@@ -1,283 +1,545 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 
-export default function SignInPage() {
+const supabase = createBrowserClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+)
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface Employee {
+  id: string
+  full_name: string
+  email: string
+  role: 'admin' | 'manager' | 'finance' | 'employee'
+  status: string
+  company_id: string | null
+  band_code: string | null
+  band_rank: number | null
+  department: string | null
+}
+
+interface Company {
+  id: string
+  name: string
+  settings: {
+    setup_confirmed?: boolean
+    approvalModel?: string
+  }
+}
+
+interface MeResponse {
+  ok: boolean
+  employee: Employee
+  company: Company | null
+}
+
+// ── Checklist ─────────────────────────────────────────────────────────────────
+
+const CHECKLIST = [
+  {
+    id: 'company',
+    label: 'Company created',
+    desc: 'Your account is active.',
+    done: true,
+    href: '/settings/company',
+    cta: 'View',
+  },
+  {
+    id: 'policy',
+    label: 'Confirm your travel policy',
+    desc: 'Review and adjust band limits before your team starts booking.',
+    done: false,
+    href: '/settings/policy',
+    cta: 'Review policy',
+  },
+  {
+    id: 'employees',
+    label: 'Add your first employee',
+    desc: 'Invite team members and assign bands.',
+    done: false,
+    href: '/settings/users',
+    cta: 'Add employees',
+  },
+  {
+    id: 'payment',
+    label: 'Connect a payment method',
+    desc: 'Required before any booking can be confirmed.',
+    done: false,
+    href: '/settings/integrations',
+    cta: 'Add payment method',
+  },
+  {
+    id: 'booking',
+    label: 'Make your first booking',
+    desc: 'Search for a flight, hotel, or car rental.',
+    done: false,
+    href: '/book',
+    cta: 'Start booking',
+  },
+]
+
+// ── Nav items per role ────────────────────────────────────────────────────────
+
+function getNavItems(role: string) {
+  const base = [
+    { label: 'Dashboard',   href: '/dashboard' },
+    { label: 'Book travel', href: '/book' },
+    { label: 'My trips',    href: '/bookings' },
+  ]
+  if (role === 'admin' || role === 'manager' || role === 'finance') {
+    base.push({ label: 'Approvals', href: '/approvals' })
+  }
+  if (role === 'admin' || role === 'finance') {
+    base.push({ label: 'Reports', href: '/reports' })
+  }
+  if (role === 'admin') {
+    base.push({ label: 'Settings', href: '/settings' })
+  }
+  return base
+}
+
+// ── Stats per role ────────────────────────────────────────────────────────────
+
+function getStats(role: string) {
+  if (role === 'admin' || role === 'finance') {
+    return [
+      { label: 'Bookings this month', value: '0', sub: 'No bookings yet' },
+      { label: 'Pending approvals',   value: '0', sub: 'Nothing to action' },
+      { label: 'Policy compliance',   value: '—', sub: 'Starts once bookings are made' },
+      { label: 'Total spend (MTD)',    value: '—', sub: 'No spend recorded' },
+    ]
+  }
+  if (role === 'manager') {
+    return [
+      { label: 'Team bookings',      value: '0', sub: 'No bookings yet' },
+      { label: 'Pending approvals',  value: '0', sub: 'Nothing to action' },
+      { label: 'Team spend (MTD)',   value: '—', sub: 'No spend recorded' },
+    ]
+  }
+  // employee
+  return [
+    { label: 'My trips this year', value: '0',  sub: 'No trips yet' },
+    { label: 'Pending approval',   value: '0',  sub: 'Nothing pending' },
+    { label: 'Total spend (YTD)',  value: '—',  sub: 'No spend recorded' },
+  ]
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
+export default function DashboardPage() {
   const router = useRouter()
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(false)
+  const [me, setMe] = useState<MeResponse | null>(null)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (typeof window === 'undefined') return
-    const hash = window.location.hash
-    if (!hash.includes('access_token')) return
-
-    const params = new URLSearchParams(hash.slice(1))
-    const type = params.get('type')
-    const accessToken = params.get('access_token')
-    const refreshToken = params.get('refresh_token')
-
-    if (!accessToken || !refreshToken) return
-
-    const supabase = createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    )
-
-    supabase.auth.setSession({
-      access_token: accessToken,
-      refresh_token: refreshToken,
-    }).then(({ error }) => {
-      if (error) {
-        console.error('Session set error:', error.message)
-        return
-      }
-      if (type === 'invite') {
-        router.replace('/auth/set-password')
-      } else {
-        router.replace('/dashboard')
-      }
-    })
+    fetch('/api/me')
+      .then(r => r.json())
+      .then((data: MeResponse) => {
+        if (!data.ok) { router.replace('/login'); return }
+        setMe(data)
+      })
+      .catch(() => router.replace('/login'))
+      .finally(() => setLoading(false))
   }, [router])
 
-  async function redirectByRole() {
-    const res = await fetch('/api/me')
-    const data = await res.json()
-    const role = data.employee?.role
-
-    if (role === 'tmc_admin') {
-      router.push('/tmc/dashboard')
-    } else if (role === 'admin') {
-      const setupConfirmed = data.company?.settings?.setup_confirmed ?? false
-      router.push(setupConfirmed ? '/dashboard' : '/setup')
-    } else {
-      router.push('/dashboard')
-    }
+  async function handleSignOut() {
+    await supabase.auth.signOut()
+    router.replace('/login')
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setError('')
-    setLoading(true)
+  if (loading || !me) return <LoadingScreen />
 
-    try {
-      const res = await fetch('/api/auth/signin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      })
+  const { employee, company } = me
+  const { role, full_name, band_code } = employee
+  const setupConfirmed = company?.settings?.setup_confirmed ?? false
+  const navItems = getNavItems(role)
+  const stats = getStats(role)
+  const firstName = full_name?.split(' ')[0] ?? 'there'
 
-      const data = await res.json()
-
-      if (!res.ok) {
-        setError(data.error || 'Sign in failed')
-        return
-      }
-
-      await redirectByRole()
-    } catch {
-      setError('Something went wrong. Please try again.')
-    } finally {
-      setLoading(false)
-    }
-  }
+  const showChecklist = role === 'admin' && !setupConfirmed
 
   return (
-    <div style={styles.root}>
-      <div style={styles.panel}>
-        <div style={styles.panelInner}>
-          <div style={styles.wordmark}>
-            <span style={styles.wordmarkMain}>TravelDesk</span>
-            <span style={styles.wordmarkBy}>by Amadeus</span>
+    <div style={s.root}>
+      {/* ── Sidebar nav ───────────────────────────────────────────── */}
+      <nav style={s.nav}>
+        <div>
+          <div style={s.navWordmark}>
+            <span style={s.navWmMain}>TravelDesk</span>
+            <span style={s.navWmBy}>by Amadeus</span>
           </div>
-          <p style={styles.panelTagline}>
-            Corporate travel management built for modern teams.
-          </p>
-        </div>
-        <p style={styles.panelFooter}>© {new Date().getFullYear()} Amadeus IT Group</p>
-      </div>
 
-      <div style={styles.formPanel}>
-        <div style={styles.formCard}>
-          <h1 style={styles.heading}>Welcome back</h1>
-          <p style={styles.subheading}>Sign in to your account</p>
-
-          <form onSubmit={handleSubmit} style={styles.form}>
-            <div style={styles.field}>
-              <label style={styles.label} htmlFor="email">Work email</label>
-              <input
-                id="email"
-                type="email"
-                autoComplete="email"
-                required
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                style={styles.input}
-                placeholder="you@company.com"
-              />
+          {company && (
+            <div style={s.companyBadge}>
+              <span style={s.companyDot} />
+              <span style={s.companyName}>{company.name}</span>
             </div>
+          )}
 
-            <div style={styles.field}>
-              <label style={styles.label} htmlFor="password">Password</label>
-              <input
-                id="password"
-                type="password"
-                autoComplete="current-password"
-                required
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                style={styles.input}
-                placeholder="••••••••"
-              />
-            </div>
-
-            {error && <p style={styles.error}>{error}</p>}
-
-            <button
-              type="submit"
-              disabled={loading}
-              style={{ ...styles.button, opacity: loading ? 0.7 : 1 }}
-            >
-              {loading ? 'Signing in…' : 'Sign in'}
-            </button>
-          </form>
-
-          <p style={styles.footer}></p>
+          <div style={s.navItems}>
+            {navItems.map(item => {
+              const active = item.href === '/dashboard'
+              return (
+                <a key={item.label} href={item.href} style={{
+                  ...s.navItem,
+                  background: active ? 'rgba(255,255,255,0.1)' : 'transparent',
+                  color: active ? '#fff' : 'rgba(255,255,255,0.5)',
+                  fontWeight: active ? 500 : 400,
+                }}>
+                  {item.label}
+                </a>
+              )
+            })}
+          </div>
         </div>
-      </div>
+
+        <div style={s.navFooter}>
+          <div style={s.userInfo}>
+            <div style={s.userAvatar}>{firstName[0]}</div>
+            <div>
+              <p style={s.userName}>{full_name}</p>
+              <p style={s.userMeta}>
+                {role.charAt(0).toUpperCase() + role.slice(1)}
+                {band_code ? ` · ${band_code}` : ''}
+              </p>
+            </div>
+          </div>
+          <button onClick={handleSignOut} style={s.signOutBtn}>
+            Sign out
+          </button>
+        </div>
+      </nav>
+
+      {/* ── Main ──────────────────────────────────────────────────── */}
+      <main style={s.main}>
+
+        {/* Top bar */}
+        <div style={s.topBar}>
+          <div>
+            <h1 style={s.pageTitle}>
+              {getGreeting()}, {firstName}
+            </h1>
+            <p style={s.pageDate}>
+              {new Date().toLocaleDateString('en-GB', {
+                weekday: 'long', day: 'numeric',
+                month: 'long', year: 'numeric',
+              })}
+            </p>
+          </div>
+          <a href="/book" style={s.bookBtn}>+ New booking</a>
+        </div>
+
+        {/* Setup checklist — admin only, hidden once setup_confirmed */}
+        {showChecklist && (
+          <div style={s.checklistCard}>
+            <div style={s.checklistHeader}>
+              <div>
+                <h2 style={s.checklistTitle}>Finish setting up TravelDesk</h2>
+                <p style={s.checklistSub}>
+                  Complete these steps before your team starts booking.
+                </p>
+              </div>
+            </div>
+            <div style={s.progressTrack}>
+              <div style={{ ...s.progressFill, width: '20%' }} />
+            </div>
+            <div style={s.checklistItems}>
+              {CHECKLIST.map(item => (
+                <div key={item.id} style={{
+                  ...s.checklistItem,
+                  opacity: item.done ? 0.5 : 1,
+                }}>
+                  <div style={{
+                    ...s.checkDot,
+                    background: item.done ? '#22C55E' : '#fff',
+                    borderColor: item.done ? '#22C55E' : '#D1D5DB',
+                  }}>
+                    {item.done && <span style={s.checkMark}>✓</span>}
+                  </div>
+                  <div style={s.checkContent}>
+                    <p style={{
+                      ...s.checkLabel,
+                      textDecoration: item.done ? 'line-through' : 'none',
+                      color: item.done ? '#9CA3AF' : '#111827',
+                    }}>{item.label}</p>
+                    {!item.done && <p style={s.checkDesc}>{item.desc}</p>}
+                  </div>
+                  {!item.done && (
+                    <a href={item.href} style={s.checkCta}>{item.cta} →</a>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Role context banner — non-admin users */}
+        {role === 'employee' && (
+          <div style={s.infoBanner}>
+            <span style={s.infoBannerText}>
+              Your travel entitlements are set by your company policy for band{' '}
+              <strong>{band_code ?? '—'}</strong>.
+              Out-of-policy bookings will be routed to your manager for approval.
+            </span>
+          </div>
+        )}
+
+        {role === 'manager' && (
+          <div style={s.infoBanner}>
+            <span style={s.infoBannerText}>
+              You can approve in-band booking requests from your direct reports.
+              High-value requests are routed to Finance automatically.
+            </span>
+          </div>
+        )}
+
+        {/* Stats */}
+        <div style={{
+          ...s.statsRow,
+          gridTemplateColumns: `repeat(${stats.length}, 1fr)`,
+        }}>
+          {stats.map(stat => (
+            <div key={stat.label} style={s.statCard}>
+              <p style={s.statLabel}>{stat.label}</p>
+              <p style={s.statValue}>{stat.value}</p>
+              <p style={s.statSub}>{stat.sub}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Recent bookings */}
+        <Section title="Recent bookings" linkLabel="View all" linkHref="/bookings">
+          <EmptyState
+            icon="✈"
+            title="No bookings yet"
+            desc={
+              role === 'employee'
+                ? 'Start a trip request and your manager will be notified for approval.'
+                : 'When your team starts booking, their trips will appear here.'
+            }
+            cta="Make your first booking →"
+            ctaHref="/book"
+          />
+        </Section>
+
+        {/* Pending approvals — managers, finance, admins only */}
+        {(role === 'admin' || role === 'manager' || role === 'finance') && (
+          <Section title="Pending approvals" linkLabel="View all" linkHref="/approvals">
+            <EmptyState
+              icon="✔"
+              title="No pending approvals"
+              desc="Out-of-policy booking requests will show up here for you to action."
+            />
+          </Section>
+        )}
+
+      </main>
     </div>
   )
 }
 
-const styles: Record<string, React.CSSProperties> = {
+// ── Sub-components ────────────────────────────────────────────────────────────
+
+function Section({
+  title, linkLabel, linkHref, children,
+}: {
+  title: string
+  linkLabel: string
+  linkHref: string
+  children: React.ReactNode
+}) {
+  return (
+    <div style={s.section}>
+      <div style={s.sectionHeader}>
+        <h2 style={s.sectionTitle}>{title}</h2>
+        <a href={linkHref} style={s.sectionLink}>{linkLabel}</a>
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function EmptyState({
+  icon, title, desc, cta, ctaHref,
+}: {
+  icon: string
+  title: string
+  desc: string
+  cta?: string
+  ctaHref?: string
+}) {
+  return (
+    <div style={s.emptyState}>
+      <div style={s.emptyIcon}>{icon}</div>
+      <p style={s.emptyTitle}>{title}</p>
+      <p style={s.emptyDesc}>{desc}</p>
+      {cta && ctaHref && (
+        <a href={ctaHref} style={s.emptyCta}>{cta}</a>
+      )}
+    </div>
+  )
+}
+
+function LoadingScreen() {
+  return (
+    <div style={{
+      minHeight: '100vh', display: 'flex',
+      alignItems: 'center', justifyContent: 'center',
+      background: '#F7F8FC',
+      fontFamily: "'Inter', sans-serif",
+    }}>
+      <p style={{ fontSize: '13px', color: '#9CA3AF' }}>Loading…</p>
+    </div>
+  )
+}
+
+function getGreeting() {
+  const h = new Date().getHours()
+  if (h < 12) return 'Good morning'
+  if (h < 17) return 'Good afternoon'
+  return 'Good evening'
+}
+
+// ── Styles ────────────────────────────────────────────────────────────────────
+
+const s: Record<string, React.CSSProperties> = {
   root: {
-    display: 'flex',
-    minHeight: '100vh',
+    display: 'flex', minHeight: '100vh',
     fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
-    backgroundColor: '#F7F8FC',
+    background: '#F7F8FC',
   },
-  panel: {
-    width: '420px',
-    flexShrink: 0,
-    backgroundColor: '#000835',
-    display: 'flex',
-    flexDirection: 'column',
-    justifyContent: 'space-between',
-    padding: '48px 40px',
+
+  // Nav
+  nav: {
+    width: '220px', flexShrink: 0, background: '#000835',
+    display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+    padding: '28px 16px',
   },
-  panelInner: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '24px',
+  navWordmark: { display: 'flex', flexDirection: 'column', gap: '2px', marginBottom: '20px', padding: '0 6px' },
+  navWmMain: { fontSize: '17px', fontWeight: 600, color: '#fff', letterSpacing: '-0.3px' },
+  navWmBy: { fontSize: '9px', color: 'rgba(255,255,255,0.32)', letterSpacing: '0.5px', textTransform: 'uppercase' as const },
+  companyBadge: {
+    display: 'flex', alignItems: 'center', gap: '7px',
+    padding: '7px 10px', marginBottom: '20px',
+    background: 'rgba(255,255,255,0.06)', borderRadius: '6px',
   },
-  wordmark: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '4px',
+  companyDot: {
+    width: '6px', height: '6px', borderRadius: '50%',
+    background: '#22C55E', flexShrink: 0,
   },
-  wordmarkMain: {
-    fontSize: '28px',
-    fontWeight: '700',
-    color: '#FFFFFF',
-    letterSpacing: '-0.5px',
+  companyName: { fontSize: '12px', color: 'rgba(255,255,255,0.7)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  navItems: { display: 'flex', flexDirection: 'column', gap: '1px' },
+  navItem: {
+    display: 'block', padding: '8px 10px', borderRadius: '6px',
+    fontSize: '13px', textDecoration: 'none', transition: 'all 0.15s',
   },
-  wordmarkBy: {
-    fontSize: '13px',
-    fontWeight: '400',
-    color: 'rgba(255,255,255,0.45)',
-    letterSpacing: '0.5px',
-    textTransform: 'uppercase' as const,
+  navFooter: { borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: '14px' },
+  userInfo: { display: 'flex', alignItems: 'center', gap: '9px', marginBottom: '10px' },
+  userAvatar: {
+    width: '30px', height: '30px', borderRadius: '50%',
+    background: 'rgba(255,255,255,0.12)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    fontSize: '12px', fontWeight: 600, color: '#fff', flexShrink: 0,
   },
-  panelTagline: {
-    fontSize: '15px',
-    lineHeight: '1.6',
-    color: 'rgba(255,255,255,0.6)',
-    maxWidth: '260px',
-    margin: 0,
+  userName: { fontSize: '12px', fontWeight: 500, color: '#fff', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  userMeta: { fontSize: '10px', color: 'rgba(255,255,255,0.38)', margin: 0 },
+  signOutBtn: {
+    width: '100%', height: '30px',
+    background: 'rgba(255,255,255,0.05)',
+    color: 'rgba(255,255,255,0.4)', fontSize: '11px',
+    border: 'none', borderRadius: '5px', cursor: 'pointer',
   },
-  panelFooter: {
-    fontSize: '12px',
-    color: 'rgba(255,255,255,0.25)',
-    margin: 0,
+
+  // Main
+  main: { flex: 1, overflowY: 'auto' as const, padding: '32px 36px' },
+  topBar: {
+    display: 'flex', justifyContent: 'space-between',
+    alignItems: 'flex-start', marginBottom: '24px',
   },
-  formPanel: {
-    flex: 1,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: '40px 24px',
+  pageTitle: {
+    fontSize: '20px', fontWeight: 600, color: '#0A0A14',
+    margin: '0 0 3px', letterSpacing: '-0.3px',
   },
-  formCard: {
-    width: '100%',
-    maxWidth: '400px',
+  pageDate: { fontSize: '12px', color: '#9CA3AF', margin: 0 },
+  bookBtn: {
+    display: 'inline-block', height: '34px', lineHeight: '34px',
+    padding: '0 14px', background: '#000835', color: '#fff',
+    fontSize: '12px', fontWeight: 600, borderRadius: '7px',
+    textDecoration: 'none', flexShrink: 0,
   },
-  heading: {
-    fontSize: '24px',
-    fontWeight: '700',
-    color: '#0A0A14',
-    margin: '0 0 8px',
-    letterSpacing: '-0.3px',
+
+  // Checklist
+  checklistCard: {
+    background: '#fff', border: '1px solid #E5E7EB',
+    borderRadius: '10px', padding: '20px', marginBottom: '20px',
   },
-  subheading: {
-    fontSize: '14px',
-    color: '#6B7280',
-    margin: '0 0 32px',
+  checklistHeader: { marginBottom: '12px' },
+  checklistTitle: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: '0 0 3px' },
+  checklistSub: { fontSize: '12px', color: '#6B7280', margin: 0 },
+  progressTrack: {
+    height: '3px', background: '#F3F4F6',
+    borderRadius: '2px', marginBottom: '16px', overflow: 'hidden',
   },
-  form: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '20px',
+  progressFill: { height: '100%', background: '#22C55E', borderRadius: '2px' },
+  checklistItems: { display: 'flex', flexDirection: 'column', gap: '10px' },
+  checklistItem: { display: 'flex', alignItems: 'flex-start', gap: '10px' },
+  checkDot: {
+    width: '18px', height: '18px', borderRadius: '50%',
+    border: '2px solid', flexShrink: 0, marginTop: '1px',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
   },
-  field: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '6px',
+  checkMark: { fontSize: '10px', color: '#fff', fontWeight: 700 },
+  checkContent: { flex: 1 },
+  checkLabel: { fontSize: '12px', fontWeight: 500, margin: '0 0 1px' },
+  checkDesc: { fontSize: '11px', color: '#6B7280', margin: 0 },
+  checkCta: { fontSize: '11px', fontWeight: 600, color: '#000835', textDecoration: 'none', flexShrink: 0, marginTop: '1px' },
+
+  // Info banner
+  infoBanner: {
+    background: '#EEF2FF', border: '1px solid #C7D2FE',
+    borderRadius: '8px', padding: '11px 14px', marginBottom: '20px',
   },
-  label: {
-    fontSize: '13px',
-    fontWeight: '500',
-    color: '#374151',
+  infoBannerText: { fontSize: '12px', color: '#3730A3', lineHeight: '1.55' },
+
+  // Stats
+  statsRow: {
+    display: 'grid', gap: '14px', marginBottom: '20px',
   },
-  input: {
-    height: '42px',
-    padding: '0 12px',
-    fontSize: '14px',
-    color: '#0A0A14',
-    backgroundColor: '#FFFFFF',
-    border: '1px solid #D1D5DB',
-    borderRadius: '8px',
-    outline: 'none',
-    transition: 'border-color 0.15s',
+  statCard: {
+    background: '#fff', border: '1px solid #E5E7EB',
+    borderRadius: '9px', padding: '16px 18px',
   },
-  error: {
-    fontSize: '13px',
-    color: '#DC2626',
-    backgroundColor: '#FEF2F2',
-    border: '1px solid #FECACA',
-    borderRadius: '6px',
-    padding: '10px 12px',
-    margin: 0,
+  statLabel: { fontSize: '10px', fontWeight: 600, color: '#9CA3AF', margin: '0 0 6px', textTransform: 'uppercase' as const, letterSpacing: '0.4px' },
+  statValue: { fontSize: '24px', fontWeight: 700, color: '#111827', margin: '0 0 3px' },
+  statSub: { fontSize: '10px', color: '#9CA3AF', margin: 0 },
+
+  // Sections
+  section: {
+    background: '#fff', border: '1px solid #E5E7EB',
+    borderRadius: '9px', padding: '18px', marginBottom: '16px',
   },
-  button: {
-    height: '42px',
-    backgroundColor: '#000835',
-    color: '#FFFFFF',
-    fontSize: '14px',
-    fontWeight: '600',
-    border: 'none',
-    borderRadius: '8px',
-    cursor: 'pointer',
-    marginTop: '4px',
-    transition: 'background-color 0.15s',
+  sectionHeader: {
+    display: 'flex', justifyContent: 'space-between',
+    alignItems: 'center', marginBottom: '14px',
   },
-  footer: {
-    fontSize: '13px',
-    color: '#6B7280',
-    textAlign: 'center' as const,
-    marginTop: '24px',
+  sectionTitle: { fontSize: '13px', fontWeight: 600, color: '#111827', margin: 0 },
+  sectionLink: { fontSize: '11px', color: '#000835', textDecoration: 'none', fontWeight: 500 },
+
+  // Empty state
+  emptyState: {
+    display: 'flex', flexDirection: 'column',
+    alignItems: 'center', padding: '24px 0', textAlign: 'center' as const,
   },
+  emptyIcon: {
+    fontSize: '22px', width: '48px', height: '48px', borderRadius: '50%',
+    background: '#F9FAFB', display: 'flex', alignItems: 'center',
+    justifyContent: 'center', marginBottom: '10px',
+  },
+  emptyTitle: { fontSize: '13px', fontWeight: 600, color: '#374151', margin: '0 0 4px' },
+  emptyDesc: { fontSize: '12px', color: '#9CA3AF', maxWidth: '300px', margin: '0 0 12px', lineHeight: '1.5' },
+  emptyCta: { fontSize: '12px', fontWeight: 600, color: '#000835', textDecoration: 'none' },
 }

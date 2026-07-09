@@ -1,6 +1,12 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { createBrowserClient } from '@supabase/ssr'
+
+const supabase = createBrowserClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+)
 
 interface Employee {
   id: string
@@ -25,14 +31,20 @@ interface ChecklistItem {
   cta: string
 }
 
-const NAV_ITEMS = [
-  { label: 'Dashboard',    href: '/dashboard', active: true  },
-  { label: 'Book travel',  href: '/book',      active: false },
-  { label: 'My bookings',  href: '/bookings',  active: false },
-  { label: 'Approvals',    href: '/approvals', active: false },
-  { label: 'Reports',      href: '/reports',   active: false },
-  { label: 'Settings',     href: '/settings',  active: false },
-]
+function getNavItems(role: string) {
+  const base = [
+    { label: 'Dashboard',   href: '/dashboard', active: true  },
+    { label: 'Book travel', href: '/book',       active: false },
+    { label: 'My trips',    href: '/bookings',   active: false },
+  ]
+  if (['admin', 'manager', 'finance'].includes(role))
+    base.push({ label: 'Approvals', href: '/approvals', active: false })
+  if (['admin', 'finance'].includes(role))
+    base.push({ label: 'Reports', href: '/reports', active: false })
+  if (role === 'admin')
+    base.push({ label: 'Settings', href: '/settings', active: false })
+  return base
+}
 
 function getGreeting() {
   const h = new Date().getHours()
@@ -45,13 +57,13 @@ export default function DashboardPage() {
   const [employee, setEmployee] = useState<Employee | null>(null)
   const [company, setCompany] = useState<Company | null>(null)
   const [loading, setLoading] = useState(true)
-  const [checklistDismissed, setChecklistDismissed] = useState(false)
+  const [companySettings, setCompanySettings] = useState<Record<string, unknown>>({})
   const [checklist, setChecklist] = useState<ChecklistItem[]>([
-    { id: 'company',   label: 'Company created',              desc: 'Your account is active.',                                       done: true,  href: '/settings/company',      cta: 'View'               },
-    { id: 'policy',    label: 'Confirm your travel policy',   desc: 'Review and adjust band limits before your team starts booking.', done: false, href: '/settings/policy',       cta: 'Review policy'      },
-    { id: 'employees', label: 'Add your first employee',      desc: 'Invite team members and assign bands.',                         done: false, href: '/settings/users',        cta: 'Add employees'      },
-    { id: 'payment',   label: 'Connect a payment method',     desc: 'Required before any booking can be confirmed.',                 done: false, href: '/settings/integrations', cta: 'Add payment method' },
-    { id: 'booking',   label: 'Make your first booking',      desc: 'Search for a flight, hotel, or car rental.',                   done: false, href: '/book',                  cta: 'Start booking'      },
+    { id: 'company',   label: 'Company created',            desc: 'Your account is active.',                                       done: true,  href: '/settings/company',      cta: 'View'               },
+    { id: 'policy',    label: 'Confirm your travel policy', desc: 'Review and adjust band limits before your team starts booking.', done: false, href: '/settings/policy',       cta: 'Review policy'      },
+    { id: 'employees', label: 'Add your first employee',    desc: 'Invite team members and assign bands.',                         done: false, href: '/settings/users',        cta: 'Add employees'      },
+    { id: 'payment',   label: 'Connect a payment method',   desc: 'Required before any booking can be confirmed.',                 done: false, href: '/settings/integrations', cta: 'Add payment method' },
+    { id: 'booking',   label: 'Make your first booking',    desc: 'Search for a flight, hotel, or car rental.',                   done: false, href: '/book',                  cta: 'Start booking'      },
   ])
 
   useEffect(() => {
@@ -61,17 +73,23 @@ export default function DashboardPage() {
         if (data.ok) {
           setEmployee(data.employee)
           setCompany(data.company)
+          setCompanySettings(data.company?.settings ?? {})
         }
       })
       .finally(() => setLoading(false))
   }, [])
 
+  async function handleSignOut() {
+    await supabase.auth.signOut()
+    window.location.href = '/login'
+  }
+
   const firstName = employee?.full_name?.split(' ')[0] ?? '…'
   const roleLabel = employee
-    ? `${employee.role.charAt(0).toUpperCase() + employee.role.slice(1)} · ${employee.band_code ?? ''}`
+    ? `${employee.role.charAt(0).toUpperCase() + employee.role.slice(1)}${employee.band_code ? ` · ${employee.band_code}` : ''}`
     : '…'
   const avatarLetter = employee?.full_name?.[0]?.toUpperCase() ?? '?'
-
+  const navItems = getNavItems(employee?.role ?? '')
   const completedCount = checklist.filter(i => i.done).length
   const allDone = completedCount === checklist.length
 
@@ -88,11 +106,9 @@ export default function DashboardPage() {
             <span style={s.wmMain}>TravelDesk</span>
             <span style={s.wmBy}>by Amadeus</span>
           </div>
-          {company && (
-            <p style={s.companyName}>{company.name}</p>
-          )}
+          {company && <p style={s.companyName}>{company.name}</p>}
           <div style={s.navItems}>
-            {NAV_ITEMS.map(item => (
+            {navItems.map(item => (
               <a key={item.label} href={item.href} style={{
                 ...s.navItem,
                 backgroundColor: item.active ? 'rgba(255,255,255,0.1)' : 'transparent',
@@ -112,9 +128,9 @@ export default function DashboardPage() {
               <p style={s.userRole}>{loading ? '…' : roleLabel}</p>
             </div>
           </div>
-          <form action="/api/auth/signout" method="POST" style={{ marginTop: '12px' }}>
-            <button type="submit" style={s.signOutBtn}>Sign out</button>
-          </form>
+          <button onClick={handleSignOut} style={{ ...s.signOutBtn, marginTop: '12px' }}>
+            Sign out
+          </button>
         </div>
       </nav>
 
@@ -130,7 +146,7 @@ export default function DashboardPage() {
           <a href="/book" style={s.bookBtn}>+ New booking</a>
         </div>
 
-        {!checklistDismissed && (
+        {employee?.role === 'admin' && !companySettings.setup_confirmed && (
           <div style={s.checklistCard}>
             <div style={s.checklistHeader}>
               <div>
@@ -141,7 +157,6 @@ export default function DashboardPage() {
                   {allDone ? 'Your workspace is fully configured.' : `${completedCount} of ${checklist.length} steps complete`}
                 </p>
               </div>
-              <button onClick={() => setChecklistDismissed(true)} style={s.dismissBtn}>✕</button>
             </div>
             <div style={s.progressTrack}>
               <div style={{ ...s.progressFill, width: `${(completedCount / checklist.length) * 100}%` }} />
@@ -197,17 +212,19 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div style={s.section}>
-          <div style={s.sectionHeader}>
-            <h2 style={s.sectionTitle}>Pending approvals</h2>
-            <a href="/approvals" style={s.sectionLink}>View all</a>
+        {['admin', 'manager', 'finance'].includes(employee?.role ?? '') && (
+          <div style={s.section}>
+            <div style={s.sectionHeader}>
+              <h2 style={s.sectionTitle}>Pending approvals</h2>
+              <a href="/approvals" style={s.sectionLink}>View all</a>
+            </div>
+            <div style={s.emptyState}>
+              <div style={s.emptyIcon}>✔</div>
+              <p style={s.emptyTitle}>No pending approvals</p>
+              <p style={s.emptyDesc}>Out-of-policy booking requests will show up here for you to approve or reject.</p>
+            </div>
           </div>
-          <div style={s.emptyState}>
-            <div style={s.emptyIcon}>✔</div>
-            <p style={s.emptyTitle}>No pending approvals</p>
-            <p style={s.emptyDesc}>Out-of-policy booking requests will show up here for you to approve or reject.</p>
-          </div>
-        </div>
+        )}
       </main>
     </div>
   )
@@ -237,7 +254,6 @@ const s: Record<string, React.CSSProperties> = {
   checklistHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px' },
   checklistTitle: { fontSize: '16px', fontWeight: '700', color: '#111827', margin: '0 0 4px' },
   checklistSub: { fontSize: '13px', color: '#6B7280', margin: 0 },
-  dismissBtn: { backgroundColor: 'transparent', border: 'none', color: '#9CA3AF', fontSize: '16px', cursor: 'pointer', padding: '0 4px' },
   progressTrack: { height: '4px', backgroundColor: '#F3F4F6', borderRadius: '2px', overflow: 'hidden', marginBottom: '20px' },
   progressFill: { height: '100%', backgroundColor: '#22C55E', borderRadius: '2px', transition: 'width 0.4s ease' },
   checklistItems: { display: 'flex', flexDirection: 'column', gap: '12px' },
