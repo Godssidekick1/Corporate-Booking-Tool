@@ -53,17 +53,17 @@ export default function SetPasswordPage() {
       if (!user) { router.replace('/login'); return }
 
       const res = await fetch('/api/me')
-const data = await res.json()
-const role = data.employee?.role
+      const data = await res.json()
+      const role = data.employee?.role
 
-if (role === 'tmc_admin') {
-  router.replace('/tmc/dashboard')
-} else if (role === 'admin') {
-  const setupConfirmed = data.company?.settings?.setup_confirmed ?? false
-  router.replace(setupConfirmed ? '/dashboard' : '/setup')
-} else {
-  router.replace('/dashboard')
-}
+      if (role === 'tmc_admin') {
+        router.replace('/tmc/dashboard')
+      } else if (role === 'admin') {
+        const setupCompleted = data.company?.setup_completed ?? false
+        router.replace(setupCompleted ? '/dashboard' : '/setup')
+      } else {
+        router.replace('/dashboard')
+      }
     } finally {
       setLoading(false)
     }

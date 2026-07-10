@@ -45,13 +45,15 @@ export async function POST(req: NextRequest) {
 
   try {
     // ── Step 1: Create the company ────────────────────────────────────
+    // setup_completed defaults to false — the wizard/settings flow flips
+    // it once the admin finishes required setup sections.
     const { data: company, error: companyError } = await service
       .from('companies')
       .insert({
         tmc_id: caller.tmc_id,
         name: corporateName,
         status: 'active',
-        settings: { setup_confirmed: false },
+        setup_completed: false,
       })
       .select('id')
       .single()
@@ -86,6 +88,8 @@ export async function POST(req: NextRequest) {
     authUserId = authData.user.id
 
     // ── Step 4: Create the corporate admin employee record ────────────
+    // status is 'invited' until they accept the invite and set a password —
+    // auth/callback flips this to 'active' on their first successful login.
     const { error: employeeError } = await service.from('employees').insert({
       id: authUserId,
       company_id: companyId,
@@ -96,7 +100,7 @@ export async function POST(req: NextRequest) {
       full_name: adminName,
       email: adminEmail,
       role: 'admin',
-      status: 'active',
+      status: 'invited',
     })
 
     if (employeeError) throw new Error(employeeError.message)

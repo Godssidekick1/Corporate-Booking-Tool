@@ -37,7 +37,7 @@ export async function GET() {
 
   const { data: company } = await service
     .from('companies')
-    .select('id, name, settings, setup_completed, status')
+    .select('id, name, settings, setup_completed, status, timezone, currency, country, booking_mode')
     .eq('id', employee.company_id)
     .single()
 

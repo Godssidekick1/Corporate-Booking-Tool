@@ -41,33 +41,42 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL('/login', req.url))
   }
 
-  if (next !== '/') {
-    return NextResponse.redirect(new URL(next, req.url))
-  }
-
   // Use service client for employee lookup — bypasses RLS which
   // may not be set up for a brand new invited user yet.
   const service = createServiceClient()
   const { data: employee } = await service
     .from('employees')
-    .select('role, company_id')
+    .select('role, company_id, status')
     .eq('id', user.id)
     .single()
+
+  // First successful login after an email invite — flip invited -> active.
+  // Direct-created employees are already 'active' so this is a no-op for them.
+  if (employee?.status === 'invited') {
+    await service
+      .from('employees')
+      .update({ status: 'active' })
+      .eq('id', user.id)
+  }
+
+  if (next !== '/') {
+    return NextResponse.redirect(new URL(next, req.url))
+  }
 
   if (employee?.role === 'tmc_admin') {
     return NextResponse.redirect(new URL('/tmc/dashboard', req.url))
   }
 
   if (employee?.role === 'admin') {
-    // Check if this is their first login by looking at setup_confirmed
+    // Check if this is their first login by looking at setup_completed
     const { data: company } = await service
       .from('companies')
-      .select('settings')
+      .select('setup_completed')
       .eq('id', employee.company_id)
       .single()
 
-    const setupConfirmed = company?.settings?.setup_confirmed ?? false
-    if (!setupConfirmed) {
+    const setupCompleted = company?.setup_completed ?? false
+    if (!setupCompleted) {
       return NextResponse.redirect(new URL('/setup', req.url))
     }
   }

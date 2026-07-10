@@ -46,8 +46,8 @@ export default function SignInPage() {
     if (role === 'tmc_admin') {
       router.push('/tmc/dashboard')
     } else if (role === 'admin') {
-      const setupConfirmed = data.company?.settings?.setup_confirmed ?? false
-      router.push(setupConfirmed ? '/dashboard' : '/setup')
+      const setupCompleted = data.company?.setup_completed ?? false
+      router.push(setupCompleted ? '/dashboard' : '/setup')
     } else {
       router.push('/dashboard')
     }

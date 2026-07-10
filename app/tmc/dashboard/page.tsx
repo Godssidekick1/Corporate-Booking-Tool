@@ -13,7 +13,7 @@ interface Company {
   id: string
   name: string
   status: string
-  settings: { setup_confirmed?: boolean }
+  setup_completed: boolean
   created_at: string
 }
 
@@ -228,10 +228,10 @@ export default function TmcDashboardPage() {
                     <td style={s.td}>
                       <span style={{
                         ...s.badge,
-                        backgroundColor: company.settings?.setup_confirmed ? '#ECFDF5' : '#F3F4F6',
-                        color: company.settings?.setup_confirmed ? '#065F46' : '#6B7280',
+                        backgroundColor: company.setup_completed ? '#ECFDF5' : '#F3F4F6',
+                        color: company.setup_completed ? '#065F46' : '#6B7280',
                       }}>
-                        {company.settings?.setup_confirmed ? 'Complete' : 'Pending'}
+                        {company.setup_completed ? 'Complete' : 'Pending'}
                       </span>
                     </td>
                     <td style={{ ...s.td, color: '#9CA3AF', fontSize: '12px' }}>

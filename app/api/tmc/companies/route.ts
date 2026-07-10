@@ -23,7 +23,7 @@ export async function GET() {
 
   const { data: companies, error } = await service
     .from('companies')
-    .select('id, name, status, settings, created_at')
+    .select('id, name, status, setup_completed, created_at')
     .eq('tmc_id', caller.tmc_id)
     .order('created_at', { ascending: false })
 

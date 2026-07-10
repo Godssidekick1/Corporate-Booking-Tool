@@ -29,8 +29,6 @@ export async function POST(req: NextRequest) {
   const service = createServiceClient()
 
   // ── Look up the admin employee record ──────────────────────────────────────
-  // If this returns nothing, it means /api/setup/company did not insert the
-  // admin into the employees table. Fix that route — see schema notes.
   const { data: employee, error: empError } = await service
     .from('employees')
     .select('company_id, role')
@@ -38,7 +36,6 @@ export async function POST(req: NextRequest) {
     .single()
 
   if (empError || !employee) {
-    // Provide a clear diagnostic instead of the generic 404
     return Response.json(
       {
         error:
@@ -153,6 +150,8 @@ export async function POST(req: NextRequest) {
     // ── Pre-create the employee row ──────────────────────────────────────────
     // This row exists before the user accepts the invite so their
     // band and role are ready the moment they first sign in.
+    // status is 'invited' until they accept + set a password —
+    // auth/callback flips this to 'active' on first successful login.
     const { error: employeeError } = await service.from('employees').insert({
       id: authData.user.id,
       company_id: companyId,
@@ -162,7 +161,7 @@ export async function POST(req: NextRequest) {
       email,
       full_name: email.split('@')[0], // placeholder until they complete their profile
       role: normalizedRole,
-      status: 'active'     // not 'active' until they accept + set password
+      status: 'invited',
     })
 
     if (employeeError) {
