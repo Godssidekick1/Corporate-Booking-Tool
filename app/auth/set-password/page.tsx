@@ -52,17 +52,18 @@ export default function SetPasswordPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.replace('/login'); return }
 
-      const { data: employee } = await supabase
-        .from('employees')
-        .select('role')
-        .eq('id', user.id)
-        .single()
+      const res = await fetch('/api/me')
+const data = await res.json()
+const role = data.employee?.role
 
-      if (employee?.role === 'tmc_admin') {
-        router.replace('/tmc/dashboard')
-      } else {
-        router.replace('/dashboard')
-      }
+if (role === 'tmc_admin') {
+  router.replace('/tmc/dashboard')
+} else if (role === 'admin') {
+  const setupConfirmed = data.company?.settings?.setup_confirmed ?? false
+  router.replace(setupConfirmed ? '/dashboard' : '/setup')
+} else {
+  router.replace('/dashboard')
+}
     } finally {
       setLoading(false)
     }
