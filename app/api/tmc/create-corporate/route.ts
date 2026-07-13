@@ -81,7 +81,7 @@ export async function POST(req: NextRequest) {
     // ── Step 3: Invite the corporate admin via Supabase Auth ──────────
     const { data: authData, error: inviteError } =
       await service.auth.admin.inviteUserByEmail(adminEmail, {
-        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`,
+        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/login`,
       })
 
     if (inviteError) throw new Error(inviteError.message)
