@@ -87,7 +87,7 @@ export default function TmcDashboardPage() {
           {[
             { label: 'Dashboard', href: '/tmc/dashboard', active: true  },
             { label: 'Companies', href: '/tmc/dashboard', active: false },
-            { label: 'Policy',    href: '/tmc/policy',    active: false },
+            { label: 'Settings',  href: '/tmc/settings',  active: false },
             { label: 'Reports',   href: '/tmc/reports',   active: false },
           ].map(item => (
             <a key={item.label} href={item.href} style={{
@@ -300,4 +300,4 @@ const s: Record<string, React.CSSProperties> = {
   emptyState: { padding: '48px 20px', textAlign: 'center' as const },
   emptyTitle: { fontSize: '14px', fontWeight: 600, color: '#374151', margin: '0 0 6px' },
   emptyDesc: { fontSize: '13px', color: '#9CA3AF', margin: 0 },
-} 
+}
