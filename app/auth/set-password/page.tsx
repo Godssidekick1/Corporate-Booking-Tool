@@ -59,9 +59,6 @@ export default function SetPasswordPage() {
       if (role === 'tmc_admin') {
         router.replace('/tmc/dashboard')
       } else if (role === 'admin') {
-        const setupCompleted = data.company?.setup_completed ?? false
-        router.replace(setupCompleted ? '/dashboard' : '/setup')
-      } else {
         router.replace('/dashboard')
       }
     } finally {

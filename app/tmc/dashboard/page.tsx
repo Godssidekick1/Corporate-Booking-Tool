@@ -86,7 +86,7 @@ export default function TmcDashboardPage() {
           <p style={s.navLabel}>TMC Admin</p>
           {[
             { label: 'Dashboard', href: '/tmc/dashboard', active: true  },
-            { label: 'Companies', href: '/tmc/companies', active: false },
+            { label: 'Companies', href: '/tmc/dashboard', active: false },
             { label: 'Policy',    href: '/tmc/policy',    active: false },
             { label: 'Reports',   href: '/tmc/reports',   active: false },
           ].map(item => (
@@ -212,7 +212,14 @@ export default function TmcDashboardPage() {
               </thead>
               <tbody>
                 {companies.map((company, i) => (
-                  <tr key={company.id} style={{ backgroundColor: i % 2 === 0 ? '#fff' : '#FAFAFA' }}>
+                  <tr
+                    key={company.id}
+                    onClick={() => { window.location.href = `/tmc/companies/${company.id}` }}
+                    style={{
+                      backgroundColor: i % 2 === 0 ? '#fff' : '#FAFAFA',
+                      cursor: 'pointer',
+                    }}
+                  >
                     <td style={s.td}>
                       <span style={s.companyName}>{company.name}</span>
                     </td>
@@ -293,4 +300,4 @@ const s: Record<string, React.CSSProperties> = {
   emptyState: { padding: '48px 20px', textAlign: 'center' as const },
   emptyTitle: { fontSize: '14px', fontWeight: 600, color: '#374151', margin: '0 0 6px' },
   emptyDesc: { fontSize: '13px', color: '#9CA3AF', margin: 0 },
-}
+} 

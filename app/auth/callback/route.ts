@@ -69,17 +69,6 @@ export async function GET(req: NextRequest) {
 
   if (employee?.role === 'admin') {
     // Check if this is their first login by looking at setup_completed
-    const { data: company } = await service
-      .from('companies')
-      .select('setup_completed')
-      .eq('id', employee.company_id)
-      .single()
-
-    const setupCompleted = company?.setup_completed ?? false
-    if (!setupCompleted) {
-      return NextResponse.redirect(new URL('/setup', req.url))
-    }
-  }
-
-  return NextResponse.redirect(new URL('/dashboard', req.url))
+ return NextResponse.redirect(new URL('/dashboard', req.url))
+}
 }
