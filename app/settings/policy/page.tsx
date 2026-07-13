@@ -4,22 +4,8 @@ import { useEffect, useState } from 'react'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface Band {
-  code: string
-  label: string
-  rank: number
-}
-
 interface PolicyRow {
   band: string
-  travel_type: string
-  limit_key: string
-  limit_value: number
-  locked: boolean
-}
-
-interface TmcRow {
-  band_id: string
   travel_type: string
   limit_key: string
   limit_value: number
@@ -31,9 +17,6 @@ interface PolicyGroup {
   name: string
   description: string | null
 }
-
-// ── Default policy seeded when no rows exist ──────────────────────────────────
-// Values match the SOR defaults. Codes match BCG's actual band table.
 
 const BAND_CODES = ['L1', 'L2', 'L3', 'L4', 'L5']
 
@@ -49,15 +32,13 @@ type LimitKey =
   | 'max_car_rate_per_day'
   | 'auto_approve_under' | 'finance_approval_over'
 
-const DEFAULTS: Record<string, Record<LimitKey, number | string>> = {
-  L1: { max_fare_domestic: 6000,  max_fare_intl: 50000,  cabin_class_short: 0, cabin_class_long: 0,  advance_booking_days: 7, max_rate_major_city: 4000,  max_rate_other_city: 3000,  max_hotel_stars: 3, max_car_rate_per_day: 50,  auto_approve_under: 25000,  finance_approval_over: 75000  },
-  L2: { max_fare_domestic: 8000,  max_fare_intl: 75000,  cabin_class_short: 0, cabin_class_long: 0,  advance_booking_days: 7, max_rate_major_city: 6500,  max_rate_other_city: 5000,  max_hotel_stars: 3, max_car_rate_per_day: 60,  auto_approve_under: 40000,  finance_approval_over: 100000 },
-  L3: { max_fare_domestic: 12000, max_fare_intl: 125000, cabin_class_short: 0, cabin_class_long: 0,  advance_booking_days: 5, max_rate_major_city: 9000,  max_rate_other_city: 7500,  max_hotel_stars: 4, max_car_rate_per_day: 80,  auto_approve_under: 75000,  finance_approval_over: 200000 },
-  L4: { max_fare_domestic: 16000, max_fare_intl: 200000, cabin_class_short: 0, cabin_class_long: 1,  advance_booking_days: 3, max_rate_major_city: 15000, max_rate_other_city: 12500, max_hotel_stars: 5, max_car_rate_per_day: 100, auto_approve_under: 100000, finance_approval_over: 350000 },
-  L5: { max_fare_domestic: 20000, max_fare_intl: 500000, cabin_class_short: 1, cabin_class_long: 1,  advance_booking_days: 0, max_rate_major_city: 25000, max_rate_other_city: 20000, max_hotel_stars: 5, max_car_rate_per_day: 150, auto_approve_under: 150000, finance_approval_over: 500000 },
+const DEFAULTS: Record<string, Record<LimitKey, number>> = {
+  L1: { max_fare_domestic: 6000,  max_fare_intl: 50000,  cabin_class_short: 0, cabin_class_long: 0, advance_booking_days: 7, max_rate_major_city: 4000,  max_rate_other_city: 3000,  max_hotel_stars: 3, max_car_rate_per_day: 50,  auto_approve_under: 25000,  finance_approval_over: 75000  },
+  L2: { max_fare_domestic: 8000,  max_fare_intl: 75000,  cabin_class_short: 0, cabin_class_long: 0, advance_booking_days: 7, max_rate_major_city: 6500,  max_rate_other_city: 5000,  max_hotel_stars: 3, max_car_rate_per_day: 60,  auto_approve_under: 40000,  finance_approval_over: 100000 },
+  L3: { max_fare_domestic: 12000, max_fare_intl: 125000, cabin_class_short: 0, cabin_class_long: 0, advance_booking_days: 5, max_rate_major_city: 9000,  max_rate_other_city: 7500,  max_hotel_stars: 4, max_car_rate_per_day: 80,  auto_approve_under: 75000,  finance_approval_over: 200000 },
+  L4: { max_fare_domestic: 16000, max_fare_intl: 200000, cabin_class_short: 0, cabin_class_long: 1, advance_booking_days: 3, max_rate_major_city: 15000, max_rate_other_city: 12500, max_hotel_stars: 5, max_car_rate_per_day: 100, auto_approve_under: 100000, finance_approval_over: 350000 },
+  L5: { max_fare_domestic: 20000, max_fare_intl: 500000, cabin_class_short: 1, cabin_class_long: 1, advance_booking_days: 0, max_rate_major_city: 25000, max_rate_other_city: 20000, max_hotel_stars: 5, max_car_rate_per_day: 150, auto_approve_under: 150000, finance_approval_over: 500000 },
 }
-
-// cabin_class: 0 = Economy, 1 = Business (stored as numeric for the limit_key pattern)
 
 interface ColDef {
   key: LimitKey
@@ -69,17 +50,17 @@ interface ColDef {
 }
 
 const COLUMNS: ColDef[] = [
-  { key: 'max_fare_domestic',      label: 'Domestic fare',    unit: '₹',      travelType: 'flight',   width: 110 },
-  { key: 'max_fare_intl',          label: 'Intl fare',        unit: '₹',      travelType: 'flight',   width: 110 },
-  { key: 'cabin_class_short',      label: 'Class (<8hr)',     unit: '',       travelType: 'flight',   width: 100, isClass: true },
-  { key: 'cabin_class_long',       label: 'Class (>8hr)',     unit: '',       travelType: 'flight',   width: 100, isClass: true },
-  { key: 'advance_booking_days',   label: 'Advance (days)',   unit: 'days',   travelType: 'flight',   width: 90  },
-  { key: 'max_rate_major_city',    label: 'Hotel (major)',    unit: '₹/night',travelType: 'hotel',    width: 110 },
-  { key: 'max_rate_other_city',    label: 'Hotel (other)',    unit: '₹/night',travelType: 'hotel',    width: 110 },
-  { key: 'max_hotel_stars',        label: 'Stars (max)',      unit: '★',      travelType: 'hotel',    width: 80  },
-  { key: 'max_car_rate_per_day',   label: 'Car ($/day)',      unit: '$',      travelType: 'car',      width: 90  },
-  { key: 'auto_approve_under',     label: 'Auto-approve <',   unit: '₹',      travelType: 'approval', width: 120 },
-  { key: 'finance_approval_over',  label: 'Finance approval >',unit: '₹',    travelType: 'approval', width: 130 },
+  { key: 'max_fare_domestic',      label: 'Domestic fare',      unit: '₹',       travelType: 'flight',   width: 110 },
+  { key: 'max_fare_intl',          label: 'Intl fare',          unit: '₹',       travelType: 'flight',   width: 110 },
+  { key: 'cabin_class_short',      label: 'Class (<8hr)',       unit: '',        travelType: 'flight',   width: 100, isClass: true },
+  { key: 'cabin_class_long',       label: 'Class (>8hr)',       unit: '',        travelType: 'flight',   width: 100, isClass: true },
+  { key: 'advance_booking_days',   label: 'Advance (days)',     unit: 'days',    travelType: 'flight',   width: 90  },
+  { key: 'max_rate_major_city',    label: 'Hotel (major)',      unit: '₹/night', travelType: 'hotel',    width: 110 },
+  { key: 'max_rate_other_city',    label: 'Hotel (other)',      unit: '₹/night', travelType: 'hotel',    width: 110 },
+  { key: 'max_hotel_stars',        label: 'Stars (max)',        unit: '★',       travelType: 'hotel',    width: 80  },
+  { key: 'max_car_rate_per_day',   label: 'Car (₹/day)',        unit: '₹',       travelType: 'car',      width: 90  },
+  { key: 'auto_approve_under',     label: 'Auto-approve <',     unit: '₹',       travelType: 'approval', width: 120 },
+  { key: 'finance_approval_over',  label: 'Finance approval >', unit: '₹',       travelType: 'approval', width: 130 },
 ]
 
 const TRAVEL_TYPE_LABELS: Record<string, string> = {
@@ -89,24 +70,6 @@ const TRAVEL_TYPE_LABELS: Record<string, string> = {
 const TRAVEL_TYPE_COLORS: Record<string, string> = {
   flight: '#EEF2FF', hotel: '#F0FDF4', car: '#FFF7ED', approval: '#F9FAFB',
 }
-
-// ── Nav ───────────────────────────────────────────────────────────────────────
-
-const NAV = [
-  { label: 'Dashboard',   href: '/dashboard' },
-  { label: 'Book travel', href: '/book' },
-  { label: 'My trips',    href: '/bookings' },
-  { label: 'Approvals',   href: '/approvals' },
-  { label: 'Reports',     href: '/reports' },
-  { label: 'Settings',    href: '/settings', active: true },
-]
-
-const SETTINGS_NAV = [
-  { label: 'Company',      href: '/settings/company' },
-  { label: 'Users',        href: '/settings/users' },
-  { label: 'Policy',       href: '/settings/policy', active: true },
-  { label: 'Integrations', href: '/settings/integrations' },
-]
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -131,14 +94,10 @@ function rowsToGrid(rows: PolicyRow[]): Record<string, Record<string, number>> {
   const grid: Record<string, Record<string, number>> = {}
   for (const band of BAND_CODES) {
     grid[band] = {}
-    for (const col of COLUMNS) {
-      grid[band][col.key] = 0
-    }
+    for (const col of COLUMNS) grid[band][col.key] = 0
   }
   for (const row of rows) {
-    if (grid[row.band]) {
-      grid[row.band][row.limit_key] = row.limit_value
-    }
+    if (grid[row.band]) grid[row.band][row.limit_key] = row.limit_value
   }
   return grid
 }
@@ -179,6 +138,7 @@ export default function SettingsPolicyPage() {
 
   useEffect(() => {
     loadPolicy(selectedGroupId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedGroupId])
 
   async function loadPolicy(groupId: string | null) {
@@ -196,7 +156,6 @@ export default function SettingsPolicyPage() {
       setCurrentVersion(data.version)
 
       if (data.rows.length === 0) {
-        // No saved policy yet — seed defaults, mark as unsaved
         setGrid(rowsToGrid(buildDefaultRows()))
         setLockedKeys(new Set())
         setIsDefault(true)
@@ -250,191 +209,145 @@ export default function SettingsPolicyPage() {
 
   return (
     <div style={s.root}>
-      {/* Sidebar */}
-      <nav style={s.nav}>
+      <div style={s.pageHeader}>
         <div>
-          <div style={s.wordmark}>
-            <span style={s.wmMain}>TravelDesk</span>
-            <span style={s.wmBy}>by Amadeus</span>
-          </div>
-          <div style={s.navItems}>
-            {NAV.map(item => (
-              <a key={item.label} href={item.href} style={{
-                ...s.navItem,
-                background: item.active ? 'rgba(255,255,255,0.1)' : 'transparent',
-                color: item.active ? '#fff' : 'rgba(255,255,255,0.5)',
-                fontWeight: item.active ? 600 : 400,
-              }}>{item.label}</a>
-            ))}
-          </div>
+          <h1 style={s.pageTitle}>Travel Policy</h1>
+          <p style={s.pageSub}>
+            {currentVersion === 0 || isDefault
+              ? 'Pre-filled with standard defaults. Edit and save to create your policy.'
+              : `Version ${currentVersion} · Locked rows are set by your TMC and cannot be edited.`
+            }
+          </p>
         </div>
-        <div style={s.navFooter}>
-          <button onClick={async () => {
-            await fetch('/api/auth/signout', { method: 'POST' })
-            window.location.href = '/login'
-          }} style={s.signOutBtn}>Sign out</button>
-        </div>
-      </nav>
-
-      {/* Main */}
-      <main style={s.main}>
-        {/* Settings sub-nav */}
-        <div style={s.subNav}>
-          {SETTINGS_NAV.map(item => (
-            <a key={item.label} href={item.href} style={{
-              ...s.subNavItem,
-              borderBottom: item.active ? '2px solid #000835' : '2px solid transparent',
-              color: item.active ? '#000835' : '#6B7280',
-              fontWeight: item.active ? 600 : 400,
-            }}>{item.label}</a>
-          ))}
-        </div>
-
-        <div style={s.pageHeader}>
-          <div>
-            <h1 style={s.pageTitle}>Travel Policy</h1>
-            <p style={s.pageSub}>
-              {currentVersion === 0 || isDefault
-                ? 'Pre-filled with standard defaults. Edit and save to create your policy.'
-                : `Version ${currentVersion} · Locked rows are set by your TMC and cannot be edited.`
-              }
-            </p>
-          </div>
-          <div style={s.headerRight}>
-            {groups.length > 0 && (
-              <select
-                value={selectedGroupId ?? ''}
-                onChange={e => setSelectedGroupId(e.target.value || null)}
-                style={s.groupSelect}
-              >
-                <option value="">Default policy</option>
-                {groups.map(g => (
-                  <option key={g.id} value={g.id}>{g.name}</option>
-                ))}
-              </select>
-            )}
-            <button
-              onClick={handleSave}
-              disabled={saving || loading}
-              style={{ ...s.saveBtn, opacity: saving || loading ? 0.6 : 1 }}
+        <div style={s.headerRight}>
+          {groups.length > 0 && (
+            <select
+              value={selectedGroupId ?? ''}
+              onChange={e => setSelectedGroupId(e.target.value || null)}
+              style={s.groupSelect}
             >
-              {saving ? 'Saving…' : isDefault ? 'Save defaults →' : 'Save changes →'}
-            </button>
-          </div>
+              <option value="">Default policy</option>
+              {groups.map(g => (
+                <option key={g.id} value={g.id}>{g.name}</option>
+              ))}
+            </select>
+          )}
+          <button
+            onClick={handleSave}
+            disabled={saving || loading}
+            style={{ ...s.saveBtn, opacity: saving || loading ? 0.6 : 1 }}
+          >
+            {saving ? 'Saving…' : isDefault ? 'Save defaults →' : 'Save changes →'}
+          </button>
         </div>
+      </div>
 
-        {isDefault && (
-          <div style={s.infoBanner}>
-            These are standard defaults based on your SOR. They are not saved yet —
-            review and hit <strong>Save defaults</strong> to activate your policy.
-          </div>
-        )}
+      {isDefault && (
+        <div style={s.infoBanner}>
+          These are standard defaults. They are not saved yet —
+          review and hit <strong>Save defaults</strong> to activate your policy.
+        </div>
+      )}
 
-        {success && <div style={s.successBanner}>✓ {success}</div>}
-        {error   && <div style={s.errorBanner}>✕ {error}</div>}
+      {success && <div style={s.successBanner}>✓ {success}</div>}
+      {error   && <div style={s.errorBanner}>✕ {error}</div>}
 
-        {loading ? (
-          <div style={s.loadingWrap}>
-            <p style={s.loadingText}>Loading policy…</p>
-          </div>
-        ) : (
-          <div style={s.tables}>
-            {travelTypes.map(tt => {
-              const cols = COLUMNS.filter(c => c.travelType === tt)
-              return (
-                <div key={tt} style={s.tableSection}>
-                  <div style={{
-                    ...s.tableSectionHeader,
-                    background: TRAVEL_TYPE_COLORS[tt],
-                  }}>
-                    <span style={s.tableSectionTitle}>{TRAVEL_TYPE_LABELS[tt]}</span>
-                  </div>
-                  <div style={s.tableWrap}>
-                    <table style={s.table}>
-                      <thead>
-                        <tr>
-                          <th style={{ ...s.th, ...s.stickyCol, width: 130 }}>Band</th>
-                          {cols.map(col => (
-                            <th key={col.key} style={{ ...s.th, width: col.width }}>
-                              <span style={s.colLabel}>{col.label}</span>
-                              {col.unit && <span style={s.colUnit}>{col.unit}</span>}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {BAND_CODES.map((band, ri) => (
-                          <tr key={band} style={{ background: ri % 2 === 0 ? '#fff' : '#FAFAFA' }}>
-                            <td style={{ ...s.td, ...s.stickyCol }}>
-                              <div style={s.bandCell}>
-                                <span style={s.bandBadge}>{band}</span>
-                                <span style={s.bandLabel}>{BAND_LABELS[band]}</span>
-                              </div>
-                            </td>
-                            {cols.map(col => {
-                              const lockKey = `${band}::${tt}::${col.key}`
-                              const isLocked = lockedKeys.has(lockKey)
-                              const val = grid[band]?.[col.key] ?? 0
+      {loading ? (
+        <div style={s.loadingWrap}>
+          <p style={s.loadingText}>Loading policy…</p>
+        </div>
+      ) : (
+        <div style={s.tables}>
+          {travelTypes.map(tt => {
+            const cols = COLUMNS.filter(c => c.travelType === tt)
+            return (
+              <div key={tt} style={s.tableSection}>
+                <div style={{ ...s.tableSectionHeader, background: TRAVEL_TYPE_COLORS[tt] }}>
+                  <span style={s.tableSectionTitle}>{TRAVEL_TYPE_LABELS[tt]}</span>
+                </div>
+                <div style={s.tableWrap}>
+                  <table style={s.table}>
+                    <thead>
+                      <tr>
+                        <th style={{ ...s.th, ...s.stickyCol, width: 130 }}>Band</th>
+                        {cols.map(col => (
+                          <th key={col.key} style={{ ...s.th, width: col.width }}>
+                            <span style={s.colLabel}>{col.label}</span>
+                            {col.unit && <span style={s.colUnit}>{col.unit}</span>}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {BAND_CODES.map((band, ri) => (
+                        <tr key={band} style={{ background: ri % 2 === 0 ? '#fff' : '#FAFAFA' }}>
+                          <td style={{ ...s.td, ...s.stickyCol }}>
+                            <div style={s.bandCell}>
+                              <span style={s.bandBadge}>{band}</span>
+                              <span style={s.bandLabel}>{BAND_LABELS[band]}</span>
+                            </div>
+                          </td>
+                          {cols.map(col => {
+                            const lockKey = `${band}::${tt}::${col.key}`
+                            const isLocked = lockedKeys.has(lockKey)
+                            const val = grid[band]?.[col.key] ?? 0
 
-                              if (col.isClass) {
-                                return (
-                                  <td key={col.key} style={s.td}>
-                                    <select
-                                      value={val}
-                                      onChange={e => handleCellChange(band, col.key, e.target.value)}
-                                      disabled={isLocked}
-                                      style={{
-                                        ...s.cellSelect,
-                                        opacity: isLocked ? 0.5 : 1,
-                                        cursor: isLocked ? 'not-allowed' : 'pointer',
-                                      }}
-                                    >
-                                      <option value={0}>Economy</option>
-                                      <option value={1}>Business</option>
-                                      <option value={2}>First</option>
-                                    </select>
-                                  </td>
-                                )
-                              }
-
+                            if (col.isClass) {
                               return (
                                 <td key={col.key} style={s.td}>
-                                  {isLocked ? (
-                                    <div style={s.lockedCell}>
-                                      <span style={s.lockedValue}>
-                                        {val.toLocaleString()}
-                                      </span>
-                                      <span style={s.lockIcon} title="Locked by TMC">🔒</span>
-                                    </div>
-                                  ) : (
-                                    <input
-                                      type="number"
-                                      value={val}
-                                      onChange={e => handleCellChange(band, col.key, e.target.value)}
-                                      style={s.cellInput}
-                                      min={0}
-                                    />
-                                  )}
+                                  <select
+                                    value={val}
+                                    onChange={e => handleCellChange(band, col.key, e.target.value)}
+                                    disabled={isLocked}
+                                    style={{
+                                      ...s.cellSelect,
+                                      opacity: isLocked ? 0.5 : 1,
+                                      cursor: isLocked ? 'not-allowed' : 'pointer',
+                                    }}
+                                  >
+                                    <option value={0}>Economy</option>
+                                    <option value={1}>Business</option>
+                                    <option value={2}>First</option>
+                                  </select>
                                 </td>
                               )
-                            })}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
+                            }
 
-        <p style={s.footNote}>
-          Locked rows (🔒) are set by your TMC and cannot be edited here.
-          Contact your TMC to request changes to locked rules.
-          Each save creates a new version — your full policy history is preserved.
-        </p>
-      </main>
+                            return (
+                              <td key={col.key} style={s.td}>
+                                {isLocked ? (
+                                  <div style={s.lockedCell}>
+                                    <span style={s.lockedValue}>{val.toLocaleString()}</span>
+                                    <span style={s.lockIcon} title="Locked by TMC">🔒</span>
+                                  </div>
+                                ) : (
+                                  <input
+                                    type="number"
+                                    value={val}
+                                    onChange={e => handleCellChange(band, col.key, e.target.value)}
+                                    style={s.cellInput}
+                                    min={0}
+                                  />
+                                )}
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      <p style={s.footNote}>
+        Locked rows (🔒) are set by your TMC and cannot be edited here.
+        Contact your TMC to request changes to locked rules.
+        Each save creates a new version — your full policy history is preserved.
+      </p>
     </div>
   )
 }
@@ -442,30 +355,19 @@ export default function SettingsPolicyPage() {
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const s: Record<string, React.CSSProperties> = {
-  root: { display: 'flex', minHeight: '100vh', fontFamily: "'Inter', -apple-system, sans-serif", background: '#F7F8FC' },
-  nav: { width: '220px', flexShrink: 0, background: '#000835', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '28px 16px' },
-  wordmark: { display: 'flex', flexDirection: 'column', gap: '2px', marginBottom: '28px', padding: '0 6px' },
-  wmMain: { fontSize: '17px', fontWeight: 600, color: '#fff', letterSpacing: '-0.3px' },
-  wmBy: { fontSize: '9px', color: 'rgba(255,255,255,0.32)', letterSpacing: '0.5px', textTransform: 'uppercase' as const },
-  navItems: { display: 'flex', flexDirection: 'column', gap: '1px' },
-  navItem: { display: 'block', padding: '8px 10px', borderRadius: '6px', fontSize: '13px', textDecoration: 'none' },
-  navFooter: { borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: '14px' },
-  signOutBtn: { width: '100%', height: '30px', background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.4)', fontSize: '11px', border: 'none', borderRadius: '5px', cursor: 'pointer' },
-  main: { flex: 1, overflowY: 'auto' as const },
-  subNav: { display: 'flex', borderBottom: '1px solid #E5E7EB', padding: '0 36px', background: '#fff' },
-  subNavItem: { padding: '14px 16px', fontSize: '13px', textDecoration: 'none', display: 'block', marginBottom: '-1px' },
-  pageHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '28px 36px 16px' },
+  root: { fontFamily: "'Inter', -apple-system, sans-serif" },
+  pageHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' },
   pageTitle: { fontSize: '20px', fontWeight: 600, color: '#0A0A14', margin: '0 0 4px', letterSpacing: '-0.3px' },
   pageSub: { fontSize: '13px', color: '#6B7280', margin: 0 },
   headerRight: { display: 'flex', gap: '10px', alignItems: 'center', flexShrink: 0 },
   groupSelect: { height: '34px', padding: '0 10px', fontSize: '13px', color: '#374151', background: '#fff', border: '1px solid #D1D5DB', borderRadius: '7px', outline: 'none', cursor: 'pointer' },
   saveBtn: { height: '34px', padding: '0 18px', background: '#000835', color: '#fff', fontSize: '13px', fontWeight: 600, border: 'none', borderRadius: '7px', cursor: 'pointer' },
-  infoBanner: { margin: '0 36px 16px', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#92400E', lineHeight: '1.5' },
-  successBanner: { margin: '0 36px 16px', background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#065F46' },
-  errorBanner: { margin: '0 36px 16px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#DC2626' },
+  infoBanner: { marginBottom: '16px', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#92400E', lineHeight: '1.5' },
+  successBanner: { marginBottom: '16px', background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#065F46' },
+  errorBanner: { marginBottom: '16px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#DC2626' },
   loadingWrap: { display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '80px' },
   loadingText: { fontSize: '13px', color: '#9CA3AF' },
-  tables: { padding: '0 36px 36px', display: 'flex', flexDirection: 'column', gap: '20px' },
+  tables: { display: 'flex', flexDirection: 'column', gap: '20px' },
   tableSection: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '10px', overflow: 'hidden' },
   tableSectionHeader: { padding: '10px 16px', borderBottom: '1px solid #E5E7EB' },
   tableSectionTitle: { fontSize: '12px', fontWeight: 600, color: '#374151', letterSpacing: '0.3px' },
@@ -484,5 +386,5 @@ const s: Record<string, React.CSSProperties> = {
   lockedCell: { display: 'flex', alignItems: 'center', gap: '6px' },
   lockedValue: { fontSize: '12px', color: '#6B7280' },
   lockIcon: { fontSize: '11px' },
-  footNote: { padding: '0 36px 36px', fontSize: '11px', color: '#9CA3AF', lineHeight: '1.6', margin: 0 },
+  footNote: { fontSize: '11px', color: '#9CA3AF', lineHeight: '1.6', margin: '20px 0 0' },
 }
