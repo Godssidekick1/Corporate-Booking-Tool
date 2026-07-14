@@ -71,7 +71,10 @@ export async function onboardCompany(
       .select('id')
       .single()
 
-    if (companyError) throw new Error(companyError.message)
+    if (companyError) {
+      console.error('onboardCompany: company insert failed. Raw error:', JSON.stringify(companyError, null, 2))
+      throw new Error(companyError.message || companyError.details || companyError.hint || 'company insert failed')
+    }
     companyId = company.id
 
     const { data: bands, error: bandsError } = await service
@@ -85,7 +88,10 @@ export async function onboardCompany(
       ])
       .select('id, code, rank')
 
-    if (bandsError) throw new Error(bandsError.message)
+    if (bandsError) {
+      console.error('onboardCompany: bands insert failed. Raw error:', JSON.stringify(bandsError, null, 2))
+      throw new Error(bandsError.message || bandsError.details || bandsError.hint || 'bands insert failed')
+    }
 
     const adminBand = bands.find(b => b.code === 'L5')
     if (!adminBand) throw new Error('Band seeding failed')
@@ -95,7 +101,10 @@ export async function onboardCompany(
         redirectTo: `${appUrl}/login`,
       })
 
-    if (inviteError) throw new Error(inviteError.message)
+    if (inviteError) {
+      console.error('onboardCompany: invite failed. Raw error:', JSON.stringify(inviteError, null, 2))
+      throw new Error(inviteError.message || 'invite failed')
+    }
     authUserId = authData.user.id
 
     const { error: employeeError } = await service.from('employees').insert({
@@ -111,7 +120,10 @@ export async function onboardCompany(
       status: 'invited',
     })
 
-    if (employeeError) throw new Error(employeeError.message)
+    if (employeeError) {
+      console.error('onboardCompany: employee insert failed. Raw error:', JSON.stringify(employeeError, null, 2))
+      throw new Error(employeeError.message || employeeError.details || employeeError.hint || 'employee insert failed')
+    }
 
     return { ok: true, companyId: companyId! }
 
