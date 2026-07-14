@@ -52,13 +52,18 @@ export default function SetPasswordPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.replace('/login'); return }
 
+      // Flip invited -> active now that they've set their password.
+      // auth/callback no longer runs for this flow since invite links
+      // redirect to /login (hash-based tokens require a client page).
+      await fetch('/api/auth/activate', { method: 'POST' })
+
       const res = await fetch('/api/me')
       const data = await res.json()
       const role = data.employee?.role
 
       if (role === 'tmc_admin') {
         router.replace('/tmc/dashboard')
-      } else if (role === 'admin') {
+      } else {
         router.replace('/dashboard')
       }
     } finally {
