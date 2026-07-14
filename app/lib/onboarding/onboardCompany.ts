@@ -113,13 +113,17 @@ export async function onboardCompany(
 
     if (employeeError) throw new Error(employeeError.message)
 
-    return { ok: true, companyId:companyId!,}
+    return { ok: true, companyId }
 
   } catch (err) {
+    console.error('onboardCompany error:', err)
     if (authUserId) await service.auth.admin.deleteUser(authUserId)
     if (companyId) await service.from('companies').delete().eq('id', companyId)
 
-    const message = err instanceof Error ? err.message : 'Failed to onboard company'
-    return { ok: false, error: message }
+    const message =
+      err instanceof Error ? err.message :
+      typeof err === 'object' && err !== null && 'message' in err ? String((err as { message: unknown }).message) :
+      JSON.stringify(err)
+    return { ok: false, error: message || 'Failed to onboard company (no error details available)' }
   }
 }
