@@ -113,7 +113,7 @@ export async function onboardCompany(
 
     if (employeeError) throw new Error(employeeError.message)
 
-    return { ok: true, companyId }
+    return { ok: true, companyId: companyId! }
 
   } catch (err) {
     console.error('onboardCompany error:', err)
