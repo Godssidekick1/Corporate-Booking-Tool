@@ -269,7 +269,7 @@ export default function SettingsPolicyPage() {
                   <table style={s.table}>
                     <thead>
                       <tr>
-                        <th style={{ ...s.th, ...s.stickyCol, width: 130 }}>Band</th>
+                        <th style={{ ...s.th, ...s.stickyCol, width: 130}}>Band</th>
                         {cols.map(col => (
                           <th key={col.key} style={{ ...s.th, width: col.width }}>
                             <span style={s.colLabel}>{col.label}</span>
@@ -373,7 +373,7 @@ const s: Record<string, React.CSSProperties> = {
   tableSectionTitle: { fontSize: '12px', fontWeight: 600, color: '#374151', letterSpacing: '0.3px' },
   tableWrap: { overflowX: 'auto' as const },
   table: { borderCollapse: 'collapse' as const, width: '100%', minWidth: '500px' },
-  th: { padding: '8px 10px', textAlign: 'left' as const, background: '#F9FAFB', borderBottom: '1px solid #E5E7EB', whiteSpace: 'nowrap' as const },
+  th: { padding: '8px 10px', textAlign: 'left' as const, background: '#F9FAFB', borderBottom: '1px solid #E5E7EB',color:'#000000', whiteSpace: 'nowrap' as const },
   colLabel: { display: 'block', fontSize: '11px', fontWeight: 600, color: '#374151' },
   colUnit: { fontSize: '10px', color: '#9CA3AF', fontWeight: 400 },
   stickyCol: { position: 'sticky' as const, left: 0, zIndex: 1, background: '#F9FAFB', borderRight: '1px solid #E5E7EB' },
