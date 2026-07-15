@@ -1,14 +1,15 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
+import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
 
 // ── GET /api/tmc/companies/[id] ─────────────────────────────────────────────
-// Full detail view of one client company, for the TMC admin.
+// Full detail view of one client company. tmc_admin sees any of their
+// companies; a TC needs explicit access to this specific company.
 //
 // ── PATCH /api/tmc/companies/[id] ───────────────────────────────────────────
-// TMC admin edits a client company's identity fields, including booking_mode —
-// which only the TMC can set. Scoped so a TMC admin can only touch companies
-// that belong to their own TMC (tmc_id match), never another TMC's clients.
+// tmc_admin only — company identity fields including booking_mode are a
+// TMC-exclusive edit, not delegable to TCs via the permission system.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ALLOWED_CURRENCIES = ['INR'] as const
@@ -20,17 +21,6 @@ interface UpdateCompanyBody {
   currency?: string
   country?: string
   booking_mode?: string
-}
-
-async function getTmcCaller(userId: string, service: ReturnType<typeof createServiceClient>) {
-  const { data: caller, error } = await service
-    .from('employees')
-    .select('role, tmc_id')
-    .eq('id', userId)
-    .single()
-
-  if (error || !caller || caller.role !== 'tmc_admin' || !caller.tmc_id) return null
-  return caller
 }
 
 export async function GET(
@@ -46,10 +36,28 @@ export async function GET(
   }
 
   const service = createServiceClient()
-  const caller = await getTmcCaller(user.id, service)
 
-  if (!caller) {
+  const { data: caller } = await service
+    .from('employees')
+    .select('role, tmc_id')
+    .eq('id', user.id)
+    .single()
+
+  if (!caller || !caller.tmc_id || (caller.role !== 'tmc_admin' && caller.role !== 'tc')) {
     return Response.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+  if (caller.role === 'tc') {
+    const { data: access } = await service
+      .from('employee_company_access')
+      .select('company_id')
+      .eq('employee_id', user.id)
+      .eq('company_id', id)
+      .maybeSingle()
+
+    if (!access) {
+      return Response.json({ error: 'No access to this company' }, { status: 403 })
+    }
   }
 
   const { data: company, error } = await service
@@ -79,13 +87,18 @@ export async function PATCH(
   }
 
   const service = createServiceClient()
-  const caller = await getTmcCaller(user.id, service)
 
-  if (!caller) {
-    return Response.json({ error: 'Forbidden' }, { status: 403 })
+  // tmc_admin only — booking_mode and company identity are not TC-delegable.
+  const { data: caller } = await service
+    .from('employees')
+    .select('role, tmc_id')
+    .eq('id', user.id)
+    .single()
+
+  if (!caller || caller.role !== 'tmc_admin' || !caller.tmc_id) {
+    return Response.json({ error: 'Only TMC admins can edit company details' }, { status: 403 })
   }
 
-  // Confirm the target company actually belongs to this TMC before writing.
   const { data: existing } = await service
     .from('companies')
     .select('id')

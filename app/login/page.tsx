@@ -43,7 +43,7 @@ export default function SignInPage() {
     const data = await res.json()
     const role = data.employee?.role
 
-    if (role === 'tmc_admin') {
+    if (role === 'tmc_admin' || role === 'tc') {
       router.push('/tmc/dashboard')
     } else if (role === 'admin') {
       router.push('/dashboard')

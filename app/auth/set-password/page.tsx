@@ -61,7 +61,7 @@ export default function SetPasswordPage() {
       const data = await res.json()
       const role = data.employee?.role
 
-      if (role === 'tmc_admin') {
+      if (role === 'tmc_admin' || role == 'tc') {
         router.replace('/tmc/dashboard')
       } else {
         router.replace('/dashboard')

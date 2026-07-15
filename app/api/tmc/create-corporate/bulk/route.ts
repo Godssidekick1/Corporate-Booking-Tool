@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { onboardCompany, OnboardCompanyInput } from '@/app/lib/onboarding/onboardCompany'
+import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
 
 // ── POST /api/tmc/create-corporate/bulk ──────────────────────────────────────
@@ -40,21 +41,11 @@ export async function POST(req: NextRequest) {
 
   const service = createServiceClient()
 
-  const { data: caller, error: callerError } = await service
-    .from('employees')
-    .select('role, tmc_id')
-    .eq('id', user.id)
-    .single()
-
-  if (callerError || !caller) {
-    return Response.json({ error: 'Unauthorized' }, { status: 401 })
+  const auth = await requireTmcPermission(service, user.id, 'manage_users')
+  if (!auth.authorized) {
+    return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }
-  if (caller.role !== 'tmc_admin') {
-    return Response.json({ error: 'Only TMC admins can create corporate accounts' }, { status: 403 })
-  }
-  if (!caller.tmc_id) {
-    return Response.json({ error: 'TMC context missing' }, { status: 400 })
-  }
+  const tmcId = auth.tmcId!
 
   const body = await req.json()
   const company: OnboardCompanyInput = body.company
@@ -74,7 +65,7 @@ export async function POST(req: NextRequest) {
   // ── Step 1: create the company + admin ─────────────────────────────────────
   const companyResult = await onboardCompany(
     service,
-    caller.tmc_id,
+    tmcId,
     process.env.NEXT_PUBLIC_APP_URL!,
     company
   )

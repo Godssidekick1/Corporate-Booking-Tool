@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react'
 import Papa from 'papaparse'
+import { canAccess } from '@/app/lib/permissions/canAccess'
 
 interface Employee {
   full_name: string
@@ -16,6 +17,12 @@ interface Company {
   status: string
   setup_completed: boolean
   created_at: string
+}
+
+interface Branch {
+  id: string
+  name: string
+  city: string | null
 }
 
 interface CsvEmployeeRow {
@@ -41,12 +48,14 @@ const MAX_EMPLOYEES = 250
 const initialForm = {
   corporateName: '', adminName: '', adminEmail: '',
   registeredAddress: '', gstNumber: '', industry: '', primaryContactPhone: '',
-  size: '', bookingMode: 'sbt',
+  size: '', bookingMode: 'sbt', branchId: '',
 }
 
 export default function TmcDashboardPage() {
   const [employee, setEmployee] = useState<Employee | null>(null)
+  const [permissions, setPermissions] = useState<string[]>([])
   const [companies, setCompanies] = useState<Company[]>([])
+  const [branches, setBranches] = useState<Branch[]>([])
   const [loading, setLoading] = useState(true)
   const [showInviteForm, setShowInviteForm] = useState(false)
   const [form, setForm] = useState(initialForm)
@@ -64,11 +73,18 @@ export default function TmcDashboardPage() {
     Promise.all([
       fetch('/api/me').then(r => r.json()),
       fetch('/api/tmc/companies').then(r => r.json()),
-    ]).then(([meData, companiesData]) => {
-      if (meData.ok) setEmployee(meData.employee)
+      fetch('/api/tmc/branches').then(r => r.json()),
+    ]).then(([meData, companiesData, branchesData]) => {
+      if (meData.ok) {
+        setEmployee(meData.employee)
+        setPermissions(meData.permissions ?? [])
+      }
       if (companiesData.ok) setCompanies(companiesData.companies)
+      if (branchesData.ok) setBranches(branchesData.branches)
     }).finally(() => setLoading(false))
   }, [])
+
+  const canCreateCompany = canAccess(employee?.role, permissions, 'manage_users')
 
   const firstName = employee?.full_name?.split(' ')[0] ?? '…'
 
@@ -152,7 +168,7 @@ export default function TmcDashboardPage() {
       const res = await fetch('/api/tmc/create-corporate/bulk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company: form, employees: employeesPayload }),
+        body: JSON.stringify({ company: { ...form, branchId: form.branchId || null }, employees: employeesPayload }),
       })
       const data = await res.json()
 
@@ -186,11 +202,11 @@ export default function TmcDashboardPage() {
           </div>
           <p style={s.navLabel}>TMC Admin</p>
           {[
-            { label: 'Dashboard', href: '/tmc/dashboard', active: true  },
-            { label: 'Companies', href: '/tmc/dashboard', active: false },
-            { label: 'Settings',  href: '/tmc/settings',  active: false },
-            { label: 'Reports',   href: '/tmc/reports',   active: false },
-          ].map(item => (
+            { label: 'Dashboard', href: '/tmc/dashboard', active: true, show: true },
+            { label: 'Companies', href: '/tmc/dashboard', active: false, show: true },
+            { label: 'Settings',  href: '/tmc/settings',  active: false, show: employee?.role === 'tmc_admin' || permissions.length > 0 },
+            { label: 'Reports',   href: '/tmc/reports',   active: false, show: canAccess(employee?.role, permissions, 'view_reports') },
+          ].filter(item => item.show).map(item => (
             <a key={item.label} href={item.href} style={{
               ...s.navItem,
               backgroundColor: item.active ? 'rgba(255,255,255,0.1)' : 'transparent',
@@ -203,7 +219,7 @@ export default function TmcDashboardPage() {
         </div>
         <div style={s.navFooter}>
           <p style={s.userName}>{loading ? '…' : employee?.full_name ?? '—'}</p>
-          <p style={s.userRole}>TMC Admin</p>
+          <p style={s.userRole}>{employee?.role === 'tmc_admin' ? 'TMC Admin' : 'Travel Counsellor'}</p>
           <button
             onClick={async () => {
               await fetch('/api/auth/signout', { method: 'POST' })
@@ -223,23 +239,45 @@ export default function TmcDashboardPage() {
             <h1 style={s.heading}>Welcome, {firstName}</h1>
             <p style={s.sub}>Manage your corporate clients from here.</p>
           </div>
-          <button onClick={() => { setShowInviteForm(true); setFormError(''); setFormSuccess('') }} style={s.primaryBtn}>
-            + Add corporate
-          </button>
+          {canCreateCompany && (
+            <button onClick={() => { setShowInviteForm(true); setFormError(''); setFormSuccess('') }} style={s.primaryBtn}>
+              + Add client
+            </button>
+          )}
         </div>
 
         {formSuccess && <div style={s.successBanner}>✓ {formSuccess}</div>}
 
-        {showInviteForm && (
+        {showInviteForm && canCreateCompany && (
           <form onSubmit={handleSubmit} style={s.formCard}>
             <div style={s.formHeader}>
-              <h2 style={s.formTitle}>Add a corporate client</h2>
+              <h2 style={s.formTitle}>Add a client</h2>
               <button type="button" onClick={() => { setShowInviteForm(false); resetForm() }} style={s.closeBtn}>✕</button>
             </div>
             <p style={s.formSub}>
               We'll create the company, seed default bands, and send the admin an invite.
               Optionally upload a CSV to add their employee roster at the same time.
             </p>
+
+            {/* ── Branch ── */}
+            <SectionLabel>Branch</SectionLabel>
+            <div style={s.fields}>
+              <div style={s.field}>
+                <label style={s.label}>Assign to branch</label>
+                {branches.length === 0 ? (
+                  <p style={s.noBranchHint}>
+                    No branches yet — <a href="/tmc/settings/branches" style={s.inlineLink}>create one</a> to group your clients, or leave unassigned.
+                  </p>
+                ) : (
+                  <select name="branchId" value={form.branchId} onChange={handleFormChange} style={s.input}>
+                    <option value="">Unassigned</option>
+                    {branches.map(b => (
+                      <option key={b.id} value={b.id}>{b.name}{b.city ? ` — ${b.city}` : ''}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            </div>
 
             {/* ── Company basics ── */}
             <SectionLabel>Company</SectionLabel>
@@ -456,6 +494,8 @@ const s: Record<string, React.CSSProperties> = {
   formTitle: { fontSize: '16px', fontWeight: 600, color: '#111827', margin: 0 },
   closeBtn: { backgroundColor: 'transparent', border: 'none', color: '#9CA3AF', fontSize: '16px', cursor: 'pointer' },
   formSub: { fontSize: '13px', color: '#6B7280', margin: '0 0 18px', lineHeight: '1.5' },
+  noBranchHint: { fontSize: '12px', color: '#9CA3AF', margin: 0, lineHeight: '1.5' },
+  inlineLink: { color: '#000835', fontWeight: 600, textDecoration: 'underline' },
   sectionLabel: { fontSize: '11px', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.5px', margin: '18px 0 10px' },
   fields: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '14px' },
   field: { display: 'flex', flexDirection: 'column', gap: '6px' },

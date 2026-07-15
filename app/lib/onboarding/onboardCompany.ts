@@ -12,6 +12,7 @@ export interface OnboardCompanyInput {
   primaryContactPhone?: string
   size?: string
   bookingMode?: 'sbt' | 'cbt' | 'both'
+  branchId?: string | null
 }
 
 export interface OnboardCompanyResult {
@@ -50,6 +51,21 @@ export async function onboardCompany(
     return { ok: false, error: `Invalid booking_mode: ${bookingMode}` }
   }
 
+  // If a branchId was given, confirm it actually belongs to this TMC —
+  // prevents cross-tenant assignment via a forged id.
+  if (input.branchId) {
+    const { data: branch } = await service
+      .from('branches')
+      .select('id')
+      .eq('id', input.branchId)
+      .eq('tmc_id', tmcId)
+      .maybeSingle()
+
+    if (!branch) {
+      return { ok: false, error: 'Branch not found for this TMC' }
+    }
+  }
+
   let companyId: string | null = null
   let authUserId: string | null = null
 
@@ -67,6 +83,7 @@ export async function onboardCompany(
         primary_contact_phone: input.primaryContactPhone?.trim() || null,
         size: input.size || null,
         booking_mode: bookingMode,
+        branch_id: input.branchId || null,
       })
       .select('id')
       .single()

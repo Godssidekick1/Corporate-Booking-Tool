@@ -1,16 +1,36 @@
 'use client'
 
 import { usePathname } from 'next/navigation'
+import { useEffect, useState } from 'react'
+import { canAccess } from '@/app/lib/permissions/canAccess'
 
 const SECTIONS = [
-  { label: 'Users',        href: '/tmc/settings/users' },
-  { label: 'Policy',       href: '/tmc/settings/policy' },
-  { label: 'Approvals',    href: '/tmc/settings/approvals' },
-  { label: 'Integrations', href: '/tmc/settings/integrations' },
+  { label: 'Branches',     href: '/tmc/settings/branches',     permission: 'manage_branches' },
+  { label: 'Users',        href: '/tmc/settings/users',        permission: 'manage_users' },
+  { label: 'Policy',       href: '/tmc/settings/policy',       permission: 'manage_policy' },
+  { label: 'Approvals',    href: '/tmc/settings/approvals',    permission: 'manage_approvals' },
+  { label: 'Integrations', href: '/tmc/settings/integrations', permission: null }, // placeholder page, no gate yet
 ]
 
 export default function TmcSettingsLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
+  const [role, setRole] = useState<string>()
+  const [permissions, setPermissions] = useState<string[]>([])
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/me')
+      .then(r => r.json())
+      .then(data => {
+        if (data.ok) {
+          setRole(data.employee?.role)
+          setPermissions(data.permissions ?? [])
+        }
+      })
+      .finally(() => setLoaded(true))
+  }, [])
+
+  const visibleSections = SECTIONS.filter(s => !s.permission || canAccess(role, permissions, s.permission))
 
   return (
     <div style={s.root}>
@@ -20,7 +40,7 @@ export default function TmcSettingsLayout({ children }: { children: React.ReactN
           <h2 style={s.sidebarTitle}>Settings</h2>
         </div>
         <nav style={s.nav}>
-          {SECTIONS.map(section => {
+          {loaded && visibleSections.map(section => {
             const active = pathname === section.href || pathname?.startsWith(section.href + '/')
             return (
               <a

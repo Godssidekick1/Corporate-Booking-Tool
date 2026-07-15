@@ -63,7 +63,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL(next, req.url))
   }
 
-  if (employee?.role === 'tmc_admin') {
+  if (employee?.role === 'tmc_admin' || employee?.role == 'tc') {
     return NextResponse.redirect(new URL('/tmc/dashboard', req.url))
   }
 
