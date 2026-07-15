@@ -3,6 +3,7 @@
 import { usePathname } from 'next/navigation'
 
 const SECTIONS = [
+  { label: 'Users',        href: '/tmc/settings/users' },
   { label: 'Policy',       href: '/tmc/settings/policy' },
   { label: 'Approvals',    href: '/tmc/settings/approvals' },
   { label: 'Integrations', href: '/tmc/settings/integrations' },
