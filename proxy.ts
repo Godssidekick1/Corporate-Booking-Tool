@@ -21,13 +21,9 @@ export async function proxy(request: NextRequest) {
     }
   )
 
-  // Always use getUser() — never getSession() in middleware.
-  // getSession() reads from the cookie without revalidating with Supabase,
-  // so a signed-out user with a stale cookie looks authenticated.
   const { data: { user } } = await supabase.auth.getUser()
   const { pathname } = request.nextUrl
 
-  // ── Public routes — always accessible ────────────────────────────────────
   const isPublic =
     pathname.startsWith('/auth/') ||
     pathname.startsWith('/verify-email') ||
@@ -35,16 +31,27 @@ export async function proxy(request: NextRequest) {
 
   if (isPublic) return supabaseResponse
 
-  // Role as set in user_metadata at invite/create time. Note this can be
-  // stale relative to the DB (e.g. right after a role change elsewhere) —
-  // it's fine for coarse routing here, but never treat it as an authorization
-  // decision. Every route/page still does its own DB-backed role check.
-  const metadataRole = user?.user_metadata?.role as string | undefined
-  const isTmcSideRole = metadataRole === 'tmc_admin' || metadataRole === 'tc'
+  // Try metadata first (cheap, no DB call). Fall back to a real DB lookup
+  // if metadata is missing role info — this covers accounts created before
+  // every creation path consistently set user_metadata.role, and is the
+  // authoritative source of truth regardless.
+  let resolvedRole = user?.user_metadata?.role as string | undefined
+
+  const isAuthOnly = pathname === '/login' || pathname === '/register'
+  const needsRoleCheck = user && (isAuthOnly || pathname.startsWith('/tmc'))
+
+  if (needsRoleCheck && !resolvedRole) {
+    const { data: employee } = await supabase
+      .from('employees')
+      .select('role')
+      .eq('id', user!.id)
+      .single()
+    resolvedRole = employee?.role
+  }
+
+  const isTmcSideRole = resolvedRole === 'tmc_admin' || resolvedRole === 'tc'
 
   // ── Auth-only routes — redirect authenticated users to their dashboard ───
-  const isAuthOnly = pathname === '/login' || pathname === '/register'
-
   if (user && isAuthOnly) {
     const destination = isTmcSideRole ? '/tmc/dashboard' : '/dashboard'
     return NextResponse.redirect(new URL(destination, request.url))
@@ -67,9 +74,6 @@ export async function proxy(request: NextRequest) {
   }
 
   // ── TMC-only routes — non-TMC users get sent to their own dashboard ──────
-  // Checked by explicit role, not inferred from company_id presence — a
-  // corp-side flow that forgets to set company_id in metadata would have
-  // silently defeated the old presence-based check.
   if (user && pathname.startsWith('/tmc') && !isTmcSideRole) {
     return NextResponse.redirect(new URL('/dashboard', request.url))
   }

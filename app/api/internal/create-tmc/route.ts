@@ -15,10 +15,7 @@ import { NextRequest } from 'next/server'
 //   }
 // ─────────────────────────────────────────────────────────────────────────────
 
-
-
 export async function POST(req: NextRequest) {
-  // Verify internal secret
   const secret = req.headers.get('x-internal-secret')
   if (!secret || secret !== process.env.INTERNAL_API_SECRET) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 })
@@ -39,7 +36,6 @@ export async function POST(req: NextRequest) {
   let authUserId: string | null = null
 
   try {
-    // ── Step 1: Create the TMC record ─────────────────────────────────
     const { data: tmc, error: tmcError } = await service
       .from('tmcs')
       .insert({ name: tmcName, status: 'active' })
@@ -49,21 +45,19 @@ export async function POST(req: NextRequest) {
     if (tmcError) throw new Error(tmcError.message)
     tmcId = tmc.id
 
-    // ── Step 2: Invite the TMC admin via Supabase Auth ────────────────
-    // This sends an invite email with a link to set their password.
-    // The link redirects to /tmc/dashboard after password is set.
+    // redirectTo points at /login — invite links carry hash-based auth
+    // tokens that only a client page (not a server route like /auth/callback)
+    // can read. data sets role/tmc_id in user_metadata so downstream role
+    // checks (e.g. proxy.ts) work immediately without a DB round-trip.
     const { data: authData, error: inviteError } =
       await service.auth.admin.inviteUserByEmail(adminEmail, {
-        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`,
+        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/login`,
+        data: { full_name: adminName, tmc_id: tmcId, role: 'tmc_admin' },
       })
-
 
     if (inviteError) throw new Error(inviteError.message)
     authUserId = authData.user.id
 
-    // ── Step 3: Create the TMC admin employee record ──────────────────
-    // tmc_id is set, company_id is null — TMC admins are not attached
-    // to a specific corporate client.
     const { error: employeeError } = await service.from('employees').insert({
       id: authUserId,
       tmc_id: tmcId,
@@ -71,7 +65,7 @@ export async function POST(req: NextRequest) {
       full_name: adminName,
       email: adminEmail,
       role: 'tmc_admin',
-      status: 'active',
+      status: 'invited',
     })
 
     if (employeeError) throw new Error(employeeError.message)
@@ -85,7 +79,6 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     console.error('CREATE TMC ERROR:', err)
 
-    // Rollback in reverse order
     if (authUserId) {
       await service.auth.admin.deleteUser(authUserId)
     }
