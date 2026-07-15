@@ -15,6 +15,7 @@ const EDITABLE_STATUSES = ['active', 'deactivated'] as const
 interface UpdateEmployeeBody {
   role?: string
   status?: string
+  band?: string
 }
 
 export async function PATCH(
@@ -63,9 +64,9 @@ export async function PATCH(
   }
 
   const body: UpdateEmployeeBody = await req.json()
-  const { role, status } = body
+  const { role, status, band } = body
 
-  const update: Record<string, string> = {}
+  const update: Record<string, string | number> = {}
 
   if (role !== undefined) {
     const normalized = role.toLowerCase() as ValidRole
@@ -73,6 +74,23 @@ export async function PATCH(
       return Response.json({ error: `Invalid role: ${role}` }, { status: 400 })
     }
     update.role = normalized
+  }
+
+  if (band !== undefined) {
+    const { data: bandRow, error: bandError } = await service
+      .from('bands')
+      .select('id, code, rank')
+      .eq('company_id', caller.company_id)
+      .eq('code', band.toUpperCase())
+      .single()
+
+    if (bandError || !bandRow) {
+      return Response.json({ error: `Band ${band} not found for this company` }, { status: 422 })
+    }
+
+    update.band_id = bandRow.id
+    update.band_code = bandRow.code
+    update.band_rank = bandRow.rank
   }
 
   if (status !== undefined) {

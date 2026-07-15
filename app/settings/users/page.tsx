@@ -57,6 +57,19 @@ export default function SettingsUsersPage() {
     setSuccess('Role updated.')
   }
 
+  async function handleBandChange(id: string, band: string) {
+    setError(''); setSuccess('')
+    const res = await fetch(`/api/settings/users/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ band }),
+    })
+    const data = await res.json()
+    if (!res.ok) { setError(data.error || 'Could not update band.'); return }
+    setEmployees(prev => prev.map(e => e.id === id ? { ...e, band_code: data.employee.band_code } : e))
+    setSuccess('Band updated.')
+  }
+
   async function handleStatusToggle(emp: Employee) {
     const newStatus = emp.status === 'active' ? 'deactivated' : 'active'
     setError(''); setSuccess('')
@@ -137,7 +150,16 @@ export default function SettingsUsersPage() {
                         {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
                       </select>
                     </td>
-                    <td style={s.td}>{emp.band_code ?? '—'}</td>
+                    <td style={s.td}>
+                      <select
+                        value={emp.band_code ?? 'L1'}
+                        onChange={e => handleBandChange(emp.id, e.target.value)}
+                        disabled={emp.status === 'deactivated'}
+                        style={s.roleSelect}
+                      >
+                        {['L1', 'L2', 'L3', 'L4', 'L5'].map(b => <option key={b} value={b}>{b}</option>)}
+                      </select>
+                    </td>
                     <td style={s.td}>
                       <span style={{ ...s.badge, background: colors.bg, color: colors.fg }}>
                         {emp.status}
