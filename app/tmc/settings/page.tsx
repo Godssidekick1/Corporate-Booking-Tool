@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation'
 
 export default function TmcSettingsIndexPage() {
-  redirect('/tmc/settings/policy')
+  redirect('/tmc/settings/branches')
 }
