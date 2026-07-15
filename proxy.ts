@@ -28,26 +28,31 @@ export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   // ── Public routes — always accessible ────────────────────────────────────
-  // These never redirect regardless of auth state.
   const isPublic =
-    pathname.startsWith('/auth/') ||       // /auth/callback, /auth/set-password
+    pathname.startsWith('/auth/') ||
     pathname.startsWith('/verify-email') ||
-    pathname.startsWith('/api/')            // all API routes handle their own auth
+    pathname.startsWith('/api/')
 
   if (isPublic) return supabaseResponse
 
-  // ── Auth-only routes — redirect authenticated users away ─────────────────
-  // Signed-in users hitting /login or /register get sent to their dashboard.
+  // Role as set in user_metadata at invite/create time. Note this can be
+  // stale relative to the DB (e.g. right after a role change elsewhere) —
+  // it's fine for coarse routing here, but never treat it as an authorization
+  // decision. Every route/page still does its own DB-backed role check.
+  const metadataRole = user?.user_metadata?.role as string | undefined
+  const isTmcSideRole = metadataRole === 'tmc_admin' || metadataRole === 'tc'
+
+  // ── Auth-only routes — redirect authenticated users to their dashboard ───
   const isAuthOnly = pathname === '/login' || pathname === '/register'
 
   if (user && isAuthOnly) {
-    return NextResponse.redirect(new URL('/dashboard', request.url))
+    const destination = isTmcSideRole ? '/tmc/dashboard' : '/dashboard'
+    return NextResponse.redirect(new URL(destination, request.url))
   }
 
   // ── Protected routes — redirect unauthenticated users to /login ──────────
   const isProtected =
     pathname.startsWith('/dashboard') ||
-    pathname.startsWith('/setup') ||
     pathname.startsWith('/settings') ||
     pathname.startsWith('/tmc') ||
     pathname.startsWith('/book') ||
@@ -61,16 +66,12 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(loginUrl)
   }
 
-  // ── TMC-only routes — non-TMC users get sent to their dashboard ──────────
-  // We avoid a DB call here — TMC admins have no company_id in their JWT.
-  // The tmc/dashboard page itself handles the role check via /api/me.
-  // This is just a coarse guard to prevent obvious wrong-door access.
-  if (user && pathname.startsWith('/tmc')) {
-    const companyId = user.user_metadata?.company_id
-    // If they have a company_id they're a corporate user, not a TMC admin
-    if (companyId) {
-      return NextResponse.redirect(new URL('/dashboard', request.url))
-    }
+  // ── TMC-only routes — non-TMC users get sent to their own dashboard ──────
+  // Checked by explicit role, not inferred from company_id presence — a
+  // corp-side flow that forgets to set company_id in metadata would have
+  // silently defeated the old presence-based check.
+  if (user && pathname.startsWith('/tmc') && !isTmcSideRole) {
+    return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 
   return supabaseResponse
@@ -78,13 +79,6 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    /*
-     * Match all paths except:
-     * - _next/static  (Next.js static files)
-     * - _next/image   (Next.js image optimisation)
-     * - favicon.ico
-     * - public folder files (png, jpg, svg, etc.)
-     */
     '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }

@@ -148,7 +148,10 @@ export async function POST(req: NextRequest) {
     if (send_invite) {
       const { data: authData, error: inviteError } = await service.auth.admin.inviteUserByEmail(
         normalizedEmail,
-        { redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/login` }
+        {
+          redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/login`,
+          data: { full_name, tmc_id: caller.tmc_id, role: 'tc' },
+        }
       )
       if (inviteError) throw new Error(inviteError.message)
       authUserId = authData.user.id
