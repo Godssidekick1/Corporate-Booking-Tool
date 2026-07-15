@@ -28,7 +28,7 @@ export async function GET() {
 
   let query = service
     .from('companies')
-    .select('id, name, status, setup_completed, created_at')
+    .select('id, name, status, setup_completed, created_at, booking_mode, branch_id, branches(id, name, city)')
     .eq('tmc_id', caller.tmc_id)
     .order('created_at', { ascending: false })
 

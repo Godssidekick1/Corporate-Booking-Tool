@@ -203,7 +203,7 @@ export default function TmcDashboardPage() {
           <p style={s.navLabel}>TMC Admin</p>
           {[
             { label: 'Dashboard', href: '/tmc/dashboard', active: true, show: true },
-            { label: 'Companies', href: '/tmc/dashboard', active: false, show: true },
+            { label: 'Companies', href: '/tmc/companies', active: false, show: true },
             { label: 'Settings',  href: '/tmc/settings',  active: false, show: employee?.role === 'tmc_admin' || permissions.length > 0 },
             { label: 'Reports',   href: '/tmc/reports',   active: false, show: canAccess(employee?.role, permissions, 'view_reports') },
           ].filter(item => item.show).map(item => (
