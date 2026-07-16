@@ -1,6 +1,21 @@
 'use client'
 
-import { useEffect, useMemo, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
+import { useParams } from 'next/navigation'
+import TmcShell from '@/app/components/TmcShell'
+
+interface Company {
+  id: string
+  name: string
+  status: string
+  setup_completed: boolean
+  timezone: string
+  currency: string
+  country: string | null
+  booking_mode: 'sbt' | 'cbt' | 'both'
+  branch_id: string | null
+  created_at: string
+}
 
 interface Branch {
   id: string
@@ -8,250 +23,213 @@ interface Branch {
   city: string | null
 }
 
-interface Company {
-  id: string
-  name: string
-  status: string
-  setup_completed: boolean
-  created_at: string
-  booking_mode: 'sbt' | 'cbt' | 'both'
-  branch_id: string | null
-  branches: Branch | null
-}
+const TIMEZONES = ['Asia/Kolkata', 'Asia/Dubai', 'Asia/Singapore', 'Europe/London', 'America/New_York']
+const CURRENCIES = ['INR']
+const BOOKING_MODES: { value: Company['booking_mode']; label: string }[] = [
+  { value: 'sbt', label: 'SBT — Self-Booking Tool' },
+  { value: 'cbt', label: 'CBT — Consultant-Booking Tool' },
+  { value: 'both', label: 'Hybrid — Both SBT and CBT' },
+]
 
-const BOOKING_MODE_LABEL: Record<Company['booking_mode'], string> = {
-  sbt: 'SBT', cbt: 'CBT', both: 'Hybrid',
-}
+export default function TmcCompanyDetailPage() {
+  const params = useParams()
+  const companyId = params.id as string
 
-const UNASSIGNED_KEY = '__unassigned__'
-
-export default function TmcCompaniesPage() {
-  const [companies, setCompanies] = useState<Company[]>([])
+  const [company, setCompany] = useState<Company | null>(null)
+  const [branches, setBranches] = useState<Branch[]>([])
   const [loading, setLoading] = useState(true)
-  const [query, setQuery] = useState('')
-  const [showSuggestions, setShowSuggestions] = useState(false)
-  const searchRef = useRef<HTMLDivElement>(null)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+
+  const [form, setForm] = useState({
+    name: '', timezone: '', currency: '', country: '', booking_mode: 'sbt' as Company['booking_mode'], branch_id: '',
+  })
 
   useEffect(() => {
-    fetch('/api/tmc/companies')
-      .then(r => r.json())
-      .then(data => { if (data.ok) setCompanies(data.companies) })
+    Promise.all([
+      fetch(`/api/tmc/companies/${companyId}`).then(r => r.json()),
+      fetch('/api/tmc/branches').then(r => r.json()),
+    ]).then(([companyData, branchesData]) => {
+        if (!companyData.ok) {
+          setError(companyData.error || 'Could not load company.')
+          return
+        }
+        const c: Company = companyData.company
+        setCompany(c)
+        setForm({
+          name: c.name ?? '',
+          timezone: c.timezone ?? 'Asia/Kolkata',
+          currency: c.currency ?? 'INR',
+          country: c.country ?? '',
+          booking_mode: c.booking_mode ?? 'sbt',
+          branch_id: c.branch_id ?? '',
+        })
+        if (branchesData.ok) setBranches(branchesData.branches)
+      })
+      .catch(() => setError('Could not load company.'))
       .finally(() => setLoading(false))
-  }, [])
+  }, [companyId])
 
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
-        setShowSuggestions(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
-
-  // ── Suggestions: matching companies and branches, combined ────────────────
-  const suggestions = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return { companies: [], branches: [] }
-
-    const matchedCompanies = companies.filter(c => c.name.toLowerCase().includes(q)).slice(0, 6)
-
-    const branchMap = new Map<string, Branch>()
-    for (const c of companies) {
-      if (c.branches && c.branches.name.toLowerCase().includes(q)) {
-        branchMap.set(c.branches.id, c.branches)
-      }
-    }
-    const matchedBranches = Array.from(branchMap.values()).slice(0, 6)
-
-    return { companies: matchedCompanies, branches: matchedBranches }
-  }, [query, companies])
-
-  // ── Filtered + grouped-by-branch, alphabetical ─────────────────────────────
-  const groups = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    const filtered = q
-      ? companies.filter(c =>
-          c.name.toLowerCase().includes(q) ||
-          (c.branches?.name.toLowerCase().includes(q) ?? false)
-        )
-      : companies
-
-    const byBranch = new Map<string, { branch: Branch | null; companies: Company[] }>()
-    for (const c of filtered) {
-      const key = c.branches?.id ?? UNASSIGNED_KEY
-      if (!byBranch.has(key)) {
-        byBranch.set(key, { branch: c.branches, companies: [] })
-      }
-      byBranch.get(key)!.companies.push(c)
-    }
-
-    const groupList = Array.from(byBranch.values())
-    groupList.sort((a, b) => {
-      if (!a.branch) return 1
-      if (!b.branch) return -1
-      return a.branch.name.localeCompare(b.branch.name)
-    })
-    for (const g of groupList) {
-      g.companies.sort((a, b) => a.name.localeCompare(b.name))
-    }
-
-    return groupList
-  }, [companies, query])
-
-  function selectSuggestion(text: string) {
-    setQuery(text)
-    setShowSuggestions(false)
+  function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) {
+    setForm(prev => ({ ...prev, [e.target.name]: e.target.value }))
   }
 
-  const hasSuggestions = suggestions.companies.length > 0 || suggestions.branches.length > 0
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setError('')
+    setSuccess('')
+    setSaving(true)
+    try {
+      const res = await fetch(`/api/tmc/companies/${companyId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setError(data.error || 'Could not save changes.')
+        return
+      }
+      setCompany(prev => prev ? { ...prev, ...data.company } : data.company)
+      setSuccess('Company updated.')
+    } catch {
+      setError('Could not save changes. Please try again.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) {
+    return <TmcShell activeLabel="Companies"><div style={s.root}><p style={s.loadingText}>Loading…</p></div></TmcShell>
+  }
+
+  if (!company) {
+    return <TmcShell activeLabel="Companies"><div style={s.root}><p style={s.error}>{error || 'Company not found.'}</p></div></TmcShell>
+  }
 
   return (
+    <TmcShell activeLabel="Companies">
     <div style={s.root}>
       <div style={s.header}>
-        <div>
-          <h1 style={s.heading}>Companies</h1>
-          <p style={s.sub}>{companies.length} client{companies.length === 1 ? '' : 's'}, grouped by branch.</p>
-        </div>
+        <a href="/tmc/companies" style={s.backLink}>← All companies</a>
+        <h1 style={s.heading}>{company.name}</h1>
+        <p style={s.sub}>Manage this client's account details, currency, and booking mode.</p>
       </div>
 
-      <div ref={searchRef} style={s.searchWrap}>
-        <input
-          type="text"
-          value={query}
-          onChange={e => { setQuery(e.target.value); setShowSuggestions(true) }}
-          onFocus={() => setShowSuggestions(true)}
-          placeholder="Search companies or branches…"
-          style={s.searchInput}
-        />
-        {showSuggestions && query.trim() && hasSuggestions && (
-          <div style={s.suggestionBox}>
-            {suggestions.companies.length > 0 && (
-              <div style={s.suggestionGroup}>
-                <p style={s.suggestionLabel}>Companies</p>
-                {suggestions.companies.map(c => (
-                  <div
-                    key={c.id}
-                    onClick={() => { window.location.href = `/tmc/companies/${c.id}` }}
-                    style={s.suggestionItem}
-                  >
-                    <span style={s.suggestionName}>{c.name}</span>
-                    {c.branches && <span style={s.suggestionMeta}>{c.branches.name}</span>}
-                  </div>
-                ))}
-              </div>
-            )}
-            {suggestions.branches.length > 0 && (
-              <div style={s.suggestionGroup}>
-                <p style={s.suggestionLabel}>Branches</p>
-                {suggestions.branches.map(b => (
-                  <div
-                    key={b.id}
-                    onClick={() => selectSuggestion(b.name)}
-                    style={s.suggestionItem}
-                  >
-                    <span style={s.suggestionName}>{b.name}</span>
-                    {b.city && <span style={s.suggestionMeta}>{b.city}</span>}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-        {showSuggestions && query.trim() && !hasSuggestions && (
-          <div style={s.suggestionBox}>
-            <p style={s.noResults}>No matches for "{query}"</p>
-          </div>
-        )}
-      </div>
+      <form onSubmit={handleSubmit} style={s.card}>
+        <div style={s.field}>
+          <label style={s.label} htmlFor="name">Company name</label>
+          <input
+            id="name" name="name" type="text" required
+            value={form.name} onChange={handleChange}
+            style={s.input}
+          />
+        </div>
 
-      {loading ? (
-        <div style={s.emptyState}><p style={s.emptyTitle}>Loading…</p></div>
-      ) : groups.length === 0 ? (
-        <div style={s.emptyState}>
-          <p style={s.emptyTitle}>No companies found</p>
-          <p style={s.emptyDesc}>Try a different search term, or add a client from the dashboard.</p>
+        <div style={s.row}>
+          <div style={s.field}>
+            <label style={s.label} htmlFor="timezone">Timezone</label>
+            <select id="timezone" name="timezone" value={form.timezone} onChange={handleChange} style={s.input}>
+              {TIMEZONES.map(tz => <option key={tz} value={tz}>{tz}</option>)}
+            </select>
+          </div>
+
+          <div style={s.field}>
+            <label style={s.label} htmlFor="currency">Currency</label>
+            <select
+              id="currency" name="currency" value={form.currency} onChange={handleChange}
+              disabled={CURRENCIES.length === 1}
+              style={{ ...s.input, opacity: CURRENCIES.length === 1 ? 0.6 : 1 }}
+            >
+              {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
         </div>
-      ) : (
-        <div style={s.groupList}>
-          {groups.map(g => (
-            <div key={g.branch?.id ?? UNASSIGNED_KEY} style={s.groupSection}>
-              <div style={s.groupHeader}>
-                <h2 style={s.groupTitle}>
-                  {g.branch ? g.branch.name : 'Unassigned'}
-                  {g.branch?.city && <span style={s.groupCity}> — {g.branch.city}</span>}
-                </h2>
-                <span style={s.groupCount}>{g.companies.length}</span>
-              </div>
-              <div style={s.cardGrid}>
-                {g.companies.map(c => (
-                  <div
-                    key={c.id}
-                    onClick={() => { window.location.href = `/tmc/companies/${c.id}` }}
-                    style={s.card}
-                  >
-                    <div style={s.cardTop}>
-                      <span style={s.cardName}>{c.name}</span>
-                      <span style={s.modeBadge}>{BOOKING_MODE_LABEL[c.booking_mode]}</span>
-                    </div>
-                    <div style={s.cardBottom}>
-                      <span style={{
-                        ...s.statusBadge,
-                        background: c.setup_completed ? '#ECFDF5' : '#F3F4F6',
-                        color: c.setup_completed ? '#065F46' : '#6B7280',
-                      }}>
-                        {c.setup_completed ? 'Setup complete' : 'Setup pending'}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
+
+        <div style={s.field}>
+          <label style={s.label} htmlFor="country">Country</label>
+          <input
+            id="country" name="country" type="text"
+            value={form.country} onChange={handleChange}
+            placeholder="e.g. India"
+            style={s.input}
+          />
         </div>
-      )}
+
+        <div style={s.field}>
+          <label style={s.label} htmlFor="branch_id">Branch</label>
+          {branches.length === 0 ? (
+            <p style={s.hint}>
+              No branches yet — <a href="/tmc/settings/branches" style={s.inlineLink}>create one</a> to assign this company.
+            </p>
+          ) : (
+            <select id="branch_id" name="branch_id" value={form.branch_id} onChange={handleChange} style={s.input}>
+              <option value="">Unassigned</option>
+              {branches.map(b => (
+                <option key={b.id} value={b.id}>{b.name}{b.city ? ` — ${b.city}` : ''}</option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        <div style={s.divider} />
+
+        <div style={s.field}>
+          <label style={s.label} htmlFor="booking_mode">Booking mode</label>
+          <select id="booking_mode" name="booking_mode" value={form.booking_mode} onChange={handleChange} style={s.input}>
+            {BOOKING_MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+          </select>
+          <p style={s.hint}>
+            This determines whether the corporate's employees book for themselves (SBT),
+            travel counsellors book on their behalf (CBT), or both. Only you can change this.
+          </p>
+        </div>
+
+        {error && <p style={s.errorMsg}>{error}</p>}
+        {success && <p style={s.success}>{success}</p>}
+
+        <button type="submit" disabled={saving} style={{ ...s.button, opacity: saving ? 0.7 : 1 }}>
+          {saving ? 'Saving…' : 'Save changes'}
+        </button>
+      </form>
     </div>
+    </TmcShell>
   )
 }
 
 const s: Record<string, React.CSSProperties> = {
-  root: { fontFamily: "'Inter', -apple-system, sans-serif", maxWidth: '1100px', margin: '0 auto', padding: '32px 40px' },
-  header: { marginBottom: '16px' },
+  root: { maxWidth: '600px', fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif", padding: '32px 40px' },
+  loadingText: { fontSize: '13px', color: '#9CA3AF' },
+  header: { marginBottom: '20px' },
+  backLink: { fontSize: '12px', color: '#9CA3AF', textDecoration: 'none', display: 'block', marginBottom: '10px' },
   heading: { fontSize: '20px', fontWeight: 600, color: '#0A0A14', margin: '0 0 4px', letterSpacing: '-0.3px' },
   sub: { fontSize: '13px', color: '#6B7280', margin: 0 },
-  searchWrap: { position: 'relative' as const, marginBottom: '24px', maxWidth: '420px' },
-  searchInput: {
-    width: '100%', height: '40px', padding: '0 14px', fontSize: '14px', color: '#111827',
-    background: '#fff', border: '1px solid #D1D5DB', borderRadius: '8px', outline: 'none', boxSizing: 'border-box' as const,
-  },
-  suggestionBox: {
-    position: 'absolute' as const, top: '46px', left: 0, right: 0, zIndex: 10,
-    background: '#fff', border: '1px solid #E5E7EB', borderRadius: '8px',
-    boxShadow: '0 4px 16px rgba(0,0,0,0.08)', maxHeight: '320px', overflowY: 'auto' as const, padding: '6px',
-  },
-  suggestionGroup: { marginBottom: '4px' },
-  suggestionLabel: { fontSize: '10px', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.5px', margin: '6px 8px 4px' },
-  suggestionItem: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' },
-  suggestionName: { color: '#111827', fontWeight: 500 },
-  suggestionMeta: { color: '#9CA3AF', fontSize: '11px' },
-  noResults: { fontSize: '12px', color: '#9CA3AF', padding: '10px', margin: 0, textAlign: 'center' as const },
-  groupList: { display: 'flex', flexDirection: 'column', gap: '24px' },
-  groupSection: {},
-  groupHeader: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' },
-  groupTitle: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: 0 },
-  groupCity: { fontWeight: 400, color: '#9CA3AF' },
-  groupCount: { fontSize: '11px', color: '#9CA3AF', background: '#F3F4F6', borderRadius: '10px', padding: '1px 8px' },
-  cardGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '12px' },
   card: {
-    background: '#fff', border: '1px solid #E5E7EB', borderRadius: '10px', padding: '14px',
-    cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: '10px',
+    background: '#fff', border: '1px solid #E5E7EB', borderRadius: '10px',
+    padding: '24px', display: 'flex', flexDirection: 'column', gap: '18px',
   },
-  cardTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' },
-  cardName: { fontSize: '13px', fontWeight: 600, color: '#111827' },
-  modeBadge: { fontSize: '10px', fontWeight: 700, color: '#3730A3', background: '#EEF2FF', borderRadius: '4px', padding: '2px 6px', flexShrink: 0 },
-  cardBottom: {},
-  statusBadge: { fontSize: '11px', fontWeight: 500, borderRadius: '4px', padding: '2px 8px' },
-  emptyState: { padding: '48px 20px', textAlign: 'center' as const },
-  emptyTitle: { fontSize: '14px', fontWeight: 600, color: '#374151', margin: '0 0 6px' },
-  emptyDesc: { fontSize: '13px', color: '#9CA3AF', margin: 0 },
+  row: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' },
+  field: { display: 'flex', flexDirection: 'column', gap: '6px' },
+  label: { fontSize: '12px', fontWeight: 500, color: '#374151' },
+  input: {
+    height: '38px', padding: '0 10px', fontSize: '13px', color: '#111827',
+    background: '#fff', border: '1px solid #D1D5DB', borderRadius: '7px', outline: 'none',
+  },
+  divider: { height: '1px', background: '#F3F4F6', margin: '2px 0' },
+  hint: { fontSize: '11px', color: '#9CA3AF', margin: '4px 0 0', lineHeight: '1.5' },
+  inlineLink: { color: '#000835', fontWeight: 600, textDecoration: 'underline' },
+  errorMsg: {
+    fontSize: '13px', color: '#DC2626', background: '#FEF2F2',
+    border: '1px solid #FECACA', borderRadius: '6px', padding: '10px 12px', margin: 0,
+  },
+  error: { fontSize: '13px', color: '#DC2626' },
+  success: {
+    fontSize: '13px', color: '#065F46', background: '#ECFDF5',
+    border: '1px solid #A7F3D0', borderRadius: '6px', padding: '10px 12px', margin: 0,
+  },
+  button: {
+    height: '38px', background: '#000835', color: '#fff', fontSize: '13px', fontWeight: 600,
+    border: 'none', borderRadius: '8px', cursor: 'pointer', alignSelf: 'flex-start', padding: '0 18px',
+  },
 }

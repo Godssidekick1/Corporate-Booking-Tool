@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState, useRef } from 'react'
+import TmcShell from '@/app/components/TmcShell'
 
 interface Branch {
   id: string
@@ -107,6 +108,7 @@ export default function TmcCompaniesPage() {
   const hasSuggestions = suggestions.companies.length > 0 || suggestions.branches.length > 0
 
   return (
+    <TmcShell activeLabel="Companies">
     <div style={s.root}>
       <div style={s.header}>
         <div>
@@ -211,11 +213,12 @@ export default function TmcCompaniesPage() {
         </div>
       )}
     </div>
+    </TmcShell>
   )
 }
 
 const s: Record<string, React.CSSProperties> = {
-  root: { fontFamily: "'Inter', -apple-system, sans-serif" },
+  root: { fontFamily: "'Inter', -apple-system, sans-serif", maxWidth: '1100px', margin: '0 auto', padding: '32px 40px' },
   header: { marginBottom: '16px' },
   heading: { fontSize: '20px', fontWeight: 600, color: '#0A0A14', margin: '0 0 4px', letterSpacing: '-0.3px' },
   sub: { fontSize: '13px', color: '#6B7280', margin: 0 },
