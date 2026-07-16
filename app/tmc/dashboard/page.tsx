@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from 'react'
 import Papa from 'papaparse'
 import { canAccess } from '@/app/lib/permissions/canAccess'
+import TmcShell from '@/app/components/TmcShell'
 
 interface Employee {
   full_name: string
@@ -192,48 +193,9 @@ export default function TmcDashboardPage() {
   }
 
   return (
-    <div style={s.root}>
-      {/* Sidebar */}
-      <nav style={s.nav}>
-        <div>
-          <div style={s.wordmark}>
-            <span style={s.wmMain}>TravelDesk</span>
-            <span style={s.wmBy}>by Amadeus</span>
-          </div>
-          <p style={s.navLabel}>TMC Admin</p>
-          {[
-            { label: 'Dashboard', href: '/tmc/dashboard', active: true, show: true },
-            { label: 'Companies', href: '/tmc/companies', active: false, show: true },
-            { label: 'Settings',  href: '/tmc/settings',  active: false, show: employee?.role === 'tmc_admin' || permissions.length > 0 },
-            { label: 'Reports',   href: '/tmc/reports',   active: false, show: canAccess(employee?.role, permissions, 'view_reports') },
-          ].filter(item => item.show).map(item => (
-            <a key={item.label} href={item.href} style={{
-              ...s.navItem,
-              backgroundColor: item.active ? 'rgba(255,255,255,0.1)' : 'transparent',
-              color: item.active ? '#fff' : 'rgba(255,255,255,0.5)',
-              fontWeight: item.active ? 600 : 400,
-            }}>
-              {item.label}
-            </a>
-          ))}
-        </div>
-        <div style={s.navFooter}>
-          <p style={s.userName}>{loading ? '…' : employee?.full_name ?? '—'}</p>
-          <p style={s.userRole}>{employee?.role === 'tmc_admin' ? 'TMC Admin' : 'Travel Counsellor'}</p>
-          <button
-            onClick={async () => {
-              await fetch('/api/auth/signout', { method: 'POST' })
-              window.location.href = '/login'
-            }}
-            style={{ ...s.signOutBtn, marginTop: '10px' }}
-          >
-            Sign out
-          </button>
-        </div>
-      </nav>
-
+    <TmcShell activeLabel="Dashboard">
       {/* Main */}
-      <main style={s.main}>
+      <div style={s.mainInner}>
         <div style={s.topBar}>
           <div>
             <h1 style={s.heading}>Welcome, {firstName}</h1>
@@ -436,8 +398,8 @@ export default function TmcDashboardPage() {
             </table>
           )}
         </div>
-      </main>
-    </div>
+      </div>
+    </TmcShell>
   )
 }
 
@@ -472,18 +434,7 @@ function Field({ label, name, value, onChange, required, type = 'text', placehol
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const s: Record<string, React.CSSProperties> = {
-  root: { display: 'flex', minHeight: '100vh', fontFamily: "'Inter', -apple-system, sans-serif", backgroundColor: '#F7F8FC' },
-  nav: { width: '220px', flexShrink: 0, backgroundColor: '#000835', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '32px 20px' },
-  wordmark: { display: 'flex', flexDirection: 'column', gap: '3px', marginBottom: '28px' },
-  wmMain: { fontSize: '18px', fontWeight: 700, color: '#fff', letterSpacing: '-0.4px' },
-  wmBy: { fontSize: '10px', color: 'rgba(255,255,255,0.35)', letterSpacing: '0.5px', textTransform: 'uppercase' as const },
-  navLabel: { fontSize: '9px', fontWeight: 600, color: 'rgba(255,255,255,0.28)', letterSpacing: '1.1px', textTransform: 'uppercase' as const, margin: '0 0 12px' },
-  navItem: { display: 'block', padding: '9px 12px', borderRadius: '7px', fontSize: '13px', textDecoration: 'none', marginBottom: '2px' },
-  navFooter: { borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '16px' },
-  userName: { fontSize: '12px', fontWeight: 600, color: '#fff', margin: '0 0 2px' },
-  userRole: { fontSize: '11px', color: 'rgba(255,255,255,0.4)', margin: 0 },
-  signOutBtn: { width: '100%', height: '32px', backgroundColor: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.45)', fontSize: '12px', border: 'none', borderRadius: '6px', cursor: 'pointer' },
-  main: { flex: 1, padding: '40px 48px', overflowY: 'auto' as const },
+  mainInner: { padding: '40px 48px' },
   topBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' },
   heading: { fontSize: '22px', fontWeight: 700, color: '#0A0A14', margin: '0 0 4px', letterSpacing: '-0.3px' },
   sub: { fontSize: '14px', color: '#6B7280', margin: 0 },

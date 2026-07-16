@@ -21,6 +21,7 @@ interface UpdateCompanyBody {
   currency?: string
   country?: string
   booking_mode?: string
+  branch_id?: string | null
 }
 
 export async function GET(
@@ -111,9 +112,9 @@ export async function PATCH(
   }
 
   const body: UpdateCompanyBody = await req.json()
-  const { name, timezone, currency, country, booking_mode } = body
+  const { name, timezone, currency, country, booking_mode, branch_id } = body
 
-  const update: Record<string, string> = {}
+  const update: Record<string, string | null> = {}
 
   if (name !== undefined) {
     const trimmed = name.trim()
@@ -142,6 +143,24 @@ export async function PATCH(
     update.country = country.trim()
   }
 
+  if (branch_id !== undefined) {
+    if (branch_id === null || branch_id === '') {
+      update.branch_id = null
+    } else {
+      const { data: branch } = await service
+        .from('branches')
+        .select('id')
+        .eq('id', branch_id)
+        .eq('tmc_id', caller.tmc_id)
+        .maybeSingle()
+
+      if (!branch) {
+        return Response.json({ error: 'Branch not found for this TMC' }, { status: 404 })
+      }
+      update.branch_id = branch_id
+    }
+  }
+
   if (booking_mode !== undefined) {
     if (!ALLOWED_BOOKING_MODES.includes(booking_mode as typeof ALLOWED_BOOKING_MODES[number])) {
       return Response.json(
@@ -160,7 +179,7 @@ export async function PATCH(
     .from('companies')
     .update(update)
     .eq('id', id)
-    .select('id, name, timezone, currency, country, booking_mode')
+    .select('id, name, timezone, currency, country, booking_mode, branch_id')
     .single()
 
   if (updateError) {
