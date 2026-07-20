@@ -145,36 +145,25 @@ export async function POST(req: NextRequest) {
   let authUserId: string | null = null
 
   try {
-    if (send_invite) {
-      const { data: authData, error: inviteError } = await service.auth.admin.inviteUserByEmail(
-        normalizedEmail,
-        {
-          redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/login`,
-          data: { full_name, tmc_id: caller.tmc_id, role: 'tc' },
-        }
-      )
-      if (inviteError) throw new Error(inviteError.message)
-      authUserId = authData.user.id
-    } else {
-      const randomPassword = crypto.randomUUID() + crypto.randomUUID()
-      const { data: authData, error: createError } = await service.auth.admin.createUser({
-        email: normalizedEmail,
-        password: randomPassword,
-        email_confirm: true,
-        user_metadata: { full_name, tmc_id: caller.tmc_id, role: 'tc' },
-      })
-      if (createError) throw new Error(createError.message)
-      authUserId = authData.user.id
-    }
+    const { data: authData, error: inviteError } = await service.auth.admin.inviteUserByEmail(
+      normalizedEmail,
+      {
+        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/login`,
+        data: { full_name, tmc_id: caller.tmc_id, role: 'tc' },
+      }
+    )
+    if (inviteError) throw new Error(inviteError.message)
+    authUserId = authData.user.id
 
     const { error: employeeError } = await service.from('employees').insert({
       id: authUserId,
+      auth_user_id: authUserId,
       tmc_id: caller.tmc_id,
       company_id: null,
       full_name: full_name.trim(),
       email: normalizedEmail,
       role: 'tc',
-      status: send_invite ? 'invited' : 'active',
+      status: 'invited',
     })
 
     if (employeeError) throw new Error(employeeError.message)
@@ -193,18 +182,10 @@ export async function POST(req: NextRequest) {
       if (accessError) throw new Error(accessError.message)
     }
 
-    if (!send_invite) {
-      await service.auth.admin.generateLink({
-        type: 'recovery',
-        email: normalizedEmail,
-        options: { redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/set-password` },
-      })
-    }
-
     return Response.json({
       ok: true,
       employeeId: authUserId,
-      message: `${full_name} added as a TC.${send_invite ? ' Invite sent.' : ' Password setup email sent.'}`,
+      message: `${full_name} invited as a TC.`,
     }, { status: 201 })
 
   } catch (err) {

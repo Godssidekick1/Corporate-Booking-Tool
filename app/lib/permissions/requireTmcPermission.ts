@@ -26,12 +26,16 @@ export async function requireTmcPermission(
 ): Promise<TmcCallerCheck> {
   const { data: caller, error: callerError } = await service
     .from('employees')
-    .select('role, tmc_id')
+    .select('role, tmc_id, status')
     .eq('id', userId)
     .single()
 
   if (callerError || !caller) {
     return { authorized: false, error: 'Employee record not found', status: 404 }
+  }
+
+  if (caller.status === 'deactivated') {
+    return { authorized: false, error: 'This account has been deactivated', status: 403 }
   }
 
   if (!caller.tmc_id || (caller.role !== 'tmc_admin' && caller.role !== 'tc')) {

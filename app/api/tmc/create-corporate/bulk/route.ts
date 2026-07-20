@@ -75,6 +75,7 @@ export async function POST(req: NextRequest) {
   }
 
   const companyId = companyResult.companyId
+  const isCbtOnly = company.bookingMode === 'cbt'
 
   if (employeeRows.length === 0) {
     return Response.json({
@@ -123,27 +124,11 @@ export async function POST(req: NextRequest) {
       continue
     }
 
-    let authUserId: string | null = null
-    try {
-      const randomPassword = crypto.randomUUID() + crypto.randomUUID()
-
-      const { data: authData, error: createError } = await service.auth.admin.createUser({
-        email,
-        password: randomPassword,
-        email_confirm: true,
-        user_metadata: { full_name: fullName, company_id: companyId, role, band_code: band.code },
-      })
-
-      if (createError) {
-        employeeResults.push({ email, status: 'failed', error: createError.message })
-        continue
-      }
-
-      authUserId = authData.user.id
-
+    // ── CBT-only company: pure traveler profile, no auth at all ──────────────
+    if (isCbtOnly) {
       const { error: employeeError } = await service.from('employees').insert({
-        id: authUserId,
         company_id: companyId,
+        auth_user_id: null,
         band_id: band.id,
         band_code: band.code,
         band_rank: band.rank,
@@ -158,16 +143,54 @@ export async function POST(req: NextRequest) {
       })
 
       if (employeeError) {
-        await service.auth.admin.deleteUser(authUserId)
         employeeResults.push({ email, status: 'failed', error: employeeError.message })
         continue
       }
 
-      await service.auth.admin.generateLink({
-        type: 'recovery',
+      employeeResults.push({ email, status: 'created' })
+      continue
+    }
+
+    // ── SBT / hybrid company: real account, real invite email ────────────────
+    let authUserId: string | null = null
+    try {
+      const { data: authData, error: inviteError } = await service.auth.admin.inviteUserByEmail(
         email,
-        options: { redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/set-password` },
+        {
+          redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/login`,
+          data: { full_name: fullName, company_id: companyId, role, band_code: band.code },
+        }
+      )
+
+      if (inviteError) {
+        employeeResults.push({ email, status: 'failed', error: inviteError.message })
+        continue
+      }
+
+      authUserId = authData.user.id
+
+      const { error: employeeError } = await service.from('employees').insert({
+        id: authUserId,
+        auth_user_id: authUserId,
+        company_id: companyId,
+        band_id: band.id,
+        band_code: band.code,
+        band_rank: band.rank,
+        email,
+        full_name: fullName,
+        role,
+        status: 'invited',
+        onboarding_method: 'csv_import',
+        first_login_completed: false,
+        department: row.department?.trim() || null,
+        cost_centre: row.cost_centre?.trim() || null,
       })
+
+      if (employeeError) {
+        await service.auth.admin.deleteUser(authUserId)
+        employeeResults.push({ email, status: 'failed', error: employeeError.message })
+        continue
+      }
 
       employeeResults.push({ email, status: 'created' })
 

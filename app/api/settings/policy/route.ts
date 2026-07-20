@@ -57,7 +57,7 @@ async function getLatestVersionRows(
 
   let rowsQuery = service
     .from('policy_rules')
-    .select('id, band_id, travel_type, limit_key, limit_value, locked, version')
+    .select('id, band_id, band_code, travel_type, limit_key, limit_value, locked, version')
     .eq('company_id', companyId)
     .eq('version', latest.version)
     .is('deleted_at', null)
@@ -93,7 +93,6 @@ export async function GET(req: NextRequest) {
   const companyId = employee.company_id
   const groupIdParam = req.nextUrl.searchParams.get('groupId')
   const policyGroupId = groupIdParam && groupIdParam !== 'null' ? groupIdParam : null
-  
 
   // Company's own current rules for this group
   const { version, rows } = await getLatestVersionRows(service, companyId, policyGroupId)
@@ -106,7 +105,7 @@ export async function GET(req: NextRequest) {
     .eq('id', companyId)
     .single()
 
-  let tmcRows: { band_id: string; travel_type: string; limit_key: string; limit_value: number; locked: boolean }[] = []
+  let tmcRows: { band_code: string; travel_type: string; limit_key: string; limit_value: number; locked: boolean }[] = []
   if (company?.tmc_id) {
     const { data: tmcVersionRow } = await service
       .from('policy_rules')
@@ -120,7 +119,7 @@ export async function GET(req: NextRequest) {
     if (tmcVersionRow) {
       const { data } = await service
         .from('policy_rules')
-        .select('band_id, travel_type, limit_key, limit_value, locked')
+        .select('band_code, travel_type, limit_key, limit_value, locked')
         .eq('tmc_id', company.tmc_id)
         .eq('version', tmcVersionRow.version)
         .is('deleted_at', null)
@@ -207,7 +206,7 @@ export async function POST(req: NextRequest) {
   const lockedKeySet = new Set(
     currentRows
       .filter(r => r.locked)
-      .map(r => `${r.band_id}::${r.travel_type}::${r.limit_key}`)
+      .map(r => `${r.band_code}::${r.travel_type}::${r.limit_key}`)
   )
 
   // ── Build the new version's rows, deduping within this submission ─────────
@@ -220,7 +219,7 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: `Unknown band: ${input.band}` }, { status: 400 })
     }
 
-    const dedupeKey = `${bandId}::${input.travel_type}::${input.limit_key}`
+    const dedupeKey = `${input.band}::${input.travel_type}::${input.limit_key}`
 
     if (seen.has(dedupeKey)) {
       return Response.json(
@@ -245,6 +244,7 @@ export async function POST(req: NextRequest) {
       tmc_id: null,
       policy_group_id: policyGroupId,
       band_id: bandId,
+      band_code: input.band,
       travel_type: input.travel_type,
       limit_key: input.limit_key,
       limit_value: Number(input.limit_value),
@@ -263,6 +263,7 @@ export async function POST(req: NextRequest) {
       tmc_id: null,
       policy_group_id: policyGroupId,
       band_id: row.band_id,
+      band_code: row.band_code,
       travel_type: row.travel_type,
       limit_key: row.limit_key,
       limit_value: row.limit_value,

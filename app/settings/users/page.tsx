@@ -194,6 +194,7 @@ function InviteForm({ onClose, onDone, onError }: {
   onError: (msg: string) => void
 }) {
   const [email, setEmail] = useState('')
+  const [fullName, setFullName] = useState('')
   const [role, setRole] = useState<typeof ROLES[number]>('employee')
   const [band, setBand] = useState('L1')
   const [submitting, setSubmitting] = useState(false)
@@ -202,15 +203,13 @@ function InviteForm({ onClose, onDone, onError }: {
     e.preventDefault()
     setSubmitting(true)
     try {
-      const res = await fetch('/api/setup/invite', {
+      const res = await fetch('/api/employees', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ invites: [{ email, role, band }] }),
+        body: JSON.stringify({ email, full_name: fullName, role, band }),
       })
       const data = await res.json()
       if (!res.ok) { onError(data.error || 'Could not send invite.'); return }
-      const result = data.results?.[0]
-      if (result?.status === 'failed') { onError(result.error); return }
       onDone()
     } finally {
       setSubmitting(false)
@@ -223,8 +222,15 @@ function InviteForm({ onClose, onDone, onError }: {
         <h2 style={s.formTitle}>Invite by email</h2>
         <button type="button" onClick={onClose} style={s.closeBtn}>✕</button>
       </div>
-      <p style={s.formSub}>They'll receive an email invite to set their own password.</p>
+      <p style={s.formSub}>
+        They'll receive an email invite to set their own password. (For CBT-only
+        companies, this adds a traveler profile instead — no email is sent.)
+      </p>
       <div style={s.fields}>
+        <div style={s.field}>
+          <label style={s.label}>Full name</label>
+          <input type="text" required value={fullName} onChange={e => setFullName(e.target.value)} placeholder="Jane Smith" style={s.input} />
+        </div>
         <div style={s.field}>
           <label style={s.label}>Email</label>
           <input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="jane@company.com" style={s.input} />
@@ -261,14 +267,13 @@ function DirectAddForm({ onClose, onDone, onError }: {
 }) {
   const [form, setForm] = useState({
     email: '', full_name: '', role: 'employee' as typeof ROLES[number], band: 'L1',
-    department: '', cost_centre: '', send_welcome_email: true,
+    department: '', cost_centre: '',
   })
   const [submitting, setSubmitting] = useState(false)
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) {
-    const { name, value, type } = e.target
-    const checked = (e.target as HTMLInputElement).checked
-    setForm(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value }))
+    const { name, value } = e.target
+    setForm(prev => ({ ...prev, [name]: value }))
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -294,7 +299,11 @@ function DirectAddForm({ onClose, onDone, onError }: {
         <h2 style={s.formTitle}>Add directly</h2>
         <button type="button" onClick={onClose} style={s.closeBtn}>✕</button>
       </div>
-      <p style={s.formSub}>No invite email required — the account is active immediately.</p>
+      <p style={s.formSub}>
+        Adds this person directly. For SBT/hybrid companies, they'll receive a real
+        invite email. For CBT-only companies, this creates a traveler profile with
+        no login — a travel counsellor books on their behalf.
+      </p>
       <div style={s.fields}>
         <div style={s.field}>
           <label style={s.label}>Full name</label>
@@ -325,15 +334,6 @@ function DirectAddForm({ onClose, onDone, onError }: {
           <input name="cost_centre" type="text" value={form.cost_centre} onChange={handleChange} style={s.input} />
         </div>
       </div>
-      <label style={s.checkboxRow}>
-        <input
-          type="checkbox"
-          name="send_welcome_email"
-          checked={form.send_welcome_email}
-          onChange={handleChange}
-        />
-        Send password setup email
-      </label>
       <div style={s.formActions}>
         <button type="button" onClick={onClose} style={s.ghostBtn}>Cancel</button>
         <button type="submit" disabled={submitting} style={{ ...s.primaryBtn, opacity: submitting ? 0.7 : 1 }}>

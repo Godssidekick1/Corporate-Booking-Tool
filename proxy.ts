@@ -26,7 +26,6 @@ export async function proxy(request: NextRequest) {
 
   const isPublic =
     pathname.startsWith('/auth/') ||
-    pathname.startsWith('/verify-email') ||
     pathname.startsWith('/api/')
 
   if (isPublic) return supabaseResponse
@@ -37,7 +36,7 @@ export async function proxy(request: NextRequest) {
   // authoritative source of truth regardless.
   let resolvedRole = user?.user_metadata?.role as string | undefined
 
-  const isAuthOnly = pathname === '/login' || pathname === '/register'
+  const isAuthOnly = pathname === '/login'
   const needsRoleCheck = user && (isAuthOnly || pathname.startsWith('/tmc'))
 
   if (needsRoleCheck && !resolvedRole) {

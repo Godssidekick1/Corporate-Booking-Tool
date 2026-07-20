@@ -3,9 +3,16 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { NextRequest } from 'next/server'
 
 // ── POST /api/employees ───────────────────────────────────────────────────────
-// Direct employee creation — no invite email sent by default.
-// The employee is created in auth.users with a random password and, if
-// send_welcome_email is true, receives a password-reset link to set their own.
+// Adds an employee to the admin's company. Behavior depends on the company's
+// booking_mode:
+//
+//   sbt / both — the employee needs to log in and book for themselves, so
+//   this always sends a real Supabase invite email (inviteUserByEmail).
+//   status starts as 'invited' until they accept and set a password.
+//
+//   cbt — the employee is a traveler profile only. A travel counsellor books
+//   on their behalf; they never need to log in. No auth.users row is created
+//   at all, no email is sent. employees.auth_user_id stays null for this row.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const VALID_ROLES = ['employee', 'manager', 'finance', 'admin'] as const
@@ -18,7 +25,6 @@ interface CreateEmployeeBody {
   band: string
   department?: string
   cost_centre?: string
-  send_welcome_email?: boolean
 }
 
 export async function POST(req: NextRequest) {
@@ -47,8 +53,20 @@ export async function POST(req: NextRequest) {
 
   const companyId = caller.company_id
 
+  const { data: company, error: companyError } = await service
+    .from('companies')
+    .select('booking_mode')
+    .eq('id', companyId)
+    .single()
+
+  if (companyError || !company) {
+    return Response.json({ error: 'Company not found' }, { status: 404 })
+  }
+
+  const isCbtOnly = company.booking_mode === 'cbt'
+
   const body: CreateEmployeeBody = await req.json()
-  const { email, full_name, role, band, department, cost_centre, send_welcome_email = true } = body
+  const { email, full_name, role, band, department, cost_centre } = body
 
   if (!email || !full_name || !role || !band) {
     return Response.json(
@@ -92,33 +110,65 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  // ── CBT-only company: pure traveler profile, no auth at all ────────────────
+  if (isCbtOnly) {
+    const { data: employee, error: employeeError } = await service
+      .from('employees')
+      .insert({
+        company_id: companyId,
+        auth_user_id: null,
+        band_id: bandRow.id,
+        band_code: bandRow.code,
+        band_rank: bandRow.rank,
+        email: normalizedEmail,
+        full_name,
+        role: normalizedRole,
+        status: 'active', // no acceptance step exists for a profile that can't log in
+        onboarding_method: 'direct_create',
+        first_login_completed: false,
+        department: department ?? null,
+        cost_centre: cost_centre ?? null,
+      })
+      .select('id')
+      .single()
+
+    if (employeeError) {
+      return Response.json({ error: employeeError.message }, { status: 500 })
+    }
+
+    return Response.json({
+      ok: true,
+      employeeId: employee.id,
+      message: `${full_name} added as a traveler profile. This company books via CBT, so no login account was created.`,
+    }, { status: 201 })
+  }
+
+  // ── SBT / hybrid company: real account, real invite email ─────────────────
   let authUserId: string | null = null
 
   try {
-    const randomPassword = crypto.randomUUID() + crypto.randomUUID()
+    const { data: authData, error: inviteError } = await service.auth.admin.inviteUserByEmail(
+      normalizedEmail,
+      {
+        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/login`,
+        data: {
+          full_name,
+          company_id: companyId,
+          role: normalizedRole,
+          band_code: bandRow.code,
+        },
+      }
+    )
 
-    const { data: authData, error: createError } = await service.auth.admin.createUser({
-      email: normalizedEmail,
-      password: randomPassword,
-      email_confirm: true,
-      user_metadata: {
-        full_name,
-        company_id: companyId,
-        role: normalizedRole,
-        band_code: bandRow.code,
-      },
-    })
-
-    if (createError) {
-      return Response.json({ error: createError.message }, { status: 400 })
+    if (inviteError) {
+      return Response.json({ error: inviteError.message }, { status: 400 })
     }
 
     authUserId = authData.user.id
 
-    // Direct-create employees skip 'invited' — no acceptance step required,
-    // they're immediately usable (optionally with a password reset link below).
     const { error: employeeError } = await service.from('employees').insert({
       id: authUserId,
+      auth_user_id: authUserId,
       company_id: companyId,
       band_id: bandRow.id,
       band_code: bandRow.code,
@@ -126,7 +176,7 @@ export async function POST(req: NextRequest) {
       email: normalizedEmail,
       full_name,
       role: normalizedRole,
-      status: 'active',
+      status: 'invited',
       onboarding_method: 'direct_create',
       first_login_completed: false,
       department: department ?? null,
@@ -138,20 +188,10 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: employeeError.message }, { status: 500 })
     }
 
-    if (send_welcome_email) {
-      await service.auth.admin.generateLink({
-        type: 'recovery',
-        email: normalizedEmail,
-        options: {
-          redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/set-password`,
-        },
-      })
-    }
-
     return Response.json({
       ok: true,
       employeeId: authUserId,
-      message: `Employee ${full_name} created${send_welcome_email ? '. Password setup email sent.' : '. No email sent — share login instructions manually.'}`,
+      message: `Invite sent to ${full_name} at ${normalizedEmail}.`,
     }, { status: 201 })
 
   } catch (err) {
