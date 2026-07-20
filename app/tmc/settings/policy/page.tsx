@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import TmcShell from '@/app/components/TmcShell'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -238,8 +237,7 @@ export default function TmcPolicyPage() {
   const selectedGroup = groups.find(g => g.id === selectedGroupId)
 
   return (
-    <TmcShell activeLabel="Settings">
-      <div style={s.root}>
+    <div style={s.root}>
         <div style={s.header}>
           <h1 style={s.heading}>Policy</h1>
           <p style={s.sub}>Set travel policy per client, by policy group and band.</p>
@@ -411,15 +409,14 @@ export default function TmcPolicyPage() {
             )}
           </>
         )}
-      </div>
-    </TmcShell>
+    </div>
   )
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const s: Record<string, React.CSSProperties> = {
-  root: { fontFamily: "'Inter', -apple-system, sans-serif", padding: '32px 40px' },
+  root: { fontFamily: "'Inter', -apple-system, sans-serif" },
   header: { marginBottom: '20px' },
   heading: { fontSize: '20px', fontWeight: 600, color: '#0A0A14', margin: '0 0 4px', letterSpacing: '-0.3px' },
   sub: { fontSize: '13px', color: '#6B7280', margin: 0 },
