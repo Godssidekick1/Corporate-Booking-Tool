@@ -3,14 +3,14 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
 
-// ── GET /api/tmc/branches ─────────────────────────────────────────────────────
-// List all branches for this TMC. Any TMC-side caller can view.
+// ── GET /api/tmc/client-groups ────────────────────────────────────────────────
+// List all client groups for this TMC. Any TMC-side caller can view.
 //
-// ── POST /api/tmc/branches ────────────────────────────────────────────────────
-// Create a new branch. Requires manage_branches permission (or tmc_admin).
+// ── POST /api/tmc/client-groups ───────────────────────────────────────────────
+// Create a new client group. Requires manage_client_groups permission (or tmc_admin).
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface CreateBranchBody {
+interface CreateClientGroupBody {
   name: string
   city?: string
   country?: string
@@ -36,8 +36,8 @@ export async function GET() {
     return Response.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  const { data: branches, error } = await service
-    .from('branches')
+  const { data: clientGroups, error } = await service
+    .from('client_groups')
     .select('id, name, city, country, created_at')
     .eq('tmc_id', caller.tmc_id)
     .order('name')
@@ -46,7 +46,7 @@ export async function GET() {
     return Response.json({ error: error.message }, { status: 500 })
   }
 
-  return Response.json({ ok: true, branches: branches ?? [] })
+  return Response.json({ ok: true, clientGroups: clientGroups ?? [] })
 }
 
 export async function POST(req: NextRequest) {
@@ -59,20 +59,20 @@ export async function POST(req: NextRequest) {
 
   const service = createServiceClient()
 
-  const auth = await requireTmcPermission(service, user.id, 'manage_branches')
+  const auth = await requireTmcPermission(service, user.id, 'manage_client_groups')
   if (!auth.authorized) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }
 
-  const body: CreateBranchBody = await req.json()
+  const body: CreateClientGroupBody = await req.json()
   const { name, city, country } = body
 
   if (!name?.trim()) {
-    return Response.json({ error: 'Branch name is required' }, { status: 400 })
+    return Response.json({ error: 'Client group name is required' }, { status: 400 })
   }
 
-  const { data: branch, error } = await service
-    .from('branches')
+  const { data: clientGroup, error } = await service
+    .from('client_groups')
     .insert({
       tmc_id: auth.tmcId,
       name: name.trim(),
@@ -86,5 +86,5 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: error.message }, { status: 500 })
   }
 
-  return Response.json({ ok: true, branch }, { status: 201 })
+  return Response.json({ ok: true, clientGroup }, { status: 201 })
 }

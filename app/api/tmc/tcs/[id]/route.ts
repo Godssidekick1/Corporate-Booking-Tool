@@ -9,7 +9,7 @@ import { NextRequest } from 'next/server'
 
 const VALID_PERMISSIONS = [
   'manage_policy', 'manage_users', 'manage_approvals',
-  'manage_branches', 'view_reports', 'book_on_behalf',
+  'manage_client_groups', 'view_reports', 'book_on_behalf',
 ] as const
 
 interface UpdateTcBody {

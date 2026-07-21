@@ -25,6 +25,15 @@ interface RuleRow {
   limit_bool: boolean | null
 }
 
+interface EmployeeAssignment {
+  id: string
+  full_name: string
+  email: string
+  band_code: string | null
+  status: string
+  policyGroupId: string | null
+}
+
 // ── Rule definitions ────────────────────────────────────────────────────────
 
 type FieldKind = 'numeric' | 'boolean'
@@ -104,10 +113,15 @@ function gridToRules(grid: Grid): RuleRow[] {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function TmcPolicyPage() {
+  const [tab, setTab] = useState<'rules' | 'employees'>('rules')
+
   const [companies, setCompanies] = useState<Company[]>([])
   const [selectedCompanyId, setSelectedCompanyId] = useState('')
   const [groups, setGroups] = useState<PolicyGroup[]>([])
   const [selectedGroupId, setSelectedGroupId] = useState('')
+
+  const [employees, setEmployees] = useState<EmployeeAssignment[]>([])
+  const [loadingEmployees, setLoadingEmployees] = useState(false)
 
   const [grid, setGrid] = useState<Grid>(buildEmptyGrid())
   const [version, setVersion] = useState(0)
@@ -142,6 +156,38 @@ export default function TmcPolicyPage() {
     loadRules(selectedCompanyId, selectedGroupId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCompanyId, selectedGroupId])
+
+  useEffect(() => {
+    if (tab !== 'employees' || !selectedCompanyId) return
+    loadEmployees(selectedCompanyId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, selectedCompanyId])
+
+  async function loadEmployees(companyId: string) {
+    setLoadingEmployees(true)
+    setError('')
+    try {
+      const res = await fetch(`/api/tmc/employee-assignments?companyId=${companyId}`)
+      const data = await res.json()
+      if (!res.ok) { setError(data.error || 'Could not load employees.'); return }
+      setEmployees(data.employees)
+    } finally {
+      setLoadingEmployees(false)
+    }
+  }
+
+  async function handleAssignGroup(employeeId: string, policyGroupId: string) {
+    setError(''); setSuccess('')
+    const res = await fetch('/api/tmc/employee-assignments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employeeId, policyGroupId }),
+    })
+    const data = await res.json()
+    if (!res.ok) { setError(data.error || 'Could not assign policy group.'); return }
+    setEmployees(prev => prev.map(e => e.id === employeeId ? { ...e, policyGroupId } : e))
+    setSuccess('Policy group assigned.')
+  }
 
   async function loadGroups(companyId: string) {
     setLoadingGroups(true)
@@ -258,10 +304,72 @@ export default function TmcPolicyPage() {
           </div>
         </div>
 
+        {selectedCompanyId && (
+          <div style={s.tabRow}>
+            <button
+              onClick={() => setTab('rules')}
+              style={{ ...s.tabBtn, ...(tab === 'rules' ? s.tabBtnActive : {}) }}
+            >
+              Policy rules
+            </button>
+            <button
+              onClick={() => setTab('employees')}
+              style={{ ...s.tabBtn, ...(tab === 'employees' ? s.tabBtnActive : {}) }}
+            >
+              Assign employees
+            </button>
+          </div>
+        )}
+
         {error && <div style={s.errorBanner}>✕ {error}</div>}
         {success && <div style={s.successBanner}>✓ {success}</div>}
 
-        {selectedCompanyId && (
+        {selectedCompanyId && tab === 'employees' && (
+          <div style={s.rulesSection}>
+            <h2 style={s.sectionTitle}>Employee → policy group assignments</h2>
+            <p style={s.mutedText}>Each employee belongs to exactly one policy group. Reassigning replaces their current group.</p>
+
+            {loadingEmployees ? (
+              <p style={s.mutedText}>Loading employees…</p>
+            ) : employees.length === 0 ? (
+              <p style={s.mutedText}>No employees found for this company.</p>
+            ) : groups.length === 0 ? (
+              <p style={s.mutedText}>Create a policy group first, under the "Policy rules" tab.</p>
+            ) : (
+              <table style={s.table}>
+                <thead>
+                  <tr>
+                    {['Name', 'Email', 'Band', 'Status', 'Policy group'].map(h => (
+                      <th key={h} style={s.th}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {employees.map((emp, i) => (
+                    <tr key={emp.id} style={{ background: i % 2 === 0 ? '#fff' : '#FAFAFA' }}>
+                      <td style={s.td}>{emp.full_name}</td>
+                      <td style={{ ...s.td, color: '#6B7280' }}>{emp.email}</td>
+                      <td style={s.td}>{emp.band_code ?? '—'}</td>
+                      <td style={s.td}>{emp.status}</td>
+                      <td style={s.td}>
+                        <select
+                          value={emp.policyGroupId ?? ''}
+                          onChange={e => handleAssignGroup(emp.id, e.target.value)}
+                          style={s.cellSelect}
+                        >
+                          <option value="" disabled>Unassigned — select a group</option>
+                          {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                        </select>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+
+        {selectedCompanyId && tab === 'rules' && (
           <>
             <div style={s.groupSection}>
               <div style={s.groupSectionHeader}>
@@ -421,6 +529,10 @@ const s: Record<string, React.CSSProperties> = {
   heading: { fontSize: '20px', fontWeight: 600, color: '#0A0A14', margin: '0 0 4px', letterSpacing: '-0.3px' },
   sub: { fontSize: '13px', color: '#6B7280', margin: 0 },
   selectorRow: { marginBottom: '20px', maxWidth: '360px' },
+  tabRow: { display: 'flex', gap: '4px', marginBottom: '16px', borderBottom: '1px solid #E5E7EB' },
+  tabBtn: { padding: '8px 14px', background: 'transparent', border: 'none', borderBottom: '2px solid transparent', fontSize: '13px', color: '#6B7280', cursor: 'pointer', marginBottom: '-1px' },
+  tabBtnActive: { color: '#000835', fontWeight: 600, borderBottomColor: '#000835' },
+  cellSelect: { fontSize: '12px', color: '#374151', padding: '5px 8px', border: '1px solid #E5E7EB', borderRadius: '5px', background: '#fff' },
   field: { display: 'flex', flexDirection: 'column', gap: '6px' },
   label: { fontSize: '12px', fontWeight: 500, color: '#374151' },
   input: { height: '38px', padding: '0 10px', fontSize: '13px', color: '#111827', background: '#fff', border: '1px solid #D1D5DB', borderRadius: '7px', outline: 'none' },

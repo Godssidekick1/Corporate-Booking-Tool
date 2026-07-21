@@ -20,7 +20,7 @@ interface Company {
   created_at: string
 }
 
-interface Branch {
+interface client_group {
   id: string
   name: string
   city: string | null
@@ -49,14 +49,14 @@ const MAX_EMPLOYEES = 250
 const initialForm = {
   corporateName: '', adminName: '', adminEmail: '',
   registeredAddress: '', gstNumber: '', industry: '', primaryContactPhone: '',
-  size: '', bookingMode: 'sbt', branchId: '',
+  size: '', bookingMode: 'sbt', client_groupId: '',
 }
 
 export default function TmcDashboardPage() {
   const [employee, setEmployee] = useState<Employee | null>(null)
   const [permissions, setPermissions] = useState<string[]>([])
   const [companies, setCompanies] = useState<Company[]>([])
-  const [branches, setBranches] = useState<Branch[]>([])
+  const [client_groups, setclient_groups] = useState<client_group[]>([])
   const [loading, setLoading] = useState(true)
   const [showInviteForm, setShowInviteForm] = useState(false)
   const [form, setForm] = useState(initialForm)
@@ -74,14 +74,14 @@ export default function TmcDashboardPage() {
     Promise.all([
       fetch('/api/me').then(r => r.json()),
       fetch('/api/tmc/companies').then(r => r.json()),
-      fetch('/api/tmc/branches').then(r => r.json()),
-    ]).then(([meData, companiesData, branchesData]) => {
+      fetch('/api/tmc/client_groups').then(r => r.json()),
+    ]).then(([meData, companiesData, client_groupsData]) => {
       if (meData.ok) {
         setEmployee(meData.employee)
         setPermissions(meData.permissions ?? [])
       }
       if (companiesData.ok) setCompanies(companiesData.companies)
-      if (branchesData.ok) setBranches(branchesData.branches)
+      if (client_groupsData.ok) setclient_groups(client_groupsData.client_groups)
     }).finally(() => setLoading(false))
   }, [])
 
@@ -169,7 +169,7 @@ export default function TmcDashboardPage() {
       const res = await fetch('/api/tmc/create-corporate/bulk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company: { ...form, branchId: form.branchId || null }, employees: employeesPayload }),
+        body: JSON.stringify({ company: { ...form, client_groupId: form.client_groupId || null }, employees: employeesPayload }),
       })
       const data = await res.json()
 
@@ -221,19 +221,19 @@ export default function TmcDashboardPage() {
               Optionally upload a CSV to add their employee roster at the same time.
             </p>
 
-            {/* ── Branch ── */}
-            <SectionLabel>Branch</SectionLabel>
+            {/* ── client_group ── */}
+            <SectionLabel>client_group</SectionLabel>
             <div style={s.fields}>
               <div style={s.field}>
-                <label style={s.label}>Assign to branch</label>
-                {branches.length === 0 ? (
-                  <p style={s.noBranchHint}>
-                    No branches yet — <a href="/tmc/settings/branches" style={s.inlineLink}>create one</a> to group your clients, or leave unassigned.
+                <label style={s.label}>Assign to client_group</label>
+                {client_groups.length === 0 ? (
+                  <p style={s.noclient_groupHint}>
+                    No client_groups yet — <a href="/tmc/settings/client_groups" style={s.inlineLink}>create one</a> to group your clients, or leave unassigned.
                   </p>
                 ) : (
-                  <select name="branchId" value={form.branchId} onChange={handleFormChange} style={s.input}>
+                  <select name="client_groupId" value={form.client_groupId} onChange={handleFormChange} style={s.input}>
                     <option value="">Unassigned</option>
-                    {branches.map(b => (
+                    {client_groups.map(b => (
                       <option key={b.id} value={b.id}>{b.name}{b.city ? ` — ${b.city}` : ''}</option>
                     ))}
                   </select>
@@ -445,7 +445,7 @@ const s: Record<string, React.CSSProperties> = {
   formTitle: { fontSize: '16px', fontWeight: 600, color: '#111827', margin: 0 },
   closeBtn: { backgroundColor: 'transparent', border: 'none', color: '#9CA3AF', fontSize: '16px', cursor: 'pointer' },
   formSub: { fontSize: '13px', color: '#6B7280', margin: '0 0 18px', lineHeight: '1.5' },
-  noBranchHint: { fontSize: '12px', color: '#9CA3AF', margin: 0, lineHeight: '1.5' },
+  noclient_groupHint: { fontSize: '12px', color: '#9CA3AF', margin: 0, lineHeight: '1.5' },
   inlineLink: { color: '#000835', fontWeight: 600, textDecoration: 'underline' },
   sectionLabel: { fontSize: '11px', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.5px', margin: '18px 0 10px' },
   fields: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '14px' },

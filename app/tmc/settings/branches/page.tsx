@@ -1,8 +1,11 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import CityDropdown from '@/app/components/CityDropdown'
+import CountryDropdown from '@/app/components/CountryDropdown'
 
-interface Branch {
+
+interface client_group {
   id: string
   name: string
   city: string | null
@@ -10,8 +13,8 @@ interface Branch {
   created_at: string
 }
 
-export default function TmcBranchesPage() {
-  const [branches, setBranches] = useState<Branch[]>([])
+export default function Tmcclient_groupsPage() {
+  const [client_groups, setclient_groups] = useState<client_group[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -21,15 +24,15 @@ export default function TmcBranchesPage() {
   const [success, setSuccess] = useState('')
 
   useEffect(() => {
-    loadBranches()
+    loadclient_groups()
   }, [])
 
-  async function loadBranches() {
+  async function loadclient_groups() {
     setLoading(true)
     try {
-      const res = await fetch('/api/tmc/branches')
+      const res = await fetch('/api/tmc/client_groups')
       const data = await res.json()
-      if (data.ok) setBranches(data.branches)
+      if (data.ok) setclient_groups(data.client_groups)
     } finally {
       setLoading(false)
     }
@@ -42,9 +45,9 @@ export default function TmcBranchesPage() {
     setError(''); setSuccess('')
   }
 
-  function openEdit(branch: Branch) {
-    setForm({ name: branch.name, city: branch.city ?? '', country: branch.country ?? '' })
-    setEditingId(branch.id)
+  function openEdit(client_group: client_group) {
+    setForm({ name: client_group.name, city: client_group.city ?? '', country: client_group.country ?? '' })
+    setEditingId(client_group.id)
     setShowForm(true)
     setError(''); setSuccess('')
   }
@@ -54,7 +57,7 @@ export default function TmcBranchesPage() {
     setSubmitting(true)
     setError('')
     try {
-      const url = editingId ? `/api/tmc/branches/${editingId}` : '/api/tmc/branches'
+      const url = editingId ? `/api/tmc/client_groups/${editingId}` : '/api/tmc/client_groups'
       const method = editingId ? 'PATCH' : 'POST'
       const res = await fetch(url, {
         method,
@@ -62,33 +65,33 @@ export default function TmcBranchesPage() {
         body: JSON.stringify(form),
       })
       const data = await res.json()
-      if (!res.ok) { setError(data.error || 'Could not save branch.'); return }
+      if (!res.ok) { setError(data.error || 'Could not save client_group.'); return }
       setShowForm(false)
-      setSuccess(editingId ? 'Branch updated.' : 'Branch created.')
-      loadBranches()
+      setSuccess(editingId ? 'client_group updated.' : 'client_group created.')
+      loadclient_groups()
     } finally {
       setSubmitting(false)
     }
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('Delete this branch? Companies assigned to it will become unassigned, not deleted.')) return
+    if (!confirm('Delete this client_group? Companies assigned to it will become unassigned, not deleted.')) return
     setError(''); setSuccess('')
-    const res = await fetch(`/api/tmc/branches/${id}`, { method: 'DELETE' })
+    const res = await fetch(`/api/tmc/client_groups/${id}`, { method: 'DELETE' })
     const data = await res.json()
-    if (!res.ok) { setError(data.error || 'Could not delete branch.'); return }
-    setSuccess('Branch deleted.')
-    loadBranches()
+    if (!res.ok) { setError(data.error || 'Could not delete client_group.'); return }
+    setSuccess('client_group deleted.')
+    loadclient_groups()
   }
 
   return (
     <div style={s.root}>
       <div style={s.header}>
         <div>
-          <h1 style={s.heading}>Branches</h1>
-          <p style={s.sub}>Group your client companies by branch, region, or office.</p>
+          <h1 style={s.heading}>client_groups</h1>
+          <p style={s.sub}>Group your client companies by client_group, region, or office.</p>
         </div>
-        <button onClick={openCreate} style={s.primaryBtn}>+ Add branch</button>
+        <button onClick={openCreate} style={s.primaryBtn}>+ Add client_group</button>
       </div>
 
       {success && <div style={s.successBanner}>✓ {success}</div>}
@@ -97,12 +100,12 @@ export default function TmcBranchesPage() {
       {showForm && (
         <form onSubmit={handleSubmit} style={s.formCard}>
           <div style={s.formHeader}>
-            <h2 style={s.formTitle}>{editingId ? 'Edit branch' : 'Add a branch'}</h2>
+            <h2 style={s.formTitle}>{editingId ? 'Edit client_group' : 'Add a client_group'}</h2>
             <button type="button" onClick={() => setShowForm(false)} style={s.closeBtn}>✕</button>
           </div>
           <div style={s.fields}>
             <div style={s.field}>
-              <label style={s.label}>Branch name</label>
+              <label style={s.label}>client_group name</label>
               <input
                 type="text" required
                 value={form.name} onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))}
@@ -111,25 +114,21 @@ export default function TmcBranchesPage() {
             </div>
             <div style={s.field}>
               <label style={s.label}>City</label>
-              <input
-                type="text"
-                value={form.city} onChange={e => setForm(prev => ({ ...prev, city: e.target.value }))}
-                placeholder="e.g. New Delhi" style={s.input}
+              <CityDropdown
+                value={form.city} onChange={city => setForm(prev => ({ ...prev, city}))}
               />
             </div>
             <div style={s.field}>
               <label style={s.label}>Country</label>
-              <input
-                type="text"
-                value={form.country} onChange={e => setForm(prev => ({ ...prev, country: e.target.value }))}
-                placeholder="e.g. India" style={s.input}
+              <CountryDropdown
+                value={form.country} onChange={country => setForm(prev => ({ ...prev, country}))}
               />
             </div>
           </div>
           <div style={s.formActions}>
             <button type="button" onClick={() => setShowForm(false)} style={s.ghostBtn}>Cancel</button>
             <button type="submit" disabled={submitting} style={{ ...s.primaryBtn, opacity: submitting ? 0.7 : 1 }}>
-              {submitting ? 'Saving…' : editingId ? 'Save changes →' : 'Create branch →'}
+              {submitting ? 'Saving…' : editingId ? 'Save changes →' : 'Create client_group →'}
             </button>
           </div>
         </form>
@@ -138,10 +137,10 @@ export default function TmcBranchesPage() {
       <div style={s.card}>
         {loading ? (
           <div style={s.emptyState}><p style={s.emptyTitle}>Loading…</p></div>
-        ) : branches.length === 0 ? (
+        ) : client_groups.length === 0 ? (
           <div style={s.emptyState}>
-            <p style={s.emptyTitle}>No branches yet</p>
-            <p style={s.emptyDesc}>Create your first branch to start grouping client companies.</p>
+            <p style={s.emptyTitle}>No client_groups yet</p>
+            <p style={s.emptyDesc}>Create your first client_group to start grouping client companies.</p>
           </div>
         ) : (
           <table style={s.table}>
@@ -151,7 +150,7 @@ export default function TmcBranchesPage() {
               </tr>
             </thead>
             <tbody>
-              {branches.map((b, i) => (
+              {client_groups.map((b, i) => (
                 <tr key={b.id} style={{ background: i % 2 === 0 ? '#fff' : '#FAFAFA' }}>
                   <td style={s.td}><span style={s.name}>{b.name}</span></td>
                   <td style={{ ...s.td, color: '#6B7280' }}>{b.city ?? '—'}</td>

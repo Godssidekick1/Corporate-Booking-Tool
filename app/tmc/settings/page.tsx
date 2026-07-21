@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation'
 
 export default function TmcSettingsIndexPage() {
-  redirect('/tmc/settings/branches')
+  redirect('/tmc/settings/client_groups')
 }

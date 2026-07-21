@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 import { canAccess } from '@/app/lib/permissions/canAccess'
 
 const SECTIONS = [
-  { label: 'Branches',     href: '/tmc/settings/branches',     permission: 'manage_branches' },
+  { label: 'client_groups',     href: '/tmc/settings/client_groups',     permission: 'manage_client_groups' },
   { label: 'Users',        href: '/tmc/settings/users',        permission: 'manage_users' },
   { label: 'Policy',       href: '/tmc/settings/policy',       permission: 'manage_policy' },
   { label: 'Approvals',    href: '/tmc/settings/approvals',    permission: 'manage_approvals' },

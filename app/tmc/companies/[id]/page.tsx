@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import TmcShell from '@/app/components/TmcShell'
+import CountryDropdown from '@/app/components/CountryDropdown'
 
 interface Company {
   id: string
@@ -13,11 +14,11 @@ interface Company {
   currency: string
   country: string | null
   booking_mode: 'sbt' | 'cbt' | 'both'
-  branch_id: string | null
+  client_group_id: string | null
   created_at: string
 }
 
-interface Branch {
+interface client_group {
   id: string
   name: string
   city: string | null
@@ -36,21 +37,21 @@ export default function TmcCompanyDetailPage() {
   const companyId = params.id as string
 
   const [company, setCompany] = useState<Company | null>(null)
-  const [branches, setBranches] = useState<Branch[]>([])
+  const [client_groups, setclient_groups] = useState<client_group[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
   const [form, setForm] = useState({
-    name: '', timezone: '', currency: '', country: '', booking_mode: 'sbt' as Company['booking_mode'], branch_id: '',
+    name: '', timezone: '', currency: '', country: '', booking_mode: 'sbt' as Company['booking_mode'], client_group_id: '',
   })
 
   useEffect(() => {
     Promise.all([
       fetch(`/api/tmc/companies/${companyId}`).then(r => r.json()),
-      fetch('/api/tmc/branches').then(r => r.json()),
-    ]).then(([companyData, branchesData]) => {
+      fetch('/api/tmc/client_groups').then(r => r.json()),
+    ]).then(([companyData, client_groupsData]) => {
         if (!companyData.ok) {
           setError(companyData.error || 'Could not load company.')
           return
@@ -63,9 +64,9 @@ export default function TmcCompanyDetailPage() {
           currency: c.currency ?? 'INR',
           country: c.country ?? '',
           booking_mode: c.booking_mode ?? 'sbt',
-          branch_id: c.branch_id ?? '',
+          client_group_id: c.client_group_id ?? '',
         })
-        if (branchesData.ok) setBranches(branchesData.branches)
+        if (client_groupsData.ok) setclient_groups(client_groupsData.client_groups)
       })
       .catch(() => setError('Could not load company.'))
       .finally(() => setLoading(false))
@@ -149,24 +150,22 @@ export default function TmcCompanyDetailPage() {
 
         <div style={s.field}>
           <label style={s.label} htmlFor="country">Country</label>
-          <input
-            id="country" name="country" type="text"
-            value={form.country} onChange={handleChange}
-            placeholder="e.g. India"
-            style={s.input}
+          <CountryDropdown
+            id="country" name="country"
+            value={form.country} onChange={(country) => setForm(prev => ({ ...prev, country }))}
           />
         </div>
 
         <div style={s.field}>
-          <label style={s.label} htmlFor="branch_id">Branch</label>
-          {branches.length === 0 ? (
+          <label style={s.label} htmlFor="client_group_id">client_group</label>
+          {client_groups.length === 0 ? (
             <p style={s.hint}>
-              No branches yet — <a href="/tmc/settings/branches" style={s.inlineLink}>create one</a> to assign this company.
+              No client_groups yet — <a href="/tmc/settings/client_groups" style={s.inlineLink}>create one</a> to assign this company.
             </p>
           ) : (
-            <select id="branch_id" name="branch_id" value={form.branch_id} onChange={handleChange} style={s.input}>
+            <select id="client_group_id" name="client_group_id" value={form.client_group_id} onChange={handleChange} style={s.input}>
               <option value="">Unassigned</option>
-              {branches.map(b => (
+              {client_groups.map(b => (
                 <option key={b.id} value={b.id}>{b.name}{b.city ? ` — ${b.city}` : ''}</option>
               ))}
             </select>

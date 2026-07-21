@@ -21,7 +21,7 @@ interface UpdateCompanyBody {
   currency?: string
   country?: string
   booking_mode?: string
-  branch_id?: string | null
+  client_group_id?: string | null
 }
 
 export async function GET(
@@ -63,7 +63,7 @@ export async function GET(
 
   const { data: company, error } = await service
     .from('companies')
-    .select('id, name, status, setup_completed, timezone, currency, country, booking_mode, created_at, branch_id, managed_by')
+    .select('id, name, status, setup_completed, timezone, currency, country, booking_mode, created_at, client_group_id, managed_by')
     .eq('id', id)
     .eq('tmc_id', caller.tmc_id)
     .single()
@@ -112,7 +112,7 @@ export async function PATCH(
   }
 
   const body: UpdateCompanyBody = await req.json()
-  const { name, timezone, currency, country, booking_mode, branch_id } = body
+  const { name, timezone, currency, country, booking_mode, client_group_id} = body
 
   const update: Record<string, string | null> = {}
 
@@ -143,21 +143,21 @@ export async function PATCH(
     update.country = country.trim()
   }
 
-  if (branch_id !== undefined) {
-    if (branch_id === null || branch_id === '') {
-      update.branch_id = null
+  if (client_group_id !== undefined) {
+    if (client_group_id === null || client_group_id === '') {
+      update.client_group_id = null
     } else {
-      const { data: branch } = await service
-        .from('branches')
+      const { data: clientGroup } = await service
+        .from('client_groups')
         .select('id')
-        .eq('id', branch_id)
+        .eq('id', client_group_id)
         .eq('tmc_id', caller.tmc_id)
         .maybeSingle()
 
-      if (!branch) {
-        return Response.json({ error: 'Branch not found for this TMC' }, { status: 404 })
+      if (!clientGroup) {
+        return Response.json({ error: 'Client group not found for this TMC' }, { status: 404 })
       }
-      update.branch_id = branch_id
+      update.client_group_id = client_group_id
     }
   }
 
@@ -179,7 +179,7 @@ export async function PATCH(
     .from('companies')
     .update(update)
     .eq('id', id)
-    .select('id, name, timezone, currency, country, booking_mode, branch_id')
+    .select('id, name, timezone, currency, country, booking_mode, client_group_id')
     .single()
 
   if (updateError) {

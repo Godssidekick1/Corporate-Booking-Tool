@@ -21,7 +21,7 @@ const PERMISSIONS: { key: string; label: string; desc: string }[] = [
   { key: 'manage_policy',    label: 'Manage policy',    desc: 'Create and edit policy groups & rules for companies' },
   { key: 'manage_users',     label: 'Manage users',     desc: 'Invite, deactivate, and edit employees within companies' },
   { key: 'manage_approvals', label: 'Manage approvals', desc: 'Configure approval chains' },
-  { key: 'manage_branches',  label: 'Manage branches',  desc: 'Create and edit branches' },
+  { key: 'manage_client_groups',  label: 'Manage client_groups',  desc: 'Create and edit client_groups' },
   { key: 'view_reports',     label: 'View reports',     desc: 'View cross-company spend & compliance reports' },
   { key: 'book_on_behalf',   label: 'Book on behalf',   desc: 'Act as a CBT travel counsellor — make bookings for travelers' },
 ]

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, useRef } from 'react'
 import TmcShell from '@/app/components/TmcShell'
 
-interface Branch {
+interface client_group {
   id: string
   name: string
   city: string | null
@@ -16,8 +16,8 @@ interface Company {
   setup_completed: boolean
   created_at: string
   booking_mode: 'sbt' | 'cbt' | 'both'
-  branch_id: string | null
-  branches: Branch | null
+  client_group_id: string | null
+  client_groups: client_group | null
 }
 
 const BOOKING_MODE_LABEL: Record<Company['booking_mode'], string> = {
@@ -50,48 +50,48 @@ export default function TmcCompaniesPage() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  // ── Suggestions: matching companies and branches, combined ────────────────
+  // ── Suggestions: matching companies and client_groupes, combined ────────────────
   const suggestions = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return { companies: [], branches: [] }
+    if (!q) return { companies: [], client_groups: [] }
 
     const matchedCompanies = companies.filter(c => c.name.toLowerCase().includes(q)).slice(0, 6)
 
-    const branchMap = new Map<string, Branch>()
+    const client_groupMap = new Map<string, client_group>()
     for (const c of companies) {
-      if (c.branches && c.branches.name.toLowerCase().includes(q)) {
-        branchMap.set(c.branches.id, c.branches)
+      if (c.client_groups && c.client_groups.name.toLowerCase().includes(q)) {
+        client_groupMap.set(c.client_groups.id, c.client_groups)
       }
     }
-    const matchedBranches = Array.from(branchMap.values()).slice(0, 6)
+    const matchedclient_groups = Array.from(client_groupMap.values()).slice(0, 6)
 
-    return { companies: matchedCompanies, branches: matchedBranches }
+    return { companies: matchedCompanies, client_groups: matchedclient_groups }
   }, [query, companies])
 
-  // ── Filtered + grouped-by-branch, alphabetical ─────────────────────────────
+  // ── Filtered + grouped-by-client_group, alphabetical ─────────────────────────────
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase()
     const filtered = q
       ? companies.filter(c =>
           c.name.toLowerCase().includes(q) ||
-          (c.branches?.name.toLowerCase().includes(q) ?? false)
+          (c.client_groups?.name.toLowerCase().includes(q) ?? false)
         )
       : companies
 
-    const byBranch = new Map<string, { branch: Branch | null; companies: Company[] }>()
+    const byclient_group = new Map<string, { client_group: client_group | null; companies: Company[] }>()
     for (const c of filtered) {
-      const key = c.branches?.id ?? UNASSIGNED_KEY
-      if (!byBranch.has(key)) {
-        byBranch.set(key, { branch: c.branches, companies: [] })
+      const key = c.client_groups?.id ?? UNASSIGNED_KEY
+      if (!byclient_group.has(key)) {
+        byclient_group.set(key, { client_group: c.client_groups, companies: [] })
       }
-      byBranch.get(key)!.companies.push(c)
+      byclient_group.get(key)!.companies.push(c)
     }
 
-    const groupList = Array.from(byBranch.values())
+    const groupList = Array.from(byclient_group.values())
     groupList.sort((a, b) => {
-      if (!a.branch) return 1
-      if (!b.branch) return -1
-      return a.branch.name.localeCompare(b.branch.name)
+      if (!a.client_group) return 1
+      if (!b.client_group) return -1
+      return a.client_group.name.localeCompare(b.client_group.name)
     })
     for (const g of groupList) {
       g.companies.sort((a, b) => a.name.localeCompare(b.name))
@@ -105,7 +105,7 @@ export default function TmcCompaniesPage() {
     setShowSuggestions(false)
   }
 
-  const hasSuggestions = suggestions.companies.length > 0 || suggestions.branches.length > 0
+  const hasSuggestions = suggestions.companies.length > 0 || suggestions.client_groups.length > 0
 
   return (
     <TmcShell activeLabel="Companies">
@@ -113,7 +113,7 @@ export default function TmcCompaniesPage() {
       <div style={s.header}>
         <div>
           <h1 style={s.heading}>Companies</h1>
-          <p style={s.sub}>{companies.length} client{companies.length === 1 ? '' : 's'}, grouped by branch.</p>
+          <p style={s.sub}>{companies.length} client{companies.length === 1 ? '' : 's'}, grouped by client_group.</p>
         </div>
       </div>
 
@@ -123,7 +123,7 @@ export default function TmcCompaniesPage() {
           value={query}
           onChange={e => { setQuery(e.target.value); setShowSuggestions(true) }}
           onFocus={() => setShowSuggestions(true)}
-          placeholder="Search companies or branches…"
+          placeholder="Search companies or client_groups…"
           style={s.searchInput}
         />
         {showSuggestions && query.trim() && hasSuggestions && (
@@ -138,15 +138,15 @@ export default function TmcCompaniesPage() {
                     style={s.suggestionItem}
                   >
                     <span style={s.suggestionName}>{c.name}</span>
-                    {c.branches && <span style={s.suggestionMeta}>{c.branches.name}</span>}
+                    {c.client_groups && <span style={s.suggestionMeta}>{c.client_groups.name}</span>}
                   </div>
                 ))}
               </div>
             )}
-            {suggestions.branches.length > 0 && (
+            {suggestions.client_groups.length > 0 && (
               <div style={s.suggestionGroup}>
-                <p style={s.suggestionLabel}>Branches</p>
-                {suggestions.branches.map(b => (
+                <p style={s.suggestionLabel}>client_groups</p>
+                {suggestions.client_groups.map(b => (
                   <div
                     key={b.id}
                     onClick={() => selectSuggestion(b.name)}
@@ -177,11 +177,11 @@ export default function TmcCompaniesPage() {
       ) : (
         <div style={s.groupList}>
           {groups.map(g => (
-            <div key={g.branch?.id ?? UNASSIGNED_KEY} style={s.groupSection}>
+            <div key={g.client_group?.id ?? UNASSIGNED_KEY} style={s.groupSection}>
               <div style={s.groupHeader}>
                 <h2 style={s.groupTitle}>
-                  {g.branch ? g.branch.name : 'Unassigned'}
-                  {g.branch?.city && <span style={s.groupCity}> — {g.branch.city}</span>}
+                  {g.client_group ? g.client_group.name : 'Unassigned'}
+                  {g.client_group?.city && <span style={s.groupCity}> — {g.client_group.city}</span>}
                 </h2>
                 <span style={s.groupCount}>{g.companies.length}</span>
               </div>
