@@ -18,7 +18,7 @@ interface Company {
   created_at: string
 }
 
-interface client_group {
+interface ClientGroup {
   id: string
   name: string
   city: string | null
@@ -37,7 +37,7 @@ export default function TmcCompanyDetailPage() {
   const companyId = params.id as string
 
   const [company, setCompany] = useState<Company | null>(null)
-  const [client_groups, setclient_groups] = useState<client_group[]>([])
+  const [clientGroups, setClientGroups] = useState<ClientGroup[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -50,8 +50,8 @@ export default function TmcCompanyDetailPage() {
   useEffect(() => {
     Promise.all([
       fetch(`/api/tmc/companies/${companyId}`).then(r => r.json()),
-      fetch('/api/tmc/client_groups').then(r => r.json()),
-    ]).then(([companyData, client_groupsData]) => {
+      fetch('/api/tmc/client-groups').then(r => r.json()),
+    ]).then(([companyData, clientGroupsData]) => {
         if (!companyData.ok) {
           setError(companyData.error || 'Could not load company.')
           return
@@ -66,7 +66,7 @@ export default function TmcCompanyDetailPage() {
           booking_mode: c.booking_mode ?? 'sbt',
           client_group_id: c.client_group_id ?? '',
         })
-        if (client_groupsData.ok) setclient_groups(client_groupsData.client_groups)
+        if (clientGroupsData.ok) setClientGroups(clientGroupsData.clientGroups)
       })
       .catch(() => setError('Could not load company.'))
       .finally(() => setLoading(false))
@@ -157,15 +157,15 @@ export default function TmcCompanyDetailPage() {
         </div>
 
         <div style={s.field}>
-          <label style={s.label} htmlFor="client_group_id">client_group</label>
-          {client_groups.length === 0 ? (
+          <label style={s.label} htmlFor="client_group_id">Client group</label>
+          {clientGroups.length === 0 ? (
             <p style={s.hint}>
-              No client_groups yet — <a href="/tmc/settings/client_groups" style={s.inlineLink}>create one</a> to assign this company.
+              No client groups yet — <a href="/tmc/settings/client-groups" style={s.inlineLink}>create one</a> to assign this company.
             </p>
           ) : (
             <select id="client_group_id" name="client_group_id" value={form.client_group_id} onChange={handleChange} style={s.input}>
               <option value="">Unassigned</option>
-              {client_groups.map(b => (
+              {clientGroups.map(b => (
                 <option key={b.id} value={b.id}>{b.name}{b.city ? ` — ${b.city}` : ''}</option>
               ))}
             </select>

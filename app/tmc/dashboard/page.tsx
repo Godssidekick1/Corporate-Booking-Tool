@@ -74,7 +74,7 @@ export default function TmcDashboardPage() {
     Promise.all([
       fetch('/api/me').then(r => r.json()),
       fetch('/api/tmc/companies').then(r => r.json()),
-      fetch('/api/tmc/client_groups').then(r => r.json()),
+      fetch('/api/tmc/client-groups').then(r => r.json()),
     ]).then(([meData, companiesData, client_groupsData]) => {
       if (meData.ok) {
         setEmployee(meData.employee)
