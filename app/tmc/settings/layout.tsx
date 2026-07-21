@@ -8,6 +8,7 @@ const SECTIONS = [
   { label: 'Client groups',     href: '/tmc/settings/client-groups',     permission: 'manage_client_groups' },
   { label: 'Users',        href: '/tmc/settings/users',        permission: 'manage_users' },
   { label: 'Policy',       href: '/tmc/settings/policy',       permission: 'manage_policy' },
+  { label: 'Rule Engine test', href: '/tmc/settings/rule-engine-test', permission: 'manage_policy' },
   { label: 'Approvals',    href: '/tmc/settings/approvals',    permission: 'manage_approvals' },
   { label: 'Integrations', href: '/tmc/settings/integrations', permission: null }, // placeholder page, no gate yet
 ]
