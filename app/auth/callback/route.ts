@@ -63,12 +63,18 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL(next, req.url))
   }
 
-  if (employee?.role === 'tmc_admin' || employee?.role == 'tc') {
+  if (employee?.role === 'tmc_admin' || employee?.role === 'tc') {
     return NextResponse.redirect(new URL('/tmc/dashboard', req.url))
   }
 
   if (employee?.role === 'admin') {
-    // Check if this is their first login by looking at setup_completed
- return NextResponse.redirect(new URL('/dashboard', req.url))
-}
+    return NextResponse.redirect(new URL('/dashboard', req.url))
+  }
+
+  if (employee?.role === 'manager' || employee?.role === 'finance' || employee?.role === 'employee') {
+    return NextResponse.redirect(new URL('/dashboard', req.url))
+  }
+
+  // No employee record found — session is valid but user isn't set up yet
+  return NextResponse.redirect(new URL('/login?error=no_profile', req.url))
 }

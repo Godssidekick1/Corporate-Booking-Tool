@@ -18,7 +18,7 @@ interface Company {
   created_at: string
 }
 
-interface ClientGroup {
+interface client_group {
   id: string
   name: string
   city: string | null
@@ -37,7 +37,7 @@ export default function TmcCompanyDetailPage() {
   const companyId = params.id as string
 
   const [company, setCompany] = useState<Company | null>(null)
-  const [clientGroups, setClientGroups] = useState<ClientGroup[]>([])
+  const [client_groups, setclient_groups] = useState<client_group[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -51,7 +51,7 @@ export default function TmcCompanyDetailPage() {
     Promise.all([
       fetch(`/api/tmc/companies/${companyId}`).then(r => r.json()),
       fetch('/api/tmc/client-groups').then(r => r.json()),
-    ]).then(([companyData, clientGroupsData]) => {
+    ]).then(([companyData, client_groupsData]) => {
         if (!companyData.ok) {
           setError(companyData.error || 'Could not load company.')
           return
@@ -66,7 +66,7 @@ export default function TmcCompanyDetailPage() {
           booking_mode: c.booking_mode ?? 'sbt',
           client_group_id: c.client_group_id ?? '',
         })
-        if (clientGroupsData.ok) setClientGroups(clientGroupsData.clientGroups)
+        if (client_groupsData.ok) setclient_groups(client_groupsData.client_groups)
       })
       .catch(() => setError('Could not load company.'))
       .finally(() => setLoading(false))
@@ -158,14 +158,14 @@ export default function TmcCompanyDetailPage() {
 
         <div style={s.field}>
           <label style={s.label} htmlFor="client_group_id">Client group</label>
-          {clientGroups.length === 0 ? (
+          {client_groups.length === 0 ? (
             <p style={s.hint}>
               No client groups yet — <a href="/tmc/settings/client-groups" style={s.inlineLink}>create one</a> to assign this company.
             </p>
           ) : (
             <select id="client_group_id" name="client_group_id" value={form.client_group_id} onChange={handleChange} style={s.input}>
               <option value="">Unassigned</option>
-              {clientGroups.map(b => (
+              {client_groups.map(b => (
                 <option key={b.id} value={b.id}>{b.name}{b.city ? ` — ${b.city}` : ''}</option>
               ))}
             </select>

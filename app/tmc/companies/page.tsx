@@ -113,7 +113,7 @@ export default function TmcCompaniesPage() {
       <div style={s.header}>
         <div>
           <h1 style={s.heading}>Companies</h1>
-          <p style={s.sub}>{companies.length} client{companies.length === 1 ? '' : 's'}, grouped by client_group.</p>
+          <p style={s.sub}>{companies.length} client{companies.length === 1 ? '' : 's'}, grouped by client group.</p>
         </div>
       </div>
 
@@ -123,7 +123,7 @@ export default function TmcCompaniesPage() {
           value={query}
           onChange={e => { setQuery(e.target.value); setShowSuggestions(true) }}
           onFocus={() => setShowSuggestions(true)}
-          placeholder="Search companies or client_groups…"
+          placeholder="Search companies or client groups…"
           style={s.searchInput}
         />
         {showSuggestions && query.trim() && hasSuggestions && (
@@ -145,7 +145,7 @@ export default function TmcCompaniesPage() {
             )}
             {suggestions.client_groups.length > 0 && (
               <div style={s.suggestionGroup}>
-                <p style={s.suggestionLabel}>client_groups</p>
+                <p style={s.suggestionLabel}>Client groups</p>
                 {suggestions.client_groups.map(b => (
                   <div
                     key={b.id}

@@ -222,13 +222,13 @@ export default function TmcDashboardPage() {
             </p>
 
             {/* ── client_group ── */}
-            <SectionLabel>client_group</SectionLabel>
+            <SectionLabel>Client group</SectionLabel>
             <div style={s.fields}>
               <div style={s.field}>
-                <label style={s.label}>Assign to client_group</label>
+                <label style={s.label}>Assign to client group</label>
                 {client_groups.length === 0 ? (
                   <p style={s.noclient_groupHint}>
-                    No client_groups yet — <a href="/tmc/settings/client_groups" style={s.inlineLink}>create one</a> to group your clients, or leave unassigned.
+                    No client groups yet — <a href="/tmc/settings/client-groups" style={s.inlineLink}>create one</a> to group your clients, or leave unassigned.
                   </p>
                 ) : (
                   <select name="client_groupId" value={form.client_groupId} onChange={handleFormChange} style={s.input}>
