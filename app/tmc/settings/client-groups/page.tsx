@@ -4,8 +4,7 @@ import { useEffect, useState } from 'react'
 import CityDropdown from '@/app/components/CityDropdown'
 import CountryDropdown from '@/app/components/CountryDropdown'
 
-
-interface client_group {
+interface ClientGroup {
   id: string
   name: string
   city: string | null
@@ -13,8 +12,8 @@ interface client_group {
   created_at: string
 }
 
-export default function Tmcclient_groupsPage() {
-  const [client_groups, setclient_groups] = useState<client_group[]>([])
+export default function TmcClientGroupsPage() {
+  const [clientGroups, setClientGroups] = useState<ClientGroup[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -24,15 +23,15 @@ export default function Tmcclient_groupsPage() {
   const [success, setSuccess] = useState('')
 
   useEffect(() => {
-    loadclient_groups()
+    loadClientGroups()
   }, [])
 
-  async function loadclient_groups() {
+  async function loadClientGroups() {
     setLoading(true)
     try {
-      const res = await fetch('/api/tmc/client_groups')
+      const res = await fetch('/api/tmc/client-groups')
       const data = await res.json()
-      if (data.ok) setclient_groups(data.client_groups)
+      if (data.ok) setClientGroups(data.clientGroups)
     } finally {
       setLoading(false)
     }
@@ -45,9 +44,9 @@ export default function Tmcclient_groupsPage() {
     setError(''); setSuccess('')
   }
 
-  function openEdit(client_group: client_group) {
-    setForm({ name: client_group.name, city: client_group.city ?? '', country: client_group.country ?? '' })
-    setEditingId(client_group.id)
+  function openEdit(group: ClientGroup) {
+    setForm({ name: group.name, city: group.city ?? '', country: group.country ?? '' })
+    setEditingId(group.id)
     setShowForm(true)
     setError(''); setSuccess('')
   }
@@ -57,7 +56,7 @@ export default function Tmcclient_groupsPage() {
     setSubmitting(true)
     setError('')
     try {
-      const url = editingId ? `/api/tmc/client_groups/${editingId}` : '/api/tmc/client_groups'
+      const url = editingId ? `/api/tmc/client-groups/${editingId}` : '/api/tmc/client-groups'
       const method = editingId ? 'PATCH' : 'POST'
       const res = await fetch(url, {
         method,
@@ -65,33 +64,33 @@ export default function Tmcclient_groupsPage() {
         body: JSON.stringify(form),
       })
       const data = await res.json()
-      if (!res.ok) { setError(data.error || 'Could not save client_group.'); return }
+      if (!res.ok) { setError(data.error || 'Could not save client group.'); return }
       setShowForm(false)
-      setSuccess(editingId ? 'client_group updated.' : 'client_group created.')
-      loadclient_groups()
+      setSuccess(editingId ? 'Client group updated.' : 'Client group created.')
+      loadClientGroups()
     } finally {
       setSubmitting(false)
     }
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('Delete this client_group? Companies assigned to it will become unassigned, not deleted.')) return
+    if (!confirm('Delete this client group? Companies assigned to it will become unassigned, not deleted.')) return
     setError(''); setSuccess('')
-    const res = await fetch(`/api/tmc/client_groups/${id}`, { method: 'DELETE' })
+    const res = await fetch(`/api/tmc/client-groups/${id}`, { method: 'DELETE' })
     const data = await res.json()
-    if (!res.ok) { setError(data.error || 'Could not delete client_group.'); return }
-    setSuccess('client_group deleted.')
-    loadclient_groups()
+    if (!res.ok) { setError(data.error || 'Could not delete client group.'); return }
+    setSuccess('Client group deleted.')
+    loadClientGroups()
   }
 
   return (
     <div style={s.root}>
       <div style={s.header}>
         <div>
-          <h1 style={s.heading}>client_groups</h1>
-          <p style={s.sub}>Group your client companies by client_group, region, or office.</p>
+          <h1 style={s.heading}>Client Groups</h1>
+          <p style={s.sub}>Group your client companies by region, office, or however makes sense for your team.</p>
         </div>
-        <button onClick={openCreate} style={s.primaryBtn}>+ Add client_group</button>
+        <button onClick={openCreate} style={s.primaryBtn}>+ Add client group</button>
       </div>
 
       {success && <div style={s.successBanner}>✓ {success}</div>}
@@ -100,12 +99,12 @@ export default function Tmcclient_groupsPage() {
       {showForm && (
         <form onSubmit={handleSubmit} style={s.formCard}>
           <div style={s.formHeader}>
-            <h2 style={s.formTitle}>{editingId ? 'Edit client_group' : 'Add a client_group'}</h2>
+            <h2 style={s.formTitle}>{editingId ? 'Edit client group' : 'Add a client group'}</h2>
             <button type="button" onClick={() => setShowForm(false)} style={s.closeBtn}>✕</button>
           </div>
           <div style={s.fields}>
             <div style={s.field}>
-              <label style={s.label}>client_group name</label>
+              <label style={s.label}>Client group name</label>
               <input
                 type="text" required
                 value={form.name} onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))}
@@ -115,20 +114,20 @@ export default function Tmcclient_groupsPage() {
             <div style={s.field}>
               <label style={s.label}>City</label>
               <CityDropdown
-                value={form.city} onChange={city => setForm(prev => ({ ...prev, city}))}
+                value={form.city} onChange={city => setForm(prev => ({ ...prev, city }))}
               />
             </div>
             <div style={s.field}>
               <label style={s.label}>Country</label>
               <CountryDropdown
-                value={form.country} onChange={country => setForm(prev => ({ ...prev, country}))}
+                value={form.country} onChange={country => setForm(prev => ({ ...prev, country }))}
               />
             </div>
           </div>
           <div style={s.formActions}>
             <button type="button" onClick={() => setShowForm(false)} style={s.ghostBtn}>Cancel</button>
             <button type="submit" disabled={submitting} style={{ ...s.primaryBtn, opacity: submitting ? 0.7 : 1 }}>
-              {submitting ? 'Saving…' : editingId ? 'Save changes →' : 'Create client_group →'}
+              {submitting ? 'Saving…' : editingId ? 'Save changes →' : 'Create client group →'}
             </button>
           </div>
         </form>
@@ -137,10 +136,10 @@ export default function Tmcclient_groupsPage() {
       <div style={s.card}>
         {loading ? (
           <div style={s.emptyState}><p style={s.emptyTitle}>Loading…</p></div>
-        ) : client_groups.length === 0 ? (
+        ) : clientGroups.length === 0 ? (
           <div style={s.emptyState}>
-            <p style={s.emptyTitle}>No client_groups yet</p>
-            <p style={s.emptyDesc}>Create your first client_group to start grouping client companies.</p>
+            <p style={s.emptyTitle}>No client groups yet</p>
+            <p style={s.emptyDesc}>Create your first client group to start grouping client companies.</p>
           </div>
         ) : (
           <table style={s.table}>
@@ -150,14 +149,14 @@ export default function Tmcclient_groupsPage() {
               </tr>
             </thead>
             <tbody>
-              {client_groups.map((b, i) => (
-                <tr key={b.id} style={{ background: i % 2 === 0 ? '#fff' : '#FAFAFA' }}>
-                  <td style={s.td}><span style={s.name}>{b.name}</span></td>
-                  <td style={{ ...s.td, color: '#6B7280' }}>{b.city ?? '—'}</td>
-                  <td style={{ ...s.td, color: '#6B7280' }}>{b.country ?? '—'}</td>
+              {clientGroups.map((g, i) => (
+                <tr key={g.id} style={{ background: i % 2 === 0 ? '#fff' : '#FAFAFA' }}>
+                  <td style={s.td}><span style={s.name}>{g.name}</span></td>
+                  <td style={{ ...s.td, color: '#6B7280' }}>{g.city ?? '—'}</td>
+                  <td style={{ ...s.td, color: '#6B7280' }}>{g.country ?? '—'}</td>
                   <td style={{ ...s.td, textAlign: 'right' as const, display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                    <button onClick={() => openEdit(b)} style={s.editBtn}>Edit</button>
-                    <button onClick={() => handleDelete(b.id)} style={s.deleteBtn}>Delete</button>
+                    <button onClick={() => openEdit(g)} style={s.editBtn}>Edit</button>
+                    <button onClick={() => handleDelete(g.id)} style={s.deleteBtn}>Delete</button>
                   </td>
                 </tr>
               ))}
