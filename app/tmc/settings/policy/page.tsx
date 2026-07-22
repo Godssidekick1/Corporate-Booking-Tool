@@ -29,6 +29,9 @@ interface TierOption { label: string; value: number }
 interface FieldDef {
   key: string; label: string; unit?: string; kind: FieldKind
   travelType: string; options?: TierOption[]
+  // Whole-number fields (star ratings, day counts, bag counts) round on entry.
+  // Currency/₹ fields are left decimal-friendly since paise amounts are valid.
+  wholeNumber?: boolean
 }
 
 const CABIN_CLASS_OPTIONS: TierOption[] = [
@@ -38,19 +41,19 @@ const CABIN_CLASS_OPTIONS: TierOption[] = [
   { label: 'First',           value: 3 },
 ]
 
-const SEAT_OPTIONS: TierOption[] = [
-  { label: 'Auto-allotted',   value: 0 },
-  { label: 'Free seats only', value: 1 },
-  { label: 'Any seat',        value: 2 },
-]
-
+// NOTE: carrier_tier and red_eye_restricted are kept per product decision,
+// but are NOT yet read by evaluateBooking.ts — toggling them today has no
+// effect on booking evaluation. Same caveat applies to refundable_fare_required,
+// connecting_flights_allowed, and personal_trips_allowed. Wire these into
+// NUMERIC_LIMIT_KEYS / BOOLEAN_ENTITLEMENT_KEYS before relying on them.
 const CARRIER_OPTIONS: TierOption[] = [
   { label: 'Budget only',    value: 0 },
   { label: 'Full-service',   value: 1 },
 ]
 
 interface CategoryDef {
-  id: string; label: string; color: string; textColor: string; fields: FieldDef[]
+  id: string; label: string; description?: string
+  color: string; textColor: string; fields: FieldDef[]
 }
 
 const CATEGORIES: CategoryDef[] = [
@@ -61,10 +64,10 @@ const CATEGORIES: CategoryDef[] = [
       { key: 'max_fare_intl',               label: 'Max international fare',    unit: '₹',    kind: 'numeric', travelType: 'flight' },
       { key: 'cabin_class_short_haul',      label: 'Cabin class (short haul)',              kind: 'tier',    travelType: 'flight', options: CABIN_CLASS_OPTIONS },
       { key: 'cabin_class_long_haul',       label: 'Cabin class (long haul >8h)',            kind: 'tier',    travelType: 'flight', options: CABIN_CLASS_OPTIONS },
-      { key: 'seat_selection',              label: 'Seat selection',                          kind: 'tier',    travelType: 'flight', options: SEAT_OPTIONS },
+      { key: 'max_seat_selection_fee',      label: 'Max seat selection spend',   unit: '₹',    kind: 'numeric', travelType: 'flight' },
       { key: 'carrier_tier',                label: 'Carrier tier',                           kind: 'tier',    travelType: 'flight', options: CARRIER_OPTIONS },
-      { key: 'advance_booking_days',        label: 'Min. advance booking',      unit: 'days', kind: 'numeric', travelType: 'flight' },
-      { key: 'baggage_extra_bags',          label: 'Extra bags allowed',        unit: 'bags', kind: 'numeric', travelType: 'flight' },
+      { key: 'advance_booking_days',        label: 'Min. advance booking',      unit: 'days', kind: 'numeric', travelType: 'flight', wholeNumber: true },
+      { key: 'baggage_extra_bags',          label: 'Extra bags allowed',        unit: 'bags', kind: 'numeric', travelType: 'flight', wholeNumber: true },
       { key: 'refundable_fare_required',    label: 'Refundable fare required',               kind: 'boolean', travelType: 'flight' },
       { key: 'connecting_flights_allowed',  label: 'Connecting flights allowed',              kind: 'boolean', travelType: 'flight' },
       { key: 'red_eye_restricted',          label: 'Red-eye flights restricted',              kind: 'boolean', travelType: 'flight' },
@@ -76,22 +79,23 @@ const CATEGORIES: CategoryDef[] = [
     fields: [
       { key: 'max_rate_major_city', label: 'Max rate (major city)', unit: '₹/night', kind: 'numeric', travelType: 'hotel' },
       { key: 'max_rate_other_city', label: 'Max rate (other city)', unit: '₹/night', kind: 'numeric', travelType: 'hotel' },
-      { key: 'max_hotel_stars',     label: 'Max hotel stars',       unit: '★',        kind: 'numeric', travelType: 'hotel' },
+      { key: 'max_hotel_stars',     label: 'Max hotel stars',       unit: '★',        kind: 'numeric', travelType: 'hotel', wholeNumber: true },
       { key: 'breakfast_included',  label: 'Breakfast included',                      kind: 'boolean', travelType: 'hotel' },
     ],
   },
   {
     id: 'car', label: 'Ground transport', color: '#FFF7ED', textColor: '#7C2D12',
+    description: 'Set a cap for self-booked rentals, and whether company-arranged transport is a separate option.',
     fields: [
-      { key: 'max_car_rate_per_day',        label: 'Max car rental rate',    unit: '₹/day', kind: 'numeric', travelType: 'car' },
-      { key: 'sponsored_transport_allowed', label: 'Sponsored transport',                    kind: 'boolean', travelType: 'car' },
+      { key: 'max_car_rate_per_day',        label: 'Max self-arranged car rental rate', unit: '₹/day', kind: 'numeric', travelType: 'car' },
+      { key: 'sponsored_transport_allowed', label: 'Company-arranged transport allowed', kind: 'boolean', travelType: 'car' },
     ],
   },
   {
     id: 'general', label: 'General', color: '#F5F3FF', textColor: '#4C1D95',
     fields: [
       { key: 'per_diem_allowance',   label: 'Per-diem allowance', unit: '₹/day', kind: 'numeric', travelType: 'general' },
-      { key: 'max_trip_duration',    label: 'Max trip duration',  unit: 'days',  kind: 'numeric', travelType: 'general' },
+      { key: 'max_trip_duration',    label: 'Max trip duration',  unit: 'days',  kind: 'numeric', travelType: 'general', wholeNumber: true },
     ],
   },
   {
@@ -148,15 +152,20 @@ function gridToRules(grid: Grid): RuleRow[] {
   return rows
 }
 
+// Booleans are deliberately excluded from both the numerator and the
+// denominator here — they're real config, just not counted as "completion"
+// factors, since a correctly-configured "false" isn't meaningfully less done
+// than a correctly-configured "true".
 function countSetFields(grid: Grid, category: CategoryDef): { set: number; total: number } {
+  const countableFields = category.fields.filter(f => f.kind !== 'boolean')
   let set = 0
   for (const band of BAND_CODES) {
-    for (const f of category.fields) {
+    for (const f of countableFields) {
       const val = grid[band]?.[f.key]
-      if (val !== null && val !== undefined && val !== false) set++
+      if (val !== null && val !== undefined) set++
     }
   }
-  return { set, total: BAND_CODES.length * category.fields.length }
+  return { set, total: BAND_CODES.length * countableFields.length }
 }
 
 // Small style helper that depends on state — kept OUTSIDE the `s` styles
@@ -298,6 +307,16 @@ export default function TmcPolicyPage() {
     setDirty(true); setSuccess('')
   }
 
+  // Whole-number fields round on entry so "why can I type 3.7 stars" can't
+  // happen again — currency (₹) fields are left as-is since paise amounts
+  // are legitimate.
+  function handleNumericInputChange(band: string, field: FieldDef, raw: string) {
+    if (raw === '') { handleCellChange(band, field.key, null); return }
+    const n = Number(raw)
+    if (Number.isNaN(n)) return
+    handleCellChange(band, field.key, field.wholeNumber ? Math.round(n) : n)
+  }
+
   async function handleSaveRules() {
     setSaving(true); setError(''); setSuccess('')
     try {
@@ -334,14 +353,14 @@ export default function TmcPolicyPage() {
         <div style={s.field}>
           <label style={s.label}>Company</label>
           <select
-  value={selectedCompanyId}
-  onChange={e => {
-    if (dirty && !confirm('You have unsaved policy changes. Switch companies and discard them?')) return
-    setSelectedCompanyId(e.target.value); setTab('rules')
-  }}
-  style={s.select}
-  disabled={loadingCompanies}
->
+            value={selectedCompanyId}
+            onChange={e => {
+              if (dirty && !confirm('You have unsaved policy changes. Switch companies and discard them?')) return
+              setSelectedCompanyId(e.target.value); setTab('rules')
+            }}
+            style={s.select}
+            disabled={loadingCompanies}
+          >
             <option value="">{loadingCompanies ? 'Loading…' : 'Select a company…'}</option>
             {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
@@ -426,9 +445,9 @@ export default function TmcPolicyPage() {
                   <div
                     key={g.id}
                     onClick={() => {
-  if (dirty && g.id !== selectedGroupId && !confirm('You have unsaved policy changes. Switch groups and discard them?')) return
-  setSelectedGroupId(g.id === selectedGroupId ? '' : g.id)
-}}
+                      if (dirty && g.id !== selectedGroupId && !confirm('You have unsaved policy changes. Switch groups and discard them?')) return
+                      setSelectedGroupId(g.id === selectedGroupId ? '' : g.id)
+                    }}
                     style={{
                       ...s.groupCard,
                       borderColor: g.id === selectedGroupId ? '#000835' : '#E5E7EB',
@@ -505,9 +524,11 @@ export default function TmcPolicyPage() {
                           <div style={s.categoryHeaderLeft}>
                             <span style={{ ...s.categoryDot, background: cat.textColor }} />
                             <span style={{ ...s.categoryLabel, color: cat.textColor }}>{cat.label}</span>
-                            <span style={{ ...s.categoryBadge, color: cat.textColor, borderColor: cat.textColor + '40', background: cat.textColor + '12' }}>
-                              {set} / {total} set
-                            </span>
+                            {total > 0 && (
+                              <span style={{ ...s.categoryBadge, color: cat.textColor, borderColor: cat.textColor + '40', background: cat.textColor + '12' }}>
+                                {set} / {total} set
+                              </span>
+                            )}
                           </div>
                           <span style={{ ...s.categoryChevron, color: cat.textColor, transform: open ? 'rotate(180deg)' : 'rotate(0deg)' }}>
                             ▾
@@ -516,86 +537,90 @@ export default function TmcPolicyPage() {
 
                         {/* Collapsible table */}
                         {open && (
-                          <div style={s.tableWrap}>
-                            <table style={s.table}>
-                              <thead>
-                                <tr>
-                                  <th style={{ ...s.th, ...s.stickyCol, width: 160 }}>Band</th>
-                                  {cat.fields.map(f => (
-                                    <th key={f.key} style={{ ...s.th, minWidth: f.kind === 'tier' ? 160 : f.kind === 'boolean' ? 90 : 120 }}>
-                                      <span style={s.colLabel}>{f.label}</span>
-                                      {f.unit && <span style={s.colUnit}> · {f.unit}</span>}
-                                    </th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {BAND_CODES.map((band, ri) => (
-                                  <tr key={band} style={{ background: ri % 2 === 0 ? '#fff' : '#FAFAFA' }}>
-                                    <td style={{ ...s.td, ...s.stickyCol }}>
-                                      <div style={s.bandCell}>
-                                        <span style={s.bandBadge}>{band}</span>
-                                        <span style={s.bandLabel}>{BAND_LABELS[band]}</span>
-                                      </div>
-                                    </td>
-                                    {cat.fields.map(f => {
-                                      const val = grid[band]?.[f.key]
-                                      if (f.kind === 'boolean') {
-                                        return (
-                                          <td key={f.key} style={{ ...s.td, textAlign: 'center' as const }}>
-                                            <label style={s.toggleLabel}>
-                                              <input
-                                                type="checkbox"
-                                                checked={Boolean(val)}
-                                                onChange={e => handleCellChange(band, f.key, e.target.checked)}
-                                                style={{ display: 'none' }}
-                                              />
-                                              <span style={{
-                                                ...s.toggle,
-                                                background: val ? '#000835' : '#E5E7EB',
-                                              }}>
+                          <div style={s.tableInner}>
+                            {cat.description && <p style={s.categoryDesc}>{cat.description}</p>}
+                            <div style={s.tableWrap}>
+                              <table style={s.table}>
+                                <thead>
+                                  <tr>
+                                    <th style={{ ...s.th, ...s.stickyCol, width: 160 }}>Band</th>
+                                    {cat.fields.map(f => (
+                                      <th key={f.key} style={{ ...s.th, minWidth: f.kind === 'tier' ? 160 : f.kind === 'boolean' ? 90 : 120 }}>
+                                        <span style={s.colLabel}>{f.label}</span>
+                                        {f.unit && <span style={s.colUnit}> · {f.unit}</span>}
+                                      </th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {BAND_CODES.map((band, ri) => (
+                                    <tr key={band} style={{ background: ri % 2 === 0 ? '#fff' : '#FAFAFA' }}>
+                                      <td style={{ ...s.td, ...s.stickyCol }}>
+                                        <div style={s.bandCell}>
+                                          <span style={s.bandBadge}>{band}</span>
+                                          <span style={s.bandLabel}>{BAND_LABELS[band]}</span>
+                                        </div>
+                                      </td>
+                                      {cat.fields.map(f => {
+                                        const val = grid[band]?.[f.key]
+                                        if (f.kind === 'boolean') {
+                                          return (
+                                            <td key={f.key} style={{ ...s.td, textAlign: 'center' as const }}>
+                                              <label style={s.toggleLabel}>
+                                                <input
+                                                  type="checkbox"
+                                                  checked={Boolean(val)}
+                                                  onChange={e => handleCellChange(band, f.key, e.target.checked)}
+                                                  style={{ display: 'none' }}
+                                                />
                                                 <span style={{
-                                                  ...s.toggleKnob,
-                                                  transform: val ? 'translateX(14px)' : 'translateX(0)',
-                                                }} />
-                                              </span>
-                                            </label>
-                                          </td>
-                                        )
-                                      }
-                                      if (f.kind === 'tier') {
+                                                  ...s.toggle,
+                                                  background: val ? '#000835' : '#E5E7EB',
+                                                }}>
+                                                  <span style={{
+                                                    ...s.toggleKnob,
+                                                    transform: val ? 'translateX(14px)' : 'translateX(0)',
+                                                  }} />
+                                                </span>
+                                              </label>
+                                            </td>
+                                          )
+                                        }
+                                        if (f.kind === 'tier') {
+                                          return (
+                                            <td key={f.key} style={s.td}>
+                                              <select
+                                                value={val === null || val === undefined ? '' : String(val)}
+                                                onChange={e => handleCellChange(band, f.key, e.target.value === '' ? null : Number(e.target.value))}
+                                                style={s.tierSelect}
+                                              >
+                                                <option value="">— not set —</option>
+                                                {f.options!.map(o => (
+                                                  <option key={o.value} value={o.value}>{o.label}</option>
+                                                ))}
+                                              </select>
+                                            </td>
+                                          )
+                                        }
                                         return (
                                           <td key={f.key} style={s.td}>
-                                            <select
-                                              value={val === null || val === undefined ? '' : String(val)}
-                                              onChange={e => handleCellChange(band, f.key, e.target.value === '' ? null : Number(e.target.value))}
-                                              style={s.tierSelect}
-                                            >
-                                              <option value="">— not set —</option>
-                                              {f.options!.map(o => (
-                                                <option key={o.value} value={o.value}>{o.label}</option>
-                                              ))}
-                                            </select>
+                                            <input
+                                              type="number"
+                                              value={val === null || val === undefined ? '' : Number(val)}
+                                              onChange={e => handleNumericInputChange(band, f, e.target.value)}
+                                              placeholder="—"
+                                              min={0}
+                                              step={f.wholeNumber ? 1 : 'any'}
+                                              style={s.numInput}
+                                            />
                                           </td>
                                         )
-                                      }
-                                      return (
-                                        <td key={f.key} style={s.td}>
-                                          <input
-                                            type="number"
-                                            value={val === null || val === undefined ? '' : Number(val)}
-                                            onChange={e => handleCellChange(band, f.key, e.target.value === '' ? null : Number(e.target.value))}
-                                            placeholder="—"
-                                            min={0}
-                                            style={s.numInput}
-                                          />
-                                        </td>
-                                      )
-                                    })}
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
+                                      })}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
                           </div>
                         )}
                       </div>
@@ -758,7 +783,9 @@ const s: Record<string, React.CSSProperties> = {
   categoryLabel: { fontSize: 13, fontWeight: 600 },
   categoryBadge: { fontSize: 10, fontWeight: 600, border: '1px solid', borderRadius: 4, padding: '2px 7px' },
   categoryChevron: { fontSize: 13, transition: 'transform 0.2s', display: 'block' },
+  categoryDesc: { fontSize: 12, color: '#6B7280', margin: '10px 16px 0', lineHeight: 1.5 },
 
+  tableInner: { display: 'flex', flexDirection: 'column', gap: 4 },
   tableWrap: { overflowX: 'auto' },
   table: { borderCollapse: 'collapse', width: '100%' },
   th: { padding: '8px 12px', textAlign: 'left', background: '#F9FAFB', borderBottom: '1px solid #E5E7EB', whiteSpace: 'nowrap', verticalAlign: 'top' },

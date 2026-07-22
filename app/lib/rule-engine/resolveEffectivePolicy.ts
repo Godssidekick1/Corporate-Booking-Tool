@@ -8,7 +8,7 @@ export interface ResolvedPolicy {
   policyGroupName: string
   bandCode: string
   version: number
-  limits: Record<string, number>
+  limits: Record<string, number | boolean>
 }
 
 export interface PolicyBlocked {
@@ -19,6 +19,22 @@ export interface PolicyBlocked {
 
 export type PolicyResolution = ResolvedPolicy | PolicyBlocked
 
+// ── toStoredCategory ──────────────────────────────────────────────────────────
+// The Policy editor stores rules under broad categories ('flight', 'hotel',
+// 'car', 'general', 'approval') — the Rule Engine (and real booking flows)
+// deal in more granular travel types ('flight_domestic',
+// 'flight_international', 'car_rental', ...). The domestic/international
+// split lives at the FIELD level (max_fare_domestic vs max_fare_intl), not
+// as a separate travel_type row, so both collapse to 'flight' here. Add
+// further mappings as new granular types are introduced.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function toStoredCategory(travelType: string): string {
+  if (travelType.startsWith('flight')) return 'flight'
+  if (travelType === 'car_rental') return 'car'
+  return travelType // 'hotel', 'car', 'general', 'approval' pass through unchanged
+}
+
 // ── resolveEffectivePolicy ────────────────────────────────────────────────────
 // The Rule Engine's foundation: given an employee and a travel type, returns
 // the limits that apply to them right now.
@@ -27,6 +43,12 @@ export type PolicyResolution = ResolvedPolicy | PolicyBlocked
 // assignment time — see employee_policy_groups). Within that group, rules
 // are further keyed by band_code, so a single group can still differentiate
 // e.g. L1 vs L3 even though both are in the same group.
+//
+// Approval thresholds (auto_approve_under / finance_approval_over) are
+// stored under their own 'approval' category, separate from the specific
+// travel category — but they apply universally regardless of travel type,
+// so they're always fetched and merged in alongside whichever category the
+// caller asked about.
 //
 // If the employee has no group, or the group has no rules configured for
 // this travel_type yet, this returns an explicit block rather than silently
@@ -90,13 +112,16 @@ export async function resolveEffectivePolicy(
     }
   }
 
+  const storedCategory = toStoredCategory(travelType)
+  const categoriesToFetch = Array.from(new Set([storedCategory, 'approval']))
+
   const { data: rows } = await service
     .from('policy_rules')
-    .select('limit_key, limit_value')
+    .select('limit_key, limit_value, limit_bool')
     .eq('company_id', employee.company_id)
     .eq('policy_group_id', policyGroupId)
     .eq('band_code', employee.band_code)
-    .eq('travel_type', travelType)
+    .in('travel_type', categoriesToFetch)
     .eq('version', latestVersionRow.version)
     .is('deleted_at', null)
 
@@ -108,9 +133,15 @@ export async function resolveEffectivePolicy(
     }
   }
 
-  const limits: Record<string, number> = {}
+  // Each row has exactly one of limit_value / limit_bool set (enforced at
+  // write time by the policy-rules route) — merge whichever is present.
+  const limits: Record<string, number | boolean> = {}
   for (const row of rows) {
-    limits[row.limit_key] = row.limit_value
+    if (row.limit_value !== null && row.limit_value !== undefined) {
+      limits[row.limit_key] = row.limit_value
+    } else if (row.limit_bool !== null && row.limit_bool !== undefined) {
+      limits[row.limit_key] = row.limit_bool
+    }
   }
 
   return {
