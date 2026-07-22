@@ -1,23 +1,25 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
-import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { checkBookingAgainstPolicy } from '@/app/lib/rule-engine/checkBookingAgainstPolicy'
+import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
 
-// ── POST /api/rule-engine/test ───────────────────────────────────────────────
-// TMC-side sandbox for the Rule Engine. Takes a mock booking (employee +
-// travel type + cost + candidate numeric/boolean values) and runs it through
-// checkBookingAgainstPolicy, returning the same verdict shape a real booking
-// flow would get. No booking or search is created — this only exists so a
-// TMC/TC can verify the policy they configured behaves as expected.
+// ── POST /api/rule-engine/test ────────────────────────────────────────────────
+// Directly invokes the Rule Engine with manually-supplied booking values —
+// no real search or booking involved. Exists to verify resolveEffectivePolicy
+// + evaluateBooking work correctly before Amadeus integration exists.
+//
+// TMC-side only for now (same people configuring policy should be the ones
+// testing it against real employees).
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface TestBody {
+interface TestRequestBody {
   employeeId: string
   travelType: string
   totalCost: number
-  numericValues?: Partial<Record<string, number>>
-  booleanValues?: Partial<Record<string, boolean>>
+  numericValues: Record<string, number>
+  booleanValues: Record<string, boolean>
+  tierValues?: Record<string, number>
 }
 
 export async function POST(req: NextRequest) {
@@ -29,20 +31,13 @@ export async function POST(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const body: TestBody = await req.json()
-  const { employeeId, travelType, totalCost, numericValues, booleanValues } = body
+  const body: TestRequestBody = await req.json()
+  const { employeeId, travelType, totalCost, numericValues, booleanValues, tierValues } = body
 
-  if (!employeeId || !travelType) {
-    return Response.json({ error: 'employeeId and travelType are required' }, { status: 400 })
+  if (!employeeId || !travelType || totalCost === undefined) {
+    return Response.json({ error: 'employeeId, travelType, and totalCost are required' }, { status: 400 })
   }
 
-  if (totalCost === undefined || totalCost === null || Number.isNaN(Number(totalCost))) {
-    return Response.json({ error: 'totalCost is required and must be a number' }, { status: 400 })
-  }
-
-  // Resolve the employee's company first — the permission check (and the
-  // rest of the Rule Engine) is scoped by company, but the client only sends
-  // employeeId, same as /api/tmc/employee-assignments POST.
   const { data: employee } = await service
     .from('employees')
     .select('company_id')
@@ -61,9 +56,10 @@ export async function POST(req: NextRequest) {
   const result = await checkBookingAgainstPolicy(service, {
     employeeId,
     travelType,
-    totalCost: Number(totalCost),
+    totalCost,
     numericValues: numericValues ?? {},
     booleanValues: booleanValues ?? {},
+    tierValues: tierValues ?? {},
   })
 
   return Response.json({ ok: true, result })

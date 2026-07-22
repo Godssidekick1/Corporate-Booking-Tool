@@ -10,6 +10,7 @@ export interface BookingCheckInput {
   totalCost: number
   numericValues: Partial<Record<string, number>>
   booleanValues: Partial<Record<string, boolean>>
+  tierValues?: Partial<Record<string, number>>
 }
 
 export type RuleEngineResult =
@@ -39,6 +40,7 @@ export async function checkBookingAgainstPolicy(
     totalCost: input.totalCost,
     numericValues: input.numericValues,
     booleanValues: input.booleanValues,
+    tierValues: input.tierValues,
   })
 
   return {

@@ -105,7 +105,7 @@ const CATEGORIES: CategoryDef[] = [
 
 const ALL_FIELDS: FieldDef[] = CATEGORIES.flatMap(c => c.fields)
 const BAND_CODES = ['L1', 'L2', 'L3', 'L4', 'L5']
-const BAND_LABELS: Record<string, string> = { L1: 'Staff', L2: 'Associate', L3: 'Manager', L4: 'Director', L5: 'VP & Above' }
+const BAND_LABELS: Record<string, string> = { L1: 'Junior', L2: 'Associate', L3: 'Senior', L4: 'Manager', L5: 'Director' }
 
 // ── Grid helpers ──────────────────────────────────────────────────────────────
 
@@ -334,11 +334,14 @@ export default function TmcPolicyPage() {
         <div style={s.field}>
           <label style={s.label}>Company</label>
           <select
-            value={selectedCompanyId}
-            onChange={e => { setSelectedCompanyId(e.target.value); setTab('rules') }}
-            style={s.select}
-            disabled={loadingCompanies}
-          >
+  value={selectedCompanyId}
+  onChange={e => {
+    if (dirty && !confirm('You have unsaved policy changes. Switch companies and discard them?')) return
+    setSelectedCompanyId(e.target.value); setTab('rules')
+  }}
+  style={s.select}
+  disabled={loadingCompanies}
+>
             <option value="">{loadingCompanies ? 'Loading…' : 'Select a company…'}</option>
             {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
@@ -422,7 +425,10 @@ export default function TmcPolicyPage() {
                 {groups.map(g => (
                   <div
                     key={g.id}
-                    onClick={() => setSelectedGroupId(g.id === selectedGroupId ? '' : g.id)}
+                    onClick={() => {
+  if (dirty && g.id !== selectedGroupId && !confirm('You have unsaved policy changes. Switch groups and discard them?')) return
+  setSelectedGroupId(g.id === selectedGroupId ? '' : g.id)
+}}
                     style={{
                       ...s.groupCard,
                       borderColor: g.id === selectedGroupId ? '#000835' : '#E5E7EB',
