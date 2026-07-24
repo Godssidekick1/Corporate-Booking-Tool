@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     )
   }
-
+console.log('SEARCH REQUEST:', { origin, destination, departDate, adult, child, infant })
   try {
     const availability = await amadeus.searchFlights({
       segments: [{ Origin: origin.toUpperCase(), Destination: destination.toUpperCase(), DepartDate: departDate }],
