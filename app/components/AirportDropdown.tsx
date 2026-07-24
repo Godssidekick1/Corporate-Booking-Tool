@@ -8,30 +8,42 @@ interface AirportDropdownProps {
   id?: string
   label?: string
   disabled?: boolean
-  exclude?: string   // exclude a specific code — used to hide origin from destination list
+  exclude?: string
+  dropdownStyle?: React.CSSProperties
 }
 
 export default function AirportDropdown({
-  value, onChange, id, label, disabled, exclude,
+  value, onChange, id, label, disabled, exclude, dropdownStyle,
 }: AirportDropdownProps) {
-  const isInvalid = value !== '' && !Object.values(AIRPORTS_BY_COUNTRY)
-    .flat()
-    .some((a: Airport) => a.code === value)
+  const allAirports = Object.values(AIRPORTS_BY_COUNTRY).flat() as Airport[]
+  const isInvalid = value !== '' && !allAirports.some(a => a.code === value)
+
+  const defaultStyle: React.CSSProperties = {
+    height: '38px', padding: '0 10px', fontSize: '13px', color: '#111827',
+    background: '#fff', border: '1px solid #D1D5DB', borderRadius: '7px',
+    outline: 'none', width: '100%',
+  }
 
   return (
     <div>
-      {label && <label htmlFor={id} style={labelStyle}>{label}</label>}
+      {label && (
+        <label htmlFor={id} style={labelStyle}>{label}</label>
+      )}
       <select
         id={id}
         value={value}
         onChange={e => onChange(e.target.value)}
         disabled={disabled}
-        style={{ ...inputStyle, borderColor: isInvalid ? '#DC2626' : '#D1D5DB' }}
+        required
+        style={{
+          ...(dropdownStyle ?? defaultStyle),
+          borderColor: isInvalid ? '#DC2626' : undefined,
+        }}
       >
         <option value="">Select airport…</option>
         {Object.entries(AIRPORTS_BY_COUNTRY).map(([country, airports]) => (
           <optgroup key={country} label={country}>
-            {airports
+            {(airports as Airport[])
               .filter(a => a.code !== exclude)
               .map(a => (
                 <option key={a.code} value={a.code}>
@@ -42,7 +54,7 @@ export default function AirportDropdown({
         ))}
       </select>
       {isInvalid && (
-        <p style={errorStyle}>Unrecognised airport code "{value}".</p>
+        <p style={errorStyle}>Unrecognised airport "{value}".</p>
       )}
     </div>
   )
@@ -51,12 +63,6 @@ export default function AirportDropdown({
 const labelStyle: React.CSSProperties = {
   display: 'block', fontSize: '11px', fontWeight: 600,
   color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: '6px',
-}
-
-const inputStyle: React.CSSProperties = {
-  height: '38px', padding: '0 10px', fontSize: '13px', color: '#111827',
-  background: '#fff', border: '1px solid #D1D5DB', borderRadius: '7px',
-  outline: 'none', width: '100%',
 }
 
 const errorStyle: React.CSSProperties = {

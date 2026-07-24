@@ -1,660 +1,424 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import AirportDropdown from '@/app/components/AirportDropdown'
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-type TripType = 'one_way' | 'return'
-type CabinClass = '' | 'Economy' | 'Premium Economy' | 'Business' | 'First'
-
-interface SearchForm {
-  tripType: TripType
-  origin: string
-  destination: string
-  departDate: string
-  returnDate: string
-  cabin: CabinClass
-  adult: number
-  child: number
-  infant: number
-  nonStop: boolean
+interface FlatFlightResult {
+  flightKey: string
+  provider: string
+  isLcc: boolean
+  itemNo: string
+  cabin?: string
+  bookingCode?: string
+  origin?: { code: string; name: string; city: string; dateTime: string }
+  destination?: { code: string; name: string; city: string; dateTime: string }
+  airline?: { code: string; name: string }
+  stops: number
+  duration?: string
+  availableSeats?: number
+  checkInBaggageKg?: string
+  pricingKey?: string
+  currency?: string
+  totalFare?: number
+  baseFare?: number
+  isNdc?: boolean
+  refundable?: boolean
 }
 
-interface FlightResult {
-  ResultIndex: string
-  Key: string
-  PricingKey: string
-  Provider: string
-  TotalFare: number
-  BaseFare: number
-  Tax: number
-  Currency: string
-  IsRefundable: boolean
-  FareType: string
-  AirlineCode: string
-  AirlineName: string
-  FlightNumber: string
-  Origin: string
-  Destination: string
-  DepartureDateTime: string
-  ArrivalDateTime: string
-  Duration: string
-  Stops: number
-  CabinClass: string
-  BaggageAllowance: string
-  SeatsAvailable: number
+function formatTime(iso: string | undefined) {
+  if (!iso) return '—'
+  try {
+    return new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+  } catch {
+    return '—'
+  }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+function formatDayLabel(iso: string | undefined) {
+  if (!iso) return ''
+  try {
+    return new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
+  } catch {
+    return ''
+  }
+}
 
-function toAmadeusDate(iso: string): string {
-  // "2026-10-20" → "20/10/2026"
-  const [y, m, d] = iso.split('-')
+function toApiDate(input: string) {
+  // <input type="date"> gives YYYY-MM-DD, Amadeus wants DD/MM/YYYY
+  const [y, m, d] = input.split('-')
   return `${d}/${m}/${y}`
 }
 
-function formatTime(dt: string): string {
-  return new Date(dt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false })
+function toDisplayDate(input: string) {
+  if (!input) return ''
+  const d = new Date(input)
+  return d.toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short' })
 }
 
-function formatDate(dt: string): string {
-  return new Date(dt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
-}
 
-function formatDuration(d: string): string {
-  const [h, m] = d.split(':')
-  return `${h}h ${m}m`
-}
 
-function formatFare(amount: number, currency: string): string {
-  return new Intl.NumberFormat('en-IN', { style: 'currency', currency, maximumFractionDigits: 0 }).format(amount)
-}
+export default function BookFlightsPage() {
+  const [origin, setOrigin] = useState('')
+  const [destination, setDestination] = useState('')
+  const [departDate, setDepartDate] = useState('')
+  const [adult, setAdult] = useState(1)
+  const [cabinPref, setCabinPref] = useState<'Economy' | 'Premium Economy' | 'Business' | 'First'>('Economy')
 
-function todayISO(): string {
-  return new Date().toISOString().split('T')[0]
-}
-
-const CABIN_OPTIONS: CabinClass[] = ['Economy', 'Premium Economy', 'Business', 'First']
-
-const INITIAL_FORM: SearchForm = {
-  tripType: 'one_way',
-  origin: '',
-  destination: '',
-  departDate: '',
-  returnDate: '',
-  cabin: '',
-  adult: 1,
-  child: 0,
-  infant: 0,
-  nonStop: false,
-}
-
-// ── Component ─────────────────────────────────────────────────────────────────
-
-export default function BookPage() {
-  const router = useRouter()
-  const [form, setForm] = useState<SearchForm>(INITIAL_FORM)
-  const [results, setResults] = useState<FlightResult[] | null>(null)
   const [searching, setSearching] = useState(false)
+  const [hasSearched, setHasSearched] = useState(false)
+  const [results, setResults] = useState<FlatFlightResult[]>([])
   const [error, setError] = useState('')
-  const [pricingId, setPricingId] = useState<string | null>(null)
-  const [pricing, setPricing] = useState<{ referenceNo: string; totalFare: number; currency: string } | null>(null)
-  const [pricingFlight, setPricingFlight] = useState<FlightResult | null>(null)
-  const [pricingLoading, setPricingLoading] = useState(false)
-  const [pricingError, setPricingError] = useState('')
+  const [sortBy, setSortBy] = useState<'price' | 'duration' | 'departure'>('price')
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
 
-  function setField<K extends keyof SearchForm>(key: K, value: SearchForm[K]) {
-    setForm(prev => ({ ...prev, [key]: value }))
-    setResults(null)
-    setError('')
-    setPricing(null)
-    setPricingFlight(null)
+  function swapOriginDestination() {
+    setOrigin(destination)
+    setDestination(origin)
   }
 
-  function validate(): string {
-    if (!form.origin) return 'Select a departure airport.'
-    if (!form.destination) return 'Select a destination airport.'
-    if (form.origin === form.destination) return 'Origin and destination cannot be the same.'
-    if (!form.departDate) return 'Select a departure date.'
-    if (form.departDate < todayISO()) return 'Departure date must be in the future.'
-    if (form.tripType === 'return') {
-      if (!form.returnDate) return 'Select a return date.'
-      if (form.returnDate <= form.departDate) return 'Return date must be after departure.'
-    }
-    if (form.adult < 1) return 'At least 1 adult is required.'
-    if (form.infant > form.adult) return 'Infants cannot exceed the number of adults.'
-    return ''
-  }
-
-  async function handleSearch() {
-    const validationError = validate()
-    if (validationError) { setError(validationError); return }
-
+  async function handleSearch(e: React.FormEvent) {
+    e.preventDefault()
     setSearching(true)
     setError('')
-    setResults(null)
-    setPricing(null)
-    setPricingFlight(null)
-
+    setHasSearched(false)
+    setSelectedKey(null)
     try {
-      const segments = [
-        { Origin: form.origin, Destination: form.destination, DepartDate: toAmadeusDate(form.departDate) },
-        ...(form.tripType === 'return' && form.returnDate
-          ? [{ Origin: form.destination, Destination: form.origin, DepartDate: toAmadeusDate(form.returnDate) }]
-          : []),
-      ]
-
-      const res = await fetch('/api/book/search', {
+      const res = await fetch('/api/book/flights/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          segments,
-          adult: form.adult,
-          child: form.child,
-          infant: form.infant,
-          nonStop: form.nonStop,
-          preferredClass: form.cabin,
+          origin, destination,
+          departDate: toApiDate(departDate),
+          adult,
         }),
       })
-
       const data = await res.json()
-
-      if (!res.ok || !data.ok) {
-        setError(data.error || 'Search failed. Please try again.')
-        return
-      }
-
-      setResults(data.flights)
+      if (!res.ok) { setError(data.error || 'Search failed.'); return }
+      setResults(data.results ?? [])
+      setHasSearched(true)
     } catch {
-      setError('Something went wrong. Check your connection and try again.')
+      setError('Something went wrong. Please try again.')
     } finally {
       setSearching(false)
     }
   }
 
-  async function handleSelectFlight(flight: FlightResult) {
-    setPricingId(flight.ResultIndex)
-    setPricingLoading(true)
-    setPricingError('')
-    setPricing(null)
-    setPricingFlight(flight)
-
-    try {
-      const res = await fetch('/api/book/price', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          key: flight.Key,
-          pricingKey: flight.PricingKey,
-          provider: flight.Provider,
-          resultIndex: flight.ResultIndex,
-        }),
-      })
-
-      const data = await res.json()
-
-      if (!res.ok || !data.ok) {
-        setPricingError(data.error || 'Pricing failed. Please try again.')
-        setPricingId(null)
-        return
-      }
-
-      setPricing({
-        referenceNo: data.referenceNo,
-        totalFare: data.totalFare,
-        currency: data.currency,
-      })
-    } catch {
-      setPricingError('Pricing failed. Please try again.')
-      setPricingId(null)
-    } finally {
-      setPricingLoading(false)
-    }
-  }
-
-  function handleProceed() {
-    if (!pricing || !pricingFlight) return
-    // Store in sessionStorage for the passenger details page
-    sessionStorage.setItem('pending_booking', JSON.stringify({
-      flight: pricingFlight,
-      pricing,
-      form: { adult: form.adult, child: form.child, infant: form.infant },
-    }))
-    router.push('/book/passenger')
-  }
-
-  const hasResults = results !== null && results.length > 0
-  const noResults = results !== null && results.length === 0
+  const sortedResults = [...results].sort((a, b) => {
+    if (sortBy === 'price') return (a.totalFare ?? Infinity) - (b.totalFare ?? Infinity)
+    if (sortBy === 'duration') return durationMinutes(a.duration) - durationMinutes(b.duration)
+    return (a.origin?.dateTime ?? '').localeCompare(b.origin?.dateTime ?? '')
+  })
 
   return (
-    <div style={s.root}>
-      {/* ── Page title ──────────────────────────────────────────────────── */}
-      <div style={s.pageHeader}>
-        <h1 style={s.heading}>Book travel</h1>
-        <p style={s.sub}>Search flights within your company's travel policy.</p>
-      </div>
-
-      {/* ── Search form ──────────────────────────────────────────────────── */}
-      <div style={s.formCard}>
-        {/* Trip type toggle */}
-        <div style={s.tripToggle}>
-          {(['one_way', 'return'] as TripType[]).map(t => (
-            <button
-              key={t}
-              onClick={() => setField('tripType', t)}
-              style={{
-                ...s.tripBtn,
-                background: form.tripType === t ? '#000835' : 'transparent',
-                color: form.tripType === t ? '#fff' : '#6B7280',
-                borderColor: form.tripType === t ? '#000835' : '#E5E7EB',
-              }}
-            >
-              {t === 'one_way' ? 'One way' : 'Return'}
-            </button>
-          ))}
+    <div style={s.page}>
+      <div style={s.root}>
+        {/* ── Header ─────────────────────────────────────────────────── */}
+        <div style={s.header}>
+          <h1 style={s.heading}>Book a flight</h1>
+          <p style={s.sub}>Search live fares — your travel policy is checked automatically before you book.</p>
         </div>
 
-        {/* Route row */}
-        <div style={s.routeRow}>
-          <div style={s.fieldWrap}>
-            <AirportDropdown
-              id="origin"
-              label="From"
-              value={form.origin}
-              onChange={v => setField('origin', v)}
-              exclude={form.destination}
-            />
+        {/* ── Search card ────────────────────────────────────────────── */}
+        <form onSubmit={handleSearch} style={s.searchCard}>
+          <div style={s.tripTypeRow}>
+            <span style={s.tripTypePill}>One way</span>
+            <span style={s.tripTypeMuted}>Round trip and multi-city coming soon</span>
           </div>
 
-          <button
-            style={s.swapBtn}
-            title="Swap airports"
-            onClick={() => {
-              setForm(prev => ({ ...prev, origin: prev.destination, destination: prev.origin }))
-              setResults(null)
-            }}
-          >
-            ⇄
-          </button>
+          <div style={s.routeFieldsWrap}>
+            <div style={s.routeFields}>
+              <div style={s.routeField}>
+                <label style={s.label}>From</label>
+                <AirportDropdown
+                  value={origin}
+                  onChange={setOrigin}
+                  exclude={destination}
+                  dropdownStyle={s.codeDropdown}
+                />
+              </div>
 
-          <div style={s.fieldWrap}>
-            <AirportDropdown
-              id="destination"
-              label="To"
-              value={form.destination}
-              onChange={v => setField('destination', v)}
-              exclude={form.origin}
-            />
-          </div>
-        </div>
+              <button type="button" onClick={swapOriginDestination} style={s.swapBtn} title="Swap origin and destination" aria-label="Swap origin and destination">
+                ⇄
+              </button>
 
-        {/* Date + options row */}
-        <div style={s.optionsRow}>
-          <div style={s.field}>
-            <label style={s.label} htmlFor="departDate">Departure</label>
-            <input
-              id="departDate"
-              type="date"
-              min={todayISO()}
-              value={form.departDate}
-              onChange={e => setField('departDate', e.target.value)}
-              style={s.input}
-            />
-          </div>
-
-          {form.tripType === 'return' && (
-            <div style={s.field}>
-              <label style={s.label} htmlFor="returnDate">Return</label>
-              <input
-                id="returnDate"
-                type="date"
-                min={form.departDate || todayISO()}
-                value={form.returnDate}
-                onChange={e => setField('returnDate', e.target.value)}
-                style={s.input}
-              />
+              <div style={s.routeField}>
+                <label style={s.label}>To</label>
+                <AirportDropdown
+                  value={destination}
+                  onChange={setDestination}
+                  exclude={origin}
+                  dropdownStyle={s.codeDropdown}
+                />
+              </div>
             </div>
-          )}
 
-          <div style={s.field}>
-            <label style={s.label} htmlFor="cabin">Cabin class</label>
-            <select
-              id="cabin"
-              value={form.cabin}
-              onChange={e => setField('cabin', e.target.value as CabinClass)}
-              style={s.input}
-            >
-              <option value="">Any cabin</option>
-              {CABIN_OPTIONS.map(c => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
-          </div>
+            <div style={s.secondaryFields}>
+              <div style={s.field}>
+                <label style={s.label}>Departure</label>
+                <input
+                  type="date" required value={departDate}
+                  onChange={e => setDepartDate(e.target.value)}
+                  min={new Date().toISOString().split('T')[0]}
+                  style={s.input}
+                />
+                {departDate && <span style={s.airportHint}>{toDisplayDate(departDate)}</span>}
+              </div>
 
-          <div style={s.field}>
-            <label style={s.label}>Passengers</label>
-            <div style={s.paxRow}>
-              {(['adult', 'child', 'infant'] as const).map(type => (
-                <div key={type} style={s.paxField}>
-                  <label style={s.paxLabel}>{type.charAt(0).toUpperCase() + type.slice(1)}</label>
-                  <div style={s.paxStepper}>
-                    <button
-                      style={s.stepperBtn}
-                      onClick={() => setField(type, Math.max(type === 'adult' ? 1 : 0, form[type] - 1))}
-                    >−</button>
-                    <span style={s.stepperVal}>{form[type]}</span>
-                    <button
-                      style={s.stepperBtn}
-                      onClick={() => setField(type, Math.min(9, form[type] + 1))}
-                    >+</button>
-                  </div>
-                </div>
-              ))}
+              <div style={s.field}>
+                <label style={s.label}>Travelers</label>
+                <input
+                  type="number" required min={1} max={9} value={adult}
+                  onChange={e => setAdult(Number(e.target.value))}
+                  style={s.input}
+                />
+              </div>
+
+              <div style={s.field}>
+                <label style={s.label}>Cabin</label>
+                <select value={cabinPref} onChange={e => setCabinPref(e.target.value as 'Economy' | 'Premium Economy' | 'Business' | 'First')} style={s.input}>
+                  <option value="Economy">Economy</option>
+                  <option value="Premium Economy">Premium Economy</option>
+                  <option value="Business">Business</option>
+                  <option value="First">First</option>
+                </select>
+              </div>
             </div>
           </div>
 
-          <div style={s.field}>
-            <label style={s.label}>Options</label>
-            <label style={s.checkLabel}>
-              <input
-                type="checkbox"
-                checked={form.nonStop}
-                onChange={e => setField('nonStop', e.target.checked)}
-                style={{ marginRight: 7 }}
-              />
-              Non-stop only
-            </label>
-          </div>
-        </div>
-
-        {error && <p style={s.errorText}>{error}</p>}
-
-        <div style={s.formFooter}>
-          <button
-            onClick={handleSearch}
-            disabled={searching}
-            style={{ ...s.searchBtn, opacity: searching ? 0.7 : 1 }}
-          >
-            {searching ? 'Searching…' : 'Search flights'}
+          <button type="submit" disabled={searching} style={{ ...s.searchBtn, opacity: searching ? 0.7 : 1 }}>
+            {searching ? (
+              <>
+                <span style={s.spinner} />
+                Searching…
+              </>
+            ) : (
+              'Search flights →'
+            )}
           </button>
-        </div>
-      </div>
+        </form>
 
-      {/* ── Results ──────────────────────────────────────────────────────── */}
-      {searching && (
-        <div style={s.loadingWrap}>
-          <div style={s.spinner} />
-          <p style={s.loadingText}>Searching available flights…</p>
-        </div>
-      )}
-
-      {noResults && !searching && (
-        <div style={s.emptyState}>
-          <p style={s.emptyIcon}>✈</p>
-          <p style={s.emptyTitle}>No flights found</p>
-          <p style={s.emptyDesc}>Try different dates, a nearby airport, or remove the non-stop filter.</p>
-        </div>
-      )}
-
-      {pricingError && (
-        <div style={s.errorBanner}>⚠ {pricingError}</div>
-      )}
-
-      {hasResults && !searching && (
-        <div style={s.resultsSection}>
-          <p style={s.resultsCount}>{results!.length} flight{results!.length !== 1 ? 's' : ''} found</p>
-
-          <div style={s.resultsList}>
-            {results!.map(flight => {
-              const isSelected = pricingId === flight.ResultIndex
-              const isPriced = isSelected && pricing !== null
-              const isLoading = isSelected && pricingLoading
-
-              return (
-                <div
-                  key={flight.ResultIndex}
-                  style={{
-                    ...s.flightCard,
-                    borderColor: isSelected ? '#000835' : '#E5E7EB',
-                    boxShadow: isSelected ? '0 0 0 2px rgba(0,8,53,0.1)' : 'none',
-                  }}
-                >
-                  {/* Airline + flight number */}
-                  <div style={s.flightTop}>
-                    <div style={s.airlineWrap}>
-                      <div style={s.airlineLogo}>{flight.AirlineCode}</div>
-                      <div>
-                        <p style={s.airlineName}>{flight.AirlineName}</p>
-                        <p style={s.flightNumber}>{flight.FlightNumber} · {flight.CabinClass}</p>
-                      </div>
-                    </div>
-
-                    <div style={s.fareWrap}>
-                      <p style={s.fareAmount}>{formatFare(flight.TotalFare, flight.Currency)}</p>
-                      <p style={s.fareBreakdown}>Base {formatFare(flight.BaseFare, flight.Currency)} + Tax {formatFare(flight.Tax, flight.Currency)}</p>
-                    </div>
-                  </div>
-
-                  {/* Route + timing */}
-                  <div style={s.routeStrip}>
-                    <div style={s.routeEndpoint}>
-                      <p style={s.routeTime}>{formatTime(flight.DepartureDateTime)}</p>
-                      <p style={s.routeDate}>{formatDate(flight.DepartureDateTime)}</p>
-                      <p style={s.routeCode}>{flight.Origin}</p>
-                    </div>
-
-                    <div style={s.routeMiddle}>
-                      <p style={s.routeDuration}>{formatDuration(flight.Duration)}</p>
-                      <div style={s.routeLine}>
-                        <div style={s.routeDot} />
-                        <div style={s.routeTrack} />
-                        <div style={s.routeDot} />
-                      </div>
-                      <p style={s.routeStops}>
-                        {flight.Stops === 0 ? 'Non-stop' : `${flight.Stops} stop${flight.Stops > 1 ? 's' : ''}`}
-                      </p>
-                    </div>
-
-                    <div style={{ ...s.routeEndpoint, textAlign: 'right' as const }}>
-                      <p style={s.routeTime}>{formatTime(flight.ArrivalDateTime)}</p>
-                      <p style={s.routeDate}>{formatDate(flight.ArrivalDateTime)}</p>
-                      <p style={s.routeCode}>{flight.Destination}</p>
-                    </div>
-                  </div>
-
-                  {/* Tags */}
-                  <div style={s.tagsRow}>
-                    {flight.IsRefundable && <span style={{ ...s.tag, ...s.tagGreen }}>Refundable</span>}
-                    {!flight.IsRefundable && <span style={{ ...s.tag, ...s.tagGray }}>Non-refundable</span>}
-                    {flight.Stops === 0 && <span style={{ ...s.tag, ...s.tagBlue }}>Non-stop</span>}
-                    <span style={{ ...s.tag, ...s.tagGray }}>{flight.BaggageAllowance}</span>
-                    <span style={{ ...s.tag, ...s.tagGray }}>{flight.SeatsAvailable} seat{flight.SeatsAvailable !== 1 ? 's' : ''} left</span>
-                  </div>
-
-                  {/* Priced fare confirmation */}
-                  {isPriced && pricing && (
-                    <div style={s.pricedBanner}>
-                      <div>
-                        <p style={s.pricedLabel}>Confirmed fare</p>
-                        <p style={s.pricedFare}>{formatFare(pricing.totalFare, pricing.currency)}</p>
-                        <p style={s.pricedRef}>Ref: {pricing.referenceNo}</p>
-                      </div>
-                      <button onClick={handleProceed} style={s.proceedBtn}>
-                        Continue to passenger details →
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Select button */}
-                  {!isSelected && (
-                    <div style={s.cardFooter}>
-                      <button
-                        onClick={() => handleSelectFlight(flight)}
-                        style={s.selectBtn}
-                      >
-                        Select
-                      </button>
-                    </div>
-                  )}
-
-                  {isLoading && (
-                    <div style={s.cardFooter}>
-                      <div style={s.spinnerSmall} />
-                      <span style={s.loadingText}>Confirming price…</span>
-                    </div>
-                  )}
-                </div>
-              )
-            })}
+        {error && (
+          <div style={s.errorBanner}>
+            <span style={s.bannerIcon}>⚠</span> {error}
           </div>
-        </div>
-      )}
+        )}
+
+        {/* ── Results ────────────────────────────────────────────────── */}
+        {searching && (
+          <div style={s.loadingState}>
+            {[0, 1, 2].map(i => <div key={i} style={s.skeletonCard} />)}
+          </div>
+        )}
+
+        {hasSearched && !searching && (
+          results.length === 0 ? (
+            <div style={s.emptyState}>
+              <p style={s.emptyTitle}>No flights found</p>
+              <p style={s.emptyDesc}>Try a different date or route.</p>
+            </div>
+          ) : (
+            <div style={s.resultsWrap}>
+              <div style={s.resultsHeader}>
+                <p style={s.resultsCount}>
+                  <strong>{results.length}</strong> fare{results.length === 1 ? '' : 's'} found · {origin} → {destination}
+                </p>
+                <div style={s.sortRow}>
+                  <span style={s.sortLabel}>Sort by</span>
+                  {(['price', 'duration', 'departure'] as const).map(key => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setSortBy(key)}
+                      style={{ ...s.sortBtn, ...(sortBy === key ? s.sortBtnActive : {}) }}
+                    >
+                      {key === 'price' ? 'Price' : key === 'duration' ? 'Duration' : 'Departure'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={s.resultsList}>
+                {sortedResults.map((flight, i) => {
+                  const isSelected = selectedKey === `${flight.flightKey}-${flight.pricingKey}`
+                  return (
+                    <div
+                      key={`${flight.flightKey}-${flight.pricingKey}-${i}`}
+                      style={{ ...s.resultCard, ...(isSelected ? s.resultCardSelected : {}) }}
+                    >
+                      <div style={s.resultTop}>
+                        <div style={s.airlineBlock}>
+                          <div style={s.airlineAvatar}>{flight.airline?.name?.[0] ?? '✈'}</div>
+                          <div>
+                            <div style={s.airlineName}>{flight.airline?.name ?? 'Unknown airline'}</div>
+                            <div style={s.airlineMeta}>
+                              {flight.airline?.code} · {flight.cabin ?? cabinPref}
+                              {flight.isNdc && <span style={s.ndcTag}>NDC fare</span>}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div style={s.fareBlock}>
+                          <span style={s.fareAmount}>₹{flight.totalFare?.toLocaleString('en-IN') ?? '—'}</span>
+                          <span style={{ ...s.refundBadge, color: flight.refundable ? '#065F46' : '#9CA3AF', background: flight.refundable ? '#ECFDF5' : '#F3F4F6' }}>
+                            {flight.refundable ? 'Refundable' : 'Non-refundable'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div style={s.routeRow}>
+                        <div style={s.routePoint}>
+                          <span style={s.routeTime}>{formatTime(flight.origin?.dateTime)}</span>
+                          <span style={s.routeCode}>{flight.origin?.code ?? origin}</span>
+                          <span style={s.routeDay}>{formatDayLabel(flight.origin?.dateTime)}</span>
+                        </div>
+
+                        <div style={s.routeMiddle}>
+                          <span style={s.routeDuration}>{flight.duration ?? ''}</span>
+                          <div style={s.routeLineWrap}>
+                            <div style={s.routeDot} />
+                            <div style={s.routeLine} />
+                            {flight.stops > 0 && <div style={s.routeStopDot} />}
+                            <div style={s.routeDot} />
+                          </div>
+                          <span style={s.routeStops}>
+                            {flight.stops === 0 ? 'Non-stop' : `${flight.stops} stop${flight.stops === 1 ? '' : 's'}`}
+                          </span>
+                        </div>
+
+                        <div style={s.routePoint}>
+                          <span style={s.routeTime}>{formatTime(flight.destination?.dateTime)}</span>
+                          <span style={s.routeCode}>{flight.destination?.code ?? destination}</span>
+                          <span style={s.routeDay}>{formatDayLabel(flight.destination?.dateTime)}</span>
+                        </div>
+                      </div>
+
+                      <div style={s.resultBottom}>
+                        <div style={s.metaTags}>
+                          <span style={{ ...s.tag, ...(flight.isLcc ? s.tagBudget : s.tagFullService) }}>
+                            {flight.isLcc ? 'Budget carrier' : 'Full-service'}
+                          </span>
+                          {flight.checkInBaggageKg && <span style={s.tag}>{flight.checkInBaggageKg}kg check-in</span>}
+                          {flight.availableSeats !== undefined && flight.availableSeats <= 4 && (
+                            <span style={{ ...s.tag, color: '#92400E', background: '#FEF3C7' }}>
+                              Only {flight.availableSeats} left
+                            </span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedKey(`${flight.flightKey}-${flight.pricingKey}`)}
+                          style={isSelected ? s.selectBtnActive : s.selectBtn}
+                        >
+                          {isSelected ? '✓ Selected' : 'Select →'}
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )
+        )}
+      </div>
     </div>
   )
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
+function durationMinutes(duration: string | undefined): number {
+  if (!duration) return Infinity
+  const [h, m] = duration.split(':').map(Number)
+  return (h || 0) * 60 + (m || 0)
+}
 
 const s: Record<string, React.CSSProperties> = {
-  root: {
-    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
-    paddingBottom: 80,
-  },
-  pageHeader: { marginBottom: 20 },
-  heading: { fontSize: 22, fontWeight: 700, color: '#0A0A14', margin: '0 0 4px', letterSpacing: '-0.4px' },
-  sub: { fontSize: 13, color: '#6B7280', margin: 0 },
+  page: { background: '#F9FAFB', minHeight: '100vh' },
+  root: { fontFamily: "'Inter', -apple-system, sans-serif", maxWidth: '820px', margin: '0 auto', padding: '32px 24px 64px' },
 
-  formCard: {
-    background: '#fff', border: '1px solid #E5E7EB', borderRadius: 12,
-    padding: 24, marginBottom: 24,
-  },
-  tripToggle: { display: 'flex', gap: 8, marginBottom: 20 },
-  tripBtn: {
-    height: 32, padding: '0 16px', fontSize: 12, fontWeight: 500,
-    border: '1px solid', borderRadius: 6, cursor: 'pointer', transition: 'all 0.15s',
-  },
+  header: { marginBottom: '20px' },
+  heading: { fontSize: '24px', fontWeight: 700, color: '#0A0A14', margin: '0 0 6px', letterSpacing: '-0.4px' },
+  sub: { fontSize: '14px', color: '#6B7280', margin: 0 },
 
-  routeRow: { display: 'flex', alignItems: 'flex-end', gap: 8, marginBottom: 16 },
-  fieldWrap: { flex: 1 },
+  searchCard: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '16px', padding: '20px 20px 16px', marginBottom: '20px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' },
+  tripTypeRow: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' },
+  tripTypePill: { fontSize: '12px', fontWeight: 600, color: '#fff', background: '#000835', padding: '5px 12px', borderRadius: '999px' },
+  tripTypeMuted: { fontSize: '11px', color: '#9CA3AF' },
+
+  routeFieldsWrap: { display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '16px' },
+  routeFields: { display: 'flex', alignItems: 'center', gap: '0', position: 'relative', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '12px', padding: '4px' },
+  routeField: { flex: 1, display: 'flex', flexDirection: 'column', gap: '2px', padding: '10px 16px' },
   swapBtn: {
-    height: 38, width: 38, flexShrink: 0, background: '#F9FAFB',
-    border: '1px solid #E5E7EB', borderRadius: 7, cursor: 'pointer',
-    fontSize: 16, color: '#6B7280', display: 'flex', alignItems: 'center',
-    justifyContent: 'center', marginBottom: 0,
+    width: '36px', height: '36px', flexShrink: 0, borderRadius: '50%', background: '#fff',
+    border: '1.5px solid #E5E7EB', color: '#000835', fontSize: '15px', cursor: 'pointer',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1,
   },
+  label: { fontSize: '10px', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.5px' },
+  codeInput: { border: 'none', background: 'transparent', outline: 'none', fontSize: '22px', fontWeight: 700, color: '#111827', padding: '2px 0', width: '100%', letterSpacing: '0.5px' },
+  codeDropdown: { border: 'none', background: 'transparent', outline: 'none', fontSize: '13px', fontWeight: 600, color: '#111827', padding: '2px 0', width: '100%' },
+  airportHint: { fontSize: '11px', color: '#9CA3AF' },
 
-  optionsRow: { display: 'flex', gap: 16, flexWrap: 'wrap' as const, alignItems: 'flex-start', marginBottom: 16 },
-  field: { display: 'flex', flexDirection: 'column', gap: 6, minWidth: 140 },
-  label: { fontSize: 11, fontWeight: 600, color: '#6B7280', textTransform: 'uppercase' as const, letterSpacing: '0.6px' },
-  input: {
-    height: 38, padding: '0 10px', fontSize: 13, color: '#111827',
-    background: '#fff', border: '1px solid #D1D5DB', borderRadius: 7, outline: 'none',
-  },
+  secondaryFields: { display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr', gap: '10px' },
+  field: { display: 'flex', flexDirection: 'column', gap: '5px' },
+  input: { height: '42px', padding: '0 12px', fontSize: '13px', fontWeight: 500, color: '#111827', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '9px', outline: 'none' },
 
-  paxRow: { display: 'flex', gap: 12 },
-  paxField: { display: 'flex', flexDirection: 'column' as const, alignItems: 'center', gap: 4 },
-  paxLabel: { fontSize: 10, color: '#9CA3AF', fontWeight: 500 },
-  paxStepper: { display: 'flex', alignItems: 'center', gap: 6 },
-  stepperBtn: {
-    width: 24, height: 24, borderRadius: 4, border: '1px solid #E5E7EB',
-    background: '#F9FAFB', cursor: 'pointer', fontSize: 14, color: '#374151',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-  },
-  stepperVal: { fontSize: 13, fontWeight: 600, color: '#111827', minWidth: 16, textAlign: 'center' as const },
-
-  checkLabel: { display: 'flex', alignItems: 'center', fontSize: 13, color: '#374151', cursor: 'pointer', marginTop: 4 },
-
-  errorText: { fontSize: 12, color: '#DC2626', margin: '0 0 12px', padding: '8px 12px', background: '#FEF2F2', borderRadius: 6 },
-  formFooter: { display: 'flex', justifyContent: 'flex-end' },
   searchBtn: {
-    height: 40, padding: '0 28px', background: '#000835', color: '#fff',
-    fontSize: 13, fontWeight: 600, border: 'none', borderRadius: 8, cursor: 'pointer',
+    height: '46px', width: '100%', background: '#000835', color: '#fff', fontSize: '14px', fontWeight: 700,
+    border: 'none', borderRadius: '10px', cursor: 'pointer', display: 'flex', alignItems: 'center',
+    justifyContent: 'center', gap: '8px', letterSpacing: '0.2px',
   },
+  spinner: { width: '13px', height: '13px', border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block' },
 
-  loadingWrap: { display: 'flex', alignItems: 'center', gap: 12, padding: '32px 0' },
-  spinner: {
-    width: 20, height: 20, border: '2px solid #E5E7EB',
-    borderTopColor: '#000835', borderRadius: '50%',
-    animation: 'spin 0.8s linear infinite',
-  },
-  spinnerSmall: {
-    width: 14, height: 14, border: '2px solid #E5E7EB',
-    borderTopColor: '#000835', borderRadius: '50%',
-    animation: 'spin 0.8s linear infinite',
-  },
-  loadingText: { fontSize: 13, color: '#6B7280' },
+  errorBanner: { display: 'flex', alignItems: 'center', gap: '8px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', color: '#DC2626', marginBottom: '16px' },
+  bannerIcon: { fontSize: '14px' },
 
-  emptyState: { textAlign: 'center' as const, padding: '48px 0' },
-  emptyIcon: { fontSize: 32, margin: '0 0 12px' },
-  emptyTitle: { fontSize: 15, fontWeight: 600, color: '#374151', margin: '0 0 6px' },
-  emptyDesc: { fontSize: 13, color: '#9CA3AF', margin: 0 },
+  loadingState: { display: 'flex', flexDirection: 'column', gap: '12px' },
+  skeletonCard: { height: '128px', borderRadius: '14px', background: 'linear-gradient(90deg, #F3F4F6 25%, #E5E7EB 37%, #F3F4F6 63%)', backgroundSize: '400% 100%' },
 
-  errorBanner: {
-    background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8,
-    padding: '10px 14px', fontSize: 12, color: '#DC2626', marginBottom: 16,
-  },
+  emptyState: { textAlign: 'center' as const, padding: '56px 20px', background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px' },
+  emptyTitle: { fontSize: '15px', fontWeight: 600, color: '#374151', margin: '0 0 6px' },
+  emptyDesc: { fontSize: '13px', color: '#9CA3AF', margin: 0 },
 
-  resultsSection: { marginTop: 8 },
-  resultsCount: { fontSize: 12, color: '#6B7280', margin: '0 0 12px', fontWeight: 500 },
-  resultsList: { display: 'flex', flexDirection: 'column' as const, gap: 12 },
+  resultsWrap: { display: 'flex', flexDirection: 'column', gap: '14px' },
+  resultsHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' as const, gap: '10px' },
+  resultsCount: { fontSize: '13px', color: '#6B7280', margin: 0 },
+  sortRow: { display: 'flex', alignItems: 'center', gap: '6px' },
+  sortLabel: { fontSize: '11px', color: '#9CA3AF', marginRight: '2px' },
+  sortBtn: { fontSize: '11px', fontWeight: 500, color: '#6B7280', background: '#fff', border: '1px solid #E5E7EB', borderRadius: '7px', padding: '5px 10px', cursor: 'pointer' },
+  sortBtnActive: { color: '#fff', background: '#000835', borderColor: '#000835' },
 
-  flightCard: {
-    background: '#fff', border: '1.5px solid #E5E7EB',
-    borderRadius: 12, padding: 20, transition: 'all 0.15s',
-  },
+  resultsList: { display: 'flex', flexDirection: 'column', gap: '12px' },
+  resultCard: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '18px', transition: 'border-color 0.15s' },
+  resultCardSelected: { borderColor: '#000835', boxShadow: '0 0 0 2px rgba(0,8,53,0.1)' },
 
-  flightTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 },
-  airlineWrap: { display: 'flex', alignItems: 'center', gap: 12 },
-  airlineLogo: {
-    width: 40, height: 40, borderRadius: 8, background: '#F0F4FF',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    fontSize: 11, fontWeight: 700, color: '#3730A3', flexShrink: 0,
-  },
-  airlineName: { fontSize: 13, fontWeight: 600, color: '#111827', margin: '0 0 2px' },
-  flightNumber: { fontSize: 11, color: '#9CA3AF', margin: 0 },
+  resultTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' },
+  airlineBlock: { display: 'flex', alignItems: 'center', gap: '10px' },
+  airlineAvatar: { width: '34px', height: '34px', borderRadius: '9px', background: '#EEF2FF', color: '#3730A3', fontSize: '14px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  airlineName: { fontSize: '13px', fontWeight: 600, color: '#111827' },
+  airlineMeta: { fontSize: '11px', color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' },
+  ndcTag: { fontSize: '9px', fontWeight: 700, color: '#3730A3', background: '#EEF2FF', padding: '1px 6px', borderRadius: '4px', letterSpacing: '0.3px' },
 
-  fareWrap: { textAlign: 'right' as const },
-  fareAmount: { fontSize: 18, fontWeight: 700, color: '#111827', margin: '0 0 2px', letterSpacing: '-0.3px' },
-  fareBreakdown: { fontSize: 10, color: '#9CA3AF', margin: 0 },
+  fareBlock: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' },
+  fareAmount: { fontSize: '19px', fontWeight: 700, color: '#0A0A14', letterSpacing: '-0.2px' },
+  refundBadge: { fontSize: '10px', fontWeight: 600, padding: '2px 8px', borderRadius: '4px' },
 
-  routeStrip: { display: 'flex', alignItems: 'center', gap: 16, marginBottom: 14 },
-  routeEndpoint: { minWidth: 60 },
-  routeTime: { fontSize: 20, fontWeight: 700, color: '#111827', margin: '0 0 2px', letterSpacing: '-0.5px' },
-  routeDate: { fontSize: 11, color: '#9CA3AF', margin: '0 0 2px' },
-  routeCode: { fontSize: 11, fontWeight: 600, color: '#6B7280', margin: 0 },
+  routeRow: { display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '16px', padding: '14px 0', borderTop: '1px solid #F3F4F6', borderBottom: '1px solid #F3F4F6' },
+  routePoint: { display: 'flex', flexDirection: 'column', gap: '2px', flex: '0 0 auto', minWidth: '58px' },
+  routeTime: { fontSize: '16px', fontWeight: 700, color: '#111827' },
+  routeCode: { fontSize: '11px', fontWeight: 600, color: '#6B7280' },
+  routeDay: { fontSize: '10px', color: '#9CA3AF' },
+  routeMiddle: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' },
+  routeDuration: { fontSize: '10px', color: '#9CA3AF', fontWeight: 500 },
+  routeLineWrap: { display: 'flex', alignItems: 'center', width: '100%', gap: '2px' },
+  routeDot: { width: '5px', height: '5px', borderRadius: '50%', background: '#D1D5DB', flexShrink: 0 },
+  routeStopDot: { width: '5px', height: '5px', borderRadius: '50%', background: '#9CA3AF', flexShrink: 0 },
+  routeLine: { flex: 1, height: '1px', background: '#D1D5DB' },
+  routeStops: { fontSize: '10px', color: '#9CA3AF' },
 
-  routeMiddle: { flex: 1, display: 'flex', flexDirection: 'column' as const, alignItems: 'center', gap: 4 },
-  routeDuration: { fontSize: 11, color: '#6B7280', margin: 0 },
-  routeLine: { display: 'flex', alignItems: 'center', width: '100%', gap: 0 },
-  routeDot: { width: 6, height: 6, borderRadius: '50%', background: '#D1D5DB', flexShrink: 0 },
-  routeTrack: { flex: 1, height: 1, background: '#E5E7EB' },
-  routeStops: { fontSize: 10, color: '#9CA3AF', margin: 0 },
+  resultBottom: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+  metaTags: { display: 'flex', gap: '6px', flexWrap: 'wrap' as const },
+  tag: { fontSize: '10px', color: '#6B7280', background: '#F3F4F6', padding: '3px 9px', borderRadius: '5px', fontWeight: 500 },
+  tagBudget: { color: '#7C2D12', background: '#FFF7ED' },
+  tagFullService: { color: '#14532D', background: '#F0FDF4' },
 
-  tagsRow: { display: 'flex', flexWrap: 'wrap' as const, gap: 6, marginBottom: 14 },
-  tag: { display: 'inline-block', padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 500 },
-  tagGreen: { background: '#ECFDF5', color: '#065F46' },
-  tagBlue: { background: '#EEF2FF', color: '#3730A3' },
-  tagGray: { background: '#F3F4F6', color: '#6B7280' },
-
-  pricedBanner: {
-    background: '#F0FDF4', border: '1px solid #A7F3D0', borderRadius: 8,
-    padding: '14px 16px', display: 'flex', alignItems: 'center',
-    justifyContent: 'space-between', marginTop: 4,
-  },
-  pricedLabel: { fontSize: 10, fontWeight: 600, color: '#065F46', textTransform: 'uppercase' as const, letterSpacing: '0.5px', margin: '0 0 3px' },
-  pricedFare: { fontSize: 18, fontWeight: 700, color: '#065F46', margin: '0 0 2px' },
-  pricedRef: { fontSize: 10, color: '#6B7280', margin: 0 },
-  proceedBtn: {
-    height: 38, padding: '0 20px', background: '#065F46', color: '#fff',
-    fontSize: 13, fontWeight: 600, border: 'none', borderRadius: 7, cursor: 'pointer',
-    whiteSpace: 'nowrap' as const,
-  },
-
-  cardFooter: { display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'flex-end', marginTop: 4 },
-  selectBtn: {
-    height: 36, padding: '0 20px', background: '#000835', color: '#fff',
-    fontSize: 13, fontWeight: 600, border: 'none', borderRadius: 7, cursor: 'pointer',
-  },
+  selectBtn: { height: '34px', padding: '0 18px', background: '#000835', color: '#fff', fontSize: '12px', fontWeight: 600, border: 'none', borderRadius: '8px', cursor: 'pointer' },
+  selectBtnActive: { height: '34px', padding: '0 18px', background: '#ECFDF5', color: '#065F46', fontSize: '12px', fontWeight: 700, border: '1px solid #A7F3D0', borderRadius: '8px', cursor: 'pointer' },
 }
