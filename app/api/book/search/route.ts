@@ -124,9 +124,18 @@ export async function POST(req: NextRequest) {
       availabilityKey: availability.Key,
     })
 
-  } catch (err) {
-    console.error('Flight search error:', err)
-    const message = err instanceof Error ? err.message : 'Flight search failed'
-    return Response.json({ error: message }, { status: 500 })
+ } catch (err) {
+  console.error('Flight search error:', err)
+
+  if (err instanceof Error) {
+    console.error('Error details:', JSON.stringify(err, null, 2))
   }
+
+  return Response.json(
+    {
+      error: err instanceof Error ? err.message : 'Flight search failed',
+    },
+    { status: 500 }
+  )
+}
 }
