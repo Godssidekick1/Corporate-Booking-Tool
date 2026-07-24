@@ -83,7 +83,7 @@ export default function BookFlightsPage() {
     setHasSearched(false)
     setSelectedKey(null)
     try {
-      const res = await fetch('/api/book/flights/search', {
+      const res = await fetch('/api/book/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
