@@ -32,14 +32,15 @@ export interface FlatFlightResult {
   origin: { code: string; name: string; city: string; dateTime: string } | undefined
   destination: { code: string; name: string; city: string; dateTime: string } | undefined
   airline: { code: string; name: string } | undefined
-  stopCount: number | undefined
+  stops: number
   duration: string | undefined
   availableSeats: number | undefined
-  baggage: string | undefined
+  checkInBaggageKg: string | undefined
   pricingKey: string | undefined
   currency: string | undefined
   totalFare: number | undefined
   baseFare: number | undefined
+  isNdc: boolean | undefined
   refundable: boolean | undefined
 }
 
@@ -106,10 +107,11 @@ export async function POST(req: NextRequest) {
           city: segment.Destination.CityName, dateTime: segment.Destination.DateTime,
         } : undefined,
         airline: segment?.AirLine ? { code: segment.AirLine.Code, name: segment.AirLine.Name } : undefined,
-        stopCount: segment?.StopCount,
-        duration: segment?.Duration,
-        availableSeats: segment?.AvailableSeats,
-        baggage: segment?.Baggage,
+        stops: segment?.StopCount ?? 0,
+duration: segment?.Duration,
+availableSeats: segment?.AvailableSeats,
+checkInBaggageKg: segment?.Baggage,
+isNdc: pricingInfo?.IsNDC,
         pricingKey: pricingInfo?.Pricingkey,
         currency: pricingInfo?.Currency,
         totalFare: pricingInfo?.Total?.Fare,
