@@ -1,55 +1,10 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import AirportDropdown from '@/app/components/AirportDropdown'
-
-interface StopInfo {
-  code: string
-  city: string
-  arrivalDateTime: string
-  departureDateTime: string | undefined
-}
-
-interface FlatFlightResult {
-  flightKey: string
-  provider: string
-  isLcc: boolean
-  itemNo: string
-  cabin?: string
-  bookingCode?: string
-  origin?: { code: string; name: string; city: string; dateTime: string }
-  destination?: { code: string; name: string; city: string; dateTime: string }
-  airline?: { code: string; name: string }
-  stopCount: number
-  stops: StopInfo[]
-  duration?: string
-  availableSeats?: number
-  checkInBaggageKg?: string
-  pricingKey?: string
-  currency?: string
-  totalFare?: number
-  baseFare?: number
-  isNdc?: boolean
-  refundable?: boolean
-}
-
-function formatTime(iso: string | undefined) {
-  if (!iso) return '—'
-  try {
-    return new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
-  } catch {
-    return '—'
-  }
-}
-
-function formatDayLabel(iso: string | undefined) {
-  if (!iso) return ''
-  try {
-    return new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
-  } catch {
-    return ''
-  }
-}
+import { flowStorage } from '@/app/lib/book/flowStorage'
+import { FlatFlightResult, formatTime, formatDayLabel } from '@/app/lib/book/types'
 
 function toApiDate(input: string) {
   const [y, m, d] = input.split('-')
@@ -62,67 +17,40 @@ function toDisplayDate(input: string) {
   return d.toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short' })
 }
 
+function durationMinutes(duration: string | undefined): number {
+  if (!duration) return Infinity
+  const [h, m] = duration.split(':').map(Number)
+  return (h || 0) * 60 + (m || 0)
+}
+
 export default function BookFlightsPage() {
+  const router = useRouter()
+
   const [origin, setOrigin] = useState('')
   const [destination, setDestination] = useState('')
   const [departDate, setDepartDate] = useState('')
   const [adult, setAdult] = useState(1)
   const [cabinPref, setCabinPref] = useState<'Economy' | 'Premium Economy' | 'Business' | 'First'>('Economy')
-  const [availabilityKey, setAvailabilityKey] = useState<string | null>(null)
-  const [pricingFlightKey, setPricingFlightKey] = useState<string | null>(null)
-  const [pricingError, setPricingError] = useState<string | null>(null)
-  const [pricedFlight, setPricedFlight] = useState<{ flightKey: string; referenceNo: string; totalFare: number } | null>(null)
+
   const [searching, setSearching] = useState(false)
   const [hasSearched, setHasSearched] = useState(false)
   const [results, setResults] = useState<FlatFlightResult[]>([])
   const [error, setError] = useState('')
   const [sortBy, setSortBy] = useState<'price' | 'duration' | 'departure'>('price')
-  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const [navigatingKey, setNavigatingKey] = useState<string | null>(null)
 
   function swapOriginDestination() {
     setOrigin(destination)
     setDestination(origin)
   }
 
-  async function handleSelectFlight(flight: FlatFlightResult) {
-    if (!availabilityKey || !flight.pricingKey) {
-      setPricingError('Missing pricing details for this flight — try searching again.')
-      return
-    }
-
-    setPricingFlightKey(flight.flightKey)
-    setPricingError(null)
-
-    try {
-      const res = await fetch('/api/book/price', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          key: availabilityKey,
-          pricingKey: flight.pricingKey,
-          provider: flight.provider,
-          resultIndex: flight.itemNo,
-        }),
-      })
-      const data = await res.json()
-
-      if (!data.ok) {
-        setPricingError(data.error || 'This fare is no longer available. Please select a different flight.')
-        setSelectedKey(null)
-        return
-      }
-
-      setSelectedKey(`${flight.flightKey}-${flight.pricingKey}`)
-      setPricedFlight({
-        flightKey: flight.flightKey,
-        referenceNo: data.referenceNo,
-        totalFare: data.totalFare,
-      })
-    } catch {
-      setPricingError('Something went wrong confirming this fare. Please try again.')
-    } finally {
-      setPricingFlightKey(null)
-    }
+  function handleSelectFlight(flight: FlatFlightResult) {
+    // Nothing to price here anymore — that's the next page's job. This page's
+    // only responsibility is: remember what was searched/found, then hand
+    // off to /book/price/[flightKey] via the URL, which is the one thing
+    // that needs to survive a refresh or a shared link.
+    setNavigatingKey(flight.flightKey)
+    router.push(`/book/price/${encodeURIComponent(flight.flightKey)}`)
   }
 
   async function handleSearch(e: React.FormEvent) {
@@ -130,7 +58,6 @@ export default function BookFlightsPage() {
     setSearching(true)
     setError('')
     setHasSearched(false)
-    setSelectedKey(null)
     try {
       const res = await fetch('/api/book/search', {
         method: 'POST',
@@ -149,9 +76,19 @@ export default function BookFlightsPage() {
         setError(`${data.error || 'Search failed.'}${diagnostic}`)
         return
       }
-      setResults(data.results ?? [])
-      setAvailabilityKey(data.availabilityKey ?? null)
+
+      const foundResults: FlatFlightResult[] = data.results ?? []
+      setResults(foundResults)
       setHasSearched(true)
+
+      // Save results + search context to sessionStorage so /book/price/[flightKey]
+      // can look up the exact result the user picked without re-searching, and
+      // so the "back to results" link on later pages has something to return to.
+      flowStorage.saveSearchResults(
+        foundResults,
+        { origin, destination, departDate: toDisplayDate(departDate), adult },
+        data.availabilityKey ?? null
+      )
     } catch {
       setError('Something went wrong. Please try again.')
     } finally {
@@ -259,13 +196,6 @@ export default function BookFlightsPage() {
           </div>
         )}
 
-        {pricingError && (
-          <div style={s.errorBanner}>
-            <span style={s.bannerIcon}>⚠</span>
-            {pricingError}
-          </div>
-        )}
-
         {/* ── Results ────────────────────────────────────────────────── */}
         {searching && (
           <div style={s.loadingState}>
@@ -302,11 +232,11 @@ export default function BookFlightsPage() {
 
               <div style={s.resultsList}>
                 {sortedResults.map((flight, i) => {
-                  const isSelected = selectedKey === `${flight.flightKey}-${flight.pricingKey}`
+                  const isNavigating = navigatingKey === flight.flightKey
                   return (
                     <div
                       key={`${flight.flightKey}-${flight.pricingKey}-${i}`}
-                      style={{ ...s.resultCard, ...(isSelected ? s.resultCardSelected : {}) }}
+                      style={s.resultCard}
                     >
                       <div style={s.resultTop}>
                         <div style={s.airlineBlock}>
@@ -382,10 +312,10 @@ export default function BookFlightsPage() {
                         <button
                           type="button"
                           onClick={() => handleSelectFlight(flight)}
-                          disabled={pricingFlightKey === flight.flightKey}
-                          style={isSelected ? s.selectBtnActive : s.selectBtn}
+                          disabled={isNavigating}
+                          style={s.selectBtn}
                         >
-                          {pricingFlightKey === flight.flightKey ? 'Checking price…' : isSelected ? '✓ Selected' : 'Select →'}
+                          {isNavigating ? 'Opening…' : 'Select →'}
                         </button>
                       </div>
                     </div>
@@ -398,12 +328,6 @@ export default function BookFlightsPage() {
       </div>
     </div>
   )
-}
-
-function durationMinutes(duration: string | undefined): number {
-  if (!duration) return Infinity
-  const [h, m] = duration.split(':').map(Number)
-  return (h || 0) * 60 + (m || 0)
 }
 
 const s: Record<string, React.CSSProperties> = {
@@ -428,7 +352,6 @@ const s: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1,
   },
   label: { fontSize: '10px', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.5px' },
-  codeInput: { border: 'none', background: 'transparent', outline: 'none', fontSize: '22px', fontWeight: 700, color: '#111827', padding: '2px 0', width: '100%', letterSpacing: '0.5px' },
   codeDropdown: { border: 'none', background: 'transparent', outline: 'none', fontSize: '13px', fontWeight: 600, color: '#111827', padding: '2px 0', width: '100%' },
   airportHint: { fontSize: '11px', color: '#9CA3AF' },
 
@@ -463,7 +386,6 @@ const s: Record<string, React.CSSProperties> = {
 
   resultsList: { display: 'flex', flexDirection: 'column', gap: '12px' },
   resultCard: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '18px', transition: 'border-color 0.15s' },
-  resultCardSelected: { borderColor: '#000835', boxShadow: '0 0 0 2px rgba(0,8,53,0.1)' },
 
   resultTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' },
   airlineBlock: { display: 'flex', alignItems: 'center', gap: '10px' },
@@ -488,8 +410,6 @@ const s: Record<string, React.CSSProperties> = {
   routeStopDot: { width: '7px', height: '7px', borderRadius: '50%', background: '#6B7280', flexShrink: 0, border: '1.5px solid #fff', boxShadow: '0 0 0 1.5px #9CA3AF' },
   routeLine: { flex: 1, height: '1px', background: '#D1D5DB' },
   routeStops: { fontSize: '10px', color: '#9CA3AF' },
-  stopPinWrap: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', position: 'relative' },
-  stopPinLabel: { fontSize: '9px', fontWeight: 700, color: '#6B7280', letterSpacing: '0.3px', whiteSpace: 'nowrap', position: 'absolute', top: '10px' },
 
   resultBottom: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   metaTags: { display: 'flex', gap: '6px', flexWrap: 'wrap' as const },
@@ -498,5 +418,4 @@ const s: Record<string, React.CSSProperties> = {
   tagFullService: { color: '#14532D', background: '#F0FDF4' },
 
   selectBtn: { height: '34px', padding: '0 18px', background: '#000835', color: '#fff', fontSize: '12px', fontWeight: 600, border: 'none', borderRadius: '8px', cursor: 'pointer' },
-  selectBtnActive: { height: '34px', padding: '0 18px', background: '#ECFDF5', color: '#065F46', fontSize: '12px', fontWeight: 700, border: '1px solid #A7F3D0', borderRadius: '8px', cursor: 'pointer' },
 }
