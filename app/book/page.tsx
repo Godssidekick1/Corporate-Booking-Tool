@@ -346,10 +346,7 @@ export default function BookFlightsPage() {
                               <>
                                 <div style={{ flex: 1, height: '1px', background: '#D1D5DB' }} />
                                 {flight.stops.map((stop, si) => (
-                                  <div key={si} style={s.stopPinWrap}>
-                                    <div style={s.routeStopDot} />
-                                    <span style={s.stopPinLabel}>{stop.code}</span>
-                                  </div>
+                                  <div key={si} style={s.routeStopDot} />
                                 ))}
                                 <div style={{ flex: 1, height: '1px', background: '#D1D5DB' }} />
                               </>
