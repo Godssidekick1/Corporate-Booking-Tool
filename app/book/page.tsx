@@ -3,6 +3,13 @@
 import { useState } from 'react'
 import AirportDropdown from '@/app/components/AirportDropdown'
 
+interface StopInfo {
+  code: string
+  city: string
+  arrivalDateTime: string
+  departureDateTime: string | undefined
+}
+
 interface FlatFlightResult {
   flightKey: string
   provider: string
@@ -13,7 +20,8 @@ interface FlatFlightResult {
   origin?: { code: string; name: string; city: string; dateTime: string }
   destination?: { code: string; name: string; city: string; dateTime: string }
   airline?: { code: string; name: string }
-  stops: number
+  stopCount: number
+  stops: StopInfo[]
   duration?: string
   availableSeats?: number
   checkInBaggageKg?: string
@@ -44,7 +52,6 @@ function formatDayLabel(iso: string | undefined) {
 }
 
 function toApiDate(input: string) {
-  // <input type="date"> gives YYYY-MM-DD, Amadeus wants DD/MM/YYYY
   const [y, m, d] = input.split('-')
   return `${d}/${m}/${y}`
 }
@@ -55,8 +62,6 @@ function toDisplayDate(input: string) {
   return d.toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short' })
 }
 
-
-
 export default function BookFlightsPage() {
   const [origin, setOrigin] = useState('')
   const [destination, setDestination] = useState('')
@@ -64,7 +69,7 @@ export default function BookFlightsPage() {
   const [adult, setAdult] = useState(1)
   const [cabinPref, setCabinPref] = useState<'Economy' | 'Premium Economy' | 'Business' | 'First'>('Economy')
   const [availabilityKey, setAvailabilityKey] = useState<string | null>(null)
-  const [pricingFlightKey, setPricingFlightKey] = useState<string | null>(null) // which flight is currently being priced
+  const [pricingFlightKey, setPricingFlightKey] = useState<string | null>(null)
   const [pricingError, setPricingError] = useState<string | null>(null)
   const [pricedFlight, setPricedFlight] = useState<{ flightKey: string; referenceNo: string; totalFare: number } | null>(null)
   const [searching, setSearching] = useState(false)
@@ -80,47 +85,45 @@ export default function BookFlightsPage() {
   }
 
   async function handleSelectFlight(flight: FlatFlightResult) {
-  if (!availabilityKey || !flight.pricingKey) {
-    setPricingError('Missing pricing details for this flight — try searching again.')
-    return
-  }
-
-  setPricingFlightKey(flight.flightKey)
-  setPricingError(null)
-
-  try {
-    const res = await fetch('/api/book/price', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        key: availabilityKey,
-        pricingKey: flight.pricingKey,
-        provider: flight.provider,
-        resultIndex: flight.itemNo,
-      }),
-    })
-    const data = await res.json()
-
-    if (!data.ok) {
-      // Clean failure — fare no longer available. Tell the user, let
-      // them pick a different flight, don't navigate anywhere.
-      setPricingError(data.error || 'This fare is no longer available. Please select a different flight.')
-      setSelectedKey(null)
+    if (!availabilityKey || !flight.pricingKey) {
+      setPricingError('Missing pricing details for this flight — try searching again.')
       return
     }
 
-    setSelectedKey(`${flight.flightKey}-${flight.pricingKey}`)
-    setPricedFlight({
-      flightKey: flight.flightKey,
-      referenceNo: data.referenceNo,
-      totalFare: data.totalFare,
-    })
-  } catch {
-    setPricingError('Something went wrong confirming this fare. Please try again.')
-  } finally {
-    setPricingFlightKey(null)
+    setPricingFlightKey(flight.flightKey)
+    setPricingError(null)
+
+    try {
+      const res = await fetch('/api/book/price', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          key: availabilityKey,
+          pricingKey: flight.pricingKey,
+          provider: flight.provider,
+          resultIndex: flight.itemNo,
+        }),
+      })
+      const data = await res.json()
+
+      if (!data.ok) {
+        setPricingError(data.error || 'This fare is no longer available. Please select a different flight.')
+        setSelectedKey(null)
+        return
+      }
+
+      setSelectedKey(`${flight.flightKey}-${flight.pricingKey}`)
+      setPricedFlight({
+        flightKey: flight.flightKey,
+        referenceNo: data.referenceNo,
+        totalFare: data.totalFare,
+      })
+    } catch {
+      setPricingError('Something went wrong confirming this fare. Please try again.')
+    } finally {
+      setPricingFlightKey(null)
+    }
   }
-}
 
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault()
@@ -146,9 +149,9 @@ export default function BookFlightsPage() {
         setError(`${data.error || 'Search failed.'}${diagnostic}`)
         return
       }
-setResults(data.results ?? [])
-setAvailabilityKey(data.availabilityKey ?? null)
-setHasSearched(true)
+      setResults(data.results ?? [])
+      setAvailabilityKey(data.availabilityKey ?? null)
+      setHasSearched(true)
     } catch {
       setError('Something went wrong. Please try again.')
     } finally {
@@ -257,11 +260,11 @@ setHasSearched(true)
         )}
 
         {pricingError && (
-  <div style={s.errorBanner}>
-    <span style={s.bannerIcon}>⚠</span>
-    {pricingError}
-  </div>
-)}
+          <div style={s.errorBanner}>
+            <span style={s.bannerIcon}>⚠</span>
+            {pricingError}
+          </div>
+        )}
 
         {/* ── Results ────────────────────────────────────────────────── */}
         {searching && (
@@ -325,6 +328,7 @@ setHasSearched(true)
                         </div>
                       </div>
 
+                      {/* ── Route strip ──────────────────────────────── */}
                       <div style={s.routeRow}>
                         <div style={s.routePoint}>
                           <span style={s.routeTime}>{formatTime(flight.origin?.dateTime)}</span>
@@ -336,16 +340,30 @@ setHasSearched(true)
                           <span style={s.routeDuration}>{flight.duration ?? ''}</span>
                           <div style={s.routeLineWrap}>
                             <div style={s.routeDot} />
-                            <div style={s.routeLine} />
-                            {flight.stops > 0 && <div style={s.routeStopDot} />}
+                            {flight.stopCount === 0 ? (
+                              <div style={s.routeLine} />
+                            ) : (
+                              <>
+                                <div style={{ flex: 1, height: '1px', background: '#D1D5DB' }} />
+                                {flight.stops.map((stop, si) => (
+                                  <div key={si} style={s.stopPinWrap}>
+                                    <div style={s.routeStopDot} />
+                                    <span style={s.stopPinLabel}>{stop.code}</span>
+                                  </div>
+                                ))}
+                                <div style={{ flex: 1, height: '1px', background: '#D1D5DB' }} />
+                              </>
+                            )}
                             <div style={s.routeDot} />
                           </div>
                           <span style={s.routeStops}>
-                            {flight.stops === 0 ? 'Non-stop' : `${flight.stops} stop${flight.stops === 1 ? '' : 's'}`}
+                            {flight.stopCount === 0
+                              ? 'Non-stop'
+                              : flight.stops.map(st => `via ${st.city}`).join(', ')}
                           </span>
                         </div>
 
-                        <div style={s.routePoint}>
+                        <div style={{ ...s.routePoint, alignItems: 'flex-end' as const }}>
                           <span style={s.routeTime}>{formatTime(flight.destination?.dateTime)}</span>
                           <span style={s.routeCode}>{flight.destination?.code ?? destination}</span>
                           <span style={s.routeDay}>{formatDayLabel(flight.destination?.dateTime)}</span>
@@ -365,13 +383,13 @@ setHasSearched(true)
                           )}
                         </div>
                         <button
-  type="button"
-  onClick={() => handleSelectFlight(flight)}
-  disabled={pricingFlightKey === flight.flightKey}
-  style={isSelected ? s.selectBtnActive : s.selectBtn}
->
-  {pricingFlightKey === flight.flightKey ? 'Checking price…' : isSelected ? '✓ Selected' : 'Select →'}
-</button>
+                          type="button"
+                          onClick={() => handleSelectFlight(flight)}
+                          disabled={pricingFlightKey === flight.flightKey}
+                          style={isSelected ? s.selectBtnActive : s.selectBtn}
+                        >
+                          {pricingFlightKey === flight.flightKey ? 'Checking price…' : isSelected ? '✓ Selected' : 'Select →'}
+                        </button>
                       </div>
                     </div>
                   )
@@ -470,9 +488,11 @@ const s: Record<string, React.CSSProperties> = {
   routeDuration: { fontSize: '10px', color: '#9CA3AF', fontWeight: 500 },
   routeLineWrap: { display: 'flex', alignItems: 'center', width: '100%', gap: '2px' },
   routeDot: { width: '5px', height: '5px', borderRadius: '50%', background: '#D1D5DB', flexShrink: 0 },
-  routeStopDot: { width: '5px', height: '5px', borderRadius: '50%', background: '#9CA3AF', flexShrink: 0 },
+  routeStopDot: { width: '7px', height: '7px', borderRadius: '50%', background: '#6B7280', flexShrink: 0, border: '1.5px solid #fff', boxShadow: '0 0 0 1.5px #9CA3AF' },
   routeLine: { flex: 1, height: '1px', background: '#D1D5DB' },
   routeStops: { fontSize: '10px', color: '#9CA3AF' },
+  stopPinWrap: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', position: 'relative' },
+  stopPinLabel: { fontSize: '9px', fontWeight: 700, color: '#6B7280', letterSpacing: '0.3px', whiteSpace: 'nowrap', position: 'absolute', top: '10px' },
 
   resultBottom: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   metaTags: { display: 'flex', gap: '6px', flexWrap: 'wrap' as const },

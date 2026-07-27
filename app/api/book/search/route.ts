@@ -22,6 +22,13 @@ interface SearchBody {
 // (Availibilities -> Availibility -> Itineraries.Itinerary -> FlightSegments)
 // is real but awkward to consume directly in React; this route flattens it
 // once, server-side, so the page doesn't have to know about that structure.
+export interface StopInfo {
+  code: string
+  city: string
+  arrivalDateTime: string
+  departureDateTime: string | undefined
+}
+
 export interface FlatFlightResult {
   flightKey: string
   provider: string
@@ -32,7 +39,8 @@ export interface FlatFlightResult {
   origin: { code: string; name: string; city: string; dateTime: string } | undefined
   destination: { code: string; name: string; city: string; dateTime: string } | undefined
   airline: { code: string; name: string } | undefined
-  stops: number
+  stopCount: number           // 0, 1, 2 — number of stops
+  stops: StopInfo[]           // intermediate stop details
   duration: string | undefined
   availableSeats: number | undefined
   checkInBaggageKg: string | undefined
@@ -115,43 +123,54 @@ export async function POST(req: NextRequest) {
     const allFlights = availability.Availibilities.flatMap(a => a.Availibility)
 
   const results: FlatFlightResult[] = allFlights.map(flight => {
-  const itinerary = flight.Itineraries?.Itinerary?.[0]
+  const itineraries = flight.Itineraries?.Itinerary ?? []
+  const firstLeg = itineraries[0]
+  const lastLeg = itineraries[itineraries.length - 1]
   const pricingInfo = flight.PricingInfos?.PricingInfo?.[0]
   const fareBreakdown = pricingInfo?.FareBreakDowns?.FareBreakDown?.[0]
+
+  // Stops are intermediate points — all leg destinations except the final one
+  const stops = itineraries.slice(0, -1).map(leg => ({
+    code: leg.Destination.AirportCode,
+    city: leg.Destination.CityName,
+    arrivalDateTime: leg.Destination.DateTime,
+    departureDateTime: itineraries[itineraries.indexOf(leg) + 1]?.Origin.DateTime,
+  }))
 
   return {
     flightKey: flight.FlightKey,
     provider: flight.Provider,
-    isLcc: flight.IsLCC === 'true',
+    isLcc: String(flight.IsLCC) === 'true',
     itemNo: flight.ItemNo ?? '',
-    cabin: itinerary?.Cabin,
-    bookingCode: itinerary?.BookingCode,
-    origin: itinerary?.Origin ? {
-      code: itinerary.Origin.AirportCode,
-      name: itinerary.Origin.AirportName,
-      city: itinerary.Origin.CityName,
-      dateTime: itinerary.Origin.DateTime,
+    cabin: pricingInfo?.FareInfos?.FareInfo?.[0]?.PaxCabin ?? firstLeg?.Cabin,
+    bookingCode: firstLeg?.BookingCode,
+    origin: firstLeg?.Origin ? {
+      code: firstLeg.Origin.AirportCode,
+      name: firstLeg.Origin.AirportName,
+      city: firstLeg.Origin.CityName,
+      dateTime: firstLeg.Origin.DateTime,
     } : undefined,
-    destination: itinerary?.Destination ? {
-      code: itinerary.Destination.AirportCode,
-      name: itinerary.Destination.AirportName,
-      city: itinerary.Destination.CityName,
-      dateTime: itinerary.Destination.DateTime,
+    destination: lastLeg?.Destination ? {
+      code: lastLeg.Destination.AirportCode,
+      name: lastLeg.Destination.AirportName,
+      city: lastLeg.Destination.CityName,
+      dateTime: lastLeg.Destination.DateTime,
     } : undefined,
-    airline: itinerary?.AirLine ? {
-      code: itinerary.AirLine.OperatingCarrier || itinerary.AirLine.Code,
-      name: itinerary.AirLine.Name,
+    stops,
+    airline: firstLeg?.AirLine ? {
+      code: firstLeg.AirLine.OperatingCarrier || firstLeg.AirLine.Code,
+      name: firstLeg.AirLine.Name,
     } : undefined,
-    stops: itinerary?.StopCount?.includes('0') ? 0 : parseInt(itinerary?.StopCount ?? '0') || 0,
-    duration: itinerary?.Duration,
-    availableSeats: itinerary?.AvailableSeats ? parseInt(itinerary.AvailableSeats) || undefined : undefined,
-    checkInBaggageKg: itinerary?.Baggage?.Allowance?.CheckIn,
+    stopCount: itineraries.length - 1,
+    duration: firstLeg?.Duration,
+    availableSeats: firstLeg?.AvailableSeats ? parseInt(firstLeg.AvailableSeats) || undefined : undefined,
+    checkInBaggageKg: firstLeg?.Baggage?.Allowance?.CheckIn,
     isNdc: pricingInfo?.IsNDC,
     pricingKey: pricingInfo?.Pricingkey,
     currency: pricingInfo?.Currency,
     totalFare: pricingInfo?.Total?.Fare ? Number(pricingInfo.Total.Fare) : undefined,
-baseFare: pricingInfo?.Total?.BaseFare ? Number(pricingInfo.Total.BaseFare) : undefined,
-refundable: fareBreakdown?.Refundable === 'Refundable',
+    baseFare: pricingInfo?.Total?.BaseFare ? Number(pricingInfo.Total.BaseFare) : undefined,
+    refundable: fareBreakdown?.Refundable === 'Refundable',
   }
 })
 
