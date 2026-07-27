@@ -16,6 +16,7 @@
 //   - On any "Session Expired" error from any endpoint, we re-auth once and retry.
 //
 // ─────────────────────────────────────────────────────────────────────────────
+import { getCachedSession, setCachedSession, clearCachedSession } from './sessionStore'
 
 const BASE_URL = process.env.AMADEUS_API_BASE_URL!
 const CLIENT_CODE = process.env.AMADEUS_CLIENT_CODE!   // "ARR001"
@@ -334,14 +335,7 @@ export interface FlightSearchParams {
   rtf?: boolean
 }
 
-// ── Session cache (module-level singleton) ────────────────────────────────────
-
-interface CachedSession {
-  sessionId: string
-  expiresAt: number           // Date.now() + SESSION_TTL_MS
-}
-
-let cachedSession: CachedSession | null = null
+// ── Session cache (module-level singleton) ──────────────────────────────────
 
 function generateSearchKey(): string {
   // Client-generated key for the search session — format matches Amadeus examples
@@ -388,18 +382,17 @@ async function login(): Promise<string> {
 
   assertSuccess(json, 'Login')
 
-  cachedSession = {
-    sessionId: json.SessionID,
-    expiresAt: Date.now() + SESSION_TTL_MS,
-  }
+  await setCachedSession(json.SessionID)
 
-  console.log(`[amadeus] new session: ${json.SessionID} expires at ${new Date(cachedSession.expiresAt).toISOString()}`)
+  console.log(`[amadeus] new session: ${json.SessionID}`)
   return json.SessionID
 }
 
+
 async function getSessionId(): Promise<string> {
-  if (cachedSession && Date.now() < cachedSession.expiresAt) {
-    return cachedSession.sessionId
+  const cached = await getCachedSession()
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.sessionId
   }
   return login()
 }
@@ -415,9 +408,8 @@ async function withSession<T extends AmadeusEnvelope>(
   const json = await post<T>(endpoint, buildBody(sessionId))
 
   if (isSessionExpired(json)) {
-    // Force re-auth and retry once
     console.log(`[amadeus] session expired on ${endpoint}, re-authing`)
-    cachedSession = null
+    await clearCachedSession()
     const freshSessionId = await getSessionId()
     const retryJson = await post<T>(endpoint, buildBody(freshSessionId))
     assertSuccess(retryJson, context)
