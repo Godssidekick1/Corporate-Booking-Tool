@@ -114,40 +114,46 @@ export async function POST(req: NextRequest) {
 
     const allFlights = availability.Availibilities.flatMap(a => a.Availibility)
 
-    const results: FlatFlightResult[] = allFlights.map(flight => {
-      const itinerary = flight.Itineraries?.Itinerary?.[0]
-      const segment = itinerary?.FlightSegments?.[0]
-      const pricingInfo = flight.PricingInfos?.PricingInfo?.[0]
-      const fareBreakdown = pricingInfo?.FareBreakDowns?.FareBreakDown?.[0]
+  const results: FlatFlightResult[] = allFlights.map(flight => {
+  const itinerary = flight.Itineraries?.Itinerary?.[0]
+  const pricingInfo = flight.PricingInfos?.PricingInfo?.[0]
+  const fareBreakdown = pricingInfo?.FareBreakDowns?.FareBreakDown?.[0]
 
-      return {
-        flightKey: flight.FlightKey,
-        provider: flight.Provider,
-        isLcc: flight.IsLCC,
-        itemNo: flight.ItemNo,
-        cabin: segment?.Cabin,
-        bookingCode: segment?.BookingCode,
-        origin: segment?.Origin ? {
-          code: segment.Origin.AirportCode, name: segment.Origin.AirportName,
-          city: segment.Origin.CityName, dateTime: segment.Origin.DateTime,
-        } : undefined,
-        destination: segment?.Destination ? {
-          code: segment.Destination.AirportCode, name: segment.Destination.AirportName,
-          city: segment.Destination.CityName, dateTime: segment.Destination.DateTime,
-        } : undefined,
-        airline: segment?.AirLine ? { code: segment.AirLine.Code, name: segment.AirLine.Name } : undefined,
-        stops: segment?.StopCount ?? 0,
-duration: segment?.Duration,
-availableSeats: segment?.AvailableSeats,
-checkInBaggageKg: segment?.Baggage,
-isNdc: pricingInfo?.IsNDC,
-        pricingKey: pricingInfo?.Pricingkey,
-        currency: pricingInfo?.Currency,
-        totalFare: pricingInfo?.Total?.Fare,
-        baseFare: pricingInfo?.Total?.BaseFare,
-        refundable: fareBreakdown?.Refundable,
-      }
-    })
+  return {
+    flightKey: flight.FlightKey,
+    provider: flight.Provider,
+    isLcc: flight.IsLCC === 'true',
+    itemNo: flight.ItemNo ?? '',
+    cabin: itinerary?.Cabin,
+    bookingCode: itinerary?.BookingCode,
+    origin: itinerary?.Origin ? {
+      code: itinerary.Origin.AirportCode,
+      name: itinerary.Origin.AirportName,
+      city: itinerary.Origin.CityName,
+      dateTime: itinerary.Origin.DateTime,
+    } : undefined,
+    destination: itinerary?.Destination ? {
+      code: itinerary.Destination.AirportCode,
+      name: itinerary.Destination.AirportName,
+      city: itinerary.Destination.CityName,
+      dateTime: itinerary.Destination.DateTime,
+    } : undefined,
+    airline: itinerary?.AirLine ? {
+      code: itinerary.AirLine.OperatingCarrier || itinerary.AirLine.Code,
+      name: itinerary.AirLine.Name,
+    } : undefined,
+    stops: itinerary?.StopCount?.includes('0') ? 0 : parseInt(itinerary?.StopCount ?? '0') || 0,
+    duration: itinerary?.Duration,
+    availableSeats: itinerary?.AvailableSeats ? parseInt(itinerary.AvailableSeats) || undefined : undefined,
+    checkInBaggageKg: itinerary?.Baggage?.Allowance?.CheckIn,
+    isNdc: pricingInfo?.IsNDC,
+    pricingKey: pricingInfo?.Pricingkey,
+    currency: pricingInfo?.Currency,
+    totalFare: pricingInfo?.Total?.Fare ? Number(pricingInfo.Total.Fare) : undefined,
+baseFare: pricingInfo?.Total?.BaseFare ? Number(pricingInfo.Total.BaseFare) : undefined,
+refundable: fareBreakdown?.Refundable === 'Refundable',
+  }
+})
 
     return Response.json({
       ok: true,
@@ -161,11 +167,13 @@ isNdc: pricingInfo?.IsNDC,
         requestId: err.requestId,
         code: err.code,
         category: err.category,
+        request: sanitizeAmadeusDiagnostic(err.requestBody),
         raw: sanitizeAmadeusDiagnostic(err.raw),
       })
       return Response.json({
         error: err.message,
         requestId: err.requestId,
+        request: sanitizeAmadeusDiagnostic(err.requestBody),
         details: sanitizeAmadeusDiagnostic(err.raw),
       }, { status: 502 })
     }

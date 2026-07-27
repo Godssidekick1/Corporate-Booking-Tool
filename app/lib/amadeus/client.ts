@@ -18,10 +18,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { getCachedSession, setCachedSession, clearCachedSession } from './sessionStore'
 
-const BASE_URL = process.env.AMADEUS_API_BASE_URL!
-const CLIENT_CODE = process.env.AMADEUS_CLIENT_CODE!   // "ARR001"
-const USERNAME = process.env.AMADEUS_USERNAME!         // "ARR001"
-const PASSWORD = process.env.AMADEUS_PASSWORD!         // "Password@123"
+const BASE_URL = (process.env.AMADEUS_API_BASE_URL ?? '').trim().replace(/\/$/, '')
+const CLIENT_CODE = (process.env.AMADEUS_CLIENT_CODE ?? '').trim()
+const USERNAME = (process.env.AMADEUS_USERNAME ?? '').trim()
+const PASSWORD = (process.env.AMADEUS_PASSWORD ?? '').trim()
 
 // ── Error ─────────────────────────────────────────────────────────────────────
 
@@ -31,19 +31,25 @@ export class AmadeusError extends Error {
     public readonly code: string = '',
     public readonly category: string = '',
     public readonly raw?: unknown,
-    public readonly requestId?: string
+    public readonly requestId?: string,
+    public readonly requestBody?: unknown
   ) {
     super(message)
     this.name = 'AmadeusError'
   }
 }
 
-function assertSuccess(json: AmadeusEnvelope, context: string, requestId?: string): void {
+function assertSuccess(
+  json: AmadeusEnvelope,
+  context: string,
+  requestId?: string,
+  requestBody?: unknown
+): void {
   if (json.Status !== 'Success') {
     const desc = json.Error?.Description ?? 'Unknown error'
     const code = json.Error?.ErrorCode ?? ''
     const category = json.Error?.Category ?? ''
-    throw new AmadeusError(`Amadeus ${context} failed: ${desc}`, code, category, json, requestId)
+    throw new AmadeusError(`Amadeus ${context} failed: ${desc}`, code, category, json, requestId, requestBody)
   }
 }
 
@@ -120,65 +126,73 @@ export interface AirlineInfo {
   OperatingCarrier?: string
 }
 
-export interface FlightSegmentInfo {
+export interface BaggageAllowance {
+  CheckIn: string       // e.g. "15" (kg)
+  Cabin: string         // e.g. "7" (kg)
+  CheckInPiece: string
+  CabinPiece: string
+}
+
+// ItineraryInfo matches real Amadeus response shape.
+// Segment data lives directly on each Itinerary item, NOT nested under FlightSegments.
+export interface ItineraryInfo {
+  Conx: { ViaPoint: string; IsChangeOfPlane: string }
   Origin: LocationInfo
   Destination: LocationInfo
   AirLine: AirlineInfo
-  Baggage?: string
-  StopCount?: number
-  Duration?: string
-  AvailableSeats?: number
-  EquipmentType?: string
-  Cabin?: string
-  BookingCode?: string
-  Key?: string
-}
-
-export interface ItineraryInfo {
-  FlightSegments: FlightSegmentInfo[]
-  Journey: string
+  Baggage: { Allowance: BaggageAllowance }
+  Leg: string
+  Flight: string
+  StopCount: string     // "0-Stop", "1-Stop" etc — string, not number
+  Duration: string      // "02:05"
+  AvailableSeats: string  // empty string when not available
+  EquipmentType: string
+  Cabin: string         // "Y" (booking class code)
+  BookingCode: string
+  Key: string
 }
 
 export interface FareBreakDown {
-  TotalFare?: number
-  BaseFare?: number
-  TotalTax?: number
+  TotalFare: string     // string in real response — use Number() when consuming
+  BaseFare: string
+  TotalTax: string
   Taxes?: unknown
-  PaxType?: string
-  Refundable?: boolean
+  PaxType: string
+  Currency: string
+  Refundable: string    // "Refundable" | "Non-Refundable" — string, not boolean
 }
 
 export interface FareInfo {
-  Cabin?: string
-  BookingCode?: string
-  PaxType?: string
-  PaxCabin?: string
-  PaxFareBasis?: string
+  Cabin: string
+  BookingCode: string
+  PaxType: string
+  PaxCabin: string
+  PaxFareBasis: string
+  PaxBookingClass: string
 }
 
 export interface PricingInfo {
   Currency: string
-  Pricingkey: string
+  Pricingkey: string    // encoded string — pass unchanged to Pricing endpoint
   Meal?: string
   Total: {
-    BaseFare?: number
-    OtherTax?: number
-    Fare?: number
-    NetFare?: number
+    BaseFare: string    // string in real response
+    OtherTax: string
+    Fare: string        // string in real response — total including tax
+    FuelSurcharge: string
+    NetFare: string
+    CommissionEarned: string
+    ServiceFee: string
   }
   FareBreakDowns: { FareBreakDown: FareBreakDown[] }
   FareInfos: { FareInfo: FareInfo[] }
-  Penalties: {
-    ChangePenalty: unknown[]
-    CancelPenalty: unknown[]
-  }
   FareType?: string
   GSTAllowed?: boolean
   IsNDC?: boolean
 }
 
 export interface FlightResult {
-  IsLCC: boolean
+  IsLCC: string | boolean
   Provider: string
   FlightKey: string
   TotalDuration?: unknown[]
@@ -392,12 +406,13 @@ console.info('[amadeus] request', { requestId, endpoint, body: sanitizeAmadeusDi
 
 async function login(): Promise<string> {
   const requestId = crypto.randomUUID()
-  const json = await post<LoginResponse>('flight/Authenticate', {
+  const body = {
     UserName: USERNAME,
     Password: PASSWORD,
-  }, requestId)
+  }
+  const json = await post<LoginResponse>('flight/Authenticate', body, requestId)
 
-  assertSuccess(json, 'Login', requestId)
+  assertSuccess(json, 'Login', requestId, body)
 
   await setCachedSession(json.SessionID)
 
@@ -423,18 +438,20 @@ async function withSession<T extends AmadeusEnvelope>(
 ): Promise<T> {
   const requestId = crypto.randomUUID()
   const sessionId = await getSessionId()
-  const json = await post<T>(endpoint, buildBody(sessionId), requestId)
+  const body = buildBody(sessionId)
+  const json = await post<T>(endpoint, body, requestId)
 
   if (isSessionExpired(json) || shouldRefreshAvailabilitySession(json, context)) {
     console.info('[amadeus] refreshing session before one retry', { requestId, endpoint })
     await clearCachedSession()
     const freshSessionId = await getSessionId()
-    const retryJson = await post<T>(endpoint, buildBody(freshSessionId), requestId)
-    assertSuccess(retryJson, context, requestId)
+    const retryBody = buildBody(freshSessionId)
+    const retryJson = await post<T>(endpoint, retryBody, requestId)
+    assertSuccess(retryJson, context, requestId, retryBody)
     return retryJson
   }
 
-  assertSuccess(json, context, requestId)
+  assertSuccess(json, context, requestId, body)
   return json
 }
 
