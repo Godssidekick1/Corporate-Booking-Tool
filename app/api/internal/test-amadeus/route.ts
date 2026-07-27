@@ -1,25 +1,17 @@
-console.log('ENV:', {
-  BASE_URL: process.env.AMADEUS_API_BASE_URL,
-  CLIENT_CODE: process.env.AMADEUS_CLIENT_CODE,
-  USERNAME: process.env.AMADEUS_USERNAME,
-})
-
 import { NextRequest } from 'next/server'
 import { amadeus } from '@/app/lib/amadeus/client'
 
 // ── Internal-only route ───────────────────────────────────────────────────────
-// Verifies the Amadeus client end-to-end: Login -> FlightAvailability -> Pricing
-// No booking is created. Safe to call repeatedly against UAT.
+// Verifies the Amadeus client end-to-end. Returns the COMPLETE, UNMODIFIED
+// raw response from each step — no field selection, no flattening, no
+// renaming. This is a debugging tool: the whole point is seeing exactly
+// what Amadeus actually sent, not a curated summary that could hide a
+// field we didn't think to look for.
 //
-// Postman usage:
-//   POST /api/internal/test-amadeus
-//   Header: x-internal-secret: <INTERNAL_API_SECRET>
-//   Body: {
-//     "origin": "DEL",
-//     "destination": "BOM",
-//     "departDate": "20/10/2026",
-//     "resultIndex": "1"          -- optional, defaults to "1"
-//   }
+// This is deliberately different from /api/book/search, which DOES
+// reshape data for the frontend — that's a real API boundary transforming
+// a third-party vendor shape into our product's own contract. This route
+// has no such purpose; it exists purely to inspect raw API behavior.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
@@ -38,7 +30,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // ── Step 1: FlightAvailability ─────────────────────────────────────
+    // ── Step 1: FlightAvailability — raw response, nothing picked out ────
     const availability = await amadeus.searchFlights({
       segments: [{ Origin: origin, Destination: destination, DepartDate: departDate }],
       adult: 1,
@@ -49,100 +41,78 @@ export async function POST(req: NextRequest) {
         ok: false,
         step: 'FlightAvailability',
         error: 'No flights returned — try a different date or route.',
-        raw: availability,
+        rawAvailabilityResponse: availability,
       }, { status: 200 })
     }
 
-    // Real shape (confirmed from a live response): Availibilities is an array
-    // of wrapper objects, each holding an `Availibility` array of actual
-    // flight results. Flatten before indexing by resultIndex.
     const allFlights = availability.Availibilities.flatMap(a => a.Availibility)
 
-    if (allFlights.length === 0) {
+    // Not every Availability result is guaranteed to have a live, priceable
+    // fare in the sandbox (and can happen in production too — a fare can go
+    // stale between search and pricing). Try results in order until one
+    // prices successfully, rather than assuming index 1 always works.
+    const MAX_ATTEMPTS = Math.min(allFlights.length, 10)
+    let pricing = null
+    let succeededIndex = -1
+    let lastError: unknown = null
+
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      const candidate = allFlights[attempt]
+      const candidatePricingInfo = candidate.PricingInfos?.PricingInfo?.[0]
+      if (!candidatePricingInfo) continue
+
+      try {
+        pricing = await amadeus.pricing(
+          availability.Key,
+          candidatePricingInfo.Pricingkey,
+          candidate.Provider,
+          candidate.ItemNo,
+        )
+        succeededIndex = attempt
+        break
+      } catch (err) {
+        lastError = err
+        continue // try the next result
+      }
+    }
+
+    if (!pricing) {
+      const message = lastError instanceof Error ? lastError.message : 'No priceable fare found among available results'
       return Response.json({
         ok: false,
-        step: 'FlightAvailability',
-        error: 'Availibilities array was non-empty but contained no flights.',
-        raw: availability,
+        step: 'Pricing',
+        error: `Tried ${MAX_ATTEMPTS} results, none were priceable. Last error: ${message}`,
+        totalResultsFound: allFlights.length,
       }, { status: 200 })
     }
 
-    const idx = Math.max(0, parseInt(resultIndex, 10) - 1)
-    const selectedFlight = allFlights[idx] ?? allFlights[0]
+    const selectedFlight = allFlights[succeededIndex]
+    const pricingInfo = selectedFlight.PricingInfos!.PricingInfo![0]
 
-    // A single flight's itinerary and pricing live in separate sub-arrays —
-    // itinerary (route/timing) and PricingInfos (fare) are siblings, not
-    // one flat object.
-    const itinerary = selectedFlight.Itineraries?.Itinerary?.[0]
-    const firstSegment = itinerary?.FlightSegments?.[0] // adjust if segments live directly under Itinerary
-    const pricingInfo = selectedFlight.PricingInfos?.PricingInfo?.[0]
-
-    if (!itinerary || !pricingInfo) {
-      return Response.json({
-        ok: false,
-        step: 'FlightAvailability',
-        error: 'Selected flight is missing Itineraries or PricingInfos — check raw shape.',
-        raw: selectedFlight,
-      }, { status: 200 })
-    }
-
-    // ── Step 2: Pricing ────────────────────────────────────────────────
-    const pricing = await amadeus.pricing(
-  availability.Key,
-  pricingInfo.Pricingkey,
-  selectedFlight.Provider,
-  String(idx + 1)
-)
-    
-
-    // ── Return diagnostic summary ──────────────────────────────────────
+    // Every raw response returned in full — nothing summarized, nothing
+    // renamed, nothing omitted. This is what Amadeus actually sent.
     return Response.json({
       ok: true,
-      steps: {
-        availability: {
-          totalResults: allFlights.length,
-          selectedIndex: idx + 1,
-          flight: {
-            flightKey: selectedFlight.FlightKey,
-            provider: selectedFlight.Provider,
-            isLcc: selectedFlight.IsLCC,
-            itemNo: selectedFlight.ItemNo,
-            journey: itinerary.Journey,
-            origin: firstSegment?.Origin,
-            destination: firstSegment?.Destination,
-            airline: firstSegment?.AirLine,
-            cabin: firstSegment?.Cabin,
-            bookingCode: firstSegment?.BookingCode,
-            stopCount: firstSegment?.StopCount,
-            duration: firstSegment?.Duration,
-            availableSeats: firstSegment?.AvailableSeats,
-            baggage: firstSegment?.Baggage,
-          },
-          pricingInfo: {
-            pricingKey: pricingInfo.Pricingkey,
-            currency: pricingInfo.Currency,
-            total: pricingInfo.Total,
-            fareBreakDowns: pricingInfo.FareBreakDowns,
-            penalties: pricingInfo.Penalties,
-            fareType: pricingInfo.FareType,
-            isNdc: pricingInfo.IsNDC,
-          },
-        },
-        // Raw pricing() response — field names not yet confirmed against a
-        // live call, unlike availability above. Treat as provisional until
-        // verified the same way Availability was.
-        pricing: pricing,
-      },
+      selectedIndex: succeededIndex + 1,
+      totalResultsFound: allFlights.length,
+      attemptsNeeded: succeededIndex + 1,
+      rawAvailabilityResponse: availability,
+      rawSelectedFlight: selectedFlight,
+      rawPricingResponse: pricing,
     }, { status: 200 })
 
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'
     const isAmadeusError = err instanceof Error && err.name === 'AmadeusError'
+    // If it's our AmadeusError type, it carries the raw failed response too —
+    // surface that in full rather than just the message.
+    const rawErrorResponse = isAmadeusError ? (err as unknown as { raw?: unknown }).raw : undefined
 
     return Response.json({
       ok: false,
       error: message,
       type: isAmadeusError ? 'AmadeusError' : 'UnknownError',
+      rawErrorResponse,
     }, { status: 500 })
   }
 }

@@ -63,7 +63,10 @@ export default function BookFlightsPage() {
   const [departDate, setDepartDate] = useState('')
   const [adult, setAdult] = useState(1)
   const [cabinPref, setCabinPref] = useState<'Economy' | 'Premium Economy' | 'Business' | 'First'>('Economy')
-
+  const [availabilityKey, setAvailabilityKey] = useState<string | null>(null)
+  const [pricingFlightKey, setPricingFlightKey] = useState<string | null>(null) // which flight is currently being priced
+  const [pricingError, setPricingError] = useState<string | null>(null)
+  const [pricedFlight, setPricedFlight] = useState<{ flightKey: string; referenceNo: string; totalFare: number } | null>(null)
   const [searching, setSearching] = useState(false)
   const [hasSearched, setHasSearched] = useState(false)
   const [results, setResults] = useState<FlatFlightResult[]>([])
@@ -75,6 +78,49 @@ export default function BookFlightsPage() {
     setOrigin(destination)
     setDestination(origin)
   }
+
+  async function handleSelectFlight(flight: FlatFlightResult) {
+  if (!availabilityKey || !flight.pricingKey) {
+    setPricingError('Missing pricing details for this flight — try searching again.')
+    return
+  }
+
+  setPricingFlightKey(flight.flightKey)
+  setPricingError(null)
+
+  try {
+    const res = await fetch('/api/book/price', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        key: availabilityKey,
+        pricingKey: flight.pricingKey,
+        provider: flight.provider,
+        resultIndex: flight.itemNo,
+      }),
+    })
+    const data = await res.json()
+
+    if (!data.ok) {
+      // Clean failure — fare no longer available. Tell the user, let
+      // them pick a different flight, don't navigate anywhere.
+      setPricingError(data.error || 'This fare is no longer available. Please select a different flight.')
+      setSelectedKey(null)
+      return
+    }
+
+    setSelectedKey(`${flight.flightKey}-${flight.pricingKey}`)
+    setPricedFlight({
+      flightKey: flight.flightKey,
+      referenceNo: data.referenceNo,
+      totalFare: data.totalFare,
+    })
+  } catch {
+    setPricingError('Something went wrong confirming this fare. Please try again.')
+  } finally {
+    setPricingFlightKey(null)
+  }
+}
 
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault()
@@ -93,9 +139,10 @@ export default function BookFlightsPage() {
         }),
       })
       const data = await res.json()
-      if (!res.ok) { setError(data.error || 'Search failed.'); return }
-      setResults(data.results ?? [])
-      setHasSearched(true)
+if (!res.ok) { setError(data.error || 'Search failed.'); return }
+setResults(data.results ?? [])
+setAvailabilityKey(data.availabilityKey ?? null)
+setHasSearched(true)
     } catch {
       setError('Something went wrong. Please try again.')
     } finally {
@@ -203,6 +250,13 @@ export default function BookFlightsPage() {
           </div>
         )}
 
+        {pricingError && (
+  <div style={s.errorBanner}>
+    <span style={s.bannerIcon}>⚠</span>
+    {pricingError}
+  </div>
+)}
+
         {/* ── Results ────────────────────────────────────────────────── */}
         {searching && (
           <div style={s.loadingState}>
@@ -305,12 +359,13 @@ export default function BookFlightsPage() {
                           )}
                         </div>
                         <button
-                          type="button"
-                          onClick={() => setSelectedKey(`${flight.flightKey}-${flight.pricingKey}`)}
-                          style={isSelected ? s.selectBtnActive : s.selectBtn}
-                        >
-                          {isSelected ? '✓ Selected' : 'Select →'}
-                        </button>
+  type="button"
+  onClick={() => handleSelectFlight(flight)}
+  disabled={pricingFlightKey === flight.flightKey}
+  style={isSelected ? s.selectBtnActive : s.selectBtn}
+>
+  {pricingFlightKey === flight.flightKey ? 'Checking price…' : isSelected ? '✓ Selected' : 'Select →'}
+</button>
                       </div>
                     </div>
                   )
