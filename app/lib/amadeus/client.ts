@@ -23,8 +23,6 @@ const CLIENT_CODE = process.env.AMADEUS_CLIENT_CODE!   // "ARR001"
 const USERNAME = process.env.AMADEUS_USERNAME!         // "ARR001"
 const PASSWORD = process.env.AMADEUS_PASSWORD!         // "Password@123"
 
-const SESSION_TTL_MS = 25 * 60 * 1000 // 25 minutes
-
 // ── Error ─────────────────────────────────────────────────────────────────────
 
 export class AmadeusError extends Error {
@@ -32,20 +30,33 @@ export class AmadeusError extends Error {
     message: string,
     public readonly code: string = '',
     public readonly category: string = '',
-    public readonly raw?: unknown
+    public readonly raw?: unknown,
+    public readonly requestId?: string
   ) {
     super(message)
     this.name = 'AmadeusError'
   }
 }
 
-function assertSuccess(json: AmadeusEnvelope, context: string): void {
+function assertSuccess(json: AmadeusEnvelope, context: string, requestId?: string): void {
   if (json.Status !== 'Success') {
     const desc = json.Error?.Description ?? 'Unknown error'
     const code = json.Error?.ErrorCode ?? ''
     const category = json.Error?.Category ?? ''
-    throw new AmadeusError(`Amadeus ${context} failed: ${desc}`, code, category, json)
+    throw new AmadeusError(`Amadeus ${context} failed: ${desc}`, code, category, json, requestId)
   }
+}
+
+export function sanitizeAmadeusDiagnostic(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sanitizeAmadeusDiagnostic)
+  if (!value || typeof value !== 'object') return value
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [
+      key,
+      /password|sessionid/i.test(key) ? '[REDACTED]' : sanitizeAmadeusDiagnostic(entry),
+    ])
+  )
 }
 
 function isSessionExpired(json: AmadeusEnvelope): boolean {
@@ -347,13 +358,14 @@ function generateSearchKey(): string {
 
 async function post<T extends AmadeusEnvelope>(
   endpoint: string,
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
+  requestId: string
 ): Promise<T> {
  
 
 const url = `${BASE_URL}/${endpoint}`
 
-console.log("Calling:", url)
+console.info('[amadeus] request', { requestId, endpoint, body: sanitizeAmadeusDiagnostic(body) })
   
   const res = await fetch(url, {
     method: 'POST',
@@ -364,27 +376,32 @@ console.log("Calling:", url)
   if (!res.ok) {
     throw new AmadeusError(
       `HTTP ${res.status} from Amadeus ${endpoint}`,
-      String(res.status)
+      String(res.status),
+      '',
+      undefined,
+      requestId
     )
   }
 
   const json = await res.json() as T
+  console.info('[amadeus] response', { requestId, endpoint, status: json.Status, error: sanitizeAmadeusDiagnostic(json.Error) })
   return json
 }
 
 // ── Session management ────────────────────────────────────────────────────────
 
 async function login(): Promise<string> {
+  const requestId = crypto.randomUUID()
   const json = await post<LoginResponse>('flight/Authenticate', {
     UserName: USERNAME,
     Password: PASSWORD,
-  })
+  }, requestId)
 
-  assertSuccess(json, 'Login')
+  assertSuccess(json, 'Login', requestId)
 
   await setCachedSession(json.SessionID)
 
-  console.log(`[amadeus] new session: ${json.SessionID}`)
+  console.info('[amadeus] new session established', { requestId })
   return json.SessionID
 }
 
@@ -404,19 +421,20 @@ async function withSession<T extends AmadeusEnvelope>(
   buildBody: (sessionId: string) => Record<string, unknown>,
   context: string
 ): Promise<T> {
+  const requestId = crypto.randomUUID()
   const sessionId = await getSessionId()
-  const json = await post<T>(endpoint, buildBody(sessionId))
+  const json = await post<T>(endpoint, buildBody(sessionId), requestId)
 
-  if (isSessionExpired(json)) {
-    console.log(`[amadeus] session expired on ${endpoint}, re-authing`)
+  if (isSessionExpired(json) || shouldRefreshAvailabilitySession(json, context)) {
+    console.info('[amadeus] refreshing session before one retry', { requestId, endpoint })
     await clearCachedSession()
     const freshSessionId = await getSessionId()
-    const retryJson = await post<T>(endpoint, buildBody(freshSessionId))
-    assertSuccess(retryJson, context)
+    const retryJson = await post<T>(endpoint, buildBody(freshSessionId), requestId)
+    assertSuccess(retryJson, context, requestId)
     return retryJson
   }
 
-  assertSuccess(json, context)
+  assertSuccess(json, context, requestId)
   return json
 }
 
@@ -668,4 +686,10 @@ export const amadeus = {
 export function isRedEye(departureDateTime: string): boolean {
   const hour = new Date(departureDateTime).getHours()
   return hour >= 22 || hour < 6
+}
+
+function shouldRefreshAvailabilitySession(json: AmadeusEnvelope, context: string): boolean {
+  return context === 'FlightAvailability' &&
+    json.Status === 'Failure' &&
+    json.Error?.Description?.toLowerCase() === 'something went wrong.'
 }

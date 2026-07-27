@@ -1,6 +1,6 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
-import { amadeus } from '@/app/lib/amadeus/client'
+import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic } from '@/app/lib/amadeus/client'
 import { NextRequest } from 'next/server'
 
 // ── POST /api/book/search ────────────────────────────────────────────
@@ -44,6 +44,19 @@ export interface FlatFlightResult {
   refundable: boolean | undefined
 }
 
+function isValidTravelDate(value: string): boolean {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value)
+  if (!match) return false
+
+  const [, day, month, year] = match.map(Number)
+  const date = new Date(year, month - 1, day)
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return false
+
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return date >= today
+}
+
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -73,9 +86,25 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  const normalizedOrigin = origin.trim().toUpperCase()
+  const normalizedDestination = destination.trim().toUpperCase()
+  const passengerCounts = [adult, child, infant]
+  if (!/^[A-Z]{3}$/.test(normalizedOrigin) || !/^[A-Z]{3}$/.test(normalizedDestination)) {
+    return Response.json({ error: 'Origin and destination must be three-letter IATA airport codes.' }, { status: 400 })
+  }
+  if (normalizedOrigin === normalizedDestination) {
+    return Response.json({ error: 'Origin and destination must be different airports.' }, { status: 400 })
+  }
+  if (!isValidTravelDate(departDate)) {
+    return Response.json({ error: 'departDate must be today or a future date in DD/MM/YYYY format.' }, { status: 400 })
+  }
+  if (!passengerCounts.every(count => Number.isInteger(count) && count >= 0) || adult < 1 || adult + child + infant > 9) {
+    return Response.json({ error: 'Passenger counts must be whole numbers with at least one adult and no more than nine travelers.' }, { status: 400 })
+  }
+
   try {
     const availability = await amadeus.searchFlights({
-      segments: [{ Origin: origin.toUpperCase(), Destination: destination.toUpperCase(), DepartDate: departDate }],
+      segments: [{ Origin: normalizedOrigin, Destination: normalizedDestination, DepartDate: departDate }],
       adult, child, infant,
     })
 
@@ -126,18 +155,23 @@ isNdc: pricingInfo?.IsNDC,
       availabilityKey: availability.Key,
     })
 
- } catch (err) {
-  console.error('Flight search error:', err)
+  } catch (err) {
+    if (err instanceof AmadeusError) {
+      console.error('Flight search error', {
+        requestId: err.requestId,
+        code: err.code,
+        category: err.category,
+        raw: sanitizeAmadeusDiagnostic(err.raw),
+      })
+      return Response.json({
+        error: err.message,
+        requestId: err.requestId,
+        details: sanitizeAmadeusDiagnostic(err.raw),
+      }, { status: 502 })
+    }
 
-  if (err instanceof Error) {
-    console.error('Error details:', JSON.stringify(err, null, 2))
+    console.error('Flight search error:', err)
+    return Response.json({ error: 'Flight search failed' }, { status: 500 })
   }
+}
 
-  return Response.json(
-    {
-      error: err instanceof Error ? err.message : 'Flight search failed',
-    },
-    { status: 500 }
-  )
-}
-}

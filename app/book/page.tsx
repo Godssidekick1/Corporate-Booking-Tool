@@ -139,7 +139,13 @@ export default function BookFlightsPage() {
         }),
       })
       const data = await res.json()
-if (!res.ok) { setError(data.error || 'Search failed.'); return }
+      if (!res.ok) {
+        const diagnostic = data.requestId
+          ? ` Request ID: ${data.requestId}.${data.details?.Error?.Description ? ` Provider: ${data.details.Error.Description}` : ''}`
+          : ''
+        setError(`${data.error || 'Search failed.'}${diagnostic}`)
+        return
+      }
 setResults(data.results ?? [])
 setAvailabilityKey(data.availabilityKey ?? null)
 setHasSearched(true)
