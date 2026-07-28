@@ -59,14 +59,14 @@ function safeSet(key: string, value: unknown): void {
 }
 
 export const flowStorage = {
-  saveSearchResults(results: FlatFlightResult[], meta: SearchMeta, availabilityKey: string | null) {
-    safeSet(RESULTS_KEY, { results, availabilityKey })
-    safeSet(SEARCH_META_KEY, meta)
-  },
+  saveSearchResults(results: FlatFlightResult[], meta: SearchMeta, availabilityKey: string | null, sessionId: string | null) {
+  safeSet(RESULTS_KEY, { results, availabilityKey, sessionId })
+  safeSet(SEARCH_META_KEY, meta)
+},
 
-  getSearchResults(): { results: FlatFlightResult[]; availabilityKey: string | null } | null {
-    return safeGet(RESULTS_KEY)
-  },
+getSearchResults(): { results: FlatFlightResult[]; availabilityKey: string | null; sessionId: string | null } | null {
+  return safeGet(RESULTS_KEY)
+},
 
   getSearchMeta(): SearchMeta | null {
     return safeGet(SEARCH_META_KEY)

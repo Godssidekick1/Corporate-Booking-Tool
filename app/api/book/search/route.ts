@@ -117,8 +117,8 @@ export async function POST(req: NextRequest) {
     })
 
     if (!availability.Availibilities || availability.Availibilities.length === 0) {
-      return Response.json({ ok: true, results: [], availabilityKey: null })
-    }
+  return Response.json({ ok: true, results: [], availabilityKey: null, sessionId: null })
+}
 
     const allFlights = availability.Availibilities.flatMap(a => a.Availibility)
 
@@ -175,10 +175,11 @@ export async function POST(req: NextRequest) {
 })
 
     return Response.json({
-      ok: true,
-      results,
-      availabilityKey: availability.Key,
-    })
+  ok: true,
+  results,
+  availabilityKey: availability.Key,
+  sessionId: availability.SessionID,   // NEW — needed for Pricing to run under the same session that produced these results
+})
 
   } catch (err) {
     if (err instanceof AmadeusError) {

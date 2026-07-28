@@ -60,23 +60,24 @@ export default function PriceConfirmPage() {
 
     const searchData = flowStorage.getSearchResults()
 
-    if (!searchData?.availabilityKey || !flightResult.pricingKey) {
-      setError('Missing pricing details for this flight — please search again.')
-      setLoading(false)
-      return
-    }
+    if (!searchData?.availabilityKey || !searchData?.sessionId || !flightResult.pricingKey) {
+  setError('Missing pricing details for this flight — please search again.')
+  setLoading(false)
+  return
+}
 
     try {
       const res = await fetch('/api/book/price', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          key: flightResult.flightKey,
-          pricingKey: flightResult.pricingKey,
-          provider: flightResult.provider,
-          resultIndex: flightResult.itemNo,
-        }),
-      })
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    key: flightResult.flightKey,
+    pricingKey: flightResult.pricingKey,
+    provider: flightResult.provider,
+    resultIndex: flightResult.itemNo,
+    sessionId: searchData.sessionId,   // NEW
+  }),
+})
       const data: PriceApiResult = await res.json()
 
       if (!data.ok) {

@@ -17,17 +17,21 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const { key, pricingKey, provider, resultIndex } = await req.json()
+  const { key, pricingKey, provider, resultIndex, sessionId } = await req.json()
 
-  if (!key || !pricingKey || !provider || !resultIndex) {
+  if (!key || !pricingKey || !provider || !resultIndex || !sessionId) {
     return Response.json(
-      { error: 'key, pricingKey, provider, and resultIndex are required' },
+      { error: 'key, pricingKey, provider, resultIndex, and sessionId are required' },
       { status: 400 }
     )
   }
 
   try {
-    const pricing = await amadeus.pricing(key, pricingKey, provider, resultIndex)
+    // sessionId must be the SessionID from the SAME search (/api/book/search)
+    // that produced this key/pricingKey — not the currently cached session,
+    // which may have rotated since. Amadeus rejects Pricing run under any
+    // session other than the one that generated the result.
+    const pricing = await amadeus.pricing(key, pricingKey, provider, resultIndex, sessionId)
 
     return Response.json({
       ok: true,

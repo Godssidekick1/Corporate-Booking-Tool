@@ -85,10 +85,11 @@ export default function BookFlightsPage() {
       // can look up the exact result the user picked without re-searching, and
       // so the "back to results" link on later pages has something to return to.
       flowStorage.saveSearchResults(
-        foundResults,
-        { origin, destination, departDate: toDisplayDate(departDate), adult },
-        data.availabilityKey ?? null
-      )
+  foundResults,
+  { origin, destination, departDate: toDisplayDate(departDate), adult },
+  data.availabilityKey ?? null,
+  data.sessionId ?? null   // NEW
+)
     } catch {
       setError('Something went wrong. Please try again.')
     } finally {
