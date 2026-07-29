@@ -544,7 +544,7 @@ export const amadeus = {
     grandTotalFare: string = '0'
   ): Promise<AddPassengerResponse> {
     const json = await withSession<AmadeusEnvelope & AddPassengerResponse>(
-      'AddPassengerDetails',
+      'Flight/AddPassengerDetails',
       (sessionId) => ({
         ClientCode: CLIENT_CODE,
         SessionID: sessionId,
