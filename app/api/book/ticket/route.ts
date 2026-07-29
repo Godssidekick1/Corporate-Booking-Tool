@@ -9,10 +9,19 @@ import { NextRequest } from 'next/server'
 // what it needs from the bookings row rather than re-accepting booking
 // details from the frontend.
 //
-// Amadeus's Ticket response returns a single TicketNo string, not an array —
-// but bookings.ticket_numbers is an array column (presumably to support
-// multi-passenger bookings later), so it's stored as a one-element array
-// for now rather than changing the column shape.
+// Amadeus's real Ticket response is NOT flat — PNR and ticket number live
+// nested under AirBookingResponse[0].PNR and
+// AirBookingResponse[0].CustomerInfo.PassengerDetails[0].TicketNo,
+// confirmed against a real response. bookings.ticket_numbers is an array
+// column (presumably to support multi-passenger bookings later), so a
+// single ticket number is stored as a one-element array for now rather
+// than changing the column shape.
+//
+// Note: NOT marking status 'failed' in the catch block — unlike a failed
+// Booking call, a failed Ticket call still leaves a valid confirmed booking
+// (status stays 'held'), since the PNR from Book already exists and is real
+// regardless of whether ticketing succeeds on this attempt. Ticketing can
+// reasonably be retried without redoing Book.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface TicketBody {
@@ -58,11 +67,11 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Not authorized to act on this booking' }, { status: 403 })
   }
 
- if (booking.status !== 'held') {
-  return Response.json({
-    error: `This booking is at status "${booking.status}" — expected "held" before calling Ticket. Complete the Book step first.`,
-  }, { status: 409 })
-}
+  if (booking.status !== 'held') {
+    return Response.json({
+      error: `This booking is at status "${booking.status}" — expected "held" before calling Ticket. Complete the Book step first.`,
+    }, { status: 409 })
+  }
 
   try {
     const result = await amadeus.ticket(
@@ -73,25 +82,28 @@ export async function POST(req: NextRequest) {
       booking.pnr ?? ''
     )
 
+    const flightResult = result.AirBookingResponse?.[0]
+    const pnr = flightResult?.PNR ?? booking.pnr
+    const ticketNo = flightResult?.CustomerInfo?.PassengerDetails?.[0]?.TicketNo
+    const ticketNumbers = ticketNo ? [ticketNo] : []
+
     const { error: updateError } = await service
       .from('bookings')
       .update({
         status: 'ticketed',
-        pnr: result.PnrNo || booking.pnr,
-        ticket_numbers: result.TicketNo ? [result.TicketNo] : [],
+        pnr,
+        ticket_numbers: ticketNumbers,
         updated_at: new Date().toISOString(),
       })
       .eq('id', bookingId)
 
     if (updateError) {
-      // Ticket is issued at this point — this is a persistence failure, not
-      // a ticketing failure. Surface the ticket number regardless.
-      console.error('Ticket issued but failed to save', updateError, { bookingId, ticketNo: result.TicketNo })
+      console.error('Ticket issued but failed to save', updateError, { bookingId, ticketNo })
       return Response.json({
         ok: true,
         bookingId,
-        pnr: result.PnrNo || booking.pnr,
-        ticketNumbers: result.TicketNo ? [result.TicketNo] : [],
+        pnr,
+        ticketNumbers,
         status: 'ticketed',
         warning: 'Ticket issued but there was an issue saving it — contact support with this ticket number if it does not appear in your bookings shortly.',
       })
@@ -100,8 +112,8 @@ export async function POST(req: NextRequest) {
     return Response.json({
       ok: true,
       bookingId,
-      pnr: result.PnrNo || booking.pnr,
-      ticketNumbers: result.TicketNo ? [result.TicketNo] : [],
+      pnr,
+      ticketNumbers,
       status: 'ticketed',
     })
   } catch (err) {
@@ -113,12 +125,6 @@ export async function POST(req: NextRequest) {
         request: sanitizeAmadeusDiagnostic(err.requestBody),
         raw: sanitizeAmadeusDiagnostic(err.raw),
       })
-
-      // Note: NOT marking status 'failed' here — unlike a failed Booking
-      // call, a failed Ticket call still leaves a valid confirmed booking
-      // (status stays 'booked'), since the PNR from Book already exists and
-      // is real regardless of whether ticketing succeeds on this attempt.
-      // Ticketing can reasonably be retried without redoing Book.
 
       return Response.json({
         error: err.message,

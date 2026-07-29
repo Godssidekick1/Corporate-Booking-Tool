@@ -285,19 +285,40 @@ export interface AddPassengerResponse {
 // Booking
 export interface BookingResponse {
   Status: string
-  Key: string
   ReferenceNo: string
-  Error: AmadeusError_ | null
+  TransactionID: string
+  AirBookingResponse: AirBookingResult[]  // new type below, one entry
+  Error: AmadeusEnvelope['Error']
+  PaymentDetails: unknown
+  SSRDetails: unknown
+  GSTRequest: unknown
+}
+
+export interface AirBookingResult {
+  PNR: string
+  BookingStatus: string
+  BookingDate: string
+  FlightDetails: unknown[]
+  FareDetails: unknown
+  CustomerInfo: {
+    PassengerDetails: { TicketNo?: string }[]
+  }
+  TrackID: string
+  TotalAmount: number
+  GrandTotalFare: number
+  ProviderDetails: { Tid: string; Status: string }
 }
 
 // Ticket
 export interface TicketResponse {
   Status: string
-  Key: string
   ReferenceNo: string
-  PnrNo: string
-  TicketNo: string
-  Error: AmadeusError_ | null
+  TransactionID: string
+  AirBookingResponse: AirBookingResult[]
+  Error: AmadeusEnvelope['Error']
+  PaymentDetails: unknown
+  SSRDetails: unknown
+  GSTRequest: unknown
 }
 
 // GetBookingDetails

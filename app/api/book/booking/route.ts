@@ -73,12 +73,14 @@ export async function POST(req: NextRequest) {
       booking.provider_order_id,
       booking.provider
     )
+const pnr = result.AirBookingResponse?.[0]?.PNR ?? null   // ADD THIS LINE
 
     const { error: updateError } = await service
       .from('bookings')
       .update({
         status: 'held',
-        updated_at: new Date().toISOString(),
+        pnr,
+        updated_at: new Date().toISOString(), 
       })
       .eq('id', bookingId)
 
