@@ -5,6 +5,8 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { flowStorage, PricedFare } from '@/app/lib/book/flowStorage'
 import { FlatFlightResult, formatTime, formatDayLabel } from '@/app/lib/book/types'
+import { countryNameFromCode } from '@/app/lib/data/countryCodes'
+
 
 // Matches CustomerInfo.PassengerDetails[number] in lib/amadeus/client.ts exactly.
 interface PassengerForm {
@@ -99,7 +101,7 @@ export default function PassengerDetailsPage() {
             City: city,
             State: state,
             CountryCode: passenger.nationality,
-            CountryName: '', // Amadeus example leaves this alongside CountryCode; not surfaced in the form
+            CountryName: countryNameFromCode(passenger.nationality), // Amadeus rejects empty CountryName (ModelState validation) — derived from the passport nationality code entered
             ZipCode: zipCode,
             PassengerDetails: [{
               Title: passenger.title,
