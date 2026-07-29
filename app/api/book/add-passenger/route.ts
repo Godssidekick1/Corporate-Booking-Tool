@@ -127,7 +127,7 @@ export async function POST(req: NextRequest) {
       ok: true,
       bookingId: booking.id,
       referenceNo: result.ReferenceNo,
-      status: 'passengers_added',
+      status: 'passenger_added',
     })
   } catch (err) {
     if (err instanceof AmadeusError) {

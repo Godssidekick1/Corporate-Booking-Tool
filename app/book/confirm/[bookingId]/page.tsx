@@ -61,7 +61,7 @@ export default function ConfirmBookingPage() {
       }
       setBooking(data.booking)
 
-      // If this booking has already moved past passengers_added (e.g. the
+      // If this booking has already moved past passenger_added (e.g. the
       // user hit back after confirming, or refreshed after clicking Book),
       // send them forward to wherever they actually are instead of letting
       // them try to re-book an already-booked reservation.

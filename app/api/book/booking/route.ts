@@ -61,9 +61,9 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Not authorized to act on this booking' }, { status: 403 })
   }
 
-  if (booking.status !== 'passengers_added') {
+  if (booking.status !== 'passenger_added') {
     return Response.json({
-      error: `This booking is at status "${booking.status}" — expected "passengers_added" before calling Book. It may have already been booked, or passenger details haven't been submitted yet.`,
+      error: `This booking is at status "${booking.status}" — expected "passenger_added" before calling Book. It may have already been booked, or passenger details haven't been submitted yet.`,
     }, { status: 409 })
   }
 
