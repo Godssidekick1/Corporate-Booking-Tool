@@ -58,11 +58,11 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Not authorized to act on this booking' }, { status: 403 })
   }
 
-  if (booking.status !== 'booked') {
-    return Response.json({
-      error: `This booking is at status "${booking.status}" — expected "booked" before calling Ticket. Complete the Book step first.`,
-    }, { status: 409 })
-  }
+ if (booking.status !== 'held') {
+  return Response.json({
+    error: `This booking is at status "${booking.status}" — expected "held" before calling Ticket. Complete the Book step first.`,
+  }, { status: 409 })
+}
 
   try {
     const result = await amadeus.ticket(
