@@ -71,7 +71,7 @@ export default function PriceConfirmPage() {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
-    key: flightResult.flightKey,
+    key: searchData.availabilityKey,
     pricingKey: flightResult.pricingKey,
     provider: flightResult.provider,
     resultIndex: flightResult.itemNo,
