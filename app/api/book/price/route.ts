@@ -51,6 +51,7 @@ export async function POST(req: NextRequest) {
 
     return Response.json({
       ok: true,
+      key: pricing.Key,
       referenceNo: pricing.ReferenceNo,
       totalFare: pricingInfo.Total?.Fare ? Number(pricingInfo.Total.Fare) : undefined,
       baseFare: pricingInfo.Total?.BaseFare ? Number(pricingInfo.Total.BaseFare) : undefined,

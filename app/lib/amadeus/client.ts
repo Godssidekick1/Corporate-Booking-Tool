@@ -575,7 +575,7 @@ export const amadeus = {
     provider: string
   ): Promise<BookingResponse> {
     const json = await withSession<AmadeusEnvelope & BookingResponse>(
-      'Booking',
+      'Flight/Booking',
       (sessionId) => ({
         ClientCode: CLIENT_CODE,
         SessionID: sessionId,
@@ -599,7 +599,7 @@ export const amadeus = {
     ticketNo: string = ''
   ): Promise<TicketResponse> {
     const json = await withSession<AmadeusEnvelope & TicketResponse>(
-      'Ticket',
+      'Flight/Ticket',
       (sessionId) => ({
         ClientCode: CLIENT_CODE,
         SessionID: sessionId,
@@ -632,7 +632,7 @@ export const amadeus = {
     } = {}
   ): Promise<BookingDetailsResponse> {
     const json = await withSession<AmadeusEnvelope & BookingDetailsResponse>(
-      'GetBookingDetails',
+      'Flight/GetBookingDetails',
       (sessionId) => ({
         SessionID: sessionId,
         ReferenceNo: referenceNo,
@@ -659,7 +659,7 @@ export const amadeus = {
     remarks: string = ''
   ): Promise<CancellationResponse> {
     const json = await withSession<AmadeusEnvelope & CancellationResponse>(
-      'CancellationRequest',
+      'Flight/CancelBooking',
       (sessionId) => ({
         ClientCode: CLIENT_CODE,
         SessionID: sessionId,
@@ -681,7 +681,7 @@ export const amadeus = {
     provider: string
   ): Promise<FareRuleResponse> {
     const json = await withSession<AmadeusEnvelope & FareRuleResponse>(
-      'FareRule',
+      'flight/Non-LccFareRule',
       (sessionId) => ({
         ClientCode: CLIENT_CODE,
         SessionID: sessionId,
@@ -704,7 +704,7 @@ export const amadeus = {
     destination: string
   ): Promise<SeatMapResponse> {
     const json = await withSession<AmadeusEnvelope & SeatMapResponse>(
-      'SeatMap',
+      'flight/SeatMap',
       (sessionId) => ({
         ClientCode: CLIENT_CODE,
         SessionID: sessionId,

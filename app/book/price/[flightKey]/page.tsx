@@ -10,6 +10,7 @@ interface PriceApiResult {
   ok: boolean
   reason?: string
   error?: string
+  key?: string
   referenceNo?: string
   totalFare?: number
   baseFare?: number
@@ -92,6 +93,7 @@ export default function PriceConfirmPage() {
       // etc. and shouldn't have to re-price to get them.
       flowStorage.savePricedFare({
         flightKey: flightResult.flightKey,
+        key: data.key!,
         pricingKey: flightResult.pricingKey!,
         provider: flightResult.provider,
         referenceNo: data.referenceNo!,

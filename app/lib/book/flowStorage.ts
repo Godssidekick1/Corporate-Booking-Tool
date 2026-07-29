@@ -24,6 +24,7 @@ export interface SearchMeta {
 
 export interface PricedFare {
   flightKey: string
+  key: string
   pricingKey: string
   provider: string
   referenceNo: string
