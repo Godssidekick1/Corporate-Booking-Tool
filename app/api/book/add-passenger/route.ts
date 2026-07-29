@@ -99,7 +99,7 @@ export async function POST(req: NextRequest) {
         employee_id: employee.id,
         requested_for: employee.id,
         booking_type: 'flight',
-        status: 'passengers_added',
+        status: 'passenger_added',
         total_cost: totalFare,
         provider,
         provider_order_id: referenceNo,

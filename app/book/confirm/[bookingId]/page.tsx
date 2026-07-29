@@ -81,7 +81,7 @@ export default function ConfirmBookingPage() {
     setConfirming(true)
     setError('')
     try {
-      const res = await fetch('/api/book/book', {
+      const res = await fetch('/api/book/booking', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ bookingId }),
