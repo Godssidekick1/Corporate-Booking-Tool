@@ -80,7 +80,7 @@ export default function PassengerDetailsPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          key: priced.flightKey,
+          key: priced.key,
           pricingKey: priced.pricingKey,
           provider: priced.provider,
           referenceNo: priced.referenceNo,
