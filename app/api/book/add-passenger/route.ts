@@ -22,7 +22,11 @@ import { NextRequest } from 'next/server'
 interface AddPassengerBody {
   // Carried forward from /book/price and the original search result —
   // the frontend is the source of truth for these until this call succeeds.
-  key: string              // FlightKey from search — same "resultKey" used throughout
+  key: string              // Key from the Pricing response (/api/book/price) — a
+                            // distinct UUID, NOT the search result's FlightKey.
+                            // Each step (Availability -> Pricing -> AddPassenger)
+                            // hands back its own Key for the next step to use;
+                            // they are never the same value.
   pricingKey: string
   provider: string
   referenceNo: string      // ReferenceNo from /book/price
@@ -106,6 +110,7 @@ export async function POST(req: NextRequest) {
         itinerary: itinerary ?? null,
         traveler_snapshot: customerInfo,
         fare_breakdown: { currency, isRefundable, fareType, passengerBreakup },
+        policy_status: 'not_evaluated', // Rule Engine not wired in here yet — see comment above. Column is NOT NULL, so this is a truthful placeholder, not a real verdict.
       })
       .select('id')
       .single()
