@@ -375,11 +375,12 @@ async function post<T extends AmadeusEnvelope>(
   body: Record<string, unknown>,
   requestId: string
 ): Promise<T> {
+ 
 
-  const url = `${BASE_URL}/${endpoint}`
+const url = `${BASE_URL}/${endpoint}`
 
-  console.info('[amadeus] request', { requestId, endpoint, body: sanitizeAmadeusDiagnostic(body) })
-
+console.info('[amadeus] request', { requestId, endpoint, body: sanitizeAmadeusDiagnostic(body) })
+  
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -387,32 +388,11 @@ async function post<T extends AmadeusEnvelope>(
   })
 
   if (!res.ok) {
-    // Amadeus sends a real error body even on non-2xx responses — read it
-    // before throwing, or every HTTP-level failure (400, 500, etc.) surfaces
-    // as an opaque "HTTP 400 from Amadeus ..." with no way to know WHY.
-    let rawBody: unknown
-    try {
-      rawBody = await res.json()
-    } catch {
-      try {
-        rawBody = await res.text()
-      } catch {
-        rawBody = undefined
-      }
-    }
-
-    const description =
-      (rawBody as { Error?: { Description?: string } })?.Error?.Description
-      ?? (rawBody as { Description?: string })?.Description
-      ?? (rawBody as { message?: string })?.message
-
-    console.error('[amadeus] HTTP error', { requestId, endpoint, status: res.status, raw: sanitizeAmadeusDiagnostic(rawBody) })
-
     throw new AmadeusError(
-      description ? `Amadeus ${endpoint} failed: ${description}` : `HTTP ${res.status} from Amadeus ${endpoint}`,
+      `HTTP ${res.status} from Amadeus ${endpoint}`,
       String(res.status),
       '',
-      rawBody,
+      undefined,
       requestId
     )
   }
@@ -455,9 +435,21 @@ async function withSession<T extends AmadeusEnvelope>(
   endpoint: string,
   buildBody: (sessionId: string) => Record<string, unknown>,
   context: string,
-  options: { fixedSessionId?: string } = {}
+  options: { fixedSessionId?: string; acceptedStatuses?: string[] } = {}
 ): Promise<T> {
   const requestId = crypto.randomUUID()
+  const acceptedStatuses = options.acceptedStatuses ?? ['Success']
+
+  // Some Amadeus endpoints use a different vocabulary for "this worked."
+  // Booking specifically: PNR creation returns Status: 'Hold' on success —
+  // that's the correct terminal state for this step (Ticketing is the step
+  // that turns Hold into Success). Treating 'Hold' as a failure here would
+  // reject a booking that Amadeus actually placed correctly.
+  function checkSuccess(json: AmadeusEnvelope, requestId: string, body: unknown) {
+    if (!acceptedStatuses.includes(json.Status)) {
+      assertSuccess(json, context, requestId, body) // throws with the real error detail
+    }
+  }
 
   // Some calls (Pricing, and anything else keyed off a specific search's
   // results) must run under the EXACT SessionID that produced those
@@ -470,7 +462,7 @@ async function withSession<T extends AmadeusEnvelope>(
   if (options.fixedSessionId) {
     const body = buildBody(options.fixedSessionId)
     const json = await post<T>(endpoint, body, requestId)
-    assertSuccess(json, context, requestId, body)
+    checkSuccess(json, requestId, body)
     return json
   }
 
@@ -484,11 +476,11 @@ async function withSession<T extends AmadeusEnvelope>(
     const freshSessionId = await getSessionId()
     const retryBody = buildBody(freshSessionId)
     const retryJson = await post<T>(endpoint, retryBody, requestId)
-    assertSuccess(retryJson, context, requestId, retryBody)
+    checkSuccess(retryJson, requestId, retryBody)
     return retryJson
   }
 
-  assertSuccess(json, context, requestId, body)
+  checkSuccess(json, requestId, body)
   return json
 }
 
@@ -589,6 +581,10 @@ export const amadeus = {
   },
 
   // ── 4. Booking ─────────────────────────────────────────────────────────────
+  // ── 4. Booking ─────────────────────────────────────────────────────────────
+  // Booking is a two-step Amadeus flow: this call creates the PNR and, on
+  // success, returns Status: 'Hold' — NOT 'Success'. 'Hold' IS the correct
+  // success state here; Ticketing (next step) is what confirms it to 'Success'.
   async booking(
     resultKey: string,
     referenceNo: string,
@@ -603,7 +599,8 @@ export const amadeus = {
         ReferenceNo: referenceNo,
         Provider: provider,
       }),
-      'Booking'
+      'Booking',
+      { acceptedStatuses: ['Hold'] }
     )
 
     return json as BookingResponse
