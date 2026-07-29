@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
     const { error: updateError } = await service
       .from('bookings')
       .update({
-        status: 'booked',
+        status: 'held',
         updated_at: new Date().toISOString(),
       })
       .eq('id', bookingId)
@@ -92,7 +92,7 @@ export async function POST(req: NextRequest) {
         ok: true,
         bookingId,
         referenceNo: result.ReferenceNo,
-        status: 'booked',
+        status: 'held',
         warning: 'Booking confirmed but there was an issue saving it — contact support with this reference if it does not appear in your bookings shortly.',
       })
     }
@@ -101,7 +101,7 @@ export async function POST(req: NextRequest) {
       ok: true,
       bookingId,
       referenceNo: result.ReferenceNo,
-      status: 'booked',
+      status: 'held',
     })
   } catch (err) {
     if (err instanceof AmadeusError) {
