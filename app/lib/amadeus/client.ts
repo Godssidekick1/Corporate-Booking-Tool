@@ -375,12 +375,11 @@ async function post<T extends AmadeusEnvelope>(
   body: Record<string, unknown>,
   requestId: string
 ): Promise<T> {
- 
 
-const url = `${BASE_URL}/${endpoint}`
+  const url = `${BASE_URL}/${endpoint}`
 
-console.info('[amadeus] request', { requestId, endpoint, body: sanitizeAmadeusDiagnostic(body) })
-  
+  console.info('[amadeus] request', { requestId, endpoint, body: sanitizeAmadeusDiagnostic(body) })
+
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -388,11 +387,32 @@ console.info('[amadeus] request', { requestId, endpoint, body: sanitizeAmadeusDi
   })
 
   if (!res.ok) {
+    // Amadeus sends a real error body even on non-2xx responses — read it
+    // before throwing, or every HTTP-level failure (400, 500, etc.) surfaces
+    // as an opaque "HTTP 400 from Amadeus ..." with no way to know WHY.
+    let rawBody: unknown
+    try {
+      rawBody = await res.json()
+    } catch {
+      try {
+        rawBody = await res.text()
+      } catch {
+        rawBody = undefined
+      }
+    }
+
+    const description =
+      (rawBody as { Error?: { Description?: string } })?.Error?.Description
+      ?? (rawBody as { Description?: string })?.Description
+      ?? (rawBody as { message?: string })?.message
+
+    console.error('[amadeus] HTTP error', { requestId, endpoint, status: res.status, raw: sanitizeAmadeusDiagnostic(rawBody) })
+
     throw new AmadeusError(
-      `HTTP ${res.status} from Amadeus ${endpoint}`,
+      description ? `Amadeus ${endpoint} failed: ${description}` : `HTTP ${res.status} from Amadeus ${endpoint}`,
       String(res.status),
       '',
-      undefined,
+      rawBody,
       requestId
     )
   }
