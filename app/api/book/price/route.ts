@@ -33,16 +33,37 @@ export async function POST(req: NextRequest) {
     // session other than the one that generated the result.
     const pricing = await amadeus.pricing(key, pricingKey, provider, resultIndex, sessionId)
 
+    // The real Pricing response is shaped just like Availability — nested
+    // under AirPricingResponse[0].PricingInfos.PricingInfo[0], NOT flat
+    // top-level fields. There is no PassengerFareBreakup field either; the
+    // per-passenger breakdown is FareBreakDowns.FareBreakDown[], one entry
+    // per PaxType, same pattern as Availability's FareInfos.
+    const flight = pricing.AirPricingResponse?.[0]
+    const pricingInfo = flight?.PricingInfos?.PricingInfo?.[0]
+    const fareBreakdown = pricingInfo?.FareBreakDowns?.FareBreakDown ?? []
+
+    if (!pricingInfo) {
+      return Response.json({
+        ok: false,
+        error: 'Pricing succeeded but returned no fare details. Please try again.',
+      }, { status: 200 })
+    }
+
     return Response.json({
       ok: true,
       referenceNo: pricing.ReferenceNo,
-      totalFare: pricing.TotalFare,
-      baseFare: pricing.BaseFare,
-      tax: pricing.Tax,
-      currency: pricing.Currency,
-      isRefundable: pricing.IsRefundable,
-      fareType: pricing.FareType,
-      passengerBreakup: pricing.PassengerFareBreakup,
+      totalFare: pricingInfo.Total?.Fare ? Number(pricingInfo.Total.Fare) : undefined,
+      baseFare: pricingInfo.Total?.BaseFare ? Number(pricingInfo.Total.BaseFare) : undefined,
+      tax: pricingInfo.Total?.OtherTax ? Number(pricingInfo.Total.OtherTax) : undefined,
+      currency: pricingInfo.Currency,
+      isRefundable: fareBreakdown[0]?.Refundable === 'Refundable',
+      fareType: pricingInfo.FareType,
+      passengerBreakup: fareBreakdown.map(fb => ({
+        PaxType: fb.PaxType,
+        BaseFare: Number(fb.BaseFare),
+        Tax: Number(fb.TotalTax),
+        TotalFare: Number(fb.TotalFare),
+      })),
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Pricing failed'

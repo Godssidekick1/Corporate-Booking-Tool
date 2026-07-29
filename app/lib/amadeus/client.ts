@@ -229,18 +229,18 @@ export interface PassengerFareBreakup {
   TotalFare: number
 }
 
+// Pricing's response reuses the exact same nested shape as a FlightResult
+// from Availability (Itineraries, PricingInfos.PricingInfo[].Total/FareBreakDowns/etc) —
+// confirmed against a real response. There is NO flat top-level TotalFare/
+// BaseFare/PassengerFareBreakup — those fields live nested under
+// AirPricingResponse[0].PricingInfos.PricingInfo[0], same as Availability.
 export interface PricingResponse {
+  Status: string
   Key: string
-  ReferenceNo: string         // "ARRF#####" — store immediately
-  TotalFare: number           // authoritative fare — use for Rule Engine
-  BaseFare: number
-  Tax: number
-  Currency: string
-  IsRefundable: boolean
-  FareType: string
-  PassengerFareBreakup: PassengerFareBreakup[]
-  FareRules: unknown[]
-  Segments: FlightSegment[]
+  ReferenceNo: string          // "ARRF#####" — store immediately
+  Error: AmadeusEnvelope['Error']
+  IsPriceChange: boolean
+  AirPricingResponse: FlightResult[]  // same shape as Availability's FlightResult — one entry, re-priced
 }
 
 // AddPassenger
