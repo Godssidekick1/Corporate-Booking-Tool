@@ -61,11 +61,11 @@ export default function PriceConfirmPage() {
 
     const searchData = flowStorage.getSearchResults()
 
-    if (!searchData?.availabilityKey || !searchData?.sessionId || !flightResult.pricingKey) {
-  setError('Missing pricing details for this flight — please search again.')
-  setLoading(false)
-  return
-}
+    if (!searchData?.availabilityKey || !flightResult.pricingKey) {
+      setError('Missing pricing details for this flight — please search again.')
+      setLoading(false)
+      return
+    }
 
     try {
       const res = await fetch('/api/book/price', {
@@ -76,7 +76,6 @@ export default function PriceConfirmPage() {
     pricingKey: flightResult.pricingKey,
     provider: flightResult.provider,
     resultIndex: flightResult.itemNo,
-    sessionId: searchData.sessionId,   // NEW
   }),
 })
       const data: PriceApiResult = await res.json()

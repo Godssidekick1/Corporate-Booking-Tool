@@ -456,7 +456,7 @@ async function withSession<T extends AmadeusEnvelope>(
   endpoint: string,
   buildBody: (sessionId: string) => Record<string, unknown>,
   context: string,
-  options: { fixedSessionId?: string; acceptedStatuses?: string[] } = {}
+  options: { acceptedStatuses?: string[] } = {}
 ): Promise<T> {
   const requestId = crypto.randomUUID()
   const acceptedStatuses = options.acceptedStatuses ?? ['Success']
@@ -470,21 +470,6 @@ async function withSession<T extends AmadeusEnvelope>(
     if (!acceptedStatuses.includes(json.Status)) {
       assertSuccess(json, context, requestId, body) // throws with the real error detail
     }
-  }
-
-  // Some calls (Pricing, and anything else keyed off a specific search's
-  // results) must run under the EXACT SessionID that produced those
-  // results — not whatever the global cache currently holds, which may
-  // have rotated since. For those, the caller passes fixedSessionId and we
-  // skip the cache and the re-auth-and-retry path entirely: retrying under
-  // a freshly re-authenticated (different) session would just repeat the
-  // same "Result Session Expired" failure, since the result never belonged
-  // to that new session in the first place.
-  if (options.fixedSessionId) {
-    const body = buildBody(options.fixedSessionId)
-    const json = await post<T>(endpoint, body, requestId)
-    checkSuccess(json, requestId, body)
-    return json
   }
 
   const sessionId = await getSessionId()
@@ -535,20 +520,15 @@ export const amadeus = {
   },
 
   // ── 2. Pricing ─────────────────────────────────────────────────────────────
-  // resultKey: the per-result Key from FlightAvailability
-  // pricingKey: the encoded PricingKey string from FlightAvailability
-  // searchSessionId: the SessionID from the SAME FlightAvailability response
-  // that produced resultKey/pricingKey. Required — Pricing must run under the
-  // exact session the result was created in. The globally cached session can
-  // rotate between search and price (another request re-authenticating,
-  // container churn, etc.), and Amadeus rejects Pricing against any session
-  // other than the one that generated the result, even a valid fresh one.
+  // resultKey: the per-result Key from the FlightAvailability RESPONSE
+  // (top-level Key field, shared by the whole search — NOT the per-result
+  // FlightKey). pricingKey: the encoded PricingKey string from that same
+  // FlightAvailability result.
   async pricing(
     resultKey: string,
     pricingKey: string,
     provider: string,
-    resultIndex: string,
-    searchSessionId: string
+    resultIndex: string
   ): Promise<PricingResponse> {
     const json = await withSession<AmadeusEnvelope & PricingResponse>(
       'flight/Pricing',
@@ -560,8 +540,7 @@ export const amadeus = {
         Provider: provider,
         ResultIndex: resultIndex,
       }),
-      'Pricing',
-      { fixedSessionId: searchSessionId }
+      'Pricing'
     )
 
     return json as PricingResponse

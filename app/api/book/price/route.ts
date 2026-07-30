@@ -17,21 +17,21 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const { key, pricingKey, provider, resultIndex, sessionId } = await req.json()
+  const { key, pricingKey, provider, resultIndex } = await req.json()
 
-  if (!key || !pricingKey || !provider || !resultIndex || !sessionId) {
-    return Response.json(
-      { error: 'key, pricingKey, provider, resultIndex, and sessionId are required' },
-      { status: 400 }
-    )
-  }
+if (!key || !pricingKey || !provider || !resultIndex) {
+  return Response.json(
+    { error: 'key, pricingKey, provider, and resultIndex are required' },
+    { status: 400 }
+  )
+}
 
   try {
     // sessionId must be the SessionID from the SAME search (/api/book/search)
     // that produced this key/pricingKey — not the currently cached session,
     // which may have rotated since. Amadeus rejects Pricing run under any
     // session other than the one that generated the result.
-    const pricing = await amadeus.pricing(key, pricingKey, provider, resultIndex, sessionId)
+    const pricing = await amadeus.pricing(key, pricingKey, provider, resultIndex)
 
     // The real Pricing response is shaped just like Availability — nested
     // under AirPricingResponse[0].PricingInfos.PricingInfo[0], NOT flat

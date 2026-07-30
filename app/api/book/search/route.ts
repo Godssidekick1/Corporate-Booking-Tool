@@ -178,7 +178,6 @@ export async function POST(req: NextRequest) {
   ok: true,
   results,
   availabilityKey: availability.Key,
-  sessionId: availability.SessionID,   // NEW — needed for Pricing to run under the same session that produced these results
 })
 
   } catch (err) {
