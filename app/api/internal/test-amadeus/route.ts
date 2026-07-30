@@ -67,7 +67,6 @@ export async function POST(req: NextRequest) {
           candidatePricingInfo.Pricingkey,
           candidate.Provider,
           candidate.ItemNo,
-          availability.SessionID,
         )
         succeededIndex = attempt
         break
