@@ -117,7 +117,7 @@ export async function POST(req: NextRequest) {
     })
 
     if (!availability.Availibilities || availability.Availibilities.length === 0) {
-  return Response.json({ ok: true, results: [], availabilityKey: null, sessionId: null })
+  return Response.json({ ok: true, results: [], availabilityKey: null})
 }
 
     const allFlights = availability.Availibilities.flatMap(a => a.Availibility)

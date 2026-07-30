@@ -27,10 +27,7 @@ if (!key || !pricingKey || !provider || !resultIndex) {
 }
 
   try {
-    // sessionId must be the SessionID from the SAME search (/api/book/search)
-    // that produced this key/pricingKey — not the currently cached session,
-    // which may have rotated since. Amadeus rejects Pricing run under any
-    // session other than the one that generated the result.
+    
     const pricing = await amadeus.pricing(key, pricingKey, provider, resultIndex)
 
     // The real Pricing response is shaped just like Availability — nested

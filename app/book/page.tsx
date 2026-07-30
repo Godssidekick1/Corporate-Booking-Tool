@@ -88,7 +88,6 @@ export default function BookFlightsPage() {
   foundResults,
   { origin, destination, departDate: toDisplayDate(departDate), adult },
   data.availabilityKey ?? null,
-  data.sessionId ?? null   // NEW
 )
     } catch {
       setError('Something went wrong. Please try again.')
