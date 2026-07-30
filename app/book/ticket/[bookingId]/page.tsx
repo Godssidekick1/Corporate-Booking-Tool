@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 
@@ -39,6 +39,7 @@ export default function TicketPage() {
   const [loading, setLoading] = useState(true)
   const [ticketing, setTicketing] = useState(false)
   const [error, setError] = useState('')
+  const ticketingRef = useRef(false) // guards against duplicate concurrent issueTicket() calls
 
   useEffect(() => {
     loadAndMaybeTicket()
@@ -72,6 +73,8 @@ export default function TicketPage() {
   }
 
   async function issueTicket() {
+    if (ticketingRef.current) return // already in flight — don't double-fire
+    ticketingRef.current = true
     setTicketing(true)
     setError('')
     try {
@@ -97,6 +100,7 @@ export default function TicketPage() {
       setError('Something went wrong issuing the ticket. You can try again below.')
     } finally {
       setTicketing(false)
+      ticketingRef.current = false
     }
   }
 
