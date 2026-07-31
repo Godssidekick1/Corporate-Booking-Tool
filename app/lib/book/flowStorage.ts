@@ -20,6 +20,8 @@ export interface SearchMeta {
   destination: string
   departDate: string   // display-formatted, whatever the search page had
   adult: number
+  child: number
+  infant: number
 }
 
 export interface PricedFare {

@@ -30,6 +30,9 @@ export default function BookFlightsPage() {
   const [destination, setDestination] = useState('')
   const [departDate, setDepartDate] = useState('')
   const [adult, setAdult] = useState(1)
+  const [child, setChild] = useState(0)
+  const [infant, setInfant] = useState(0)
+  const [travelersOpen, setTravelersOpen] = useState(false)
   const [cabinPref, setCabinPref] = useState<'Economy' | 'Premium Economy' | 'Business' | 'First'>('Economy')
 
   const [searching, setSearching] = useState(false)
@@ -55,6 +58,10 @@ export default function BookFlightsPage() {
 
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault()
+    if (infant > adult) {
+      setError('Each infant must travel with an adult. Please adjust traveler counts.')
+      return
+    }
     setSearching(true)
     setError('')
     setHasSearched(false)
@@ -65,7 +72,7 @@ export default function BookFlightsPage() {
         body: JSON.stringify({
           origin, destination,
           departDate: toApiDate(departDate),
-          adult,
+          adult, child, infant,
         }),
       })
       const data = await res.json()
@@ -86,7 +93,7 @@ export default function BookFlightsPage() {
       // so the "back to results" link on later pages has something to return to.
       flowStorage.saveSearchResults(
   foundResults,
-  { origin, destination, departDate: toDisplayDate(departDate), adult },
+  { origin, destination, departDate: toDisplayDate(departDate), adult, child, infant },
   data.availabilityKey ?? null,
 )
     } catch {
@@ -157,13 +164,57 @@ export default function BookFlightsPage() {
                 {departDate && <span style={s.airportHint}>{toDisplayDate(departDate)}</span>}
               </div>
 
-              <div style={s.field}>
+              <div style={{ ...s.field, position: 'relative' }}>
                 <label style={s.label}>Travelers</label>
-                <input
-                  type="number" required min={1} max={9} value={adult}
-                  onChange={e => setAdult(Number(e.target.value))}
-                  style={s.input}
-                />
+                <button
+                  type="button"
+                  onClick={() => setTravelersOpen(o => !o)}
+                  style={{ ...s.input, textAlign: 'left' as const, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                >
+                  {adult + child + infant} traveler{adult + child + infant === 1 ? '' : 's'}
+                </button>
+
+                {travelersOpen && (
+                  <div style={s.travelersPopover}>
+                    {([
+                      { key: 'adult', label: 'Adults', sub: '12+ years', value: adult, setValue: setAdult, min: 1 },
+                      { key: 'child', label: 'Children', sub: '2–11 years', value: child, setValue: setChild, min: 0 },
+                      { key: 'infant', label: 'Infants', sub: 'Under 2 years', value: infant, setValue: setInfant, min: 0 },
+                    ] as const).map(row => (
+                      <div key={row.key} style={s.travelerRow}>
+                        <div>
+                          <div style={s.travelerRowLabel}>{row.label}</div>
+                          <div style={s.travelerRowSub}>{row.sub}</div>
+                        </div>
+                        <div style={s.travelerStepper}>
+                          <button
+                            type="button"
+                            onClick={() => row.setValue(Math.max(row.min, row.value - 1))}
+                            disabled={row.value <= row.min}
+                            style={{ ...s.stepperBtn, opacity: row.value <= row.min ? 0.4 : 1 }}
+                          >
+                            −
+                          </button>
+                          <span style={s.stepperValue}>{row.value}</span>
+                          <button
+                            type="button"
+                            onClick={() => row.setValue(Math.min(9, row.value + 1))}
+                            disabled={adult + child + infant >= 9}
+                            style={{ ...s.stepperBtn, opacity: adult + child + infant >= 9 ? 0.4 : 1 }}
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    {infant > adult && (
+                      <p style={s.travelerNote}>Each infant must travel with an adult.</p>
+                    )}
+                    <button type="button" onClick={() => setTravelersOpen(false)} style={s.travelersDoneBtn}>
+                      Done
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div style={s.field}>
@@ -418,4 +469,25 @@ const s: Record<string, React.CSSProperties> = {
   tagFullService: { color: '#14532D', background: '#F0FDF4' },
 
   selectBtn: { height: '34px', padding: '0 18px', background: '#000835', color: '#fff', fontSize: '12px', fontWeight: 600, border: 'none', borderRadius: '8px', cursor: 'pointer' },
+
+  travelersPopover: {
+    position: 'absolute' as const, top: 'calc(100% + 6px)', left: 0, right: 0, zIndex: 10,
+    background: '#fff', border: '1px solid #E5E7EB', borderRadius: '12px', padding: '14px',
+    boxShadow: '0 8px 24px rgba(0,0,0,0.08)',
+  },
+  travelerRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0' },
+  travelerRowLabel: { fontSize: '13px', fontWeight: 600, color: '#111827' },
+  travelerRowSub: { fontSize: '11px', color: '#9CA3AF' },
+  travelerStepper: { display: 'flex', alignItems: 'center', gap: '10px' },
+  stepperBtn: {
+    width: '26px', height: '26px', borderRadius: '50%', border: '1px solid #D1D5DB', background: '#fff',
+    color: '#000835', fontSize: '14px', fontWeight: 700, cursor: 'pointer', display: 'flex',
+    alignItems: 'center', justifyContent: 'center', lineHeight: 1,
+  },
+  stepperValue: { fontSize: '13px', fontWeight: 600, color: '#111827', minWidth: '16px', textAlign: 'center' as const },
+  travelerNote: { fontSize: '11px', color: '#DC2626', margin: '8px 0 0' },
+  travelersDoneBtn: {
+    width: '100%', height: '34px', marginTop: '10px', background: '#000835', color: '#fff',
+    fontSize: '12px', fontWeight: 600, border: 'none', borderRadius: '8px', cursor: 'pointer',
+  },
 }
