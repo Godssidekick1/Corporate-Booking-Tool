@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { flowStorage, PricedFare } from '@/app/lib/book/flowStorage'
 import { FlatFlightResult, formatTime, formatDayLabel } from '@/app/lib/book/types'
 import { countryNameFromCode } from '@/app/lib/data/countryCodes'
+import { classifyTrip } from '@/app/lib/rule-engine/classifyTrip'
 
 // Matches CustomerInfo.PassengerDetails[number] in lib/amadeus/client.ts exactly.
 interface PassengerForm {
@@ -103,6 +104,7 @@ export default function PassengerDetailsPage() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+  const [tripType, setTripType] = useState<'domestic' | 'international'>('domestic')
 
   useEffect(() => {
     const storedFlight = flowStorage.findResultByFlightKey(flightKey)
@@ -116,6 +118,19 @@ export default function PassengerDetailsPage() {
 
     setFlight(storedFlight)
     setPriced(storedPriced)
+
+    // Domestic vs international drives whether passport fields are shown/required —
+    // reuses the same classifyTrip logic the Rule Engine uses, built from every
+    // leg of the itinerary (origin -> each stop -> destination).
+    if (storedFlight.origin?.code && storedFlight.destination?.code) {
+      const points = [
+        storedFlight.origin.code,
+        ...storedFlight.stops.map(s => s.code),
+        storedFlight.destination.code,
+      ]
+      const legs = points.slice(0, -1).map((origin, i) => ({ origin, destination: points[i + 1] }))
+      setTripType(classifyTrip(legs))
+    }
 
     // Build one form per passenger, tagged with the right PaxType, based on
     // the counts from search. Falls back to a single adult if search meta
@@ -341,25 +356,29 @@ export default function PassengerDetailsPage() {
                 </div>
               </div>
 
-              <div style={s.grid3}>
-                <div style={s.field}>
-                  <label style={s.label}>Passport number</label>
-                  <input type="text" required value={passenger.passportNumber} onChange={e => updatePassenger(i, 'passportNumber', e.target.value)} style={s.input} />
-                </div>
-                <div style={s.field}>
-                  <label style={s.label}>Issuing country</label>
-                  <input type="text" required value={passenger.issuingCountry} onChange={e => updatePassenger(i, 'issuingCountry', e.target.value.toUpperCase())} style={s.input} maxLength={2} placeholder="IN" />
-                </div>
-                <div style={s.field}>
-                  <label style={s.label}>Nationality</label>
-                  <input type="text" required value={passenger.nationality} onChange={e => updatePassenger(i, 'nationality', e.target.value.toUpperCase())} style={s.input} maxLength={2} placeholder="IN" />
-                </div>
-              </div>
+              {tripType === 'international' && (
+                <>
+                  <div style={s.grid3}>
+                    <div style={s.field}>
+                      <label style={s.label}>Passport number</label>
+                      <input type="text" required value={passenger.passportNumber} onChange={e => updatePassenger(i, 'passportNumber', e.target.value)} style={s.input} />
+                    </div>
+                    <div style={s.field}>
+                      <label style={s.label}>Issuing country</label>
+                      <input type="text" required value={passenger.issuingCountry} onChange={e => updatePassenger(i, 'issuingCountry', e.target.value.toUpperCase())} style={s.input} maxLength={2} placeholder="IN" />
+                    </div>
+                    <div style={s.field}>
+                      <label style={s.label}>Nationality</label>
+                      <input type="text" required value={passenger.nationality} onChange={e => updatePassenger(i, 'nationality', e.target.value.toUpperCase())} style={s.input} maxLength={2} placeholder="IN" />
+                    </div>
+                  </div>
 
-              <div style={s.field}>
-                <label style={s.label}>Passport expiry</label>
-                <input type="date" required value={passenger.expiryDate} onChange={e => updatePassenger(i, 'expiryDate', e.target.value)} style={s.input} />
-              </div>
+                  <div style={s.field}>
+                    <label style={s.label}>Passport expiry</label>
+                    <input type="date" required value={passenger.expiryDate} onChange={e => updatePassenger(i, 'expiryDate', e.target.value)} style={s.input} />
+                  </div>
+                </>
+              )}
             </div>
           ))}
 
