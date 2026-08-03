@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 
@@ -58,6 +58,7 @@ export default function ConfirmBookingPage() {
   const [loadError, setLoadError] = useState('')
   const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState('')
+  const confirmingRef = useRef(false) // guards against duplicate concurrent Booking calls
 
   useEffect(() => {
     loadBooking()
@@ -93,6 +94,8 @@ export default function ConfirmBookingPage() {
   }
 
   async function handleConfirmBooking() {
+    if (confirmingRef.current) return // already in flight — a fast double-click or duplicate call shouldn't fire a second Booking request
+    confirmingRef.current = true
     setConfirming(true)
     setError('')
     try {
@@ -113,6 +116,7 @@ export default function ConfirmBookingPage() {
       setError('Something went wrong completing the booking. Please try again.')
     } finally {
       setConfirming(false)
+      confirmingRef.current = false
     }
   }
 
@@ -265,7 +269,7 @@ export default function ConfirmBookingPage() {
         <div style={s.noticeCard}>
           <p style={s.noticeText}>
             Clicking below will confirm this booking directly with the airline. This step typically can't be undone —
-            double-check the traveler's name and dates match their passport exactly.
+            double-check the traveler's name and details are entered correctly.
           </p>
         </div>
 
