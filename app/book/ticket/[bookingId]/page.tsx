@@ -3,32 +3,81 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
+import { formatTime, formatDayLabel } from '@/app/lib/book/types'
+
+// ── /book/ticket/[bookingId] ──────────────────────────────────────────────────
+// Displayed once a ticket is issued. Styled as an e-ticket / boarding-pass
+// stub rather than a generic confirmation card — that's the standard shape
+// people recognize from airline confirmations.
+//
+// Deliberately does NOT show seat or gate: nothing in this flow assigns a
+// seat (SeatMap isn't wired into booking yet) or a gate (only known at
+// check-in), and fabricating placeholder values for those would be actively
+// misleading on a real travel document. The perforated-stub shape and route
+// line carry the "ticket" visual language without needing that data.
+//
+// Ticket numbers: paired with each traveler by array index, matching the
+// order they were submitted to AddPassengerDetails (see /api/book/ticket —
+// it now reads the full PassengerDetails array from Amadeus's response,
+// not just index 0). If Amadeus returns fewer ticket numbers than
+// passengers for any reason, the extra travelers simply show no ticket
+// number rather than a wrong one.
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface FlightItinerary {
+  airline?: { code: string; name: string }
+  origin?: { code: string; name: string; city: string; dateTime: string }
+  destination?: { code: string; name: string; city: string; dateTime: string }
+  duration?: string
+  stopCount?: number
+  cabin?: string
+  checkInBaggageKg?: string
+}
+
+interface BookingPassenger {
+  FirstName: string
+  LastName: string
+  Title: string
+  PaxType: 'ADT' | 'CHD' | 'INF' | string
+}
 
 interface Booking {
   id: string
   status: string
   pnr: string | null
-  ticket_numbers: string[] | null
+  ticket_numbers: (string | null)[] | null
   total_cost: number
-  itinerary: {
-    airline?: { code: string; name: string }
-    origin?: { code: string; name: string; city: string; dateTime: string }
-    destination?: { code: string; name: string; city: string; dateTime: string }
-  } | null
+  itinerary: FlightItinerary | null
   traveler_snapshot: {
     Email: string
-    PassengerDetails: { FirstName: string; LastName: string; Title: string }[]
+    Mobile?: string
+    PassengerDetails: BookingPassenger[]
   } | null
   fare_breakdown: { currency: string } | null
 }
 
-function formatTime(iso: string | undefined) {
-  if (!iso) return '—'
-  try {
-    return new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
-  } catch {
-    return '—'
+const PAX_TYPE_LABEL: Record<string, string> = {
+  ADT: 'Adult', CHD: 'Child', INF: 'Infant',
+}
+
+// Deterministic decorative barcode — purely visual (not a real scannable
+// code), seeded off the PNR so the pattern is stable per booking rather
+// than reshuffling on every render.
+function BarcodeStrip({ seed }: { seed: string }) {
+  const bars: number[] = []
+  let hash = 0
+  for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0
+  for (let i = 0; i < 34; i++) {
+    hash = (hash * 1103515245 + 12345) >>> 0
+    bars.push(1 + (hash % 3))
   }
+  return (
+    <div style={{ display: 'flex', alignItems: 'stretch', gap: '2px', height: '36px' }}>
+      {bars.map((w, i) => (
+        <div key={i} style={{ width: `${w}px`, background: '#0A0A14', opacity: i % 7 === 0 ? 0.4 : 0.85 }} />
+      ))}
+    </div>
+  )
 }
 
 export default function TicketPage() {
@@ -129,8 +178,11 @@ export default function TicketPage() {
     )
   }
 
-  const traveler = booking.traveler_snapshot?.PassengerDetails?.[0]
+  const travelers = booking.traveler_snapshot?.PassengerDetails ?? []
+  const ticketNumbers = booking.ticket_numbers ?? []
   const isTicketed = booking.status === 'ticketed'
+  const it = booking.itinerary
+  const currency = booking.fare_breakdown?.currency ?? ''
 
   return (
     <div style={s.page}>
@@ -147,47 +199,126 @@ export default function TicketPage() {
             <div style={s.successHero}>
               <div style={s.successIcon}>✓</div>
               <h1 style={s.successHeading}>You're booked!</h1>
-              <p style={s.successSub}>Your ticket has been issued.</p>
+              <p style={s.successSub}>Your e-ticket is below — a copy has also been sent to your email.</p>
             </div>
 
-            <div style={s.card}>
-              <div style={s.confirmRow}>
-                <span style={s.confirmLabel}>PNR</span>
-                <span style={s.confirmValue}>{booking.pnr || '—'}</span>
+            {/* ── E-ticket / boarding-pass style card ─────────────────── */}
+            <div style={s.ticketCard}>
+              <div style={s.ticketHeaderBand}>
+                <span style={s.airlineName}>{it?.airline?.name ?? 'Airline'}</span>
+                <span style={s.eTicketTag}>E-TICKET</span>
               </div>
-              {booking.ticket_numbers && booking.ticket_numbers.length > 0 && (
-                <div style={s.confirmRow}>
-                  <span style={s.confirmLabel}>Ticket number</span>
-                  <span style={s.confirmValue}>{booking.ticket_numbers[0]}</span>
+
+              <div style={s.ticketBody}>
+                {/* Main coupon: route */}
+                <div style={s.coupon}>
+                  <div style={s.routeRow}>
+                    <div style={s.routePoint}>
+                      <span style={s.routeTime}>{formatTime(it?.origin?.dateTime)}</span>
+                      <span style={s.routeCode}>{it?.origin?.code}</span>
+                      <span style={s.routeCity}>{it?.origin?.city}</span>
+                    </div>
+
+                    <div style={s.routeMiddle}>
+                      <span style={s.routeDate}>{formatDayLabel(it?.origin?.dateTime)}</span>
+                      <div style={s.routeLineWrap}>
+                        <div style={s.routeDot} />
+                        <div style={s.routeLine} />
+                        <span style={s.routePlane}>✈</span>
+                        <div style={s.routeLine} />
+                        <div style={s.routeDot} />
+                      </div>
+                      <span style={s.routeStops}>
+                        {it?.duration ? `${it.duration} · ` : ''}
+                        {(it?.stopCount ?? 0) === 0 ? 'Non-stop' : `${it?.stopCount} stop(s)`}
+                      </span>
+                    </div>
+
+                    <div style={{ ...s.routePoint, alignItems: 'flex-end' as const }}>
+                      <span style={s.routeTime}>{formatTime(it?.destination?.dateTime)}</span>
+                      <span style={s.routeCode}>{it?.destination?.code}</span>
+                      <span style={s.routeCity}>{it?.destination?.city}</span>
+                    </div>
+                  </div>
+
+                  {(it?.cabin || it?.checkInBaggageKg) && (
+                    <div style={s.metaRow}>
+                      {it?.cabin && (
+                        <div style={s.metaItem}>
+                          <span style={s.metaLabel}>Class</span>
+                          <span style={s.metaValue}>{it.cabin}</span>
+                        </div>
+                      )}
+                      {it?.checkInBaggageKg && (
+                        <div style={s.metaItem}>
+                          <span style={s.metaLabel}>Baggage</span>
+                          <span style={s.metaValue}>{it.checkInBaggageKg} kg</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
-              )}
+
+                {/* Perforated divider with cutout notches */}
+                <div style={s.perforationWrap}>
+                  <div style={s.notchLeft} />
+                  <div style={s.perforationLine} />
+                  <div style={s.notchRight} />
+                </div>
+
+                {/* Stub: PNR + barcode */}
+                <div style={s.stub}>
+                  <div style={s.stubRow}>
+                    <span style={s.stubLabel}>PNR</span>
+                    <span style={s.stubValue}>{booking.pnr || '—'}</span>
+                  </div>
+                  {travelers.length <= 1 && ticketNumbers[0] && (
+                    <div style={s.stubRow}>
+                      <span style={s.stubLabel}>Ticket no.</span>
+                      <span style={s.stubValue}>{ticketNumbers[0]}</span>
+                    </div>
+                  )}
+                  {travelers.length > 1 && (
+                    <div style={s.stubRow}>
+                      <span style={s.stubLabel}>Tickets issued</span>
+                      <span style={s.stubValue}>{ticketNumbers.filter(Boolean).length} of {travelers.length}</span>
+                    </div>
+                  )}
+                  <div style={s.barcodeWrap}>
+                    <BarcodeStrip seed={booking.pnr || bookingId} />
+                  </div>
+                </div>
+              </div>
             </div>
 
-            {booking.itinerary && (
+            {/* ── Travelers ────────────────────────────────────────────── */}
+            {travelers.length > 0 && (
               <div style={s.card}>
-                <h2 style={s.cardTitle}>Flight</h2>
-                <div style={s.routeRow}>
-                  <div style={s.routePoint}>
-                    <span style={s.routeTime}>{formatTime(booking.itinerary.origin?.dateTime)}</span>
-                    <span style={s.routeCode}>{booking.itinerary.origin?.code}</span>
-                  </div>
-                  <span style={s.routeArrow}>→</span>
-                  <div style={s.routePoint}>
-                    <span style={s.routeTime}>{formatTime(booking.itinerary.destination?.dateTime)}</span>
-                    <span style={s.routeCode}>{booking.itinerary.destination?.code}</span>
-                  </div>
+                <h2 style={s.cardTitle}>
+                  Travelers <span style={s.travelerCount}>({travelers.length})</span>
+                </h2>
+                <div style={s.travelerList}>
+                  {travelers.map((t, i) => (
+                    <div key={i} style={s.travelerRow}>
+                      <div style={s.travelerNameCol}>
+                        <span style={s.travelerName}>{t.Title} {t.FirstName} {t.LastName}</span>
+                        {ticketNumbers[i] && <span style={s.travelerTicketNo}>{ticketNumbers[i]}</span>}
+                      </div>
+                      <span style={s.travelerType}>{PAX_TYPE_LABEL[t.PaxType] ?? t.PaxType}</span>
+                    </div>
+                  ))}
                 </div>
-                <p style={s.mutedLine}>{booking.itinerary.airline?.name ?? 'Airline'}</p>
+                {booking.traveler_snapshot?.Email && (
+                  <p style={s.mutedLine}>{booking.traveler_snapshot.Email}</p>
+                )}
               </div>
             )}
 
-            {traveler && (
-              <div style={s.card}>
-                <h2 style={s.cardTitle}>Traveler</h2>
-                <p style={s.travelerName}>{traveler.Title} {traveler.FirstName} {traveler.LastName}</p>
-                <p style={s.mutedLine}>{booking.traveler_snapshot?.Email}</p>
-              </div>
-            )}
+            {/* ── Fare (kept minimal — this is a ticket, not an invoice) ── */}
+            <div style={s.fareFooter}>
+              <span>Total paid</span>
+              <span style={s.fareFooterValue}>{currency} {booking.total_cost?.toLocaleString('en-IN')}</span>
+            </div>
 
             <Link href="/book" style={s.doneLink}>Book another flight →</Link>
           </>
@@ -226,21 +357,65 @@ const s: Record<string, React.CSSProperties> = {
   successHeading: { fontSize: '22px', fontWeight: 700, color: '#0A0A14', margin: '0 0 4px' },
   successSub: { fontSize: '13px', color: '#6B7280', margin: 0 },
 
+  // ── E-ticket card ──────────────────────────────────────────────────────
+  ticketCard: {
+    background: '#fff', borderRadius: '18px', marginBottom: '16px', overflow: 'hidden',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 8px 24px rgba(0,8,53,0.08)', border: '1px solid #E5E7EB',
+  },
+  ticketHeaderBand: {
+    background: '#000835', padding: '13px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+  },
+  airlineName: { color: '#fff', fontSize: '13px', fontWeight: 700, letterSpacing: '0.2px' },
+  eTicketTag: { color: '#A5B4E8', fontSize: '10px', fontWeight: 700, letterSpacing: '1.2px' },
+
+  ticketBody: { position: 'relative' as const },
+  coupon: { padding: '22px 20px 18px' },
+
+  routeRow: { display: 'flex', alignItems: 'flex-start', gap: '10px' },
+  routePoint: { display: 'flex', flexDirection: 'column', gap: '2px', flex: '0 0 auto', minWidth: '70px' },
+  routeTime: { fontSize: '20px', fontWeight: 700, color: '#0A0A14', letterSpacing: '-0.3px' },
+  routeCode: { fontSize: '13px', fontWeight: 700, color: '#374151' },
+  routeCity: { fontSize: '10.5px', color: '#9CA3AF' },
+
+  routeMiddle: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', paddingTop: '2px' },
+  routeDate: { fontSize: '10px', color: '#9CA3AF', fontWeight: 600, letterSpacing: '0.3px' },
+  routeLineWrap: { display: 'flex', alignItems: 'center', width: '100%', gap: '2px' },
+  routeDot: { width: '4px', height: '4px', borderRadius: '50%', background: '#000835', flexShrink: 0 },
+  routeLine: { flex: 1, height: '1px', background: '#D1D5DB' },
+  routePlane: { fontSize: '11px', color: '#000835', transform: 'rotate(90deg)', flexShrink: 0 },
+  routeStops: { fontSize: '10px', color: '#9CA3AF' },
+
+  metaRow: { display: 'flex', gap: '24px', marginTop: '18px', paddingTop: '14px', borderTop: '1px solid #F3F4F6' },
+  metaItem: { display: 'flex', flexDirection: 'column', gap: '2px' },
+  metaLabel: { fontSize: '9.5px', color: '#9CA3AF', fontWeight: 600, letterSpacing: '0.4px', textTransform: 'uppercase' as const },
+  metaValue: { fontSize: '12.5px', color: '#111827', fontWeight: 600 },
+
+  perforationWrap: { position: 'relative' as const, height: '0px' },
+  notchLeft: { position: 'absolute' as const, left: '-10px', top: '-10px', width: '20px', height: '20px', borderRadius: '50%', background: '#F9FAFB' },
+  notchRight: { position: 'absolute' as const, right: '-10px', top: '-10px', width: '20px', height: '20px', borderRadius: '50%', background: '#F9FAFB' },
+  perforationLine: { borderTop: '1.5px dashed #D1D5DB', margin: '0 14px' },
+
+  stub: { padding: '18px 20px 20px', background: '#FAFAFB' },
+  stubRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0' },
+  stubLabel: { fontSize: '11px', color: '#6B7280', fontWeight: 500 },
+  stubValue: { fontSize: '13px', color: '#0A0A14', fontWeight: 700, letterSpacing: '0.4px' },
+  barcodeWrap: { marginTop: '12px', display: 'flex', justifyContent: 'center' },
+
+  // ── Traveler / fare cards ────────────────────────────────────────────
   card: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '20px', marginBottom: '16px' },
-  cardTitle: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: '0 0 14px' },
+  cardTitle: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: '0 0 14px', display: 'flex', alignItems: 'center', gap: '6px' },
+  travelerCount: { fontSize: '12px', fontWeight: 500, color: '#9CA3AF' },
 
-  confirmRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0' },
-  confirmLabel: { fontSize: '12px', color: '#6B7280' },
-  confirmValue: { fontSize: '15px', fontWeight: 700, color: '#0A0A14', letterSpacing: '0.5px' },
-
-  routeRow: { display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '10px' },
-  routePoint: { display: 'flex', flexDirection: 'column', gap: '2px' },
-  routeTime: { fontSize: '16px', fontWeight: 700, color: '#111827' },
-  routeCode: { fontSize: '11px', fontWeight: 600, color: '#6B7280' },
-  routeArrow: { fontSize: '13px', color: '#9CA3AF' },
+  travelerList: { display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '10px' },
+  travelerRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: '8px', borderBottom: '1px solid #F3F4F6' },
+  travelerNameCol: { display: 'flex', flexDirection: 'column', gap: '2px' },
+  travelerName: { fontSize: '13px', fontWeight: 600, color: '#111827' },
+  travelerTicketNo: { fontSize: '10.5px', color: '#9CA3AF', letterSpacing: '0.2px' },
+  travelerType: { fontSize: '10.5px', color: '#6B7280', background: '#F3F4F6', padding: '2px 8px', borderRadius: '5px', fontWeight: 500 },
   mutedLine: { fontSize: '12px', color: '#9CA3AF', margin: 0 },
 
-  travelerName: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: '0 0 4px' },
+  fareFooter: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 4px 20px', fontSize: '12px', color: '#9CA3AF' },
+  fareFooterValue: { fontSize: '13px', fontWeight: 600, color: '#6B7280' },
 
   doneLink: {
     display: 'block', textAlign: 'center' as const, height: '48px', lineHeight: '48px', width: '100%',

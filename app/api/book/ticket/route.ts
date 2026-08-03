@@ -9,13 +9,14 @@ import { NextRequest } from 'next/server'
 // what it needs from the bookings row rather than re-accepting booking
 // details from the frontend.
 //
-// Amadeus's real Ticket response is NOT flat — PNR and ticket number live
+// Amadeus's real Ticket response is NOT flat — PNR and ticket numbers live
 // nested under AirBookingResponse[0].PNR and
-// AirBookingResponse[0].CustomerInfo.PassengerDetails[0].TicketNo,
-// confirmed against a real response. bookings.ticket_numbers is an array
-// column (presumably to support multi-passenger bookings later), so a
-// single ticket number is stored as a one-element array for now rather
-// than changing the column shape.
+// AirBookingResponse[0].CustomerInfo.PassengerDetails[].TicketNo, one entry
+// per passenger in the same order they were submitted to AddPassengerDetails.
+// Previously this only read index [0], so multi-passenger bookings silently
+// lost every ticket number after the first — now captures the full array,
+// same order as traveler_snapshot.PassengerDetails, so the confirm/ticket
+// pages can zip the two together to show "name -> ticket number" per pax.
 //
 // Note: NOT marking status 'failed' in the catch block — unlike a failed
 // Booking call, a failed Ticket call still leaves a valid confirmed booking
@@ -84,8 +85,10 @@ export async function POST(req: NextRequest) {
 
     const flightResult = result.AirBookingResponse?.[0]
     const pnr = flightResult?.PNR ?? booking.pnr
-    const ticketNo = flightResult?.CustomerInfo?.PassengerDetails?.[0]?.TicketNo
-    const ticketNumbers = ticketNo ? [ticketNo] : []
+    // Keep position stable (don't .filter() out gaps) — the confirm/ticket
+    // pages zip this against traveler_snapshot.PassengerDetails by index,
+    // so a missing TicketNo for one passenger must not shift the ones after it.
+    const ticketNumbers = (flightResult?.CustomerInfo?.PassengerDetails ?? []).map(p => p.TicketNo ?? null)
 
     const { error: updateError } = await service
       .from('bookings')
@@ -98,7 +101,7 @@ export async function POST(req: NextRequest) {
       .eq('id', bookingId)
 
     if (updateError) {
-      console.error('Ticket issued but failed to save', updateError, { bookingId, ticketNo })
+      console.error('Ticket issued but failed to save', updateError, { bookingId, ticketNumbers })
       return Response.json({
         ok: true,
         bookingId,
