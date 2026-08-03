@@ -108,11 +108,11 @@ export default function TicketPage() {
       setBooking(data.booking)
       setLoading(false)
 
-      // A booking that reached this page at status 'booked' hasn't been
+      // A booking that reached this page at status 'held' hasn't been
       // ticketed yet — issue the ticket automatically rather than making
       // the user click a second button right after "Confirm booking".
       // If it's already 'ticketed' (e.g. a refresh), there's nothing to do.
-      if (data.booking.status === 'booked') {
+      if (data.booking.status === 'held') {
         await issueTicket()
       }
     } catch {

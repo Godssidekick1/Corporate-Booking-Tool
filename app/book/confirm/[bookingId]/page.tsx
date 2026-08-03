@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 
@@ -58,7 +58,6 @@ export default function ConfirmBookingPage() {
   const [loadError, setLoadError] = useState('')
   const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState('')
-  const confirmingRef = useRef(false) // guards against duplicate concurrent Booking calls
 
   useEffect(() => {
     loadBooking()
@@ -81,7 +80,7 @@ export default function ConfirmBookingPage() {
       // user hit back after confirming, or refreshed after clicking Book),
       // send them forward to wherever they actually are instead of letting
       // them try to re-book an already-booked reservation.
-      if (data.booking.status === 'booked') {
+      if (data.booking.status === 'held') {
         router.replace(`/book/ticket/${bookingId}`)
       } else if (data.booking.status === 'ticketed') {
         router.replace(`/book/ticket/${bookingId}`)
@@ -94,8 +93,6 @@ export default function ConfirmBookingPage() {
   }
 
   async function handleConfirmBooking() {
-    if (confirmingRef.current) return // already in flight — a fast double-click or duplicate call shouldn't fire a second Booking request
-    confirmingRef.current = true
     setConfirming(true)
     setError('')
     try {
@@ -113,25 +110,9 @@ export default function ConfirmBookingPage() {
 
       router.push(`/book/ticket/${bookingId}`)
     } catch {
-      // The fetch itself failed/timed out client-side — but the Amadeus call
-      // may well have succeeded server-side before the response could get
-      // back to us (slow function, network blip). Check the booking's real
-      // status before assuming it failed; a false "could not complete" when
-      // it actually did is worse than a brief extra check here.
-      try {
-        const checkRes = await fetch(`/api/book/${bookingId}`)
-        const checkData = await checkRes.json()
-        if (checkRes.ok && (checkData.booking?.status === 'held' || checkData.booking?.status === 'ticketed')) {
-          router.push(`/book/ticket/${bookingId}`)
-          return
-        }
-      } catch {
-        // fall through to the generic error below — we genuinely can't tell
-      }
       setError('Something went wrong completing the booking. Please try again.')
     } finally {
       setConfirming(false)
-      confirmingRef.current = false
     }
   }
 
@@ -284,7 +265,7 @@ export default function ConfirmBookingPage() {
         <div style={s.noticeCard}>
           <p style={s.noticeText}>
             Clicking below will confirm this booking directly with the airline. This step typically can't be undone —
-            double-check the traveler's name and details are entered correctly.
+            double-check the traveler's name and dates match their passport exactly.
           </p>
         </div>
 
@@ -349,7 +330,7 @@ const s: Record<string, React.CSSProperties> = {
   routeStops: { fontSize: '10px', color: '#9CA3AF' },
   mutedLine: { fontSize: '12px', color: '#9CA3AF', margin: 0 },
 
-  travelerName: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: '0 0 4px', textTransform: 'uppercase' as const },
+  travelerName: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: '0 0 4px' },
 
   fareRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' },
   fareLabel: { fontSize: '13px', color: '#6B7280' },
