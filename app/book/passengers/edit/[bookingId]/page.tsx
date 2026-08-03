@@ -3,52 +3,130 @@
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { FlatFlightResult, formatTime, formatDayLabel } from '@/app/lib/book/types'
+import { countryNameFromCode } from '@/app/lib/data/countryCodes'
+import { classifyTrip } from '@/app/lib/rule-engine/classifyTrip'
+
+// ── /book/passengers/edit/[bookingId] ─────────────────────────────────────────
+// Lets a traveler correct passenger/contact details on a booking that's
+// already been persisted (status === 'passenger_added'), before it's booked
+// with the airline. Unlike the original /book/passengers/[flightKey] page,
+// this loads its data from the `bookings` row via bookingId (the DB is the
+// source of truth here — sessionStorage from the original search/price steps
+// may well have expired by the time someone comes back to edit), and PATCHes
+// the correction in place instead of creating a new booking row.
+// Fare, itinerary, and pricing are read-only here — editing passenger details
+// never re-runs pricing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface PassengerForm {
+  paxType: 'ADT' | 'CHD' | 'INF'
+  title: string
+  gender: string
+  firstName: string
+  middleName: string
+  lastName: string
+  dateOfBirth: string   // <input type="date"> value, YYYY-MM-DD
+  passportNumber: string
+  issuingCountry: string
+  nationality: string
+  expiryDate: string    // <input type="date"> value, YYYY-MM-DD
+}
+
+interface BookingPassengerDetail {
+  Title: string
+  Gender: string
+  FirstName: string
+  MiddleName: string
+  LastName: string
+  DateOfBirth: string // DD/MM/YYYY, as stored by Amadeus
+  PaxType: 'ADT' | 'CHD' | 'INF'
+  PassportNumber: string
+  IssuingCountry: string
+  Nationality: string
+  ExpiryDate: string  // DD/MM/YYYY
+  MealCode: string
+}
+
+interface BookingTravelerSnapshot {
+  Email: string
+  Mobile: string
+  Address: string
+  City: string
+  State: string
+  CountryCode: string
+  CountryName: string
+  ZipCode: string
+  PassengerDetails: BookingPassengerDetail[]
+}
 
 interface Booking {
   id: string
   status: string
-  provider: string
-  provider_order_id: string
   total_cost: number
-  itinerary: {
-    airline?: { code: string; name: string }
-    origin?: { code: string; name: string; city: string; dateTime: string }
-    destination?: { code: string; name: string; city: string; dateTime: string }
-    duration?: string
-    stopCount?: number
-  } | null
-  traveler_snapshot: {
-    Email: string
-    Mobile: string
-    PassengerDetails: {
-      FirstName: string
-      LastName: string
-      Title: string
-      PaxType: 'ADT' | 'CHD' | 'INF' | string
-    }[]
-  } | null
-  fare_breakdown: {
-    currency: string
-    isRefundable: boolean
-    fareType: string
-    passengerBreakup?: { PaxType: string; BaseFare: number; Tax: number; TotalFare: number }[]
-  } | null
+  itinerary: FlatFlightResult | null
+  traveler_snapshot: BookingTravelerSnapshot | null
+  fare_breakdown: { currency: string; isRefundable: boolean; fareType: string } | null
 }
 
-const PAX_TYPE_LABEL: Record<string, string> = {
+const PAX_TYPE_LABEL: Record<PassengerForm['paxType'], string> = {
   ADT: 'Adult', CHD: 'Child', INF: 'Infant',
 }
 
-function formatTime(iso: string | undefined) {
-  if (!iso) return '—'
-  try {
-    return new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
-  } catch {
-    return '—'
-  }
+function toAmadeusDate(value: string): string {
+  // <input type="date"> gives YYYY-MM-DD — Amadeus wants DD/MM/YYYY.
+  if (!value) return ''
+  const [y, m, d] = value.split('-')
+  return `${d}/${m}/${y}`
 }
 
-export default function ConfirmBookingPage() {
+function fromAmadeusDate(value: string): string {
+  // Amadeus gives DD/MM/YYYY — <input type="date"> wants YYYY-MM-DD.
+  if (!value) return ''
+  const [d, m, y] = value.split('/')
+  if (!d || !m || !y) return ''
+  return `${y}-${m}-${d}`
+}
+
+function ageInYears(dob: string): number {
+  const birth = new Date(dob)
+  const now = new Date()
+  let age = now.getFullYear() - birth.getFullYear()
+  const monthDiff = now.getMonth() - birth.getMonth()
+  if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < birth.getDate())) age--
+  return age
+}
+
+function validateAge(paxType: PassengerForm['paxType'], dob: string): string | null {
+  if (!dob) return null
+  const birth = new Date(dob)
+  if (isNaN(birth.getTime()) || birth > new Date()) {
+    return 'Date of birth cannot be in the future.'
+  }
+  const age = ageInYears(dob)
+  if (paxType === 'ADT' && age < 12) {
+    return 'Adult passengers must be 12 years or older. Add this traveler as a child instead.'
+  }
+  if (paxType === 'CHD' && (age < 2 || age > 11)) {
+    return 'Child passengers must be between 2 and 11 years old.'
+  }
+  if (paxType === 'INF' && age >= 2) {
+    return 'Infant passengers must be under 2 years old.'
+  }
+  return null
+}
+
+function validateEmail(email: string): string | null {
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return 'Enter a valid email address.'
+  return null
+}
+
+function validateMobile(mobile: string): string | null {
+  if (!/^[6-9]\d{9}$/.test(mobile)) return 'Enter a valid 10-digit mobile number.'
+  return null
+}
+
+export default function EditPassengerDetailsPage() {
   const router = useRouter()
   const params = useParams<{ bookingId: string }>()
   const bookingId = params.bookingId
@@ -56,8 +134,19 @@ export default function ConfirmBookingPage() {
   const [booking, setBooking] = useState<Booking | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
-  const [confirming, setConfirming] = useState(false)
+
+  const [passengers, setPassengers] = useState<PassengerForm[]>([])
+  const [email, setEmail] = useState('')
+  const [mobile, setMobile] = useState('')
+  const [address, setAddress] = useState('')
+  const [city, setCity] = useState('')
+  const [state, setState] = useState('')
+  const [zipCode, setZipCode] = useState('')
+
+  const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+  const [tripType, setTripType] = useState<'domestic' | 'international'>('domestic')
 
   useEffect(() => {
     loadBooking()
@@ -74,16 +163,51 @@ export default function ConfirmBookingPage() {
         setLoadError(data.error || 'Could not load this booking.')
         return
       }
-      setBooking(data.booking)
 
-      // If this booking has already moved past passenger_added (e.g. the
-      // user hit back after confirming, or refreshed after clicking Book),
-      // send them forward to wherever they actually are instead of letting
-      // them try to re-book an already-booked reservation.
-      if (data.booking.status === 'booked') {
-        router.replace(`/book/ticket/${bookingId}`)
-      } else if (data.booking.status === 'ticketed') {
-        router.replace(`/book/ticket/${bookingId}`)
+      const b: Booking = data.booking
+
+      if (b.status !== 'passenger_added') {
+        setLoadError('This booking has already moved past the passenger details step and can no longer be edited here.')
+        return
+      }
+
+      const snapshot = b.traveler_snapshot
+      if (!snapshot || snapshot.PassengerDetails.length === 0) {
+        setLoadError('No passenger details found on this booking.')
+        return
+      }
+
+      setBooking(b)
+      setEmail(snapshot.Email ?? '')
+      setMobile(snapshot.Mobile ?? '')
+      setAddress(snapshot.Address ?? '')
+      setCity(snapshot.City ?? '')
+      setState(snapshot.State ?? '')
+      setZipCode(snapshot.ZipCode ?? '')
+      setPassengers(snapshot.PassengerDetails.map(p => ({
+        paxType: p.PaxType,
+        title: p.Title,
+        gender: p.Gender,
+        firstName: p.FirstName,
+        middleName: p.MiddleName,
+        lastName: p.LastName,
+        dateOfBirth: fromAmadeusDate(p.DateOfBirth),
+        passportNumber: p.PassportNumber,
+        issuingCountry: p.IssuingCountry,
+        nationality: p.Nationality,
+        expiryDate: fromAmadeusDate(p.ExpiryDate),
+      })))
+
+      // Same domestic/international check the original passengers page uses,
+      // built from the stored itinerary's origin -> stops -> destination.
+      if (b.itinerary?.origin?.code && b.itinerary?.destination?.code) {
+        const points = [
+          b.itinerary.origin.code,
+          ...b.itinerary.stops.map(s => s.code),
+          b.itinerary.destination.code,
+        ]
+        const legs = points.slice(0, -1).map((origin, i) => ({ origin, destination: points[i + 1] }))
+        setTripType(classifyTrip(legs))
       }
     } catch {
       setLoadError('Something went wrong loading this booking.')
@@ -92,27 +216,84 @@ export default function ConfirmBookingPage() {
     }
   }
 
-  async function handleConfirmBooking() {
-    setConfirming(true)
+  function updatePassenger<K extends keyof PassengerForm>(index: number, key: K, value: PassengerForm[K]) {
+    setPassengers(prev => prev.map((p, i) => i === index ? { ...p, [key]: value } : p))
+  }
+
+  function validateAll(): boolean {
+    const errors: Record<string, string> = {}
+
+    passengers.forEach((p, i) => {
+      const ageError = validateAge(p.paxType, p.dateOfBirth)
+      if (ageError) errors[`passenger-${i}-dob`] = ageError
+    })
+
+    const emailError = validateEmail(email)
+    if (emailError) errors['contact-email'] = emailError
+
+    const mobileError = validateMobile(mobile)
+    if (mobileError) errors['contact-mobile'] = mobileError
+
+    setFieldErrors(errors)
+    return Object.keys(errors).length === 0
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!booking) return
+
     setError('')
+    if (!validateAll()) {
+      setError('Please fix the highlighted fields before continuing.')
+      return
+    }
+
+    setSubmitting(true)
+
     try {
-      const res = await fetch('/api/book/booking', {
-        method: 'POST',
+      const res = await fetch(`/api/book/${bookingId}`, {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bookingId }),
+        body: JSON.stringify({
+          customerInfo: {
+            Email: email,
+            Mobile: mobile,
+            Address: address,
+            City: city,
+            State: state,
+            CountryCode: passengers[0]?.nationality ?? 'IN',
+            CountryName: countryNameFromCode(passengers[0]?.nationality ?? 'IN'),
+            ZipCode: zipCode,
+            PassengerDetails: passengers.map(p => ({
+              Title: p.title,
+              Gender: p.gender,
+              FirstName: p.firstName,
+              MiddleName: p.middleName,
+              LastName: p.lastName,
+              DateOfBirth: toAmadeusDate(p.dateOfBirth),
+              PaxType: p.paxType,
+              PassportNumber: p.passportNumber,
+              IssuingCountry: p.issuingCountry,
+              Nationality: p.nationality,
+              ExpiryDate: toAmadeusDate(p.expiryDate),
+              MealCode: '',
+            })),
+          },
+        }),
       })
+
       const data = await res.json()
 
       if (!data.ok) {
-        setError(data.error || 'Could not complete the booking. Please try again.')
+        setError(data.error || 'Could not save your changes. Please try again.')
         return
       }
 
-      router.push(`/book/ticket/${bookingId}`)
+      router.push(`/book/confirm/${bookingId}`)
     } catch {
-      setError('Something went wrong completing the booking. Please try again.')
+      setError('Something went wrong saving your changes. Please try again.')
     } finally {
-      setConfirming(false)
+      setSubmitting(false)
     }
   }
 
@@ -134,155 +315,191 @@ export default function ConfirmBookingPage() {
         <div style={s.root}>
           <div style={s.errorCard}>
             <p style={s.errorTitle}>⚠ {loadError || 'Booking not found.'}</p>
-            <Link href="/book" style={s.errorLink}>← Start a new search</Link>
+            <Link href={`/book/confirm/${bookingId}`} style={s.errorLink}>← Back to review</Link>
           </div>
         </div>
       </div>
     )
   }
 
-  const travelers = booking.traveler_snapshot?.PassengerDetails ?? []
-  const adultCount = travelers.filter(t => t.PaxType === 'ADT').length
-  const childCount = travelers.filter(t => t.PaxType === 'CHD').length
-  const infantCount = travelers.filter(t => t.PaxType === 'INF').length
-  const travelerCountParts = [
-    adultCount > 0 && `${adultCount} adult${adultCount > 1 ? 's' : ''}`,
-    childCount > 0 && `${childCount} child${childCount > 1 ? 'ren' : ''}`,
-    infantCount > 0 && `${infantCount} infant${infantCount > 1 ? 's' : ''}`,
-  ].filter(Boolean)
+  const flight = booking.itinerary
 
   return (
     <div style={s.page}>
       <div style={s.root}>
+        <Link href={`/book/confirm/${bookingId}`} style={s.backLink}>← Back to review</Link>
+
         <div style={s.header}>
-          <h1 style={s.heading}>Review & confirm</h1>
-          <p style={s.sub}>This is the final step before booking with the airline — check the details below carefully.</p>
-        </div>
-
-        {/* ── Flight ───────────────────────────────────────────────── */}
-        {booking.itinerary && (
-          <div style={s.card}>
-            <h2 style={s.cardTitle}>Flight</h2>
-            <div style={s.routeRow}>
-              <div style={s.routePoint}>
-                <span style={s.routeTime}>{formatTime(booking.itinerary.origin?.dateTime)}</span>
-                <span style={s.routeCode}>{booking.itinerary.origin?.code}</span>
-              </div>
-              <div style={s.routeMiddle}>
-                <span style={s.routeDuration}>{booking.itinerary.duration ?? ''}</span>
-                <div style={s.routeLine} />
-                <span style={s.routeStops}>
-                  {(booking.itinerary.stopCount ?? 0) === 0 ? 'Non-stop' : `${booking.itinerary.stopCount} stop(s)`}
-                </span>
-              </div>
-              <div style={{ ...s.routePoint, alignItems: 'flex-end' as const }}>
-                <span style={s.routeTime}>{formatTime(booking.itinerary.destination?.dateTime)}</span>
-                <span style={s.routeCode}>{booking.itinerary.destination?.code}</span>
-              </div>
-            </div>
-            <p style={s.mutedLine}>{booking.itinerary.airline?.name ?? 'Airline'}</p>
-          </div>
-        )}
-
-        {/* ── Travelers ────────────────────────────────────────────── */}
-        {travelers.length > 0 && (
-          <div style={s.card}>
-            <div style={s.cardTitleRow}>
-              <h2 style={s.cardTitle}>
-                Travelers {travelerCountParts.length > 0 && (
-                  <span style={s.travelerCount}>({travelerCountParts.join(', ')})</span>
-                )}
-              </h2>
-              {booking.status === 'passenger_added' && (
-                <Link href={`/book/passengers/edit/${bookingId}`} style={s.editLink}>Edit →</Link>
-              )}
-            </div>
-
-            <div style={s.travelerList}>
-              {travelers.map((t, i) => (
-                <div key={i} style={s.travelerRow}>
-                  <div>
-                    <p style={s.travelerName}>{t.Title} {t.FirstName} {t.LastName}</p>
-                    <p style={s.mutedLine}>{PAX_TYPE_LABEL[t.PaxType] ?? t.PaxType}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div style={s.contactBlock}>
-              {booking.traveler_snapshot?.Email && (
-                <p style={s.mutedLine}>{booking.traveler_snapshot.Email}</p>
-              )}
-              {booking.traveler_snapshot?.Mobile && (
-                <p style={s.mutedLine}>{booking.traveler_snapshot.Mobile}</p>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ── Fare ─────────────────────────────────────────────────── */}
-        <div style={s.card}>
-          <h2 style={s.cardTitle}>Fare</h2>
-
-          {booking.fare_breakdown?.passengerBreakup && booking.fare_breakdown.passengerBreakup.length > 0 && (
-            <div style={s.paxFareList}>
-              {booking.fare_breakdown.passengerBreakup.map((pax, i) => (
-                <div key={i} style={s.paxFareRow}>
-                  <span style={s.paxFareLabel}>
-                    {PAX_TYPE_LABEL[pax.PaxType] ?? pax.PaxType}
-                    {booking.fare_breakdown!.passengerBreakup!.filter(p => p.PaxType === pax.PaxType).length > 1
-                      ? ` ${i + 1}` : ''}
-                  </span>
-                  <span style={s.paxFareBreakdown}>
-                    Base {booking.fare_breakdown?.currency ?? ''} {pax.BaseFare?.toLocaleString('en-IN')}
-                    {' + Tax '}{booking.fare_breakdown?.currency ?? ''} {pax.Tax?.toLocaleString('en-IN')}
-                  </span>
-                  <span style={s.paxFareValue}>
-                    {booking.fare_breakdown?.currency ?? ''} {pax.TotalFare?.toLocaleString('en-IN')}
-                  </span>
-                </div>
-              ))}
-              <div style={s.fareDivider} />
-            </div>
-          )}
-
-          <div style={s.fareRow}>
-            <span style={s.fareLabel}>Total</span>
-            <span style={s.fareValue}>
-              {booking.fare_breakdown?.currency ?? ''} {booking.total_cost?.toLocaleString('en-IN')}
-            </span>
-          </div>
-          {booking.fare_breakdown && (
-            <div style={s.metaTags}>
-              <span style={{ ...s.tag, color: booking.fare_breakdown.isRefundable ? '#065F46' : '#9CA3AF', background: booking.fare_breakdown.isRefundable ? '#ECFDF5' : '#F3F4F6' }}>
-                {booking.fare_breakdown.isRefundable ? 'Refundable' : 'Non-refundable'}
-              </span>
-              {booking.fare_breakdown.fareType && <span style={s.tag}>{booking.fare_breakdown.fareType}</span>}
-            </div>
-          )}
-        </div>
-
-        <div style={s.noticeCard}>
-          <p style={s.noticeText}>
-            Clicking below will confirm this booking directly with the airline. This step typically can't be undone —
-            double-check the traveler's name and dates match their passport exactly.
+          <h1 style={s.heading}>Edit passenger details</h1>
+          <p style={s.sub}>
+            {passengers.length > 1
+              ? `Update details for all ${passengers.length} travelers, exactly as they appear on their ID.`
+              : 'Update details exactly as they appear on the traveler\u2019s ID.'}
           </p>
         </div>
 
-        {error && (
-          <div style={s.errorBanner}>
-            <span style={s.bannerIcon}>⚠</span> {error}
+        {/* ── Flight + fare summary strip (read-only — editing passenger
+             details never re-runs pricing) ────────────────────────── */}
+        {flight && (
+          <div style={s.summaryCard}>
+            <div style={s.summaryRoute}>
+              <span style={s.summaryCode}>{flight.origin?.code}</span>
+              <span style={s.summaryArrow}>→</span>
+              <span style={s.summaryCode}>{flight.destination?.code}</span>
+              <span style={s.summaryMeta}>
+                {formatTime(flight.origin?.dateTime)} · {formatDayLabel(flight.origin?.dateTime)}
+              </span>
+            </div>
+            <div style={s.summaryFare}>
+              {booking.fare_breakdown?.currency ?? ''} {booking.total_cost?.toLocaleString('en-IN')}
+            </div>
           </div>
         )}
 
-        <button
-          type="button"
-          onClick={handleConfirmBooking}
-          disabled={confirming}
-          style={{ ...s.confirmBtn, opacity: confirming ? 0.7 : 1 }}
-        >
-          {confirming ? 'Booking…' : 'Confirm booking →'}
-        </button>
+        <form onSubmit={handleSubmit}>
+          {/* ── One card per passenger ──────────────────────────────── */}
+          {passengers.map((passenger, i) => (
+            <div style={s.card} key={i}>
+              <h2 style={s.cardTitle}>
+                Traveler {passengers.length > 1 ? `${i + 1} of ${passengers.length}` : ''}
+                <span style={s.paxTypeBadge}>{PAX_TYPE_LABEL[passenger.paxType]}</span>
+              </h2>
+
+              <div style={s.grid3}>
+                <div style={s.field}>
+                  <label style={s.label}>Title</label>
+                  <select value={passenger.title} onChange={e => updatePassenger(i, 'title', e.target.value)} style={s.input}>
+                    {passenger.paxType === 'INF' ? (
+                      <>
+                        <option value="MSTR">Master</option>
+                        <option value="MISS">Miss</option>
+                      </>
+                    ) : (
+                      <>
+                        <option value="MR">Mr</option>
+                        <option value="MRS">Mrs</option>
+                        <option value="MS">Ms</option>
+                      </>
+                    )}
+                  </select>
+                </div>
+                <div style={s.field}>
+                  <label style={s.label}>Gender</label>
+                  <select value={passenger.gender} onChange={e => updatePassenger(i, 'gender', e.target.value)} style={s.input}>
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                  </select>
+                </div>
+                <div style={s.field}>
+                  <label style={s.label}>Date of birth</label>
+                  <input
+                    type="date" required value={passenger.dateOfBirth}
+                    onChange={e => updatePassenger(i, 'dateOfBirth', e.target.value)}
+                    style={{ ...s.input, borderColor: fieldErrors[`passenger-${i}-dob`] ? '#DC2626' : undefined }}
+                  />
+                  {fieldErrors[`passenger-${i}-dob`] && (
+                    <p style={s.fieldError}>{fieldErrors[`passenger-${i}-dob`]}</p>
+                  )}
+                </div>
+              </div>
+
+              <div style={s.grid3}>
+                <div style={s.field}>
+                  <label style={s.label}>First name</label>
+                  <input type="text" required value={passenger.firstName} onChange={e => updatePassenger(i, 'firstName', e.target.value)} style={s.input} placeholder="As on ID" />
+                </div>
+                <div style={s.field}>
+                  <label style={s.label}>Middle name</label>
+                  <input type="text" value={passenger.middleName} onChange={e => updatePassenger(i, 'middleName', e.target.value)} style={s.input} />
+                </div>
+                <div style={s.field}>
+                  <label style={s.label}>Last name</label>
+                  <input type="text" required value={passenger.lastName} onChange={e => updatePassenger(i, 'lastName', e.target.value)} style={s.input} placeholder="As on ID" />
+                </div>
+              </div>
+
+              {tripType === 'international' && (
+                <>
+                  <div style={s.grid3}>
+                    <div style={s.field}>
+                      <label style={s.label}>Passport number</label>
+                      <input type="text" required value={passenger.passportNumber} onChange={e => updatePassenger(i, 'passportNumber', e.target.value)} style={s.input} />
+                    </div>
+                    <div style={s.field}>
+                      <label style={s.label}>Issuing country</label>
+                      <input type="text" required value={passenger.issuingCountry} onChange={e => updatePassenger(i, 'issuingCountry', e.target.value.toUpperCase())} style={s.input} maxLength={2} placeholder="IN" />
+                    </div>
+                    <div style={s.field}>
+                      <label style={s.label}>Nationality</label>
+                      <input type="text" required value={passenger.nationality} onChange={e => updatePassenger(i, 'nationality', e.target.value.toUpperCase())} style={s.input} maxLength={2} placeholder="IN" />
+                    </div>
+                  </div>
+
+                  <div style={s.field}>
+                    <label style={s.label}>Passport expiry</label>
+                    <input type="date" required value={passenger.expiryDate} onChange={e => updatePassenger(i, 'expiryDate', e.target.value)} style={s.input} />
+                  </div>
+                </>
+              )}
+            </div>
+          ))}
+
+          {/* ── Contact details (shared, not per-passenger) ─────────── */}
+          <div style={s.card}>
+            <h2 style={s.cardTitle}>Contact details</h2>
+            <p style={s.cardSub}>We'll send booking confirmations and updates here.</p>
+
+            <div style={s.grid2}>
+              <div style={s.field}>
+                <label style={s.label}>Email</label>
+                <input
+                  type="email" required value={email} onChange={e => setEmail(e.target.value)}
+                  style={{ ...s.input, borderColor: fieldErrors['contact-email'] ? '#DC2626' : undefined }}
+                />
+                {fieldErrors['contact-email'] && <p style={s.fieldError}>{fieldErrors['contact-email']}</p>}
+              </div>
+              <div style={s.field}>
+                <label style={s.label}>Mobile</label>
+                <input
+                  type="tel" required value={mobile} onChange={e => setMobile(e.target.value)}
+                  style={{ ...s.input, borderColor: fieldErrors['contact-mobile'] ? '#DC2626' : undefined }}
+                  placeholder="10-digit number"
+                />
+                {fieldErrors['contact-mobile'] && <p style={s.fieldError}>{fieldErrors['contact-mobile']}</p>}
+              </div>
+            </div>
+
+            <div style={s.field}>
+              <label style={s.label}>Address</label>
+              <input type="text" required value={address} onChange={e => setAddress(e.target.value)} style={s.input} />
+            </div>
+
+            <div style={s.grid3}>
+              <div style={s.field}>
+                <label style={s.label}>City</label>
+                <input type="text" required value={city} onChange={e => setCity(e.target.value)} style={s.input} />
+              </div>
+              <div style={s.field}>
+                <label style={s.label}>State</label>
+                <input type="text" required value={state} onChange={e => setState(e.target.value)} style={s.input} />
+              </div>
+              <div style={s.field}>
+                <label style={s.label}>ZIP code</label>
+                <input type="text" required value={zipCode} onChange={e => setZipCode(e.target.value)} style={s.input} />
+              </div>
+            </div>
+          </div>
+
+          {error && (
+            <div style={s.errorBanner}>
+              <span style={s.bannerIcon}>⚠</span> {error}
+            </div>
+          )}
+
+          <button type="submit" disabled={submitting} style={{ ...s.continueBtn, opacity: submitting ? 0.7 : 1 }}>
+            {submitting ? 'Saving…' : 'Save changes →'}
+          </button>
+        </form>
       </div>
     </div>
   )
@@ -291,6 +508,8 @@ export default function ConfirmBookingPage() {
 const s: Record<string, React.CSSProperties> = {
   page: { background: '#F9FAFB', minHeight: '100vh' },
   root: { fontFamily: "'Inter', -apple-system, sans-serif", maxWidth: '640px', margin: '0 auto', padding: '32px 24px 64px' },
+
+  backLink: { fontSize: '13px', color: '#6B7280', textDecoration: 'none', display: 'inline-block', marginBottom: '16px' },
 
   header: { marginBottom: '20px' },
   heading: { fontSize: '22px', fontWeight: 700, color: '#0A0A14', margin: '0 0 6px', letterSpacing: '-0.4px' },
@@ -303,48 +522,30 @@ const s: Record<string, React.CSSProperties> = {
   errorTitle: { fontSize: '13px', color: '#DC2626', margin: '0 0 10px', lineHeight: 1.5 },
   errorLink: { fontSize: '13px', color: '#DC2626', fontWeight: 600, textDecoration: 'underline' },
 
+  summaryCard: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', border: '1px solid #E5E7EB', borderRadius: '12px', padding: '14px 18px', marginBottom: '20px' },
+  summaryRoute: { display: 'flex', alignItems: 'center', gap: '8px' },
+  summaryCode: { fontSize: '14px', fontWeight: 700, color: '#111827' },
+  summaryArrow: { fontSize: '12px', color: '#9CA3AF' },
+  summaryMeta: { fontSize: '11px', color: '#9CA3AF', marginLeft: '8px' },
+  summaryFare: { fontSize: '15px', fontWeight: 700, color: '#0A0A14' },
+
   card: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '20px', marginBottom: '16px' },
-  cardTitle: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: 0 },
-  cardTitleRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' },
-  travelerCount: { fontSize: '12px', fontWeight: 500, color: '#9CA3AF' },
-  editLink: { fontSize: '12px', fontWeight: 600, color: '#000835', textDecoration: 'none' },
+  cardTitle: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: '8px' },
+  cardSub: { fontSize: '12px', color: '#9CA3AF', margin: '0 0 16px' },
 
-  travelerList: { display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '12px' },
-  travelerRow: { paddingBottom: '10px', borderBottom: '1px solid #F3F4F6' },
-  contactBlock: { display: 'flex', flexDirection: 'column', gap: '2px' },
+  paxTypeBadge: { fontSize: '10px', fontWeight: 700, color: '#3730A3', background: '#EEF2FF', padding: '2px 8px', borderRadius: '5px', letterSpacing: '0.3px' },
 
-  paxFareList: { display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' },
-  paxFareRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' },
-  paxFareLabel: { fontSize: '12px', fontWeight: 600, color: '#374151', minWidth: '64px' },
-  paxFareBreakdown: { fontSize: '11px', color: '#9CA3AF', flex: 1 },
-  paxFareValue: { fontSize: '12px', fontWeight: 600, color: '#111827' },
-  fareDivider: { height: '1px', background: '#F3F4F6', margin: '2px 0 0' },
-
-  routeRow: { display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '10px' },
-  routePoint: { display: 'flex', flexDirection: 'column', gap: '2px', flex: '0 0 auto', minWidth: '58px' },
-  routeTime: { fontSize: '16px', fontWeight: 700, color: '#111827' },
-  routeCode: { fontSize: '11px', fontWeight: 600, color: '#6B7280' },
-  routeMiddle: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' },
-  routeDuration: { fontSize: '10px', color: '#9CA3AF', fontWeight: 500 },
-  routeLine: { width: '100%', height: '1px', background: '#D1D5DB' },
-  routeStops: { fontSize: '10px', color: '#9CA3AF' },
-  mutedLine: { fontSize: '12px', color: '#9CA3AF', margin: 0 },
-
-  travelerName: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: '0 0 4px' },
-
-  fareRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' },
-  fareLabel: { fontSize: '13px', color: '#6B7280' },
-  fareValue: { fontSize: '16px', fontWeight: 700, color: '#0A0A14' },
-  metaTags: { display: 'flex', gap: '6px' },
-  tag: { fontSize: '10px', color: '#6B7280', background: '#F3F4F6', padding: '3px 9px', borderRadius: '5px', fontWeight: 500 },
-
-  noticeCard: { background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '12px', padding: '14px 16px', marginBottom: '16px' },
-  noticeText: { fontSize: '12px', color: '#92400E', margin: 0, lineHeight: 1.5 },
+  grid2: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' },
+  grid3: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '12px' },
+  field: { display: 'flex', flexDirection: 'column', gap: '5px', marginBottom: '12px' },
+  label: { fontSize: '11px', fontWeight: 500, color: '#374151' },
+  input: { height: '38px', padding: '0 10px', fontSize: '13px', color: '#111827', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '7px', outline: 'none' },
+  fieldError: { fontSize: '10.5px', color: '#DC2626', margin: '2px 0 0' },
 
   errorBanner: { display: 'flex', alignItems: 'center', gap: '8px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', color: '#DC2626', marginBottom: '16px' },
   bannerIcon: { fontSize: '14px' },
 
-  confirmBtn: {
+  continueBtn: {
     height: '48px', width: '100%', background: '#000835', color: '#fff', fontSize: '14px', fontWeight: 700,
     border: 'none', borderRadius: '10px', cursor: 'pointer', letterSpacing: '0.2px',
   },

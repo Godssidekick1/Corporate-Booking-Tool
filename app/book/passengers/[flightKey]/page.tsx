@@ -3,22 +3,12 @@
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { flowStorage, PricedFare } from '@/app/lib/book/flowStorage'
 import { FlatFlightResult, formatTime, formatDayLabel } from '@/app/lib/book/types'
 import { countryNameFromCode } from '@/app/lib/data/countryCodes'
 import { classifyTrip } from '@/app/lib/rule-engine/classifyTrip'
 
-// ── /book/passengers/edit/[bookingId] ─────────────────────────────────────────
-// Lets a traveler correct passenger/contact details on a booking that's
-// already been persisted (status === 'passenger_added'), before it's booked
-// with the airline. Unlike the original /book/passengers/[flightKey] page,
-// this loads its data from the `bookings` row via bookingId (the DB is the
-// source of truth here — sessionStorage from the original search/price steps
-// may well have expired by the time someone comes back to edit), and PATCHes
-// the correction in place instead of creating a new booking row.
-// Fare, itinerary, and pricing are read-only here — editing passenger details
-// never re-runs pricing.
-// ─────────────────────────────────────────────────────────────────────────────
-
+// Matches CustomerInfo.PassengerDetails[number] in lib/amadeus/client.ts exactly.
 interface PassengerForm {
   paxType: 'ADT' | 'CHD' | 'INF'
   title: string
@@ -26,66 +16,33 @@ interface PassengerForm {
   firstName: string
   middleName: string
   lastName: string
-  dateOfBirth: string   // <input type="date"> value, YYYY-MM-DD
+  dateOfBirth: string   // <input type="date"> value, YYYY-MM-DD — converted on submit
   passportNumber: string
   issuingCountry: string
   nationality: string
-  expiryDate: string    // <input type="date"> value, YYYY-MM-DD
+  expiryDate: string    // <input type="date"> value, YYYY-MM-DD — converted on submit
 }
 
-interface BookingPassengerDetail {
-  Title: string
-  Gender: string
-  FirstName: string
-  MiddleName: string
-  LastName: string
-  DateOfBirth: string // DD/MM/YYYY, as stored by Amadeus
-  PaxType: 'ADT' | 'CHD' | 'INF'
-  PassportNumber: string
-  IssuingCountry: string
-  Nationality: string
-  ExpiryDate: string  // DD/MM/YYYY
-  MealCode: string
-}
-
-interface BookingTravelerSnapshot {
-  Email: string
-  Mobile: string
-  Address: string
-  City: string
-  State: string
-  CountryCode: string
-  CountryName: string
-  ZipCode: string
-  PassengerDetails: BookingPassengerDetail[]
-}
-
-interface Booking {
-  id: string
-  status: string
-  total_cost: number
-  itinerary: FlatFlightResult | null
-  traveler_snapshot: BookingTravelerSnapshot | null
-  fare_breakdown: { currency: string; isRefundable: boolean; fareType: string } | null
-}
-
-const PAX_TYPE_LABEL: Record<PassengerForm['paxType'], string> = {
-  ADT: 'Adult', CHD: 'Child', INF: 'Infant',
+function emptyPassenger(paxType: PassengerForm['paxType']): PassengerForm {
+  return {
+    paxType,
+    title: paxType === 'INF' ? 'MSTR' : 'MR',
+    gender: 'Male',
+    firstName: '', middleName: '', lastName: '',
+    dateOfBirth: '', passportNumber: '', issuingCountry: 'IN', nationality: 'IN', expiryDate: '',
+  }
 }
 
 function toAmadeusDate(value: string): string {
   // <input type="date"> gives YYYY-MM-DD — Amadeus wants DD/MM/YYYY.
-  if (!value) return ''
   const [y, m, d] = value.split('-')
   return `${d}/${m}/${y}`
 }
 
-function fromAmadeusDate(value: string): string {
-  // Amadeus gives DD/MM/YYYY — <input type="date"> wants YYYY-MM-DD.
-  if (!value) return ''
-  const [d, m, y] = value.split('/')
-  if (!d || !m || !y) return ''
-  return `${y}-${m}-${d}`
+// Age bounds per standard airline convention: adult 12+, child 2-11, infant under 2.
+// Checked against today's date as a reasonable proxy for travel date.
+const PAX_TYPE_LABEL: Record<PassengerForm['paxType'], string> = {
+  ADT: 'Adult', CHD: 'Child', INF: 'Infant',
 }
 
 function ageInYears(dob: string): number {
@@ -98,7 +55,7 @@ function ageInYears(dob: string): number {
 }
 
 function validateAge(paxType: PassengerForm['paxType'], dob: string): string | null {
-  if (!dob) return null
+  if (!dob) return null // required-field validation handles empty separately
   const birth = new Date(dob)
   if (isNaN(birth.getTime()) || birth > new Date()) {
     return 'Date of birth cannot be in the future.'
@@ -122,17 +79,18 @@ function validateEmail(email: string): string | null {
 }
 
 function validateMobile(mobile: string): string | null {
+  // Indian mobile numbers: 10 digits, starting 6-9. Adjust if supporting other countries.
   if (!/^[6-9]\d{9}$/.test(mobile)) return 'Enter a valid 10-digit mobile number.'
   return null
 }
 
-export default function EditPassengerDetailsPage() {
+export default function PassengerDetailsPage() {
   const router = useRouter()
-  const params = useParams<{ bookingId: string }>()
-  const bookingId = params.bookingId
+  const params = useParams<{ flightKey: string }>()
+  const flightKey = decodeURIComponent(params.flightKey)
 
-  const [booking, setBooking] = useState<Booking | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [flight, setFlight] = useState<FlatFlightResult | null>(null)
+  const [priced, setPriced] = useState<PricedFare | null>(null)
   const [loadError, setLoadError] = useState('')
 
   const [passengers, setPassengers] = useState<PassengerForm[]>([])
@@ -149,72 +107,45 @@ export default function EditPassengerDetailsPage() {
   const [tripType, setTripType] = useState<'domestic' | 'international'>('domestic')
 
   useEffect(() => {
-    loadBooking()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookingId])
+    const storedFlight = flowStorage.findResultByFlightKey(flightKey)
+    const storedPriced = flowStorage.getPricedFare(flightKey)
+    const meta = flowStorage.getSearchMeta()
 
-  async function loadBooking() {
-    setLoading(true)
-    setLoadError('')
-    try {
-      const res = await fetch(`/api/book/${bookingId}`)
-      const data = await res.json()
-      if (!res.ok) {
-        setLoadError(data.error || 'Could not load this booking.')
-        return
-      }
-
-      const b: Booking = data.booking
-
-      if (b.status !== 'passenger_added') {
-        setLoadError('This booking has already moved past the passenger details step and can no longer be edited here.')
-        return
-      }
-
-      const snapshot = b.traveler_snapshot
-      if (!snapshot || snapshot.PassengerDetails.length === 0) {
-        setLoadError('No passenger details found on this booking.')
-        return
-      }
-
-      setBooking(b)
-      setEmail(snapshot.Email ?? '')
-      setMobile(snapshot.Mobile ?? '')
-      setAddress(snapshot.Address ?? '')
-      setCity(snapshot.City ?? '')
-      setState(snapshot.State ?? '')
-      setZipCode(snapshot.ZipCode ?? '')
-      setPassengers(snapshot.PassengerDetails.map(p => ({
-        paxType: p.PaxType,
-        title: p.Title,
-        gender: p.Gender,
-        firstName: p.FirstName,
-        middleName: p.MiddleName,
-        lastName: p.LastName,
-        dateOfBirth: fromAmadeusDate(p.DateOfBirth),
-        passportNumber: p.PassportNumber,
-        issuingCountry: p.IssuingCountry,
-        nationality: p.Nationality,
-        expiryDate: fromAmadeusDate(p.ExpiryDate),
-      })))
-
-      // Same domestic/international check the original passengers page uses,
-      // built from the stored itinerary's origin -> stops -> destination.
-      if (b.itinerary?.origin?.code && b.itinerary?.destination?.code) {
-        const points = [
-          b.itinerary.origin.code,
-          ...b.itinerary.stops.map(s => s.code),
-          b.itinerary.destination.code,
-        ]
-        const legs = points.slice(0, -1).map((origin, i) => ({ origin, destination: points[i + 1] }))
-        setTripType(classifyTrip(legs))
-      }
-    } catch {
-      setLoadError('Something went wrong loading this booking.')
-    } finally {
-      setLoading(false)
+    if (!storedFlight || !storedPriced) {
+      setLoadError('We couldn\u2019t find your priced fare for this flight — it may have expired. Please search again.')
+      return
     }
-  }
+
+    setFlight(storedFlight)
+    setPriced(storedPriced)
+
+    // Domestic vs international drives whether passport fields are shown/required —
+    // reuses the same classifyTrip logic the Rule Engine uses, built from every
+    // leg of the itinerary (origin -> each stop -> destination).
+    if (storedFlight.origin?.code && storedFlight.destination?.code) {
+      const points = [
+        storedFlight.origin.code,
+        ...storedFlight.stops.map(s => s.code),
+        storedFlight.destination.code,
+      ]
+      const legs = points.slice(0, -1).map((origin, i) => ({ origin, destination: points[i + 1] }))
+      setTripType(classifyTrip(legs))
+    }
+
+    // Build one form per passenger, tagged with the right PaxType, based on
+    // the counts from search. Falls back to a single adult if search meta
+    // is somehow missing (shouldn't happen in normal flow).
+    const adultCount = meta?.adult ?? 1
+    const childCount = meta?.child ?? 0
+    const infantCount = meta?.infant ?? 0
+
+    const built: PassengerForm[] = [
+      ...Array.from({ length: adultCount }, () => emptyPassenger('ADT')),
+      ...Array.from({ length: childCount }, () => emptyPassenger('CHD')),
+      ...Array.from({ length: infantCount }, () => emptyPassenger('INF')),
+    ]
+    setPassengers(built)
+  }, [flightKey])
 
   function updatePassenger<K extends keyof PassengerForm>(index: number, key: K, value: PassengerForm[K]) {
     setPassengers(prev => prev.map((p, i) => i === index ? { ...p, [key]: value } : p))
@@ -240,7 +171,7 @@ export default function EditPassengerDetailsPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!booking) return
+    if (!priced) return
 
     setError('')
     if (!validateAll()) {
@@ -251,10 +182,22 @@ export default function EditPassengerDetailsPage() {
     setSubmitting(true)
 
     try {
-      const res = await fetch(`/api/book/${bookingId}`, {
-        method: 'PATCH',
+      const res = await fetch('/api/book/add-passenger', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          key: priced.key,
+          pricingKey: priced.pricingKey,
+          provider: priced.provider,
+          referenceNo: priced.referenceNo,
+          totalFare: priced.totalFare,
+          currency: priced.currency,
+          isRefundable: priced.isRefundable,
+          fareType: priced.fareType,
+          passengerBreakup: priced.passengerBreakup,
+          isNdc: priced.isNdc,
+          searchKey: priced.searchKey,
+          itinerary: flight,
           customerInfo: {
             Email: email,
             Mobile: mobile,
@@ -262,7 +205,7 @@ export default function EditPassengerDetailsPage() {
             City: city,
             State: state,
             CountryCode: passengers[0]?.nationality ?? 'IN',
-            CountryName: countryNameFromCode(passengers[0]?.nationality ?? 'IN'),
+            CountryName: countryNameFromCode(passengers[0]?.nationality ?? 'IN'), // Amadeus rejects empty CountryName (ModelState validation)
             ZipCode: zipCode,
             PassengerDetails: passengers.map(p => ({
               Title: p.title,
@@ -285,19 +228,34 @@ export default function EditPassengerDetailsPage() {
       const data = await res.json()
 
       if (!data.ok) {
-        setError(data.error || 'Could not save your changes. Please try again.')
+        setError(data.error || 'Could not save passenger details. Please try again.')
         return
       }
 
-      router.push(`/book/confirm/${bookingId}`)
+      // add-passenger created the bookings row — from here on the flow is
+      // keyed by bookingId, not flightKey, and sessionStorage is done being used.
+      router.push(`/book/confirm/${data.bookingId}`)
     } catch {
-      setError('Something went wrong saving your changes. Please try again.')
+      setError('Something went wrong saving passenger details. Please try again.')
     } finally {
       setSubmitting(false)
     }
   }
 
-  if (loading) {
+  if (loadError) {
+    return (
+      <div style={s.page}>
+        <div style={s.root}>
+          <div style={s.errorCard}>
+            <p style={s.errorTitle}>⚠ {loadError}</p>
+            <Link href="/book" style={s.errorLink}>← Search again</Link>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (!flight || !priced || passengers.length === 0) {
     return (
       <div style={s.page}>
         <div style={s.root}>
@@ -309,52 +267,32 @@ export default function EditPassengerDetailsPage() {
     )
   }
 
-  if (loadError || !booking) {
-    return (
-      <div style={s.page}>
-        <div style={s.root}>
-          <div style={s.errorCard}>
-            <p style={s.errorTitle}>⚠ {loadError || 'Booking not found.'}</p>
-            <Link href={`/book/confirm/${bookingId}`} style={s.errorLink}>← Back to review</Link>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  const flight = booking.itinerary
-
   return (
     <div style={s.page}>
       <div style={s.root}>
-        <Link href={`/book/confirm/${bookingId}`} style={s.backLink}>← Back to review</Link>
+        <Link href={`/book/price/${encodeURIComponent(flightKey)}`} style={s.backLink}>← Back to fare</Link>
 
         <div style={s.header}>
-          <h1 style={s.heading}>Edit passenger details</h1>
+          <h1 style={s.heading}>Passenger details</h1>
           <p style={s.sub}>
             {passengers.length > 1
-              ? `Update details for all ${passengers.length} travelers, exactly as they appear on their ID.`
-              : 'Update details exactly as they appear on the traveler\u2019s ID.'}
+              ? `Enter details for all ${passengers.length} travelers, exactly as they appear on their ID.`
+              : 'Enter details exactly as they appear on the traveler\u2019s ID.'}
           </p>
         </div>
 
-        {/* ── Flight + fare summary strip (read-only — editing passenger
-             details never re-runs pricing) ────────────────────────── */}
-        {flight && (
-          <div style={s.summaryCard}>
-            <div style={s.summaryRoute}>
-              <span style={s.summaryCode}>{flight.origin?.code}</span>
-              <span style={s.summaryArrow}>→</span>
-              <span style={s.summaryCode}>{flight.destination?.code}</span>
-              <span style={s.summaryMeta}>
-                {formatTime(flight.origin?.dateTime)} · {formatDayLabel(flight.origin?.dateTime)}
-              </span>
-            </div>
-            <div style={s.summaryFare}>
-              {booking.fare_breakdown?.currency ?? ''} {booking.total_cost?.toLocaleString('en-IN')}
-            </div>
+        {/* ── Flight + fare summary strip ─────────────────────────── */}
+        <div style={s.summaryCard}>
+          <div style={s.summaryRoute}>
+            <span style={s.summaryCode}>{flight.origin?.code}</span>
+            <span style={s.summaryArrow}>→</span>
+            <span style={s.summaryCode}>{flight.destination?.code}</span>
+            <span style={s.summaryMeta}>
+              {formatTime(flight.origin?.dateTime)} · {formatDayLabel(flight.origin?.dateTime)}
+            </span>
           </div>
-        )}
+          <div style={s.summaryFare}>{priced.currency} {priced.totalFare.toLocaleString('en-IN')}</div>
+        </div>
 
         <form onSubmit={handleSubmit}>
           {/* ── One card per passenger ──────────────────────────────── */}
@@ -497,7 +435,7 @@ export default function EditPassengerDetailsPage() {
           )}
 
           <button type="submit" disabled={submitting} style={{ ...s.continueBtn, opacity: submitting ? 0.7 : 1 }}>
-            {submitting ? 'Saving…' : 'Save changes →'}
+            {submitting ? 'Saving…' : 'Continue to review →'}
           </button>
         </form>
       </div>
