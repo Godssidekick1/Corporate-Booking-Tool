@@ -16,6 +16,12 @@ export default function SignInPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
+  const [mode, setMode] = useState<'signin' | 'forgot'>('signin')
+  const [resetEmail, setResetEmail] = useState('')
+  const [resetSent, setResetSent] = useState(false)
+  const [resetLoading, setResetLoading] = useState(false)
+  const [resetError, setResetError] = useState('')
+
   useEffect(() => {
     if (typeof window === 'undefined') return
     const hash = window.location.hash
@@ -30,7 +36,10 @@ export default function SignInPage() {
     supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken })
       .then(({ error }) => {
         if (error) { console.error('Session error:', error.message); return }
-        if (type === 'invite') {
+        // Both a first-time invite link and a "forgot password" reset link
+        // land here as a hash-token session — either way, the next step is
+        // to make them choose a password before going anywhere else.
+        if (type === 'invite' || type === 'recovery') {
           router.replace('/auth/set-password')
         } else {
           redirectByRole()
@@ -70,6 +79,32 @@ export default function SignInPage() {
     }
   }
 
+  async function handleResetRequest(e: React.FormEvent) {
+    e.preventDefault()
+    setResetError('')
+    setResetLoading(true)
+    try {
+      // Called directly against Supabase (same pattern as updateUser() on
+      // the set-password page) — this only sends an email, no session or
+      // cookie changes are involved, so there's no need to route it through
+      // a custom API endpoint. The reset link lands back on /login with a
+      // type=recovery hash token, which the effect above sends to
+      // /auth/set-password to actually choose a new password.
+      const { error: resetErr } = await supabase.auth.resetPasswordForEmail(resetEmail, {
+        redirectTo: `${window.location.origin}/login`,
+      })
+      if (resetErr) {
+        setResetError(resetErr.message)
+        return
+      }
+      setResetSent(true)
+    } catch {
+      setResetError('Something went wrong. Please try again.')
+    } finally {
+      setResetLoading(false)
+    }
+  }
+
   return (
     <div style={styles.root}>
       <div style={styles.panel}>
@@ -87,34 +122,102 @@ export default function SignInPage() {
 
       <div style={styles.formPanel}>
         <div style={styles.formCard}>
-          <h1 style={styles.heading}>Welcome back</h1>
-          <p style={styles.subheading}>Sign in to your account</p>
+          {mode === 'signin' ? (
+            <>
+              <h1 style={styles.heading}>Welcome back</h1>
+              <p style={styles.subheading}>Sign in to your account</p>
 
-          <form onSubmit={handleSubmit} style={styles.form}>
-            <div style={styles.field}>
-              <label style={styles.label} htmlFor="email">Work email</label>
-              <input
-                id="email" type="email" autoComplete="email" required
-                value={email} onChange={e => setEmail(e.target.value)}
-                style={styles.input} placeholder="you@company.com"
-              />
-            </div>
-            <div style={styles.field}>
-              <label style={styles.label} htmlFor="password">Password</label>
-              <input
-                id="password" type="password" autoComplete="current-password" required
-                value={password} onChange={e => setPassword(e.target.value)}
-                style={styles.input} placeholder="••••••••"
-              />
-            </div>
-            {error && <p style={styles.error}>{error}</p>}
-            <button
-              type="submit" disabled={loading}
-              style={{ ...styles.button, opacity: loading ? 0.7 : 1 }}
-            >
-              {loading ? 'Signing in…' : 'Sign in'}
-            </button>
-          </form>
+              <form onSubmit={handleSubmit} style={styles.form}>
+                <div style={styles.field}>
+                  <label style={styles.label} htmlFor="email">Work email</label>
+                  <input
+                    id="email" type="email" autoComplete="email" required
+                    value={email} onChange={e => setEmail(e.target.value)}
+                    style={styles.input} placeholder="you@company.com"
+                  />
+                </div>
+                <div style={styles.field}>
+                  <div style={styles.labelRow}>
+                    <label style={styles.label} htmlFor="password">Password</label>
+                    <button
+                      type="button"
+                      onClick={() => { setMode('forgot'); setError(''); setResetError(''); setResetSent(false) }}
+                      style={styles.forgotLink}
+                      aria-label="Forgot password"
+                    >
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="11" width="18" height="11" rx="2" />
+                        <path d="M7 11V7a5 5 0 0 1 9.9-1" />
+                      </svg>
+                      Forgot password?
+                    </button>
+                  </div>
+                  <input
+                    id="password" type="password" autoComplete="current-password" required
+                    value={password} onChange={e => setPassword(e.target.value)}
+                    style={styles.input} placeholder="••••••••"
+                  />
+                </div>
+                {error && <p style={styles.error}>{error}</p>}
+                <button
+                  type="submit" disabled={loading}
+                  style={{ ...styles.button, opacity: loading ? 0.7 : 1 }}
+                >
+                  {loading ? 'Signing in…' : 'Sign in'}
+                </button>
+              </form>
+            </>
+          ) : (
+            <>
+              <h1 style={styles.heading}>Reset your password</h1>
+              <p style={styles.subheading}>
+                {resetSent
+                  ? 'Check your email for a reset link.'
+                  : 'Enter your work email and we\u2019ll send you a link to set a new password.'}
+              </p>
+
+              {resetSent ? (
+                <div style={styles.form}>
+                  <p style={styles.resetSentNote}>
+                    If an account exists for <strong>{resetEmail}</strong>, a password reset link is on its way.
+                    The link will bring you back here to set a new password.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => { setMode('signin'); setResetSent(false); setResetEmail('') }}
+                    style={styles.button}
+                  >
+                    ← Back to sign in
+                  </button>
+                </div>
+              ) : (
+                <form onSubmit={handleResetRequest} style={styles.form}>
+                  <div style={styles.field}>
+                    <label style={styles.label} htmlFor="resetEmail">Work email</label>
+                    <input
+                      id="resetEmail" type="email" autoComplete="email" required
+                      value={resetEmail} onChange={e => setResetEmail(e.target.value)}
+                      style={styles.input} placeholder="you@company.com"
+                    />
+                  </div>
+                  {resetError && <p style={styles.error}>{resetError}</p>}
+                  <button
+                    type="submit" disabled={resetLoading}
+                    style={{ ...styles.button, opacity: resetLoading ? 0.7 : 1 }}
+                  >
+                    {resetLoading ? 'Sending…' : 'Send reset link'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setMode('signin'); setResetError('') }}
+                    style={styles.backLink}
+                  >
+                    ← Back to sign in
+                  </button>
+                </form>
+              )}
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -136,7 +239,17 @@ const styles: Record<string, React.CSSProperties> = {
   subheading: { fontSize: '14px', color: '#6B7280', margin: '0 0 32px' },
   form: { display: 'flex', flexDirection: 'column', gap: '20px' },
   field: { display: 'flex', flexDirection: 'column', gap: '6px' },
+  labelRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   label: { fontSize: '13px', fontWeight: '500', color: '#374151' },
+  forgotLink: {
+    display: 'flex', alignItems: 'center', gap: '5px', background: 'none', border: 'none',
+    fontSize: '12px', fontWeight: 500, color: '#6B7280', cursor: 'pointer', padding: 0,
+  },
+  backLink: {
+    background: 'none', border: 'none', fontSize: '13px', fontWeight: 500, color: '#6B7280',
+    cursor: 'pointer', padding: '2px 0', textAlign: 'left' as const,
+  },
+  resetSentNote: { fontSize: '13px', color: '#374151', lineHeight: '1.6', margin: '0 0 4px' },
   input: { height: '42px', padding: '0 12px', fontSize: '14px', color: '#0A0A14', backgroundColor: '#FFFFFF', border: '1px solid #D1D5DB', borderRadius: '8px', outline: 'none' },
   error: { fontSize: '13px', color: '#DC2626', backgroundColor: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '6px', padding: '10px 12px', margin: 0 },
   button: { height: '42px', backgroundColor: '#000835', color: '#FFFFFF', fontSize: '14px', fontWeight: '600', border: 'none', borderRadius: '8px', cursor: 'pointer', marginTop: '4px' },

@@ -330,7 +330,7 @@ const s: Record<string, React.CSSProperties> = {
   routeStops: { fontSize: '10px', color: '#9CA3AF' },
   mutedLine: { fontSize: '12px', color: '#9CA3AF', margin: 0 },
 
-  travelerName: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: '0 0 4px' },
+  travelerName: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: '0 0 4px', textTransform: 'uppercase' as const },
 
   fareRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' },
   fareLabel: { fontSize: '13px', color: '#6B7280' },
