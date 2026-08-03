@@ -19,9 +19,24 @@ interface Booking {
   } | null
   traveler_snapshot: {
     Email: string
-    PassengerDetails: { FirstName: string; LastName: string; Title: string }[]
+    Mobile: string
+    PassengerDetails: {
+      FirstName: string
+      LastName: string
+      Title: string
+      PaxType: 'ADT' | 'CHD' | 'INF' | string
+    }[]
   } | null
-  fare_breakdown: { currency: string; isRefundable: boolean; fareType: string } | null
+  fare_breakdown: {
+    currency: string
+    isRefundable: boolean
+    fareType: string
+    passengerBreakup?: { PaxType: string; BaseFare: number; Tax: number; TotalFare: number }[]
+  } | null
+}
+
+const PAX_TYPE_LABEL: Record<string, string> = {
+  ADT: 'Adult', CHD: 'Child', INF: 'Infant',
 }
 
 function formatTime(iso: string | undefined) {
@@ -126,7 +141,15 @@ export default function ConfirmBookingPage() {
     )
   }
 
-  const traveler = booking.traveler_snapshot?.PassengerDetails?.[0]
+  const travelers = booking.traveler_snapshot?.PassengerDetails ?? []
+  const adultCount = travelers.filter(t => t.PaxType === 'ADT').length
+  const childCount = travelers.filter(t => t.PaxType === 'CHD').length
+  const infantCount = travelers.filter(t => t.PaxType === 'INF').length
+  const travelerCountParts = [
+    adultCount > 0 && `${adultCount} adult${adultCount > 1 ? 's' : ''}`,
+    childCount > 0 && `${childCount} child${childCount > 1 ? 'ren' : ''}`,
+    infantCount > 0 && `${infantCount} infant${infantCount > 1 ? 's' : ''}`,
+  ].filter(Boolean)
 
   return (
     <div style={s.page}>
@@ -161,18 +184,68 @@ export default function ConfirmBookingPage() {
           </div>
         )}
 
-        {/* ── Traveler ─────────────────────────────────────────────── */}
-        {traveler && (
+        {/* ── Travelers ────────────────────────────────────────────── */}
+        {travelers.length > 0 && (
           <div style={s.card}>
-            <h2 style={s.cardTitle}>Traveler</h2>
-            <p style={s.travelerName}>{traveler.Title} {traveler.FirstName} {traveler.LastName}</p>
-            <p style={s.mutedLine}>{booking.traveler_snapshot?.Email}</p>
+            <div style={s.cardTitleRow}>
+              <h2 style={s.cardTitle}>
+                Travelers {travelerCountParts.length > 0 && (
+                  <span style={s.travelerCount}>({travelerCountParts.join(', ')})</span>
+                )}
+              </h2>
+              {booking.status === 'passenger_added' && (
+                <Link href={`/book/passengers/edit/${bookingId}`} style={s.editLink}>Edit →</Link>
+              )}
+            </div>
+
+            <div style={s.travelerList}>
+              {travelers.map((t, i) => (
+                <div key={i} style={s.travelerRow}>
+                  <div>
+                    <p style={s.travelerName}>{t.Title} {t.FirstName} {t.LastName}</p>
+                    <p style={s.mutedLine}>{PAX_TYPE_LABEL[t.PaxType] ?? t.PaxType}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div style={s.contactBlock}>
+              {booking.traveler_snapshot?.Email && (
+                <p style={s.mutedLine}>{booking.traveler_snapshot.Email}</p>
+              )}
+              {booking.traveler_snapshot?.Mobile && (
+                <p style={s.mutedLine}>{booking.traveler_snapshot.Mobile}</p>
+              )}
+            </div>
           </div>
         )}
 
         {/* ── Fare ─────────────────────────────────────────────────── */}
         <div style={s.card}>
           <h2 style={s.cardTitle}>Fare</h2>
+
+          {booking.fare_breakdown?.passengerBreakup && booking.fare_breakdown.passengerBreakup.length > 0 && (
+            <div style={s.paxFareList}>
+              {booking.fare_breakdown.passengerBreakup.map((pax, i) => (
+                <div key={i} style={s.paxFareRow}>
+                  <span style={s.paxFareLabel}>
+                    {PAX_TYPE_LABEL[pax.PaxType] ?? pax.PaxType}
+                    {booking.fare_breakdown!.passengerBreakup!.filter(p => p.PaxType === pax.PaxType).length > 1
+                      ? ` ${i + 1}` : ''}
+                  </span>
+                  <span style={s.paxFareBreakdown}>
+                    Base {booking.fare_breakdown?.currency ?? ''} {pax.BaseFare?.toLocaleString('en-IN')}
+                    {' + Tax '}{booking.fare_breakdown?.currency ?? ''} {pax.Tax?.toLocaleString('en-IN')}
+                  </span>
+                  <span style={s.paxFareValue}>
+                    {booking.fare_breakdown?.currency ?? ''} {pax.TotalFare?.toLocaleString('en-IN')}
+                  </span>
+                </div>
+              ))}
+              <div style={s.fareDivider} />
+            </div>
+          )}
+
           <div style={s.fareRow}>
             <span style={s.fareLabel}>Total</span>
             <span style={s.fareValue}>
@@ -231,7 +304,21 @@ const s: Record<string, React.CSSProperties> = {
   errorLink: { fontSize: '13px', color: '#DC2626', fontWeight: 600, textDecoration: 'underline' },
 
   card: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '20px', marginBottom: '16px' },
-  cardTitle: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: '0 0 14px' },
+  cardTitle: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: 0 },
+  cardTitleRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' },
+  travelerCount: { fontSize: '12px', fontWeight: 500, color: '#9CA3AF' },
+  editLink: { fontSize: '12px', fontWeight: 600, color: '#000835', textDecoration: 'none' },
+
+  travelerList: { display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '12px' },
+  travelerRow: { paddingBottom: '10px', borderBottom: '1px solid #F3F4F6' },
+  contactBlock: { display: 'flex', flexDirection: 'column', gap: '2px' },
+
+  paxFareList: { display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' },
+  paxFareRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' },
+  paxFareLabel: { fontSize: '12px', fontWeight: 600, color: '#374151', minWidth: '64px' },
+  paxFareBreakdown: { fontSize: '11px', color: '#9CA3AF', flex: 1 },
+  paxFareValue: { fontSize: '12px', fontWeight: 600, color: '#111827' },
+  fareDivider: { height: '1px', background: '#F3F4F6', margin: '2px 0 0' },
 
   routeRow: { display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '10px' },
   routePoint: { display: 'flex', flexDirection: 'column', gap: '2px', flex: '0 0 auto', minWidth: '58px' },
