@@ -9,11 +9,12 @@
 // this module is not used past that point.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { FlatFlightResult } from './types'
+import type { FlatFlightResult, SelectedSeat } from './types'
 
 const RESULTS_KEY = 'cbt:book:searchResults'
 const SEARCH_META_KEY = 'cbt:book:searchMeta'
 const PRICED_KEY_PREFIX = 'cbt:book:priced:' // + flightKey
+const SEATS_KEY_PREFIX = 'cbt:book:seats:'   // + flightKey
 
 export interface SearchMeta {
   origin: string
@@ -86,5 +87,16 @@ export const flowStorage = {
 
   getPricedFare(flightKey: string): PricedFare | null {
     return safeGet(PRICED_KEY_PREFIX + flightKey)
+  },
+
+  // Selected seats: one array of SelectedSeat (one per leg with a pick) per
+  // passenger index. Seat selection is optional — a passenger with no entry
+  // here, or an empty array, simply travels without a pre-assigned seat.
+  saveSelectedSeats(flightKey: string, seatsByPassenger: Record<number, SelectedSeat[]>) {
+    safeSet(SEATS_KEY_PREFIX + flightKey, seatsByPassenger)
+  },
+
+  getSelectedSeats(flightKey: string): Record<number, SelectedSeat[]> {
+    return safeGet(SEATS_KEY_PREFIX + flightKey) ?? {}
   },
 }

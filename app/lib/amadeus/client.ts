@@ -244,6 +244,29 @@ export interface PricingResponse {
 }
 
 // AddPassenger
+// SeatListDetails entry as submitted back on AddPassengerDetails — confirmed
+// against a real request body. This is a SUBSET of the seat map's own
+// SeatListDetail: the fields below are exactly what Amadeus expects back,
+// copied from the selected seat-map cell for that passenger/leg. SeatDesignator
+// here is "22-B" (row-hyphen-letter) — different from the seat MAP's own
+// SeatDesignator field ("22"), which is numeric-only; the frontend derives
+// the lettered form from the seat map cell's RowNo + column position before
+// submitting it here.
+export interface PassengerSeatSelection {
+  SeatDesignator: string       // e.g. "22-B"
+  SeatFee: string              // stringified number, per the confirmed sample
+  FlightNumber: string
+  FlightTime: string
+  Equipment: string
+  SeatAlignment: string
+  OptionalServiceRef: string
+  Group: string
+  ClassOfService: string
+  Carrier: string
+  Paid: boolean
+  SegmentRef: string
+}
+
 export interface PassengerDetail {
   Title: string
   Gender: string
@@ -257,6 +280,7 @@ export interface PassengerDetail {
   Nationality: string
   ExpiryDate: string          // "DD/MM/YYYY"
   MealCode: string
+  SeatListDetails?: PassengerSeatSelection[]  // one entry per leg with a selected seat; omitted/empty if no seat was picked
 }
 
 export interface CustomerInfo {
@@ -354,12 +378,80 @@ export interface FareRuleResponse {
   Error: AmadeusError_ | null
 }
 
-// SeatMap
+// SeatMap — confirmed against a real UAT response. Note the envelope here is
+// NOT the same shape as everything else (no top-level Key, no Status string —
+// both were seen as null; data lives under DeckData, not Availibilities/etc).
+// One call = one leg: the frontend calls this once per segment, passing that
+// segment's own Origin/Destination, so SeatMapAll in practice has been seen
+// with a single SeatMapDetails_Final entry per call.
+export interface SeatListDetail {
+  RowNo: number
+  ColumnNo: number
+  Assignable: boolean
+  SeatSet: number
+  SeatAngle: number
+  SeatAvailability: string        // "Unknown" | "" | ... — SeatStatus is what actually matters
+  SeatDesignator: string          // e.g. "22-B" when assignable; numeric-looking placeholder ("11") for non-seat/filler cells
+  SeatType: string | null
+  TravelClassCode: string
+  SeatGroup: number
+  PremiumSeatIndicator: boolean
+  SeatFee: number
+  CGST: number
+  SGST: number
+  IGST: number
+  UGST: number
+  SeatStatus: string              // "OCCUPIED" | "BLANK" | "OPEN" — OPEN is free/selectable, OCCUPIED is paid/taken
+  ExitSeats: string
+  Message: string
+  SeatAlignment: string           // "Window" | "Middle" | "Aisle"
+  FlightNumber: string
+  FlightTime: string
+  Paid: boolean
+  Characteristic: unknown[]
+  OptionalServiceRef: string
+  Group: string
+  ClassOfService: string
+  Equipment: string
+  Carrier: string
+  SegmentRef: string
+}
+
+export interface SeatMapDetail {
+  Deck: number
+  MaxRows: number
+  MaxColumn: number
+  AircraftName: string | null
+  EquipmentCategory: string | null
+  AvailableUnits: number | null
+  SeatListDetails: SeatListDetail[]
+}
+
+export interface SeatMapDetailsFinal {
+  ArrivalStation: string
+  DepartureStation: string
+  EquipmentType: string
+  AvailableUnits: number | null
+  EquipmentCategory: string
+  Aircraft: string
+  FlightNumber: string
+  FlightTime: string
+  SeatMapDetails: SeatMapDetail[]
+}
+
+export interface SeatMapAllEntry {
+  SeatMapDetails_Final: SeatMapDetailsFinal[]
+}
+
 export interface SeatMapResponse {
-  Status: string
-  Key: string
-  SeatMap: unknown
   Error: AmadeusError_ | null
+  Status: string | null
+  DeckData: {
+    Airline: string
+    Columns: number
+    Rows: number
+    SeatMapAll: SeatMapAllEntry[]
+  } | null
 }
 
 // ── Search input types ────────────────────────────────────────────────────────
@@ -456,7 +548,7 @@ async function withSession<T extends AmadeusEnvelope>(
   endpoint: string,
   buildBody: (sessionId: string) => Record<string, unknown>,
   context: string,
-  options: { acceptedStatuses?: string[] } = {}
+  options: { acceptedStatuses?: string[]; skipStatusCheck?: boolean } = {}
 ): Promise<T> {
   const requestId = crypto.randomUUID()
   const acceptedStatuses = options.acceptedStatuses ?? ['Success']
@@ -466,7 +558,15 @@ async function withSession<T extends AmadeusEnvelope>(
   // that's the correct terminal state for this step (Ticketing is the step
   // that turns Hold into Success). Treating 'Hold' as a failure here would
   // reject a booking that Amadeus actually placed correctly.
+  //
+  // SeatMap is a different case entirely — confirmed against a real response,
+  // it returns Status: null and Error: null even on a normal successful call,
+  // with the real payload under DeckData. There's no status vocabulary to
+  // check here at all, so skipStatusCheck bypasses assertSuccess rather than
+  // trying to add null to acceptedStatuses (which would also incorrectly
+  // accept a null-status response from every OTHER endpoint).
   function checkSuccess(json: AmadeusEnvelope, requestId: string, body: unknown) {
+    if (options.skipStatusCheck) return
     if (!acceptedStatuses.includes(json.Status)) {
       assertSuccess(json, context, requestId, body) // throws with the real error detail
     }
@@ -732,7 +832,8 @@ export const amadeus = {
         Origin: origin,
         Provider: provider,
       }),
-      'SeatMap'
+      'SeatMap',
+      { skipStatusCheck: true }
     )
 
     return json as SeatMapResponse

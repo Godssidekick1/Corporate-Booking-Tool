@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { flowStorage, PricedFare } from '@/app/lib/book/flowStorage'
-import { FlatFlightResult, formatTime, formatDayLabel } from '@/app/lib/book/types'
+import { FlatFlightResult, formatTime, formatDayLabel, SelectedSeat } from '@/app/lib/book/types'
 import { countryNameFromCode } from '@/app/lib/data/countryCodes'
 import { classifyTrip } from '@/app/lib/rule-engine/classifyTrip'
 
@@ -37,6 +37,14 @@ function toAmadeusDate(value: string): string {
   // <input type="date"> gives YYYY-MM-DD — Amadeus wants DD/MM/YYYY.
   const [y, m, d] = value.split('-')
   return `${d}/${m}/${y}`
+}
+
+// Selected seats are stored per-leg (legIndex) but AddPassenger just wants a
+// flat array per passenger — strips legIndex since Amadeus doesn't need it,
+// it's only used internally to key storage across the seat selection page.
+function toSeatListDetails(seats: SelectedSeat[] | undefined) {
+  if (!seats || seats.length === 0) return []
+  return seats.map(({ legIndex, ...rest }) => rest)
 }
 
 // Age bounds per standard airline convention: adult 12+, child 2-11, infant under 2.
@@ -207,7 +215,7 @@ export default function PassengerDetailsPage() {
             CountryCode: passengers[0]?.nationality ?? 'IN',
             CountryName: countryNameFromCode(passengers[0]?.nationality ?? 'IN'), // Amadeus rejects empty CountryName (ModelState validation)
             ZipCode: zipCode,
-            PassengerDetails: passengers.map(p => ({
+            PassengerDetails: passengers.map((p, i) => ({
               Title: p.title,
               Gender: p.gender,
               FirstName: p.firstName,
@@ -220,6 +228,7 @@ export default function PassengerDetailsPage() {
               Nationality: p.nationality,
               ExpiryDate: toAmadeusDate(p.expiryDate),
               MealCode: '',
+              SeatListDetails: toSeatListDetails(flowStorage.getSelectedSeats(flightKey)[i]),
             })),
           },
         }),
