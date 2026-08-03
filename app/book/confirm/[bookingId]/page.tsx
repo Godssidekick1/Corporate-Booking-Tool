@@ -113,6 +113,21 @@ export default function ConfirmBookingPage() {
 
       router.push(`/book/ticket/${bookingId}`)
     } catch {
+      // The fetch itself failed/timed out client-side — but the Amadeus call
+      // may well have succeeded server-side before the response could get
+      // back to us (slow function, network blip). Check the booking's real
+      // status before assuming it failed; a false "could not complete" when
+      // it actually did is worse than a brief extra check here.
+      try {
+        const checkRes = await fetch(`/api/book/${bookingId}`)
+        const checkData = await checkRes.json()
+        if (checkRes.ok && (checkData.booking?.status === 'held' || checkData.booking?.status === 'ticketed')) {
+          router.push(`/book/ticket/${bookingId}`)
+          return
+        }
+      } catch {
+        // fall through to the generic error below — we genuinely can't tell
+      }
       setError('Something went wrong completing the booking. Please try again.')
     } finally {
       setConfirming(false)
