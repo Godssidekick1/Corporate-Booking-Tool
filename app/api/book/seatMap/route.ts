@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic } from '@/app/lib/amadeus/client'
 import { NextRequest } from 'next/server'
+import util from 'util'
 
 // ── POST /api/book/seatmap ────────────────────────────────────────────────────
 // Sits right after Price, before AddPassenger, in the booking chain
@@ -62,6 +63,12 @@ export async function POST(req: NextRequest) {
     // back with something in it.
     const finalDetails = result.DeckData?.SeatMapAll?.[0]?.SeatMapDetails_Final?.[0]
     if (!finalDetails) {
+      console.warn('SeatMap: no SeatMapDetails_Final in response', {
+        origin, destination, legIndex,
+        hasDeckData: Boolean(result.DeckData),
+        seatMapAllLength: result.DeckData?.SeatMapAll?.length ?? 0,
+        rawKeys: result.DeckData ? Object.keys(result.DeckData) : [],
+      })
       return Response.json({
         ok: true,
         available: false,
@@ -70,6 +77,12 @@ export async function POST(req: NextRequest) {
     }
 
     const rawSeats = finalDetails.SeatMapDetails?.[0]?.SeatListDetails ?? []
+    if (rawSeats.length === 0) {
+      console.warn('SeatMap: SeatMapDetails_Final present but SeatListDetails empty', {
+        origin, destination, legIndex,
+        seatMapDetailsLength: finalDetails.SeatMapDetails?.length ?? 0,
+      })
+    }
 
     // Keep only real, selectable-cabin seats — drop the walkway (BLANK) and
     // rows this fare can't see (numeric-junk SeatDesignator, TravelClassCode "NA").
@@ -119,6 +132,7 @@ export async function POST(req: NextRequest) {
         request: sanitizeAmadeusDiagnostic(err.requestBody),
         raw: sanitizeAmadeusDiagnostic(err.raw),
       })
+      console.error('SeatMap error (full, untruncated raw):', util.inspect(sanitizeAmadeusDiagnostic(err.raw), { depth: null, colors: false }))
 
       // Seat maps aren't always available for every fare/carrier — treat an
       // Amadeus-side error here as "no seat map for this flight" rather than
