@@ -2,6 +2,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic } from '@/app/lib/amadeus/client'
 import { NextRequest } from 'next/server'
+import util from 'util'
 
 // ── POST /api/book/book ───────────────────────────────────────────────────────
 // Fourth step (search → price → add-passenger → book → ticket). Commits the
@@ -73,14 +74,19 @@ export async function POST(req: NextRequest) {
       booking.provider_order_id,
       booking.provider
     )
-const pnr = result.AirBookingResponse?.[0]?.PNR ?? null   // ADD THIS LINE
+
+    // BookingResponse itself has no top-level PNR — it only appears nested
+    // inside AirBookingResponse[0] once the airline confirms. bookings.pnr
+    // is also set again in /api/book/ticket (Ticket's response is the
+    // authoritative source), so this is a best-effort early capture.
+    const pnr = result.AirBookingResponse?.[0]?.PNR ?? null
 
     const { error: updateError } = await service
       .from('bookings')
       .update({
         status: 'held',
         pnr,
-        updated_at: new Date().toISOString(), 
+        updated_at: new Date().toISOString(),
       })
       .eq('id', bookingId)
 
@@ -114,6 +120,11 @@ const pnr = result.AirBookingResponse?.[0]?.PNR ?? null   // ADD THIS LINE
         request: sanitizeAmadeusDiagnostic(err.requestBody),
         raw: sanitizeAmadeusDiagnostic(err.raw),
       })
+      // Node's console.error truncates nested objects past depth 2 (that's
+      // the "[ [Object] ]" you see for AirBookingResponse above) — this
+      // prints the same raw payload with no depth limit so the actual
+      // failure reason inside AirBookingResponse[0] is visible.
+      console.error('Booking error (full, untruncated raw):', util.inspect(sanitizeAmadeusDiagnostic(err.raw), { depth: null, colors: false }))
 
       await service
         .from('bookings')
