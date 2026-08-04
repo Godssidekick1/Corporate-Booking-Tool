@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 
@@ -22,30 +22,11 @@ export default function SignInPage() {
   const [resetLoading, setResetLoading] = useState(false)
   const [resetError, setResetError] = useState('')
 
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    const hash = window.location.hash
-    if (!hash.includes('access_token')) return
-
-    const params = new URLSearchParams(hash.slice(1))
-    const type = params.get('type')
-    const accessToken = params.get('access_token')
-    const refreshToken = params.get('refresh_token')
-    if (!accessToken || !refreshToken) return
-
-    supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken })
-      .then(({ error }) => {
-        if (error) { console.error('Session error:', error.message); return }
-        // Both a first-time invite link and a "forgot password" reset link
-        // land here as a hash-token session — either way, the next step is
-        // to make them choose a password before going anywhere else.
-        if (type === 'invite' || type === 'recovery') {
-          router.replace('/auth/set-password')
-        } else {
-          redirectByRole()
-        }
-      })
-  }, [router])
+  // Invite and password-reset links both route through /auth/callback now
+  // (a server-side code exchange, exempt from proxy.ts's "authenticated
+  // user visiting /login -> redirect to dashboard" rule) rather than
+  // landing here with a hash-fragment token. This page no longer needs to
+  // parse anything off the URL on load — see /auth/callback/route.ts.
 
   async function redirectByRole() {
     const res = await fetch('/api/me')
@@ -84,14 +65,22 @@ export default function SignInPage() {
     setResetError('')
     setResetLoading(true)
     try {
-      // Called directly against Supabase (same pattern as updateUser() on
-      // the set-password page) — this only sends an email, no session or
-      // cookie changes are involved, so there's no need to route it through
-      // a custom API endpoint. The reset link lands back on /login with a
-      // type=recovery hash token, which the effect above sends to
-      // /auth/set-password to actually choose a new password.
+      // Routed through /auth/callback, not /login — two separate problems
+      // with sending this to /login:
+      // 1. resetPasswordForEmail() issues a different link format than
+      //    inviteUserByEmail() does; /login only ever parsed hash-fragment
+      //    tokens (#access_token=...), so a link that arrives as a ?code=
+      //    query param instead would land on /login and do nothing.
+      // 2. Even for a hash-token link, proxy.ts redirects an authenticated
+      //    user away from /login server-side, before the browser ever runs
+      //    the client-side code that reads the hash — so anyone with an
+      //    existing session cookie in that browser never gets a chance to
+      //    process the reset link at all.
+      // /auth/callback does a proper server-side code exchange and is
+      // exempt from that redirect, and next=/auth/set-password tells it
+      // where to land afterward instead of its default role-based redirect.
       const { error: resetErr } = await supabase.auth.resetPasswordForEmail(resetEmail, {
-        redirectTo: `${window.location.origin}/login`,
+        redirectTo: `${window.location.origin}/auth/callback?next=/auth/set-password`,
       })
       if (resetErr) {
         setResetError(resetErr.message)

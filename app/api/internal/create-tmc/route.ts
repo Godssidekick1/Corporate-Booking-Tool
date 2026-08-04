@@ -45,13 +45,22 @@ export async function POST(req: NextRequest) {
     if (tmcError) throw new Error(tmcError.message)
     tmcId = tmc.id
 
-    // redirectTo points at /login — invite links carry hash-based auth
-    // tokens that only a client page (not a server route like /auth/callback)
-    // can read. data sets role/tmc_id in user_metadata so downstream role
-    // checks (e.g. proxy.ts) work immediately without a DB round-trip.
+    // redirectTo points at /auth/callback, not /login. /login is gated by
+    // proxy.ts's "authenticated user visiting /login -> redirect to
+    // dashboard" rule, which runs server-side before any client page loads —
+    // so anyone with an existing session cookie in that browser (a shared
+    // machine, a TC testing invites, etc.) got bounced away before the
+    // invite was ever processed, no matter how the link itself carried its
+    // auth data. /auth/callback is in proxy.ts's public bucket and does a
+    // proper server-side code exchange, so it isn't subject to that
+    // redirect. `next=/auth/set-password` tells the callback where to send
+    // the user once the code exchange succeeds, instead of falling through
+    // to its default role-based redirect. data sets role/tmc_id in
+    // user_metadata so downstream role checks (e.g. proxy.ts) work
+    // immediately without a DB round-trip.
     const { data: authData, error: inviteError } =
       await service.auth.admin.inviteUserByEmail(adminEmail, {
-        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/login`,
+        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/auth/set-password`,
         data: { full_name: adminName, tmc_id: tmcId, role: 'tmc_admin' },
       })
 

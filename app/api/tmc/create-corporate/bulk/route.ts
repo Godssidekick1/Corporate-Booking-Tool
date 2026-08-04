@@ -157,7 +157,7 @@ export async function POST(req: NextRequest) {
       const { data: authData, error: inviteError } = await service.auth.admin.inviteUserByEmail(
         email,
         {
-          redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/login`,
+          redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/auth/set-password`,
           data: { full_name: fullName, company_id: companyId, role, band_code: band.code },
         }
       )
