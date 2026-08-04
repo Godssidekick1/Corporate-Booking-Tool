@@ -115,7 +115,7 @@ export default function PriceConfirmPage() {
 
   function handleContinue() {
     setContinuing(true)
-    router.push(`/book/passengers/${encodeURIComponent(flightKey)}`)
+    router.push(`/book/seats/${encodeURIComponent(flightKey)}`)
   }
 
   return (
@@ -230,7 +230,7 @@ export default function PriceConfirmPage() {
               disabled={continuing}
               style={{ ...s.continueBtn, opacity: continuing ? 0.7 : 1 }}
             >
-              {continuing ? 'Opening…' : 'Continue to passenger details →'}
+              {continuing ? 'Opening…' : 'Continue to seat selection→'}
             </button>
           </>
         )}
