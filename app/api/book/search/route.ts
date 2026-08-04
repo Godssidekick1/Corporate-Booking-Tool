@@ -16,6 +16,17 @@ interface SearchBody {
   adult?: number
   child?: number
   infant?: number
+  cabinClass?: 'Economy' | 'Premium Economy' | 'Business' | 'First'
+}
+
+// Amadeus's PreferredClass expects single-letter GDS cabin codes, not the
+// full display names the UI shows — Y/W/B/F per the aggregator's own test
+// convention (confirmed against real usage, not assumed).
+const CABIN_CLASS_CODE: Record<string, string> = {
+  'Economy': 'Y',
+  'Premium Economy': 'W',
+  'Business': 'B',
+  'First': 'F',
 }
 
 // Flattened, frontend-friendly shape — the raw Amadeus nesting
@@ -85,7 +96,7 @@ export async function POST(req: NextRequest) {
   }
 
   const body: SearchBody = await req.json()
-  const { origin, destination, departDate, adult = 1, child = 0, infant = 0 } = body
+  const { origin, destination, departDate, adult = 1, child = 0, infant = 0, cabinClass } = body
 
   if (!origin || !destination || !departDate) {
     return Response.json(
@@ -114,6 +125,7 @@ export async function POST(req: NextRequest) {
     const availability = await amadeus.searchFlights({
       segments: [{ Origin: normalizedOrigin, Destination: normalizedDestination, DepartDate: departDate }],
       adult, child, infant,
+      preferredClass: cabinClass ? CABIN_CLASS_CODE[cabinClass] : undefined,
     })
 
     if (!availability.Availibilities || availability.Availibilities.length === 0) {
@@ -201,4 +213,3 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Flight search failed' }, { status: 500 })
   }
 }
-

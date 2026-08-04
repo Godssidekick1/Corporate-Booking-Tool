@@ -127,6 +127,7 @@ export default function BookFlightsSearchPage() {
           origin, destination,
           departDate: toApiDate(departDate),
           adult, child, infant,
+          cabinClass: cabinPref,
         }),
       })
       const data = await res.json()
