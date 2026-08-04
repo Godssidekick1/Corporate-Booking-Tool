@@ -16,6 +16,7 @@ interface Booking {
     destination?: { code: string; name: string; city: string; dateTime: string }
     duration?: string
     stopCount?: number
+    stops?: { code: string; city: string; arrivalDateTime: string; departureDateTime: string | undefined }[]
   } | null
   traveler_snapshot: {
     Email: string
@@ -25,6 +26,12 @@ interface Booking {
       LastName: string
       Title: string
       PaxType: 'ADT' | 'CHD' | 'INF' | string
+      SeatListDetails?: {
+        SeatDesignator: string
+        SeatFee: string
+        FlightNumber: string
+        FlightTime: string
+      }[]
     }[]
   } | null
   fare_breakdown: {
@@ -37,6 +44,24 @@ interface Booking {
 
 const PAX_TYPE_LABEL: Record<string, string> = {
   ADT: 'Adult', CHD: 'Child', INF: 'Infant',
+}
+
+// Legs aren't stored with their own flight numbers on the itinerary — only
+// the overall origin/stops/destination sequence. Seats carry FlightTime but
+// not which leg they belong to (that association is dropped before
+// AddPassengerDetails, since Amadeus's request shape has no field for it).
+// Chronological order is reliable for any real itinerary though — legs
+// always happen in time order — so seats are sorted by FlightTime and
+// paired positionally with the leg sequence built from the itinerary.
+function buildLegLabels(it: Booking['itinerary']): { origin: string; destination: string }[] {
+  if (!it?.origin?.code || !it?.destination?.code) return []
+  const points = [it.origin.code, ...(it.stops ?? []).map(s => s.code), it.destination.code]
+  return points.slice(0, -1).map((origin, i) => ({ origin, destination: points[i + 1] }))
+}
+
+function seatsInLegOrder(seats: { SeatDesignator: string; SeatFee: string; FlightNumber: string; FlightTime: string }[] | undefined) {
+  if (!seats) return []
+  return [...seats].sort((a, b) => (a.FlightTime || '').localeCompare(b.FlightTime || ''))
 }
 
 function formatTime(iso: string | undefined) {
@@ -142,6 +167,7 @@ export default function ConfirmBookingPage() {
   }
 
   const travelers = booking.traveler_snapshot?.PassengerDetails ?? []
+  const legLabels = buildLegLabels(booking.itinerary)
   const adultCount = travelers.filter(t => t.PaxType === 'ADT').length
   const childCount = travelers.filter(t => t.PaxType === 'CHD').length
   const infantCount = travelers.filter(t => t.PaxType === 'INF').length
@@ -199,14 +225,26 @@ export default function ConfirmBookingPage() {
             </div>
 
             <div style={s.travelerList}>
-              {travelers.map((t, i) => (
-                <div key={i} style={s.travelerRow}>
-                  <div>
-                    <p style={s.travelerName}>{t.Title} {t.FirstName} {t.LastName}</p>
-                    <p style={s.mutedLine}>{PAX_TYPE_LABEL[t.PaxType] ?? t.PaxType}</p>
+              {travelers.map((t, i) => {
+                const orderedSeats = seatsInLegOrder(t.SeatListDetails)
+                return (
+                  <div key={i} style={s.travelerRow}>
+                    <div>
+                      <p style={s.travelerName}>{t.Title} {t.FirstName} {t.LastName}</p>
+                      <p style={s.mutedLine}>{PAX_TYPE_LABEL[t.PaxType] ?? t.PaxType}</p>
+                    </div>
+                    {orderedSeats.length > 0 && (
+                      <div style={s.seatTags}>
+                        {orderedSeats.map((seat, si) => (
+                          <span key={si} style={s.seatTag}>
+                            {legLabels[si] ? `${legLabels[si].origin}→${legLabels[si].destination} ${seat.SeatDesignator}` : seat.SeatDesignator}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
 
             <div style={s.contactBlock}>
@@ -310,7 +348,9 @@ const s: Record<string, React.CSSProperties> = {
   editLink: { fontSize: '12px', fontWeight: 600, color: '#000835', textDecoration: 'none' },
 
   travelerList: { display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '12px' },
-  travelerRow: { paddingBottom: '10px', borderBottom: '1px solid #F3F4F6' },
+  travelerRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', paddingBottom: '10px', borderBottom: '1px solid #F3F4F6' },
+  seatTags: { display: 'flex', flexWrap: 'wrap' as const, gap: '5px', flexShrink: 0 },
+  seatTag: { fontSize: '10.5px', fontWeight: 600, color: '#000835', background: '#EEF2FF', padding: '3px 9px', borderRadius: '6px' },
   contactBlock: { display: 'flex', flexDirection: 'column', gap: '2px' },
 
   paxFareList: { display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' },

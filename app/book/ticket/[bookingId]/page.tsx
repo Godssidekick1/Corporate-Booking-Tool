@@ -10,11 +10,11 @@ import { formatTime, formatDayLabel } from '@/app/lib/book/types'
 // stub rather than a generic confirmation card — that's the standard shape
 // people recognize from airline confirmations.
 //
-// Deliberately does NOT show seat or gate: nothing in this flow assigns a
-// seat (SeatMap isn't wired into booking yet) or a gate (only known at
-// check-in), and fabricating placeholder values for those would be actively
-// misleading on a real travel document. The perforated-stub shape and route
-// line carry the "ticket" visual language without needing that data.
+// One shared flight header (route, times, cabin, baggage — genuinely common
+// to everyone on this PNR), then one stub per traveler underneath with their
+// own seat(s) and ticket number. Gate is still deliberately omitted — that's
+// only known at check-in and fabricating a value would be misleading on a
+// real travel document.
 //
 // Ticket numbers: paired with each traveler by array index, matching the
 // order they were submitted to AddPassengerDetails (see /api/book/ticket —
@@ -24,12 +24,20 @@ import { formatTime, formatDayLabel } from '@/app/lib/book/types'
 // number rather than a wrong one.
 // ─────────────────────────────────────────────────────────────────────────────
 
+interface StopInfo {
+  code: string
+  city: string
+  arrivalDateTime: string
+  departureDateTime: string | undefined
+}
+
 interface FlightItinerary {
   airline?: { code: string; name: string }
   origin?: { code: string; name: string; city: string; dateTime: string }
   destination?: { code: string; name: string; city: string; dateTime: string }
   duration?: string
   stopCount?: number
+  stops?: StopInfo[]
   cabin?: string
   checkInBaggageKg?: string
 }
@@ -39,6 +47,12 @@ interface BookingPassenger {
   LastName: string
   Title: string
   PaxType: 'ADT' | 'CHD' | 'INF' | string
+  SeatListDetails?: {
+    SeatDesignator: string
+    SeatFee: string
+    FlightNumber: string
+    FlightTime: string
+  }[]
 }
 
 interface Booking {
@@ -60,7 +74,28 @@ const PAX_TYPE_LABEL: Record<string, string> = {
   ADT: 'Adult', CHD: 'Child', INF: 'Infant',
 }
 
-// Deterministic decorative barcode — purely visual (not a real scannable
+// Legs aren't stored with their own flight numbers on the itinerary — only
+// the overall origin/stops/destination sequence. Seats carry FlightTime but
+// not which leg they belong to (that association is dropped before
+// AddPassengerDetails, since Amadeus's request shape has no field for it).
+// Chronological order is reliable for any real itinerary though — legs
+// always happen in time order — so seats are sorted by FlightTime and
+// paired positionally with the leg sequence built from the itinerary.
+interface LegLabel {
+  origin: string
+  destination: string
+}
+
+function buildLegLabels(it: FlightItinerary | null): LegLabel[] {
+  if (!it?.origin?.code || !it?.destination?.code) return []
+  const points = [it.origin.code, ...(it.stops ?? []).map(s => s.code), it.destination.code]
+  return points.slice(0, -1).map((origin, i) => ({ origin, destination: points[i + 1] }))
+}
+
+function seatsInLegOrder(seats: BookingPassenger['SeatListDetails']) {
+  if (!seats) return []
+  return [...seats].sort((a, b) => (a.FlightTime || '').localeCompare(b.FlightTime || ''))
+}
 // code), seeded off the PNR so the pattern is stable per booking rather
 // than reshuffling on every render.
 function BarcodeStrip({ seed }: { seed: string }) {
@@ -183,6 +218,7 @@ export default function TicketPage() {
   const isTicketed = booking.status === 'ticketed'
   const it = booking.itinerary
   const currency = booking.fare_breakdown?.currency ?? ''
+  const legLabels = buildLegLabels(it)
 
   return (
     <div style={s.page}>
@@ -266,28 +302,54 @@ export default function TicketPage() {
                   <div style={s.notchRight} />
                 </div>
 
-                {/* Stub: PNR + barcode */}
-                <div style={s.stub}>
-                  <div style={s.stubRow}>
-                    <span style={s.stubLabel}>PNR</span>
-                    <span style={s.stubValue}>{booking.pnr || '—'}</span>
-                  </div>
-                  {travelers.length <= 1 && ticketNumbers[0] && (
-                    <div style={s.stubRow}>
-                      <span style={s.stubLabel}>Ticket no.</span>
-                      <span style={s.stubValue}>{ticketNumbers[0]}</span>
+                {/* One stub per traveler: their own seat(s), ticket number,
+                    and barcode — a shared flight header above covers what's
+                    genuinely common to everyone on this PNR. */}
+                {travelers.map((t, i) => {
+                  const orderedSeats = seatsInLegOrder(t.SeatListDetails)
+                  const isLast = i === travelers.length - 1
+                  return (
+                    <div key={i} style={s.stub}>
+                      <div style={s.stubRow}>
+                        <span style={s.stubLabel}>Passenger</span>
+                        <span style={s.stubValue}>{t.Title} {t.FirstName} {t.LastName}</span>
+                      </div>
+                      <div style={s.stubRow}>
+                        <span style={s.stubLabel}>PNR</span>
+                        <span style={s.stubValue}>{booking.pnr || '—'}</span>
+                      </div>
+                      {ticketNumbers[i] && (
+                        <div style={s.stubRow}>
+                          <span style={s.stubLabel}>Ticket no.</span>
+                          <span style={s.stubValue}>{ticketNumbers[i]}</span>
+                        </div>
+                      )}
+                      {orderedSeats.length > 0 && (
+                        <div style={s.seatsByLeg}>
+                          {orderedSeats.map((seat, si) => {
+                            // legLabels[si] assumes seats sort into the same
+                            // order as the itinerary's leg sequence — true
+                            // whenever both are chronological, which holds
+                            // for any real itinerary (legs happen in order).
+                            const leg = legLabels[si]
+                            return (
+                              <div key={si} style={s.stubRow}>
+                                <span style={s.stubLabel}>
+                                  {leg ? `${leg.origin} → ${leg.destination}` : `Seat ${si + 1}`}
+                                </span>
+                                <span style={s.stubValue}>{seat.SeatDesignator}</span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                      <div style={s.barcodeWrap}>
+                        <BarcodeStrip seed={(booking.pnr || bookingId) + ticketNumbers[i] + i} />
+                      </div>
+                      {!isLast && <div style={s.stubDivider} />}
                     </div>
-                  )}
-                  {travelers.length > 1 && (
-                    <div style={s.stubRow}>
-                      <span style={s.stubLabel}>Tickets issued</span>
-                      <span style={s.stubValue}>{ticketNumbers.filter(Boolean).length} of {travelers.length}</span>
-                    </div>
-                  )}
-                  <div style={s.barcodeWrap}>
-                    <BarcodeStrip seed={booking.pnr || bookingId} />
-                  </div>
-                </div>
+                  )
+                })}
               </div>
             </div>
 
@@ -298,15 +360,25 @@ export default function TicketPage() {
                   Travelers <span style={s.travelerCount}>({travelers.length})</span>
                 </h2>
                 <div style={s.travelerList}>
-                  {travelers.map((t, i) => (
-                    <div key={i} style={s.travelerRow}>
-                      <div style={s.travelerNameCol}>
-                        <span style={s.travelerName}>{t.Title} {t.FirstName} {t.LastName}</span>
-                        {ticketNumbers[i] && <span style={s.travelerTicketNo}>{ticketNumbers[i]}</span>}
+                  {travelers.map((t, i) => {
+                    const orderedSeats = seatsInLegOrder(t.SeatListDetails)
+                    return (
+                      <div key={i} style={s.travelerRow}>
+                        <div style={s.travelerNameCol}>
+                          <span style={s.travelerName}>{t.Title} {t.FirstName} {t.LastName}</span>
+                          {ticketNumbers[i] && <span style={s.travelerTicketNo}>{ticketNumbers[i]}</span>}
+                        </div>
+                        <div style={s.travelerRightCol}>
+                          {orderedSeats.map((seat, si) => (
+                            <span key={si} style={s.travelerSeat}>
+                              {legLabels[si] ? `${legLabels[si].origin} ${seat.SeatDesignator}` : seat.SeatDesignator}
+                            </span>
+                          ))}
+                          <span style={s.travelerType}>{PAX_TYPE_LABEL[t.PaxType] ?? t.PaxType}</span>
+                        </div>
                       </div>
-                      <span style={s.travelerType}>{PAX_TYPE_LABEL[t.PaxType] ?? t.PaxType}</span>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
                 {booking.traveler_snapshot?.Email && (
                   <p style={s.mutedLine}>{booking.traveler_snapshot.Email}</p>
@@ -396,9 +468,11 @@ const s: Record<string, React.CSSProperties> = {
   perforationLine: { borderTop: '1.5px dashed #D1D5DB', margin: '0 14px' },
 
   stub: { padding: '18px 20px 20px', background: '#FAFAFB' },
+  seatsByLeg: { display: 'flex', flexDirection: 'column' as const, gap: '2px' },
   stubRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0' },
   stubLabel: { fontSize: '11px', color: '#6B7280', fontWeight: 500 },
   stubValue: { fontSize: '13px', color: '#0A0A14', fontWeight: 700, letterSpacing: '0.4px' },
+  stubDivider: { height: '1px', background: '#E5E7EB', margin: '14px 0 -2px' },
   barcodeWrap: { marginTop: '12px', display: 'flex', justifyContent: 'center' },
 
   // ── Traveler / fare cards ────────────────────────────────────────────
@@ -411,6 +485,8 @@ const s: Record<string, React.CSSProperties> = {
   travelerNameCol: { display: 'flex', flexDirection: 'column', gap: '2px' },
   travelerName: { fontSize: '13px', fontWeight: 600, color: '#111827' },
   travelerTicketNo: { fontSize: '10.5px', color: '#9CA3AF', letterSpacing: '0.2px' },
+  travelerRightCol: { display: 'flex', alignItems: 'center', gap: '6px' },
+  travelerSeat: { fontSize: '10.5px', fontWeight: 600, color: '#000835', background: '#EEF2FF', padding: '2px 8px', borderRadius: '5px' },
   travelerType: { fontSize: '10.5px', color: '#6B7280', background: '#F3F4F6', padding: '2px 8px', borderRadius: '5px', fontWeight: 500 },
   mutedLine: { fontSize: '12px', color: '#9CA3AF', margin: 0 },
 
