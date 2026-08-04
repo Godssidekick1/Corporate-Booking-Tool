@@ -23,6 +23,38 @@ function durationMinutes(duration: string | undefined): number {
   return (h || 0) * 60 + (m || 0)
 }
 
+type DeparturePeriod = 'morning' | 'afternoon' | 'evening' | 'night'
+
+// Morning 5am–12pm, Afternoon 12pm–5pm, Evening 5pm–9pm, Night 9pm–5am —
+// standard airline-search buckets, based on local departure time from the
+// ISO dateTime string (same field formatTime() already renders from).
+function departurePeriod(iso: string | undefined): DeparturePeriod | null {
+  if (!iso) return null
+  const hour = new Date(iso).getHours()
+  if (hour >= 5 && hour < 12) return 'morning'
+  if (hour >= 12 && hour < 17) return 'afternoon'
+  if (hour >= 17 && hour < 21) return 'evening'
+  return 'night'
+}
+
+const STOP_FILTERS = [
+  { key: 'nonstop', label: 'Non-stop', test: (f: FlatFlightResult) => f.stopCount === 0 },
+  { key: '1stop', label: '1 stop', test: (f: FlatFlightResult) => f.stopCount === 1 },
+  { key: '2plusstop', label: '2+ stops', test: (f: FlatFlightResult) => f.stopCount >= 2 },
+] as const
+
+const FARE_TYPE_FILTERS = [
+  { key: 'ndc', label: 'NDC', test: (f: FlatFlightResult) => Boolean(f.isNdc) },
+  { key: 'nonndc', label: 'Non-NDC', test: (f: FlatFlightResult) => !f.isNdc },
+] as const
+
+const DEPARTURE_FILTERS = [
+  { key: 'morning', label: 'Morning', sub: '5am–12pm' },
+  { key: 'afternoon', label: 'Afternoon', sub: '12pm–5pm' },
+  { key: 'evening', label: 'Evening', sub: '5pm–9pm' },
+  { key: 'night', label: 'Night', sub: '9pm–5am' },
+] as const
+
 export default function BookFlightsSearchPage() {
   const router = useRouter()
 
@@ -41,6 +73,28 @@ export default function BookFlightsSearchPage() {
   const [error, setError] = useState('')
   const [sortBy, setSortBy] = useState<'price' | 'duration' | 'departure'>('price')
   const [navigatingKey, setNavigatingKey] = useState<string | null>(null)
+
+  // Filters are multi-select within each group, OR'd within a group and
+  // AND'd across groups — e.g. selecting "Non-stop" + "1 stop" shows either,
+  // but selecting "Non-stop" + "Morning" shows only non-stop morning flights.
+  const [stopFilters, setStopFilters] = useState<Set<string>>(new Set())
+  const [fareTypeFilters, setFareTypeFilters] = useState<Set<string>>(new Set())
+  const [departureFilters, setDepartureFilters] = useState<Set<string>>(new Set())
+
+  function toggleFilter(setter: React.Dispatch<React.SetStateAction<Set<string>>>, key: string) {
+    setter(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  function clearAllFilters() {
+    setStopFilters(new Set())
+    setFareTypeFilters(new Set())
+    setDepartureFilters(new Set())
+  }
 
   function swapOriginDestination() {
     setOrigin(destination)
@@ -103,11 +157,29 @@ export default function BookFlightsSearchPage() {
     }
   }
 
-  const sortedResults = [...results].sort((a, b) => {
+  const filteredResults = results.filter(flight => {
+    if (stopFilters.size > 0) {
+      const matchesStop = STOP_FILTERS.some(f => stopFilters.has(f.key) && f.test(flight))
+      if (!matchesStop) return false
+    }
+    if (fareTypeFilters.size > 0) {
+      const matchesFareType = FARE_TYPE_FILTERS.some(f => fareTypeFilters.has(f.key) && f.test(flight))
+      if (!matchesFareType) return false
+    }
+    if (departureFilters.size > 0) {
+      const period = departurePeriod(flight.origin?.dateTime)
+      if (!period || !departureFilters.has(period)) return false
+    }
+    return true
+  })
+
+  const sortedResults = [...filteredResults].sort((a, b) => {
     if (sortBy === 'price') return (a.totalFare ?? Infinity) - (b.totalFare ?? Infinity)
     if (sortBy === 'duration') return durationMinutes(a.duration) - durationMinutes(b.duration)
     return (a.origin?.dateTime ?? '').localeCompare(b.origin?.dateTime ?? '')
   })
+
+  const activeFilterCount = stopFilters.size + fareTypeFilters.size + departureFilters.size
 
   return (
     <div style={s.page}>
@@ -262,9 +334,78 @@ export default function BookFlightsSearchPage() {
             </div>
           ) : (
             <div style={s.resultsWrap}>
+              {/* ── Filters ──────────────────────────────────────────── */}
+              <div style={s.filterBar}>
+                <div style={s.filterGroup}>
+                  <span style={s.filterGroupLabel}>Stops</span>
+                  <div style={s.filterChips}>
+                    {STOP_FILTERS.map(f => (
+                      <button
+                        key={f.key}
+                        type="button"
+                        onClick={() => toggleFilter(setStopFilters, f.key)}
+                        style={{ ...s.filterChip, ...(stopFilters.has(f.key) ? s.filterChipActive : {}) }}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={s.filterGroup}>
+                  <span style={s.filterGroupLabel}>Fare type</span>
+                  <div style={s.filterChips}>
+                    {FARE_TYPE_FILTERS.map(f => (
+                      <button
+                        key={f.key}
+                        type="button"
+                        onClick={() => toggleFilter(setFareTypeFilters, f.key)}
+                        style={{ ...s.filterChip, ...(fareTypeFilters.has(f.key) ? s.filterChipActive : {}) }}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={s.filterGroup}>
+                  <span style={s.filterGroupLabel}>Departure time</span>
+                  <div style={s.filterChips}>
+                    {DEPARTURE_FILTERS.map(f => (
+                      <button
+                        key={f.key}
+                        type="button"
+                        onClick={() => toggleFilter(setDepartureFilters, f.key)}
+                        style={{ ...s.filterChip, ...(departureFilters.has(f.key) ? s.filterChipActive : {}) }}
+                        title={f.sub}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {activeFilterCount > 0 && (
+                  <button type="button" onClick={clearAllFilters} style={s.clearFiltersBtn}>
+                    Clear filters ({activeFilterCount})
+                  </button>
+                )}
+              </div>
+
+              {sortedResults.length === 0 ? (
+                <div style={s.emptyState}>
+                  <p style={s.emptyTitle}>No flights match your filters</p>
+                  <p style={s.emptyDesc}>Try clearing a filter to see more results.</p>
+                  <button type="button" onClick={clearAllFilters} style={s.clearFiltersBtnInline}>
+                    Clear all filters
+                  </button>
+                </div>
+              ) : (
+              <>
               <div style={s.resultsHeader}>
                 <p style={s.resultsCount}>
-                  <strong>{results.length}</strong> fare{results.length === 1 ? '' : 's'} found · {origin} → {destination}
+                  <strong>{sortedResults.length}</strong> fare{sortedResults.length === 1 ? '' : 's'} found
+                  {activeFilterCount > 0 && <span style={s.resultsCountMuted}> (of {results.length})</span>} · {origin} → {destination}
                 </p>
                 <div style={s.sortRow}>
                   <span style={s.sortLabel}>Sort by</span>
@@ -373,6 +514,8 @@ export default function BookFlightsSearchPage() {
                   )
                 })}
               </div>
+              </>
+              )}
             </div>
           )
         )}
@@ -430,10 +573,32 @@ const s: Record<string, React.CSSProperties> = {
   resultsWrap: { display: 'flex', flexDirection: 'column', gap: '14px' },
   resultsHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' as const, gap: '10px' },
   resultsCount: { fontSize: '13px', color: '#6B7280', margin: 0 },
+  resultsCountMuted: { color: '#9CA3AF' },
   sortRow: { display: 'flex', alignItems: 'center', gap: '6px' },
   sortLabel: { fontSize: '11px', color: '#9CA3AF', marginRight: '2px' },
   sortBtn: { fontSize: '11px', fontWeight: 500, color: '#6B7280', background: '#fff', border: '1px solid #E5E7EB', borderRadius: '7px', padding: '5px 10px', cursor: 'pointer' },
   sortBtnActive: { color: '#fff', background: '#000835', borderColor: '#000835' },
+
+  filterBar: {
+    display: 'flex', flexWrap: 'wrap' as const, alignItems: 'flex-start', gap: '20px',
+    background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '14px 16px',
+  },
+  filterGroup: { display: 'flex', flexDirection: 'column' as const, gap: '6px' },
+  filterGroupLabel: { fontSize: '10px', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.4px' },
+  filterChips: { display: 'flex', flexWrap: 'wrap' as const, gap: '6px' },
+  filterChip: {
+    fontSize: '12px', fontWeight: 500, color: '#374151', background: '#F9FAFB',
+    border: '1px solid #E5E7EB', borderRadius: '8px', padding: '6px 11px', cursor: 'pointer',
+  },
+  filterChipActive: { color: '#fff', background: '#000835', borderColor: '#000835', fontWeight: 600 },
+  clearFiltersBtn: {
+    fontSize: '12px', fontWeight: 600, color: '#DC2626', background: 'none', border: 'none',
+    cursor: 'pointer', alignSelf: 'flex-start', marginLeft: 'auto', marginTop: '18px',
+  },
+  clearFiltersBtnInline: {
+    fontSize: '13px', fontWeight: 600, color: '#fff', background: '#000835',
+    border: 'none', borderRadius: '8px', padding: '8px 16px', cursor: 'pointer', marginTop: '8px',
+  },
 
   resultsList: { display: 'flex', flexDirection: 'column', gap: '12px' },
   resultCard: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '18px', transition: 'border-color 0.15s' },
