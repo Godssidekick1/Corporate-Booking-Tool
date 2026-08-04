@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { formatTime, formatDayLabel } from '@/app/lib/book/types'
 
@@ -117,6 +117,7 @@ function BarcodeStrip({ seed }: { seed: string }) {
 
 export default function TicketPage() {
   const params = useParams<{ bookingId: string }>()
+  const router = useRouter()
   const bookingId = params.bookingId
 
   const [booking, setBooking] = useState<Booking | null>(null)
@@ -149,6 +150,12 @@ export default function TicketPage() {
       // If it's already 'ticketed' (e.g. a refresh), there's nothing to do.
       if (data.booking.status === 'held') {
         await issueTicket()
+      } else if (data.booking.status === 'passenger_added') {
+        // Booking hasn't been placed with the airline yet — this page has
+        // nothing to do until Confirm Booking runs. Can happen from a stale
+        // bookmark/link, or a direct URL edit.
+        setError('This booking hasn\u2019t been confirmed with the airline yet.')
+        router.replace(`/book/confirm/${bookingId}`)
       }
     } catch {
       setError('Something went wrong loading this booking.')
@@ -392,7 +399,10 @@ export default function TicketPage() {
               <span style={s.fareFooterValue}>{currency} {booking.total_cost?.toLocaleString('en-IN')}</span>
             </div>
 
-            <Link href="/book" style={s.doneLink}>Book another flight →</Link>
+            <div style={s.doneLinks}>
+              <Link href="/book" style={s.doneLink}>Book another flight →</Link>
+              <Link href="/dashboard" style={s.doneLinkSecondary}>← Back to dashboard</Link>
+            </div>
           </>
         )}
 
@@ -493,9 +503,15 @@ const s: Record<string, React.CSSProperties> = {
   fareFooter: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 4px 20px', fontSize: '12px', color: '#9CA3AF' },
   fareFooterValue: { fontSize: '13px', fontWeight: 600, color: '#6B7280' },
 
+  doneLinks: { display: 'flex', flexDirection: 'column' as const, gap: '10px' },
   doneLink: {
     display: 'block', textAlign: 'center' as const, height: '48px', lineHeight: '48px', width: '100%',
     background: '#000835', color: '#fff', fontSize: '14px', fontWeight: 700, borderRadius: '10px',
     textDecoration: 'none', letterSpacing: '0.2px',
+  },
+  doneLinkSecondary: {
+    display: 'block', textAlign: 'center' as const, height: '44px', lineHeight: '44px', width: '100%',
+    background: '#fff', color: '#374151', fontSize: '13px', fontWeight: 600, borderRadius: '10px',
+    textDecoration: 'none', border: '1px solid #E5E7EB',
   },
 }
