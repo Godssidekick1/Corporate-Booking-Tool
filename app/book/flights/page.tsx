@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import AirportDropdown from '@/app/components/AirportDropdown'
 import { flowStorage } from '@/app/lib/book/flowStorage'
@@ -55,7 +55,7 @@ const DEPARTURE_FILTERS = [
   { key: 'night', label: 'Night', sub: '9pm–5am' },
 ] as const
 
-export default function BookFlightsSearchPage() {
+function BookFlightsSearchPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
 
@@ -666,4 +666,16 @@ const s: Record<string, React.CSSProperties> = {
     width: '100%', height: '34px', marginTop: '10px', background: '#000835', color: '#fff',
     fontSize: '12px', fontWeight: 600, border: 'none', borderRadius: '8px', cursor: 'pointer',
   },
+}
+
+// useSearchParams() requires a Suspense boundary for Next.js's static
+// export/prerendering to succeed — without this wrapper, the build fails
+// with "Export encountered an error on /book/flights/page" even though
+// nothing is functionally wrong with the component itself.
+export default function BookFlightsSearchPageWrapper() {
+  return (
+    <Suspense fallback={null}>
+      <BookFlightsSearchPage />
+    </Suspense>
+  )
 }
