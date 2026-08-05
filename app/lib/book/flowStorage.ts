@@ -15,6 +15,7 @@ const RESULTS_KEY = 'cbt:book:searchResults'
 const SEARCH_META_KEY = 'cbt:book:searchMeta'
 const PRICED_KEY_PREFIX = 'cbt:book:priced:' // + flightKey
 const SEATS_KEY_PREFIX = 'cbt:book:seats:'   // + flightKey
+const TRIP_ID_KEY = 'cbt:book:tripId'
 
 export interface SearchMeta {
   origin: string
@@ -98,5 +99,21 @@ export const flowStorage = {
 
   getSelectedSeats(flightKey: string): Record<number, SelectedSeat[]> {
     return safeGet(SEATS_KEY_PREFIX + flightKey) ?? {}
+  },
+ setTripId(tripId: string | null) {
+    if (tripId) safeSet(TRIP_ID_KEY, tripId)
+  },
+
+  getTripId(): string | null {
+    return safeGet<string>(TRIP_ID_KEY)
+  },
+
+  clearTripId() {
+    if (typeof window === 'undefined') return
+    try {
+      window.sessionStorage.removeItem(TRIP_ID_KEY)
+    } catch {
+      // no-op, matches safeSet's failure handling elsewhere in this file
+    }
   },
 }

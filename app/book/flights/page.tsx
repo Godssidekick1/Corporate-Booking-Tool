@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import AirportDropdown from '@/app/components/AirportDropdown'
 import { flowStorage } from '@/app/lib/book/flowStorage'
 import { FlatFlightResult, formatTime, formatDayLabel } from '@/app/lib/book/types'
@@ -57,6 +57,16 @@ const DEPARTURE_FILTERS = [
 
 export default function BookFlightsSearchPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+
+  // A flight search reached from a trip's workspace carries ?tripId= so the
+  // eventual booking gets tagged with trip_id at AddPassenger time. Stored
+  // via flowStorage (not re-read from the URL on every subsequent page)
+  // since /book/price and /book/passengers don't carry query params forward.
+  useEffect(() => {
+    const tripId = searchParams.get('tripId')
+    if (tripId) flowStorage.setTripId(tripId)
+  }, [searchParams])
 
   const [origin, setOrigin] = useState('')
   const [destination, setDestination] = useState('')

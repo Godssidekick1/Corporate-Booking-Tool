@@ -37,6 +37,7 @@ interface AddPassengerBody {
   passengerBreakup: unknown
   isNdc?: boolean
   searchKey?: string       // availabilityKey from /book/search, for traceability only
+  tripId?: string          // trip this booking belongs to, if started from a trip's workspace
   itinerary: unknown       // the FlatFlightResult the traveler selected, for bookings.itinerary
 
   // Passenger details for this booking
@@ -65,7 +66,7 @@ export async function POST(req: NextRequest) {
   const body: AddPassengerBody = await req.json()
   const {
     key, pricingKey, provider, referenceNo, totalFare, currency, isRefundable, fareType,
-    passengerBreakup, isNdc, searchKey, itinerary, customerInfo,
+    passengerBreakup, isNdc, searchKey, tripId, itinerary, customerInfo,
   } = body
 
   if (!key || !pricingKey || !provider || !referenceNo || totalFare === undefined) {
@@ -77,6 +78,22 @@ export async function POST(req: NextRequest) {
 
   if (!customerInfo?.PassengerDetails?.length) {
     return Response.json({ error: 'customerInfo.PassengerDetails must include at least one passenger' }, { status: 400 })
+  }
+
+  // If this booking is being made under a trip, confirm the trip actually
+  // belongs to this employee before tagging the booking with it — otherwise
+  // a crafted tripId could attach a booking (and its cost) to someone else's
+  // trip.
+  if (tripId) {
+    const { data: trip } = await service
+      .from('trips')
+      .select('id, created_by')
+      .eq('id', tripId)
+      .maybeSingle()
+
+    if (!trip || trip.created_by !== employee.id) {
+      return Response.json({ error: 'Trip not found or not owned by you' }, { status: 403 })
+    }
   }
 
   try {
@@ -106,6 +123,7 @@ export async function POST(req: NextRequest) {
         amadeus_key: key,
         pricing_key: pricingKey,
         search_key: searchKey ?? null,
+        trip_id: tripId ?? null,
         is_ndc: isNdc ?? null,
         itinerary: itinerary ?? null,
         traveler_snapshot: customerInfo,
@@ -127,7 +145,7 @@ export async function POST(req: NextRequest) {
       ok: true,
       bookingId: booking.id,
       referenceNo: result.ReferenceNo,
-      status: 'passenger_added',
+      status: 'passengers_added',
     })
   } catch (err) {
     if (err instanceof AmadeusError) {
