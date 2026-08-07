@@ -207,6 +207,7 @@ export default function PassengerDetailsPage() {
       // Autofill is a convenience, not a required step — silently do
       // nothing on failure and let the employee type their details as normal.
     }
+  }
 
   function updatePassenger<K extends keyof PassengerForm>(index: number, key: K, value: PassengerForm[K]) {
     setPassengers(prev => prev.map((p, i) => i === index ? { ...p, [key]: value } : p))
@@ -549,5 +550,4 @@ const s: Record<string, React.CSSProperties> = {
     height: '48px', width: '100%', background: '#000835', color: '#fff', fontSize: '14px', fontWeight: 700,
     border: 'none', borderRadius: '10px', cursor: 'pointer', letterSpacing: '0.2px',
   },
-}
 }
