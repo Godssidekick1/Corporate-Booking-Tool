@@ -16,6 +16,7 @@ const SEARCH_META_KEY = 'cbt:book:searchMeta'
 const PRICED_KEY_PREFIX = 'cbt:book:priced:' // + flightKey
 const SEATS_KEY_PREFIX = 'cbt:book:seats:'   // + flightKey
 const TRIP_ID_KEY = 'cbt:book:tripId'
+const GUEST_BOOKING_KEY = 'cbt:book:isGuestBooking'
 
 export interface SearchMeta {
   origin: string
@@ -100,7 +101,8 @@ export const flowStorage = {
   getSelectedSeats(flightKey: string): Record<number, SelectedSeat[]> {
     return safeGet(SEATS_KEY_PREFIX + flightKey) ?? {}
   },
- setTripId(tripId: string | null) {
+
+  setTripId(tripId: string | null) {
     if (tripId) safeSet(TRIP_ID_KEY, tripId)
   },
 
@@ -112,6 +114,30 @@ export const flowStorage = {
     if (typeof window === 'undefined') return
     try {
       window.sessionStorage.removeItem(TRIP_ID_KEY)
+    } catch {
+      // no-op, matches safeSet's failure handling elsewhere in this file
+    }
+  },
+
+  // Whether this booking is being made for someone other than the employee
+  // themselves (a guest/colleague) rather than the employee traveling.
+  // Defaults to false (i.e. "this is me traveling") everywhere it's read,
+  // via ?? false at the call site — so passenger-page autofill is safe by
+  // default even before any UI actually sets this flag to true. Set from
+  // wherever the "booking for a guest" checkbox lives (search page, My
+  // trips, etc.) — not owned by this module beyond storage.
+  setGuestBooking(isGuest: boolean) {
+    safeSet(GUEST_BOOKING_KEY, isGuest)
+  },
+
+  isGuestBooking(): boolean {
+    return safeGet<boolean>(GUEST_BOOKING_KEY) ?? false
+  },
+
+  clearGuestBooking() {
+    if (typeof window === 'undefined') return
+    try {
+      window.sessionStorage.removeItem(GUEST_BOOKING_KEY)
     } catch {
       // no-op, matches safeSet's failure handling elsewhere in this file
     }

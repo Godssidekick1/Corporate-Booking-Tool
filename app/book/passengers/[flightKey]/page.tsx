@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { flowStorage, PricedFare } from '@/app/lib/book/flowStorage'
-import { FlatFlightResult, formatTime, formatDayLabel, SelectedSeat } from '@/app/lib/book/types'
+import { FlatFlightResult, formatTime, formatDayLabel, SelectedSeat, TravelerProfile } from '@/app/lib/book/types'
 import { countryNameFromCode } from '@/app/lib/data/countryCodes'
 import { classifyTrip } from '@/app/lib/rule-engine/classifyTrip'
 
@@ -37,6 +37,33 @@ function toAmadeusDate(value: string): string {
   // <input type="date"> gives YYYY-MM-DD — Amadeus wants DD/MM/YYYY.
   const [y, m, d] = value.split('-')
   return `${d}/${m}/${y}`
+}
+
+// Inverse of toAmadeusDate — TravelerProfile stores DD/MM/YYYY (matching
+// AddPassengerDetails' own format), but <input type="date"> needs YYYY-MM-DD.
+function fromAmadeusDate(value: string | undefined): string {
+  if (!value) return ''
+  const [d, m, y] = value.split('/')
+  if (!d || !m || !y) return ''
+  return `${y}-${m}-${d}`
+}
+
+// Slot 1 (index 0, first adult) is the only slot ever autofilled — it's the
+// only one that can reliably be "the employee themselves." Guarded by
+// isGuestBooking() at the call site: if the trip was flagged as being for
+// someone else, this never runs, so a guest's passport details are never
+// silently overwritten with the employee's own.
+function applyTravelerProfile(passenger: PassengerForm, profile: TravelerProfile): PassengerForm {
+  return {
+    ...passenger,
+    title: profile.title || passenger.title,
+    gender: profile.gender || passenger.gender,
+    dateOfBirth: fromAmadeusDate(profile.dateOfBirth) || passenger.dateOfBirth,
+    passportNumber: profile.passportNumber ?? passenger.passportNumber,
+    issuingCountry: profile.issuingCountry ?? passenger.issuingCountry,
+    nationality: profile.nationality ?? passenger.nationality,
+    expiryDate: fromAmadeusDate(profile.passportExpiryDate) || passenger.expiryDate,
+  }
 }
 
 // Selected seats are stored per-leg (legIndex) but AddPassenger just wants a
@@ -153,7 +180,33 @@ export default function PassengerDetailsPage() {
       ...Array.from({ length: infantCount }, () => emptyPassenger('INF')),
     ]
     setPassengers(built)
+
+    // Autofill passenger slot 1 from the employee's saved travel profile —
+    // silent, since this is the common case (booking for yourself). Skipped
+    // entirely when this trip is flagged as being for a guest, so a
+    // colleague's details are never silently overwritten with the
+    // employee's own passport/DOB.
+    if (!flowStorage.isGuestBooking()) {
+      loadTravelerProfile()
+    }
   }, [flightKey])
+
+  async function loadTravelerProfile() {
+    try {
+      const res = await fetch('/api/employees/me')
+      if (!res.ok) return
+      const data = await res.json()
+      const profile: TravelerProfile | null = data.travelerProfile
+      if (!profile) return
+      setPassengers(prev =>
+        prev.length > 0 && prev[0].paxType === 'ADT'
+          ? prev.map((p, i) => i === 0 ? applyTravelerProfile(p, profile) : p)
+          : prev
+      )
+    } catch {
+      // Autofill is a convenience, not a required step — silently do
+      // nothing on failure and let the employee type their details as normal.
+    }
 
   function updatePassenger<K extends keyof PassengerForm>(index: number, key: K, value: PassengerForm[K]) {
     setPassengers(prev => prev.map((p, i) => i === index ? { ...p, [key]: value } : p))
@@ -205,7 +258,6 @@ export default function PassengerDetailsPage() {
           passengerBreakup: priced.passengerBreakup,
           isNdc: priced.isNdc,
           searchKey: priced.searchKey,
-          tripId: flowStorage.getTripId() ?? undefined,  
           itinerary: flight,
           customerInfo: {
             Email: email,
@@ -244,7 +296,6 @@ export default function PassengerDetailsPage() {
 
       // add-passenger created the bookings row — from here on the flow is
       // keyed by bookingId, not flightKey, and sessionStorage is done being used.
-      flowStorage.clearTripId()   
       router.push(`/book/confirm/${data.bookingId}`)
     } catch {
       setError('Something went wrong saving passenger details. Please try again.')
@@ -498,4 +549,5 @@ const s: Record<string, React.CSSProperties> = {
     height: '48px', width: '100%', background: '#000835', color: '#fff', fontSize: '14px', fontWeight: 700,
     border: 'none', borderRadius: '10px', cursor: 'pointer', letterSpacing: '0.2px',
   },
+}
 }

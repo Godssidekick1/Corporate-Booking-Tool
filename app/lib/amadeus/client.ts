@@ -117,6 +117,7 @@ export interface LocationInfo {
   CityName: string
   Terminal?: string
   DateTime: string
+  InternationalTime?: string  // same instant with explicit timezone offset, e.g. "2026-08-08T16:00:00.000+05:30"
 }
 
 export interface AirlineInfo {
@@ -152,11 +153,17 @@ export interface ItineraryInfo {
   Key: string
 }
 
+export interface TaxLine {
+  TaxCode: string
+  Amount: string   // stringified number, per the confirmed sample
+}
+
 export interface FareBreakDown {
   TotalFare: string     // string in real response — use Number() when consuming
   BaseFare: string
   TotalTax: string
-  Taxes?: unknown
+  Taxes?: { Tax: TaxLine[] }
+  Messages?: string
   PaxType: string
   Currency: string
   Refundable: string    // "Refundable" | "Non-Refundable" — string, not boolean
@@ -164,11 +171,23 @@ export interface FareBreakDown {
 
 export interface FareInfo {
   Cabin: string
+  FareBasis?: string        // seen empty ("") in a real response — PaxFareBasis is the field that's actually populated
   BookingCode: string
+  RuleNumber?: string       // seen empty in a real response
+  FareRuleKey?: string      // seen empty in a real response — presumably populated when fare rules are actually fetched
+  FareSegRef?: string       // seen empty in a real response
+  Leg?: string              // which leg this FareInfo entry applies to, e.g. "1", "2" — one FareInfo per (leg × paxType) pair
+  Flight?: string
   PaxType: string
   PaxCabin: string
-  PaxFareBasis: string
+  PaxFareBasis: string      // the fare basis code that's actually populated, e.g. "LU1YXEIX"
   PaxBookingClass: string
+}
+
+export interface PenaltyLine {
+  PaxType: string
+  Type: string    // "Amount" seen in a real response — assume other values are possible, not enumerated
+  Text: string    // free-text, e.g. " INR3000" (note leading space) or "0" — display as-is, do not attempt to parse into a structured amount+currency
 }
 
 export interface PricingInfo {
@@ -182,13 +201,24 @@ export interface PricingInfo {
     FuelSurcharge: string
     NetFare: string
     CommissionEarned: string
+    CashBackEarned?: string
+    PLBEarned?: string
+    TdsOnCommision?: string
+    TdsOnCashBack?: string
+    TdsOnPlb?: string
     ServiceFee: string
   }
   FareBreakDowns: { FareBreakDown: FareBreakDown[] }
   FareInfos: { FareInfo: FareInfo[] }
+  Penalties?: {
+    ChangePenalty?: PenaltyLine[]
+    CancelPenalty?: PenaltyLine[]
+  }
   FareType?: string
   GSTAllowed?: boolean
+  IsGSTMandatory?: boolean
   IsNDC?: boolean
+  OfferItem?: unknown
 }
 
 export interface FlightResult {

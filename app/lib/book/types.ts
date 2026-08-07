@@ -4,11 +4,53 @@
 // price/passengers pages don't redeclare it.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Traveler profile (employees.traveler_profile) ────────────────────────────
+// One per employee — their own stable, per-person details, filled in once on
+// /profile and reused to autofill passenger slot 1 whenever they book for
+// themselves. Deliberately excludes firstName/lastName (employees.full_name
+// is the source of truth) and contact info (that's CustomerInfo, per-booking,
+// not "who is this person"). Field names mirror AddPassengerDetails'
+// PassengerDetail exactly, confirmed against a real request body, so no
+// translation layer is needed between this and the passenger form.
+export interface TravelerProfile {
+  title: string                  // "MR" | "MRS" | "MS" | "MSTR" etc — matches PassengerDetail.Title
+  gender: string                 // "Male" | "Female"
+  dateOfBirth: string            // "DD/MM/YYYY" — matches PassengerDetail.DateOfBirth format
+  passportNumber?: string        // optional — only relevant for international travel
+  issuingCountry?: string
+  nationality?: string
+  passportExpiryDate?: string    // "DD/MM/YYYY"
+  mealPreference?: string        // matches PassengerDetail.MealCode
+}
+
 export interface StopInfo {
   code: string
   city: string
   arrivalDateTime: string
   departureDateTime: string | undefined
+}
+
+export interface PenaltyLine {
+  paxType: string
+  text: string   // free-text as Amadeus sends it, e.g. "INR3000" or "0" — never parsed, just trimmed
+}
+
+// One fare option for this flight. Real responses seen so far only ever
+// contain one of these per flight, but Amadeus's own shape
+// (PricingInfos.PricingInfo) is an array, and production may return more
+// than one — rendered as however many actually come back, not assumed to be 1.
+export interface FareOption {
+  pricingKey: string
+  currency?: string
+  totalFare?: number
+  baseFare?: number
+  tax?: number
+  isNdc?: boolean
+  refundable?: boolean
+  fareType?: string
+  fareBasis?: string
+  changePenalties: PenaltyLine[]
+  cancelPenalties: PenaltyLine[]
 }
 
 export interface FlatFlightResult {
@@ -18,14 +60,16 @@ export interface FlatFlightResult {
   itemNo: string
   cabin?: string
   bookingCode?: string
-  origin?: { code: string; name: string; city: string; dateTime: string }
-  destination?: { code: string; name: string; city: string; dateTime: string }
+  origin?: { code: string; name: string; city: string; dateTime: string; terminal?: string }
+  destination?: { code: string; name: string; city: string; dateTime: string; terminal?: string }
   airline?: { code: string; name: string }
   stopCount: number
   stops: StopInfo[]
   duration?: string
   availableSeats?: number
   checkInBaggageKg?: string
+  fareOptions: FareOption[]
+  // Mirrors fareOptions[0] — kept for pages still reading these directly.
   pricingKey?: string
   currency?: string
   totalFare?: number

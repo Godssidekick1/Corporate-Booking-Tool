@@ -54,28 +54,13 @@ export async function proxy(request: NextRequest) {
   // every creation path consistently set user_metadata.role, and is the
   // authoritative source of truth regardless.
   let resolvedRole = user?.user_metadata?.role as string | undefined
+  let firstLoginCompleted: boolean | undefined
 
   const isAuthOnly = pathname === '/login'
+  const isProfilePage = matchesBase(pathname, '/profile')
   const needsRoleCheck = user && (isAuthOnly || matchesBase(pathname, '/tmc'))
 
-  if (needsRoleCheck && !resolvedRole) {
-    const { data: employee } = await supabase
-      .from('employees')
-      .select('role')
-      .eq('id', user!.id)
-      .single()
-    resolvedRole = employee?.role
-  }
-
-  const isTmcSideRole = resolvedRole === 'tmc_admin' || resolvedRole === 'tc'
-
-  // ── Auth-only routes — redirect authenticated users to their dashboard ───
-  if (user && isAuthOnly) {
-    const destination = isTmcSideRole ? '/tmc/dashboard' : '/dashboard'
-    return NextResponse.redirect(new URL(destination, request.url))
-  }
-
-  // ── Protected routes — redirect unauthenticated users to /login ──────────
+  // ── Protected routes ──────────────────────────────────────────────────────
   // Every real page in the app other than /login and /auth/* belongs here.
   // Kept as an explicit allow-list (rather than "protect everything except
   // the public list") so a newly added route is protected by default unless
@@ -85,14 +70,51 @@ export async function proxy(request: NextRequest) {
     '/settings',
     '/tmc',
     '/book',       // covers /book, /book/flights, /book/hotels, /book/cabs,
-                    // /book/price/*, /book/passengers/*,
+                    // /book/price/*, /book/seats/*, /book/passengers/*,
                     // /book/passengers/edit/*, /book/confirm/*, /book/ticket/*
     '/bookings',
     '/approvals',
     '/reports',
+    '/profile',
   ]
   const isProtected = matchesAny(pathname, protectedBases)
 
+  // Scoped to the same set of routes as isProtected (minus /profile itself)
+  // rather than "everything that isn't /login" — a hypothetical future
+  // authenticated-but-unprotected page shouldn't get pulled into this check
+  // just because it isn't /login or /profile.
+  const needsOnboardingCheck = user && isProtected && !isProfilePage
+
+  if ((needsRoleCheck || needsOnboardingCheck) && (!resolvedRole || firstLoginCompleted === undefined)) {
+    const { data: employee } = await supabase
+      .from('employees')
+      .select('role, first_login_completed')
+      .eq('id', user!.id)
+      .single()
+    resolvedRole = resolvedRole ?? employee?.role
+    firstLoginCompleted = employee?.first_login_completed
+  }
+
+  const isTmcSideRole = resolvedRole === 'tmc_admin' || resolvedRole === 'tc'
+
+  // ── First login — force corporate-side employees to set up their travel
+  // profile before anything else. TMC staff are excluded (isTmcSideRole)
+  // since they aren't personally booking flights. /profile itself and
+  // /login/auth are excluded above to avoid redirecting to the very page
+  // this check would otherwise loop back to.
+  if (needsOnboardingCheck && !isTmcSideRole && firstLoginCompleted === false) {
+    const profileUrl = new URL('/profile', request.url)
+    profileUrl.searchParams.set('first', '1')
+    return NextResponse.redirect(profileUrl)
+  }
+
+  // ── Auth-only routes — redirect authenticated users to their dashboard ───
+  if (user && isAuthOnly) {
+    const destination = isTmcSideRole ? '/tmc/dashboard' : '/dashboard'
+    return NextResponse.redirect(new URL(destination, request.url))
+  }
+
+  // ── Redirect unauthenticated users to /login ──────────────────────────────
   if (!user && isProtected) {
     const loginUrl = new URL('/login', request.url)
     loginUrl.searchParams.set('next', pathname)
