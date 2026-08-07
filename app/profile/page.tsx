@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 
@@ -59,6 +59,23 @@ function fromDdMmYyyy(value: string | undefined): [string, string, string] {
 }
 
 export default function ProfilePage() {
+  // useSearchParams() requires a Suspense boundary during static prerendering
+  // (Next.js bails out to client-side rendering otherwise) — this wrapper is
+  // the boundary; ProfilePageInner is the actual page content.
+  return (
+    <Suspense fallback={
+      <div style={s.page}>
+        <div style={s.root}>
+          <div style={s.loadingCard}><div style={s.spinner} /></div>
+        </div>
+      </div>
+    }>
+      <ProfilePageInner />
+    </Suspense>
+  )
+}
+
+function ProfilePageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const isFirstLogin = searchParams.get('first') === '1'
