@@ -57,6 +57,8 @@ if (!key || !pricingKey || !provider || !resultIndex) {
       isRefundable: fareBreakdown[0]?.Refundable === 'Refundable',
       fareType: pricingInfo.FareType,
       fareBasis: pricingInfo.FareInfos?.FareInfo?.[0]?.PaxFareBasis || undefined,
+      mealIncluded: pricingInfo.Meal === 'YES',
+      cabinBaggageKg: flight?.Itineraries?.Itinerary?.[0]?.Baggage?.Allowance?.Cabin || undefined,
       changePenalties: (pricingInfo.Penalties?.ChangePenalty ?? []).map(p => ({ paxType: p.PaxType, text: p.Text.trim() })),
       cancelPenalties: (pricingInfo.Penalties?.CancelPenalty ?? []).map(p => ({ paxType: p.PaxType, text: p.Text.trim() })),
       passengerBreakup: fareBreakdown.map(fb => ({

@@ -49,6 +49,7 @@ export interface FareOption {
   refundable: boolean | undefined
   fareType: string | undefined
   fareBasis: string | undefined       // FareInfo.PaxFareBasis for the first (adult) pax entry
+  mealIncluded: boolean | undefined   // PricingInfo.Meal === "YES" — treated as chargeable/optional unless explicitly "YES"
   changePenalties: PenaltyLine[]
   cancelPenalties: PenaltyLine[]
 }
@@ -68,6 +69,7 @@ export interface FlatFlightResult {
   duration: string | undefined
   availableSeats: number | undefined
   checkInBaggageKg: string | undefined
+  cabinBaggageKg: string | undefined
   fareOptions: FareOption[]
   // Kept for backward compatibility with existing pages/flowStorage that
   // read these directly off the top level — mirrors fareOptions[0].
@@ -183,6 +185,7 @@ export async function POST(req: NextRequest) {
       refundable: fareBreakdown?.Refundable === 'Refundable',
       fareType: pricingInfo.FareType,
       fareBasis: fareBasis || undefined,  // seen as "" in real responses when not populated
+      mealIncluded: pricingInfo.Meal === 'YES',
       changePenalties: toPenaltyLines(pricingInfo.Penalties?.ChangePenalty),
       cancelPenalties: toPenaltyLines(pricingInfo.Penalties?.CancelPenalty),
     }
@@ -220,6 +223,7 @@ export async function POST(req: NextRequest) {
     duration: firstLeg?.Duration,
     availableSeats: firstLeg?.AvailableSeats ? parseInt(firstLeg.AvailableSeats) || undefined : undefined,
     checkInBaggageKg: firstLeg?.Baggage?.Allowance?.CheckIn,
+    cabinBaggageKg: firstLeg?.Baggage?.Allowance?.Cabin || undefined,
     fareOptions,
     // Mirrors fareOptions[0] — kept so existing consumers (flowStorage,
     // price page as it exists today) don't break while Step 2's rebuild

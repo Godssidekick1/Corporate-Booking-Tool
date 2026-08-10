@@ -128,10 +128,10 @@ export interface AirlineInfo {
 }
 
 export interface BaggageAllowance {
-  CheckIn: string       // e.g. "15" (kg)
-  Cabin: string         // e.g. "7" (kg)
+  CheckIn: string           // e.g. "15" (kg)
+  Cabin: string | null      // e.g. "7" (kg) — confirmed seen as null in a real response when cabin baggage isn't itemized separately
   CheckInPiece: string
-  CabinPiece: string
+  CabinPiece: string | null // confirmed seen as null alongside a null Cabin
 }
 
 // ItineraryInfo matches real Amadeus response shape.

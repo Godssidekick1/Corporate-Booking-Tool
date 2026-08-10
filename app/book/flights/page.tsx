@@ -71,7 +71,7 @@ export default function BookFlightsSearchPage() {
 
   const [origin, setOrigin] = useState('')
   const [destination, setDestination] = useState('')
-  const [departDate, setDepartDate] = useState('')
+  const [departDate, setDepartDate] = useState(() => new Date().toISOString().split('T')[0])
   const [adult, setAdult] = useState(1)
   const [child, setChild] = useState(0)
   const [infant, setInfant] = useState(0)
@@ -86,8 +86,18 @@ export default function BookFlightsSearchPage() {
   useEffect(() => {
     const lastOrigin = searchPreferences.getLastOrigin()
     const lastDestination = searchPreferences.getLastDestination()
+    const lastTravelers = searchPreferences.getLastTravelers()
+    const lastCabin = searchPreferences.getLastCabinPref()
+
     if (lastOrigin) setOrigin(lastOrigin)
     if (lastDestination) setDestination(lastDestination)
+    if (lastTravelers) {
+      setAdult(lastTravelers.adult)
+      setChild(lastTravelers.child)
+      setInfant(lastTravelers.infant)
+    }
+    if (lastCabin) setCabinPref(lastCabin)
+
     setShowPopularRoutes(!searchPreferences.hasSearchedBefore())
   }, [])
 
@@ -171,7 +181,7 @@ export default function BookFlightsSearchPage() {
       const foundResults: FlatFlightResult[] = data.results ?? []
       setResults(foundResults)
       setHasSearched(true)
-      searchPreferences.saveLastSearch(origin, destination)
+      searchPreferences.saveLastSearch({ origin, destination, adult, child, infant, cabinPref })
 
       // Save results + search context to sessionStorage so /book/price/[flightKey]
       // can look up the exact result the user picked without re-searching, and

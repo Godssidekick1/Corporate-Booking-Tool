@@ -49,6 +49,7 @@ export interface FareOption {
   refundable?: boolean
   fareType?: string
   fareBasis?: string
+  mealIncluded?: boolean       // PricingInfo.Meal === "YES" — treated as chargeable/optional unless explicitly "YES"
   changePenalties: PenaltyLine[]
   cancelPenalties: PenaltyLine[]
 }
@@ -68,6 +69,7 @@ export interface FlatFlightResult {
   duration?: string
   availableSeats?: number
   checkInBaggageKg?: string
+  cabinBaggageKg?: string
   fareOptions: FareOption[]
   // Mirrors fareOptions[0] — kept for pages still reading these directly.
   pricingKey?: string

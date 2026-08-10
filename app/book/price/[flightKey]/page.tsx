@@ -40,6 +40,8 @@ interface PriceApiResult {
   isRefundable?: boolean
   fareType?: string
   fareBasis?: string
+  mealIncluded?: boolean
+  cabinBaggageKg?: string
   changePenalties?: { paxType: string; text: string }[]
   cancelPenalties?: { paxType: string; text: string }[]
   passengerBreakup?: {
@@ -189,9 +191,6 @@ export default function SelectFarePage() {
 
   const hasMultipleFares = flight.fareOptions.length > 1
   const activeFare = flight.fareOptions[selectedFareIndex] as FareOption | undefined
-  const changePenalty = penaltySummary(pricing?.changePenalties ?? activeFare?.changePenalties)
-  const cancelPenalty = penaltySummary(pricing?.cancelPenalties ?? activeFare?.cancelPenalties)
-  const fareBasis = pricing?.fareBasis ?? activeFare?.fareBasis
 
   return (
     <div style={s.page}>
@@ -249,78 +248,75 @@ export default function SelectFarePage() {
           </div>
         </div>
 
-        {/* ── Fare option picker — only shown if more than one exists ── */}
-        {hasMultipleFares && (
-          <div style={s.card}>
-            <h2 style={s.cardTitle}>Choose a fare</h2>
-            <div style={s.fareOptionList}>
-              {flight.fareOptions.map((fare, i) => {
-                const isActive = i === selectedFareIndex
-                const changeText = penaltySummary(fare.changePenalties)
-                const cancelText = penaltySummary(fare.cancelPenalties)
-                return (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => handleSelectFareOption(i)}
-                    style={{ ...s.fareOptionBand, ...(isActive ? s.fareOptionBandActive : {}) }}
-                  >
-                    <div style={s.fareOptionTopRow}>
-                      <div style={s.fareOptionRadio}>
-                        <div style={{ ...s.fareOptionRadioDot, ...(isActive ? s.fareOptionRadioDotActive : {}) }} />
-                      </div>
-                      <span style={s.fareOptionType}>{fare.fareType ?? `Fare ${i + 1}`}</span>
+        {/* ── Fare options — one rich card per option, price + grouped ── */}
+        {/* rule sections (Baggage / Flexibility / Seats, Meals & More),   */}
+        {/* matching the structure of a standard OTA fare-comparison card. */}
+        {/* When there's only one fare option (the common case today —    */}
+        {/* confirmed real responses never show more than one), it still  */}
+        {/* renders as a single full card, not a disabled picker.         */}
+        <div style={s.card}>
+          <h2 style={s.cardTitle}>{hasMultipleFares ? 'Choose a fare' : 'Fare details'}</h2>
+          <div style={s.fareOptionList}>
+            {flight.fareOptions.map((fare, i) => {
+              const isActive = i === selectedFareIndex
+              const changeText = penaltySummary(fare.changePenalties)
+              const cancelText = penaltySummary(fare.cancelPenalties)
+              const mealsIncluded = pricing && isActive ? pricing.mealIncluded : fare.mealIncluded
+              const cabinBag = pricing && isActive ? pricing.cabinBaggageKg : flight.cabinBaggageKg
+
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => handleSelectFareOption(i)}
+                  style={{ ...s.fareCard, ...(isActive ? s.fareCardActive : {}), ...(hasMultipleFares ? {} : s.fareCardStatic) }}
+                >
+                  <div style={s.fareCardTopRow}>
+                    <div>
+                      <span style={s.fareCardType}>{fare.fareType ?? `Fare ${i + 1}`}</span>
                       <span style={{ ...s.fareOptionRefundTag, color: fare.refundable ? '#166534' : '#9CA3AF', background: fare.refundable ? '#F0FDF4' : '#F3F4F6' }}>
                         {fare.refundable ? 'Refundable' : 'Non-refundable'}
                       </span>
-                      <span style={s.fareOptionPrice}>{fare.currency} {fare.totalFare?.toLocaleString('en-IN')}</span>
                     </div>
+                    {hasMultipleFares && (
+                      <div style={s.fareOptionRadio}>
+                        <div style={{ ...s.fareOptionRadioDot, ...(isActive ? s.fareOptionRadioDotActive : {}) }} />
+                      </div>
+                    )}
+                  </div>
 
-                    <div style={s.fareOptionRulesRow}>
-                      {flight.checkInBaggageKg && (
-                        <span style={s.fareOptionRuleItem}>🧳 {flight.checkInBaggageKg}kg check-in</span>
-                      )}
-                      {fare.fareBasis && (
-                        <span style={s.fareOptionRuleItem}>Fare basis {fare.fareBasis}</span>
-                      )}
-                      {changeText && (
-                        <span style={s.fareOptionRuleItem}>Change: {changeText}</span>
-                      )}
-                      {cancelText && (
-                        <span style={s.fareOptionRuleItem}>Cancel: {cancelText}</span>
-                      )}
+                  <div style={s.fareCardPriceRow}>
+                    <span style={s.fareCardPrice}>{fare.currency} {fare.totalFare?.toLocaleString('en-IN')}</span>
+                    <span style={s.fareCardPriceSub}>per adult</span>
+                  </div>
+
+                  <div style={s.fareRuleSection}>
+                    <span style={s.fareRuleSectionTitle}>Baggage</span>
+                    <div style={s.fareRuleLine}><span style={s.fareRuleDot} />{cabinBag ? `${cabinBag}kg cabin baggage` : 'Cabin baggage as per airline policy'}</div>
+                    <div style={s.fareRuleLine}><span style={s.fareRuleDot} />{flight.checkInBaggageKg ? `${flight.checkInBaggageKg}kg check-in baggage` : 'Check-in baggage as per airline policy'}</div>
+                  </div>
+
+                  <div style={s.fareRuleSection}>
+                    <span style={s.fareRuleSectionTitle}>Flexibility</span>
+                    <div style={s.fareRuleLine}><span style={s.fareRuleDotAmber} />Cancellation fee {cancelText ?? 'as per airline policy'}</div>
+                    <div style={s.fareRuleLine}><span style={s.fareRuleDotAmber} />Date change fee {changeText ?? 'as per airline policy'}</div>
+                    {fare.fareBasis && (
+                      <div style={s.fareRuleLine}><span style={s.fareRuleDot} />Fare basis {fare.fareBasis}</div>
+                    )}
+                  </div>
+
+                  <div style={s.fareRuleSection}>
+                    <span style={s.fareRuleSectionTitle}>Seats, meals & more</span>
+                    <div style={s.fareRuleLine}><span style={s.fareRuleDotAmber} />Seats — chargeable, select on the next step</div>
+                    <div style={mealsIncluded ? s.fareRuleLine : { ...s.fareRuleLine }}>
+                      <span style={mealsIncluded ? s.fareRuleDot : s.fareRuleDotAmber} />
+                      {mealsIncluded ? 'Complimentary meal' : 'Meals — optional, at extra cost'}
                     </div>
-                  </button>
-                )
-              })}
-            </div>
+                  </div>
+                </button>
+              )
+            })}
           </div>
-        )}
-
-        {/* ── Fare rules — fare basis, baggage, penalties ─────────────── */}
-        <div style={s.card}>
-          <h2 style={s.cardTitle}>Fare rules</h2>
-          <div style={s.rulesGrid}>
-            {fareBasis && (
-              <div style={s.ruleRow}>
-                <span style={s.ruleLabel}>Fare basis</span>
-                <span style={s.ruleValue}>{fareBasis}</span>
-              </div>
-            )}
-            <div style={s.ruleRow}>
-              <span style={s.ruleLabel}>Check-in baggage</span>
-              <span style={s.ruleValue}>{flight.checkInBaggageKg ? `${flight.checkInBaggageKg}kg` : 'Not specified'}</span>
-            </div>
-            <div style={s.ruleRow}>
-              <span style={s.ruleLabel}>Change penalty</span>
-              <span style={s.ruleValue}>{changePenalty ?? 'Not specified'}</span>
-            </div>
-            <div style={s.ruleRow}>
-              <span style={s.ruleLabel}>Cancellation penalty</span>
-              <span style={s.ruleValue}>{cancelPenalty ?? 'Not specified'}</span>
-            </div>
-          </div>
-          <p style={s.rulesNote}>Penalties are set by the airline and shown as provided — they may vary by fare rule.</p>
         </div>
 
         {/* ── Fare breakdown — live from Pricing ──────────────────────── */}
@@ -440,28 +436,30 @@ const s: Record<string, React.CSSProperties> = {
   tagBudget: { color: '#7C2D12', background: '#FFF7ED' },
   tagFullService: { color: '#14532D', background: '#F0FDF4' },
 
-  fareOptionList: { display: 'flex', flexDirection: 'column' as const, gap: '10px' },
-  fareOptionBand: {
-    display: 'flex', flexDirection: 'column' as const, gap: '10px', width: '100%',
-    padding: '14px 16px', background: '#F9FAFB', border: '1.5px solid #E5E7EB', borderRadius: '12px',
+  fareOptionList: { display: 'flex', flexDirection: 'column' as const, gap: '12px' },
+  fareCard: {
+    display: 'flex', flexDirection: 'column' as const, width: '100%',
+    padding: '18px', background: '#F9FAFB', border: '1.5px solid #E5E7EB', borderRadius: '14px',
     cursor: 'pointer', textAlign: 'left' as const,
   },
-  fareOptionBandActive: { background: '#EEF2FF', borderColor: '#000835' },
-  fareOptionTopRow: { display: 'flex', alignItems: 'center', gap: '10px' },
+  fareCardActive: { background: '#EEF2FF', borderColor: '#000835' },
+  fareCardStatic: { cursor: 'default' },
+  fareCardTopRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' },
+  fareCardType: { fontSize: '14px', fontWeight: 700, color: '#111827', marginRight: '8px' },
+  fareOptionRefundTag: { fontSize: '10px', fontWeight: 700, padding: '3px 9px', borderRadius: '6px' },
   fareOptionRadio: { width: '18px', height: '18px', borderRadius: '50%', border: '2px solid #D1D5DB', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   fareOptionRadioDot: { width: '8px', height: '8px', borderRadius: '50%', background: 'transparent' },
   fareOptionRadioDotActive: { background: '#000835' },
-  fareOptionType: { fontSize: '13px', fontWeight: 700, color: '#111827', flex: 1 },
-  fareOptionRefundTag: { fontSize: '10px', fontWeight: 700, padding: '3px 9px', borderRadius: '6px' },
-  fareOptionPrice: { fontSize: '15px', fontWeight: 700, color: '#0A0A14', marginLeft: '4px' },
-  fareOptionRulesRow: { display: 'flex', flexWrap: 'wrap' as const, gap: '10px', paddingLeft: '28px' },
-  fareOptionRuleItem: { fontSize: '11px', color: '#6B7280' },
 
-  rulesGrid: { display: 'flex', flexDirection: 'column' as const, gap: '2px' },
-  ruleRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #F9FAFB' },
-  ruleLabel: { fontSize: '12.5px', color: '#6B7280' },
-  ruleValue: { fontSize: '12.5px', color: '#111827', fontWeight: 600 },
-  rulesNote: { fontSize: '10.5px', color: '#9CA3AF', margin: '12px 0 0', lineHeight: 1.5 },
+  fareCardPriceRow: { display: 'flex', alignItems: 'baseline', gap: '6px', marginBottom: '14px', paddingBottom: '14px', borderBottom: '1px dashed #E5E7EB' },
+  fareCardPrice: { fontSize: '20px', fontWeight: 700, color: '#0A0A14' },
+  fareCardPriceSub: { fontSize: '11px', color: '#9CA3AF' },
+
+  fareRuleSection: { marginBottom: '12px' },
+  fareRuleSectionTitle: { display: 'block', fontSize: '11px', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.4px', marginBottom: '6px' },
+  fareRuleLine: { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#374151', padding: '3px 0' },
+  fareRuleDot: { width: '6px', height: '6px', borderRadius: '50%', background: '#22C55E', flexShrink: 0 },
+  fareRuleDotAmber: { width: '6px', height: '6px', borderRadius: '50%', background: '#F59E0B', flexShrink: 0 },
 
   fareRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0' },
   fareLabel: { fontSize: '13px', color: '#6B7280' },
