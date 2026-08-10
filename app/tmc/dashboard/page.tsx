@@ -81,7 +81,7 @@ export default function TmcDashboardPage() {
         setPermissions(meData.permissions ?? [])
       }
       if (companiesData.ok) setCompanies(companiesData.companies)
-      if (client_groupsData.ok) setclient_groups(client_groupsData.client_groups)
+      if (client_groupsData.ok) setclient_groups(client_groupsData.clientGroups)
     }).finally(() => setLoading(false))
   }, [])
 
