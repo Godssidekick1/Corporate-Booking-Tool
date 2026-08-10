@@ -1,20 +1,48 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-// Exact-or-child-segment match, e.g. matchesBase('/book/flights', '/book')
-// is true but matchesBase('/bookmark', '/book') is false. Plain
-// pathname.startsWith(base) would incorrectly treat any future route that
-// merely starts with the same characters (e.g. '/bookmark', '/settings-old')
-// as falling under this one — this guards every check below against that.
+// Exact-or-child-segment match.
+// /book/flights → matches /book
+// /bookmark     → does NOT match /book
 function matchesBase(pathname: string, base: string): boolean {
   return pathname === base || pathname.startsWith(base + '/')
 }
 
 function matchesAny(pathname: string, bases: string[]): boolean {
-  return bases.some(base => matchesBase(pathname, base))
+  return bases.some((base) => matchesBase(pathname, base))
 }
 
 export async function proxy(request: NextRequest) {
+  const { pathname } = request.nextUrl
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // PUBLIC AUTH ROUTES
+  // ─────────────────────────────────────────────────────────────────────────
+  //
+  // /auth/* handles things like:
+  // - auth/callback
+  // - password recovery
+  // - set-password
+  //
+  // These routes should not call supabase.auth.getUser().
+  // They need to be able to complete the authentication flow without being
+  // treated as normally authenticated protected pages.
+  //
+  // This check happens BEFORE creating the Supabase client and BEFORE
+  // getUser(), avoiding an unnecessary network round trip to Supabase.
+  //
+  // /api/* is NOT handled here because it is excluded from the matcher below.
+  // API routes perform their own authentication server-side.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  if (matchesAny(pathname, ['/auth'])) {
+    return NextResponse.next({ request })
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // SUPABASE SERVER CLIENT
+  // ─────────────────────────────────────────────────────────────────────────
+
   let supabaseResponse = NextResponse.next({ request })
 
   const supabase = createServerClient(
@@ -22,115 +50,214 @@ export async function proxy(request: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        getAll() { return request.cookies.getAll() },
+        getAll() {
+          return request.cookies.getAll()
+        },
+
         setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
+          cookiesToSet.forEach(({ name, value }) => {
+            request.cookies.set(name, value)
+          })
+
           supabaseResponse = NextResponse.next({ request })
-          cookiesToSet.forEach(({ name, value, options }) =>
+
+          cookiesToSet.forEach(({ name, value, options }) => {
             supabaseResponse.cookies.set(name, value, options)
-          )
+          })
         },
       },
     }
   )
 
-  const { data: { user } } = await supabase.auth.getUser()
-  const { pathname } = request.nextUrl
+  // ─────────────────────────────────────────────────────────────────────────
+  // AUTHENTICATION
+  // ─────────────────────────────────────────────────────────────────────────
+  //
+  // At this point we know the request is not /auth/* and not /api/*.
+  // Therefore getUser() is only performed for pages where the proxy actually
+  // needs authentication information.
+  // ─────────────────────────────────────────────────────────────────────────
 
-  // ── Public — no auth enforcement at all ───────────────────────────────────
-  // /auth/* covers the invite/reset hash-token landing (auth/callback) and
-  // the set-password page, which must work with only a short-lived recovery
-  // session, not a normal signed-in one — enforcing the full protected-route
-  // check here would risk bouncing that flow to /login mid-flight.
-  // /api/* is intentionally NOT gated here — every /api/book, /api/tmc, etc.
-  // route does its own supabase.auth.getUser() check server-side. The proxy
-  // is a routing/UX layer, not the security boundary for API calls.
-  const isPublic = matchesAny(pathname, ['/auth', '/api'])
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
 
-  if (isPublic) return supabaseResponse
+  // ─────────────────────────────────────────────────────────────────────────
+  // PROTECTED ROUTES
+  // ─────────────────────────────────────────────────────────────────────────
+  //
+  // Keep this as an explicit allow-list.
+  //
+  // IMPORTANT:
+  // A newly created page is NOT automatically protected by this list.
+  // It must be added here if it requires authentication.
+  // ─────────────────────────────────────────────────────────────────────────
 
-  // Try metadata first (cheap, no DB call). Fall back to a real DB lookup
-  // if metadata is missing role info — this covers accounts created before
-  // every creation path consistently set user_metadata.role, and is the
-  // authoritative source of truth regardless.
-  let resolvedRole = user?.user_metadata?.role as string | undefined
-  let firstLoginCompleted: boolean | undefined
-
-  const isAuthOnly = pathname === '/login'
-  const isProfilePage = matchesBase(pathname, '/profile')
-  const needsRoleCheck = user && (isAuthOnly || matchesBase(pathname, '/tmc'))
-
-  // ── Protected routes ──────────────────────────────────────────────────────
-  // Every real page in the app other than /login and /auth/* belongs here.
-  // Kept as an explicit allow-list (rather than "protect everything except
-  // the public list") so a newly added route is protected by default unless
-  // someone deliberately adds it above — the safer failure direction.
   const protectedBases = [
     '/dashboard',
     '/settings',
     '/tmc',
-    '/book',       // covers /book, /book/flights, /book/hotels, /book/cabs,
-                    // /book/price/*, /book/seats/*, /book/passengers/*,
-                    // /book/passengers/edit/*, /book/confirm/*, /book/ticket/*
+    '/book',
     '/bookings',
     '/approvals',
     '/reports',
     '/profile',
   ]
+
   const isProtected = matchesAny(pathname, protectedBases)
 
-  // Scoped to the same set of routes as isProtected (minus /profile itself)
-  // rather than "everything that isn't /login" — a hypothetical future
-  // authenticated-but-unprotected page shouldn't get pulled into this check
-  // just because it isn't /login or /profile.
-  const needsOnboardingCheck = user && isProtected && !isProfilePage
+  // ─────────────────────────────────────────────────────────────────────────
+  // ROUTE TYPES
+  // ─────────────────────────────────────────────────────────────────────────
 
-  if ((needsRoleCheck || needsOnboardingCheck) && (!resolvedRole || firstLoginCompleted === undefined)) {
+  const isAuthOnly = pathname === '/login'
+
+  const isProfilePage = matchesBase(pathname, '/profile')
+
+  const needsRoleCheck =
+    !!user &&
+    (isAuthOnly || matchesBase(pathname, '/tmc'))
+
+  // Profile itself is where the user completes onboarding, so don't redirect
+  // /profile → /profile when first_login_completed is false.
+  const needsOnboardingCheck =
+    !!user &&
+    isProtected &&
+    !isProfilePage
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // USER ROLE / ONBOARDING DATA
+  // ─────────────────────────────────────────────────────────────────────────
+  //
+  // Try user_metadata first for role because it avoids a database query when
+  // the metadata is present.
+  //
+  // first_login_completed is stored in employees, so when onboarding needs to
+  // be checked we fetch it from the database.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  let resolvedRole =
+    user?.user_metadata?.role as string | undefined
+
+  let firstLoginCompleted: boolean | undefined
+
+  if (
+    (needsRoleCheck || needsOnboardingCheck) &&
+    (!resolvedRole || firstLoginCompleted === undefined)
+  ) {
     const { data: employee } = await supabase
       .from('employees')
       .select('role, first_login_completed')
       .eq('id', user!.id)
       .single()
+
     resolvedRole = resolvedRole ?? employee?.role
     firstLoginCompleted = employee?.first_login_completed
   }
 
-  const isTmcSideRole = resolvedRole === 'tmc_admin' || resolvedRole === 'tc'
+  const isTmcSideRole =
+    resolvedRole === 'tmc_admin' ||
+    resolvedRole === 'tc'
 
-  // ── First login — force corporate-side employees to set up their travel
-  // profile before anything else. TMC staff are excluded (isTmcSideRole)
-  // since they aren't personally booking flights. /profile itself and
-  // /login/auth are excluded above to avoid redirecting to the very page
-  // this check would otherwise loop back to.
-  if (needsOnboardingCheck && !isTmcSideRole && firstLoginCompleted === false) {
+  // ─────────────────────────────────────────────────────────────────────────
+  // FIRST-LOGIN ONBOARDING
+  // ─────────────────────────────────────────────────────────────────────────
+  //
+  // Corporate-side employees who haven't completed their first-login profile
+  // are forced to /profile?first=1.
+  //
+  // TMC admins / TCs are excluded because they are TMC-side users and don't
+  // personally go through the corporate employee booking profile flow.
+  //
+  // /profile itself is excluded above to prevent a redirect loop.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  if (
+    needsOnboardingCheck &&
+    !isTmcSideRole &&
+    firstLoginCompleted === false
+  ) {
     const profileUrl = new URL('/profile', request.url)
+
     profileUrl.searchParams.set('first', '1')
+
     return NextResponse.redirect(profileUrl)
   }
 
-  // ── Auth-only routes — redirect authenticated users to their dashboard ───
+  // ─────────────────────────────────────────────────────────────────────────
+  // LOGIN PAGE
+  // ─────────────────────────────────────────────────────────────────────────
+  //
+  // If an already-authenticated user visits /login, send them to the correct
+  // dashboard instead.
+  // ─────────────────────────────────────────────────────────────────────────
+
   if (user && isAuthOnly) {
-    const destination = isTmcSideRole ? '/tmc/dashboard' : '/dashboard'
-    return NextResponse.redirect(new URL(destination, request.url))
+    const destination = isTmcSideRole
+      ? '/tmc/dashboard'
+      : '/dashboard'
+
+    return NextResponse.redirect(
+      new URL(destination, request.url)
+    )
   }
 
-  // ── Redirect unauthenticated users to /login ──────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // PROTECTED ROUTES
+  // ─────────────────────────────────────────────────────────────────────────
+  //
+  // An unauthenticated user trying to access a protected page gets sent to
+  // /login.
+  //
+  // The original destination is preserved in ?next= so the application can
+  // optionally return the user there after login.
+  // ─────────────────────────────────────────────────────────────────────────
+
   if (!user && isProtected) {
     const loginUrl = new URL('/login', request.url)
+
     loginUrl.searchParams.set('next', pathname)
+
     return NextResponse.redirect(loginUrl)
   }
 
-  // ── TMC-only routes — non-TMC users get sent to their own dashboard ──────
-  if (user && matchesBase(pathname, '/tmc') && !isTmcSideRole) {
-    return NextResponse.redirect(new URL('/dashboard', request.url))
+  // ─────────────────────────────────────────────────────────────────────────
+  // TMC-ONLY ROUTES
+  // ─────────────────────────────────────────────────────────────────────────
+  //
+  // A logged-in corporate employee cannot access /tmc/*.
+  // Only tmc_admin and tc users are allowed there.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  if (
+    user &&
+    matchesBase(pathname, '/tmc') &&
+    !isTmcSideRole
+  ) {
+    return NextResponse.redirect(
+      new URL('/dashboard', request.url)
+    )
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // ALLOW REQUEST
+  // ─────────────────────────────────────────────────────────────────────────
 
   return supabaseResponse
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// MATCHER
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// /api and /api/* are excluded because API routes perform their own
+// authentication server-side.
+//
+// Static assets are also excluded.
+// ─────────────────────────────────────────────────────────────────────────────
+
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!api(?:/|$)|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }
