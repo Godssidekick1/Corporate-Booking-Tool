@@ -254,20 +254,45 @@ export default function SelectFarePage() {
           <div style={s.card}>
             <h2 style={s.cardTitle}>Choose a fare</h2>
             <div style={s.fareOptionList}>
-              {flight.fareOptions.map((fare, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  onClick={() => handleSelectFareOption(i)}
-                  style={{ ...s.fareOptionCard, ...(i === selectedFareIndex ? s.fareOptionCardActive : {}) }}
-                >
-                  <span style={s.fareOptionType}>{fare.fareType ?? `Fare ${i + 1}`}</span>
-                  <span style={s.fareOptionPrice}>{fare.currency} {fare.totalFare?.toLocaleString('en-IN')}</span>
-                  <span style={{ ...s.fareOptionRefund, color: fare.refundable ? '#166534' : '#9CA3AF' }}>
-                    {fare.refundable ? 'Refundable' : 'Non-refundable'}
-                  </span>
-                </button>
-              ))}
+              {flight.fareOptions.map((fare, i) => {
+                const isActive = i === selectedFareIndex
+                const changeText = penaltySummary(fare.changePenalties)
+                const cancelText = penaltySummary(fare.cancelPenalties)
+                return (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => handleSelectFareOption(i)}
+                    style={{ ...s.fareOptionBand, ...(isActive ? s.fareOptionBandActive : {}) }}
+                  >
+                    <div style={s.fareOptionTopRow}>
+                      <div style={s.fareOptionRadio}>
+                        <div style={{ ...s.fareOptionRadioDot, ...(isActive ? s.fareOptionRadioDotActive : {}) }} />
+                      </div>
+                      <span style={s.fareOptionType}>{fare.fareType ?? `Fare ${i + 1}`}</span>
+                      <span style={{ ...s.fareOptionRefundTag, color: fare.refundable ? '#166534' : '#9CA3AF', background: fare.refundable ? '#F0FDF4' : '#F3F4F6' }}>
+                        {fare.refundable ? 'Refundable' : 'Non-refundable'}
+                      </span>
+                      <span style={s.fareOptionPrice}>{fare.currency} {fare.totalFare?.toLocaleString('en-IN')}</span>
+                    </div>
+
+                    <div style={s.fareOptionRulesRow}>
+                      {flight.checkInBaggageKg && (
+                        <span style={s.fareOptionRuleItem}>🧳 {flight.checkInBaggageKg}kg check-in</span>
+                      )}
+                      {fare.fareBasis && (
+                        <span style={s.fareOptionRuleItem}>Fare basis {fare.fareBasis}</span>
+                      )}
+                      {changeText && (
+                        <span style={s.fareOptionRuleItem}>Change: {changeText}</span>
+                      )}
+                      {cancelText && (
+                        <span style={s.fareOptionRuleItem}>Cancel: {cancelText}</span>
+                      )}
+                    </div>
+                  </button>
+                )
+              })}
             </div>
           </div>
         )}
@@ -415,16 +440,22 @@ const s: Record<string, React.CSSProperties> = {
   tagBudget: { color: '#7C2D12', background: '#FFF7ED' },
   tagFullService: { color: '#14532D', background: '#F0FDF4' },
 
-  fareOptionList: { display: 'flex', flexDirection: 'column' as const, gap: '8px' },
-  fareOptionCard: {
-    display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%',
-    padding: '12px 14px', background: '#F9FAFB', border: '1.5px solid #E5E7EB', borderRadius: '10px', cursor: 'pointer',
-    textAlign: 'left' as const,
+  fareOptionList: { display: 'flex', flexDirection: 'column' as const, gap: '10px' },
+  fareOptionBand: {
+    display: 'flex', flexDirection: 'column' as const, gap: '10px', width: '100%',
+    padding: '14px 16px', background: '#F9FAFB', border: '1.5px solid #E5E7EB', borderRadius: '12px',
+    cursor: 'pointer', textAlign: 'left' as const,
   },
-  fareOptionCardActive: { background: '#EEF2FF', borderColor: '#000835' },
-  fareOptionType: { fontSize: '12.5px', fontWeight: 600, color: '#111827', flex: 1 },
-  fareOptionPrice: { fontSize: '13px', fontWeight: 700, color: '#0A0A14', marginRight: '10px' },
-  fareOptionRefund: { fontSize: '10.5px', fontWeight: 600 },
+  fareOptionBandActive: { background: '#EEF2FF', borderColor: '#000835' },
+  fareOptionTopRow: { display: 'flex', alignItems: 'center', gap: '10px' },
+  fareOptionRadio: { width: '18px', height: '18px', borderRadius: '50%', border: '2px solid #D1D5DB', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  fareOptionRadioDot: { width: '8px', height: '8px', borderRadius: '50%', background: 'transparent' },
+  fareOptionRadioDotActive: { background: '#000835' },
+  fareOptionType: { fontSize: '13px', fontWeight: 700, color: '#111827', flex: 1 },
+  fareOptionRefundTag: { fontSize: '10px', fontWeight: 700, padding: '3px 9px', borderRadius: '6px' },
+  fareOptionPrice: { fontSize: '15px', fontWeight: 700, color: '#0A0A14', marginLeft: '4px' },
+  fareOptionRulesRow: { display: 'flex', flexWrap: 'wrap' as const, gap: '10px', paddingLeft: '28px' },
+  fareOptionRuleItem: { fontSize: '11px', color: '#6B7280' },
 
   rulesGrid: { display: 'flex', flexDirection: 'column' as const, gap: '2px' },
   ruleRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #F9FAFB' },
@@ -451,4 +482,4 @@ const s: Record<string, React.CSSProperties> = {
     height: '48px', width: '100%', background: '#000835', color: '#fff', fontSize: '14px', fontWeight: 700,
     border: 'none', borderRadius: '10px', cursor: 'pointer', letterSpacing: '0.2px',
   },
-} 
+}
