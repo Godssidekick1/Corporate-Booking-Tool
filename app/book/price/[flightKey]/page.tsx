@@ -167,10 +167,10 @@ export default function SelectFarePage() {
     return (
       <div style={s.page}>
         <div style={s.root}>
-          <Link href="/book" style={s.backLink}>← Back to results</Link>
+          <Link href="/book/flights" style={s.backLink}>← Back to results</Link>
           <div style={s.errorCard}>
             <p style={s.errorTitle}>⚠ {error}</p>
-            <Link href="/book" style={s.errorLink}>← Search again</Link>
+            <Link href="/book/flights" style={s.errorLink}>← Search again</Link>
           </div>
         </div>
       </div>
@@ -196,7 +196,7 @@ export default function SelectFarePage() {
   return (
     <div style={s.page}>
       <div style={s.root}>
-        <Link href="/book" style={s.backLink}>← Back to results</Link>
+        <Link href="/book/flights" style={s.backLink}>← Back to results</Link>
 
         <div style={s.header}>
           <h1 style={s.heading}>Select your fare</h1>

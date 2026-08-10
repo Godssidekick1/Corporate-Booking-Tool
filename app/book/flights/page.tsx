@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useEffect, Suspense } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import AirportDropdown from '@/app/components/AirportDropdown'
 import { flowStorage } from '@/app/lib/book/flowStorage'
+import { searchPreferences } from '@/app/lib/book/searchPreferences'
 import { FlatFlightResult, formatTime, formatDayLabel } from '@/app/lib/book/types'
 
 function toApiDate(input: string) {
@@ -55,18 +56,18 @@ const DEPARTURE_FILTERS = [
   { key: 'night', label: 'Night', sub: '9pm–5am' },
 ] as const
 
-function BookFlightsSearchPage() {
-  const router = useRouter()
-  const searchParams = useSearchParams()
+// Shown as one-click quick-search chips only for first-time users (no saved
+// search history yet) — a common-route shortcut, not a permanent feature of
+// the form once someone has a real search history to fall back on instead.
+const POPULAR_ROUTES = [
+  { origin: 'DEL', destination: 'BOM', label: 'Delhi → Mumbai' },
+  { origin: 'DEL', destination: 'BLR', label: 'Delhi → Bengaluru' },
+  { origin: 'BOM', destination: 'BLR', label: 'Mumbai → Bengaluru' },
+  { origin: 'DEL', destination: 'GOI', label: 'Delhi → Goa' },
+] as const
 
-  // A flight search reached from a trip's workspace carries ?tripId= so the
-  // eventual booking gets tagged with trip_id at AddPassenger time. Stored
-  // via flowStorage (not re-read from the URL on every subsequent page)
-  // since /book/price and /book/passengers don't carry query params forward.
-  useEffect(() => {
-    const tripId = searchParams.get('tripId')
-    if (tripId) flowStorage.setTripId(tripId)
-  }, [searchParams])
+export default function BookFlightsSearchPage() {
+  const router = useRouter()
 
   const [origin, setOrigin] = useState('')
   const [destination, setDestination] = useState('')
@@ -76,6 +77,25 @@ function BookFlightsSearchPage() {
   const [infant, setInfant] = useState(0)
   const [travelersOpen, setTravelersOpen] = useState(false)
   const [cabinPref, setCabinPref] = useState<'Economy' | 'Premium Economy' | 'Business' | 'First'>('Economy')
+
+  // Shown only until the person has searched at least once, ever — after
+  // that, the remembered origin/destination (below) is more useful than a
+  // generic popular-route suggestion.
+  const [showPopularRoutes, setShowPopularRoutes] = useState(false)
+
+  useEffect(() => {
+    const lastOrigin = searchPreferences.getLastOrigin()
+    const lastDestination = searchPreferences.getLastDestination()
+    if (lastOrigin) setOrigin(lastOrigin)
+    if (lastDestination) setDestination(lastDestination)
+    setShowPopularRoutes(!searchPreferences.hasSearchedBefore())
+  }, [])
+
+  function applyPopularRoute(route: { origin: string; destination: string }) {
+    setOrigin(route.origin)
+    setDestination(route.destination)
+    setShowPopularRoutes(false)
+  }
 
   const [searching, setSearching] = useState(false)
   const [hasSearched, setHasSearched] = useState(false)
@@ -137,7 +157,6 @@ function BookFlightsSearchPage() {
           origin, destination,
           departDate: toApiDate(departDate),
           adult, child, infant,
-          cabinClass: cabinPref,
         }),
       })
       const data = await res.json()
@@ -152,6 +171,7 @@ function BookFlightsSearchPage() {
       const foundResults: FlatFlightResult[] = data.results ?? []
       setResults(foundResults)
       setHasSearched(true)
+      searchPreferences.saveLastSearch(origin, destination)
 
       // Save results + search context to sessionStorage so /book/price/[flightKey]
       // can look up the exact result the user picked without re-searching, and
@@ -234,6 +254,22 @@ function BookFlightsSearchPage() {
                 />
               </div>
             </div>
+
+            {showPopularRoutes && (
+              <div style={s.popularRoutesRow}>
+                <span style={s.popularRoutesLabel}>Popular:</span>
+                {POPULAR_ROUTES.map(route => (
+                  <button
+                    key={`${route.origin}-${route.destination}`}
+                    type="button"
+                    onClick={() => applyPopularRoute(route)}
+                    style={s.popularRouteChip}
+                  >
+                    {route.label}
+                  </button>
+                ))}
+              </div>
+            )}
 
             <div style={s.secondaryFields}>
               <div style={s.field}>
@@ -551,6 +587,13 @@ const s: Record<string, React.CSSProperties> = {
   routeFieldsWrap: { display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '16px' },
   routeFields: { display: 'flex', alignItems: 'center', gap: '0', position: 'relative', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '12px', padding: '4px' },
   routeField: { flex: 1, display: 'flex', flexDirection: 'column', gap: '2px', padding: '10px 16px' },
+
+  popularRoutesRow: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' as const },
+  popularRoutesLabel: { fontSize: '11.5px', color: '#9CA3AF', fontWeight: 500 },
+  popularRouteChip: {
+    fontSize: '11.5px', fontWeight: 600, color: '#3730A3', background: '#EEF2FF',
+    border: '1px solid #E0E7FF', borderRadius: '20px', padding: '5px 12px', cursor: 'pointer',
+  },
   swapBtn: {
     width: '36px', height: '36px', flexShrink: 0, borderRadius: '50%', background: '#fff',
     border: '1.5px solid #E5E7EB', color: '#000835', fontSize: '15px', cursor: 'pointer',
@@ -666,16 +709,4 @@ const s: Record<string, React.CSSProperties> = {
     width: '100%', height: '34px', marginTop: '10px', background: '#000835', color: '#fff',
     fontSize: '12px', fontWeight: 600, border: 'none', borderRadius: '8px', cursor: 'pointer',
   },
-}
-
-// useSearchParams() requires a Suspense boundary for Next.js's static
-// export/prerendering to succeed — without this wrapper, the build fails
-// with "Export encountered an error on /book/flights/page" even though
-// nothing is functionally wrong with the component itself.
-export default function BookFlightsSearchPageWrapper() {
-  return (
-    <Suspense fallback={null}>
-      <BookFlightsSearchPage />
-    </Suspense>
-  )
 }
