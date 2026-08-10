@@ -66,7 +66,7 @@ export default function TmcCompanyDetailPage() {
           booking_mode: c.booking_mode ?? 'sbt',
           client_group_id: c.client_group_id ?? '',
         })
-        if (client_groupsData.ok) setclient_groups(client_groupsData.client_groups)
+        if (client_groupsData.ok) setclient_groups(client_groupsData.clientGroups ?? [])
       })
       .catch(() => setError('Could not load company.'))
       .finally(() => setLoading(false))
