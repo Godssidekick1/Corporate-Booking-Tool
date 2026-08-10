@@ -12,7 +12,7 @@ export interface OnboardCompanyInput {
   primaryContactPhone?: string
   size?: string
   bookingMode?: 'sbt' | 'cbt' | 'both'
-  client_group_Id?: string | null
+  client_groupId?: string | null
 }
 
 export interface OnboardCompanyResult {
@@ -53,11 +53,11 @@ export async function onboardCompany(
 
   // If a client_groupId was given, confirm it actually belongs to this TMC —
   // prevents cross-tenant assignment via a forged id.
-  if (input.client_group_Id) {
+  if (input.client_groupId) {
     const { data: client_group } = await service
       .from('client_groups')
       .select('id')
-      .eq('id', input.client_group_Id)
+      .eq('id', input.client_groupId)
       .eq('tmc_id', tmcId)
       .maybeSingle()
 
@@ -83,7 +83,7 @@ export async function onboardCompany(
         primary_contact_phone: input.primaryContactPhone?.trim() || null,
         size: input.size || null,
         booking_mode: bookingMode,
-        client_group_id: input.client_group_Id || null,
+        client_group_id: input.client_groupId || null,
       })
       .select('id')
       .single()
@@ -113,9 +113,20 @@ export async function onboardCompany(
     const adminBand = bands.find(b => b.code === 'L5')
     if (!adminBand) throw new Error('Band seeding failed')
 
+    // redirectTo points at /auth/callback, not /login — /login is gated by
+    // proxy.ts's "authenticated user visiting /login -> redirect to
+    // dashboard" rule, which runs server-side before any client page loads,
+    // so anyone with an existing session cookie in that browser would get
+    // bounced away before this invite was ever processed. /auth/callback is
+    // exempt from that redirect and does a proper server-side code
+    // exchange; next=/auth/set-password sends them to actually choose a
+    // password afterward instead of falling through to a role-based
+    // redirect. (Same fix as the other inviteUserByEmail call sites —
+    // this one was missed in that pass since it's shared logic, not a
+    // route file.)
     const { data: authData, error: inviteError } =
       await service.auth.admin.inviteUserByEmail(adminEmail.trim().toLowerCase(), {
-        redirectTo: `${appUrl}/login`,
+        redirectTo: `${appUrl}/auth/callback?next=/auth/set-password`,
       })
 
     if (inviteError) {
