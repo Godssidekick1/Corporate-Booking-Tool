@@ -1,386 +1,602 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams, useRouter } from 'next/navigation'
-import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import AirportDropdown from '@/app/components/AirportDropdown'
 import { flowStorage } from '@/app/lib/book/flowStorage'
-import { FlatFlightResult, FareOption, formatTime, formatDayLabel } from '@/app/lib/book/types'
+import { searchPreferences } from '@/app/lib/book/searchPreferences'
+import { FlatFlightResult, formatTime, formatDayLabel } from '@/app/lib/book/types'
 
-// ── /book/price/[flightKey] — Step 2: Select fare ─────────────────────────────
-// Merges what used to be two separate concepts into one screen:
-//   1. Fare details already available from the Availability response
-//      (baggage, fare basis, terminals, cancellation/change penalties, fare
-//      type, refundability) — shown immediately, no extra API call.
-//   2. Pricing — locks the live fare with the airline (unchanged from
-//      before: same /api/book/price call, same flowStorage.savePricedFare).
-//
-// These run at the same time rather than gating one behind the other: fare
-// details render the instant the page loads (from sessionStorage), while
-// Pricing confirms in the background. If Pricing comes back with a
-// different total than what search showed, the live number wins — search
-// results are always provisional, Pricing is the source of truth.
-//
-// Fare options: today's real Amadeus responses only ever contain one
-// PricingInfo per flight (confirmed against UAT), but the underlying shape
-// is an array and production may return more than one — so this renders
-// however many fareOptions actually exist, defaulting to the first when
-// there's only one, rather than assuming there's exactly one.
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface PriceApiResult {
-  ok: boolean
-  reason?: string
-  error?: string
-  key?: string
-  referenceNo?: string
-  totalFare?: number
-  baseFare?: number
-  tax?: number
-  currency?: string
-  isRefundable?: boolean
-  fareType?: string
-  fareBasis?: string
-  mealIncluded?: boolean
-  cabinBaggageKg?: string
-  changePenalties?: { paxType: string; text: string }[]
-  cancelPenalties?: { paxType: string; text: string }[]
-  passengerBreakup?: {
-    PaxType: string
-    BaseFare: number
-    Tax: number
-    TotalFare: number
-  }[]
+function toApiDate(input: string) {
+  const [y, m, d] = input.split('-')
+  return `${d}/${m}/${y}`
 }
 
-function penaltySummary(lines: { paxType: string; text: string }[] | undefined): string | null {
-  if (!lines || lines.length === 0) return null
-  // Real responses show the same penalty text repeated per PaxType (ADT/CHD
-  // both "INR3000", INF "0") far more often than genuinely different
-  // amounts per type — collapsing to the adult figure keeps this readable
-  // instead of listing three near-identical lines for a single-traveler
-  // search. If they DO differ, showing all of them would be the more
-  // correct choice, but that's not been seen in any real response yet.
-  const adult = lines.find(l => l.paxType === 'ADT')
-  return (adult ?? lines[0]).text || '—'
+function toDisplayDate(input: string) {
+  if (!input) return ''
+  const d = new Date(input)
+  return d.toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short' })
 }
 
-export default function SelectFarePage() {
+function durationMinutes(duration: string | undefined): number {
+  if (!duration) return Infinity
+  const [h, m] = duration.split(':').map(Number)
+  return (h || 0) * 60 + (m || 0)
+}
+
+type DeparturePeriod = 'morning' | 'afternoon' | 'evening' | 'night'
+
+// Morning 5am–12pm, Afternoon 12pm–5pm, Evening 5pm–9pm, Night 9pm–5am —
+// standard airline-search buckets, based on local departure time from the
+// ISO dateTime string (same field formatTime() already renders from).
+function departurePeriod(iso: string | undefined): DeparturePeriod | null {
+  if (!iso) return null
+  const hour = new Date(iso).getHours()
+  if (hour >= 5 && hour < 12) return 'morning'
+  if (hour >= 12 && hour < 17) return 'afternoon'
+  if (hour >= 17 && hour < 21) return 'evening'
+  return 'night'
+}
+
+const STOP_FILTERS = [
+  { key: 'nonstop', label: 'Non-stop', test: (f: FlatFlightResult) => f.stopCount === 0 },
+  { key: '1stop', label: '1 stop', test: (f: FlatFlightResult) => f.stopCount === 1 },
+  { key: '2plusstop', label: '2+ stops', test: (f: FlatFlightResult) => f.stopCount >= 2 },
+] as const
+
+const FARE_TYPE_FILTERS = [
+  { key: 'ndc', label: 'NDC', test: (f: FlatFlightResult) => Boolean(f.isNdc) },
+  { key: 'nonndc', label: 'Non-NDC', test: (f: FlatFlightResult) => !f.isNdc },
+] as const
+
+const DEPARTURE_FILTERS = [
+  { key: 'morning', label: 'Morning', sub: '5am–12pm' },
+  { key: 'afternoon', label: 'Afternoon', sub: '12pm–5pm' },
+  { key: 'evening', label: 'Evening', sub: '5pm–9pm' },
+  { key: 'night', label: 'Night', sub: '9pm–5am' },
+] as const
+
+// Shown as one-click quick-search chips only for first-time users (no saved
+// search history yet) — a common-route shortcut, not a permanent feature of
+// the form once someone has a real search history to fall back on instead.
+const POPULAR_ROUTES = [
+  { origin: 'DEL', destination: 'BOM', label: 'Delhi → Mumbai' },
+  { origin: 'DEL', destination: 'BLR', label: 'Delhi → Bengaluru' },
+  { origin: 'BOM', destination: 'BLR', label: 'Mumbai → Bengaluru' },
+  { origin: 'DEL', destination: 'GOI', label: 'Delhi → Goa' },
+] as const
+
+export default function BookFlightsSearchPage() {
   const router = useRouter()
-  const params = useParams<{ flightKey: string }>()
-  const flightKey = decodeURIComponent(params.flightKey)
 
-  const [flight, setFlight] = useState<FlatFlightResult | null>(null)
-  const [selectedFareIndex, setSelectedFareIndex] = useState(0)
-  const [pricing, setPricing] = useState<PriceApiResult | null>(null)
-  const [pricingLoading, setPricingLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [continuing, setContinuing] = useState(false)
+  const [origin, setOrigin] = useState('')
+  const [destination, setDestination] = useState('')
+  const [departDate, setDepartDate] = useState(() => new Date().toISOString().split('T')[0])
+  const [adult, setAdult] = useState(1)
+  const [child, setChild] = useState(0)
+  const [infant, setInfant] = useState(0)
+  const [travelersOpen, setTravelersOpen] = useState(false)
+  const [cabinPref, setCabinPref] = useState<'Economy' | 'Premium Economy' | 'Business' | 'First'>('Economy')
+  // Ticked by default — the common case is booking your own travel, and the
+  // passengers page autofills slot 1 from the traveler profile whenever this
+  // is true. Unticking it means "I'm booking for someone else," so slot 1
+  // stays blank for manual entry instead of silently filling in the current
+  // employee's own passport/DOB on a colleague's booking.
+  const [bookingForSelf, setBookingForSelf] = useState(true)
+
+  // Shown only until the person has searched at least once, ever — after
+  // that, the remembered origin/destination (below) is more useful than a
+  // generic popular-route suggestion.
+  const [showPopularRoutes, setShowPopularRoutes] = useState(false)
 
   useEffect(() => {
-    const stored = flowStorage.findResultByFlightKey(flightKey)
+    const lastOrigin = searchPreferences.getLastOrigin()
+    const lastDestination = searchPreferences.getLastDestination()
+    const lastTravelers = searchPreferences.getLastTravelers()
+    const lastCabin = searchPreferences.getLastCabinPref()
 
-    if (!stored) {
-      // sessionStorage doesn't have this — either a stale link/refresh long
-      // after the tab's results expired, or the flightKey is just wrong.
-      // Either way, there's no flight data to show, so send back to search
-      // rather than showing a broken page.
-      setError('This flight is no longer available. Please search again.')
-      setPricingLoading(false)
+    if (lastOrigin) setOrigin(lastOrigin)
+    if (lastDestination) setDestination(lastDestination)
+    if (lastTravelers) {
+      setAdult(lastTravelers.adult)
+      setChild(lastTravelers.child)
+      setInfant(lastTravelers.infant)
+    }
+    if (lastCabin) setCabinPref(lastCabin)
+
+    setShowPopularRoutes(!searchPreferences.hasSearchedBefore())
+  }, [])
+
+  function applyPopularRoute(route: { origin: string; destination: string }) {
+    setOrigin(route.origin)
+    setDestination(route.destination)
+    setShowPopularRoutes(false)
+  }
+
+  const [searching, setSearching] = useState(false)
+  const [hasSearched, setHasSearched] = useState(false)
+  const [results, setResults] = useState<FlatFlightResult[]>([])
+  const [error, setError] = useState('')
+  const [sortBy, setSortBy] = useState<'price' | 'duration' | 'departure'>('price')
+  const [navigatingKey, setNavigatingKey] = useState<string | null>(null)
+
+  // Filters are multi-select within each group, OR'd within a group and
+  // AND'd across groups — e.g. selecting "Non-stop" + "1 stop" shows either,
+  // but selecting "Non-stop" + "Morning" shows only non-stop morning flights.
+  const [stopFilters, setStopFilters] = useState<Set<string>>(new Set())
+  const [fareTypeFilters, setFareTypeFilters] = useState<Set<string>>(new Set())
+  const [departureFilters, setDepartureFilters] = useState<Set<string>>(new Set())
+
+  function toggleFilter(setter: React.Dispatch<React.SetStateAction<Set<string>>>, key: string) {
+    setter(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  function clearAllFilters() {
+    setStopFilters(new Set())
+    setFareTypeFilters(new Set())
+    setDepartureFilters(new Set())
+  }
+
+  function swapOriginDestination() {
+    setOrigin(destination)
+    setDestination(origin)
+  }
+
+  function handleSelectFlight(flight: FlatFlightResult) {
+    // Nothing to price here anymore — that's the next page's job. This page's
+    // only responsibility is: remember what was searched/found, then hand
+    // off to /book/price/[flightKey] via the URL, which is the one thing
+    // that needs to survive a refresh or a shared link.
+    setNavigatingKey(flight.flightKey)
+    router.push(`/book/price/${encodeURIComponent(flight.flightKey)}`)
+  }
+
+  async function handleSearch(e: React.FormEvent) {
+    e.preventDefault()
+    if (infant > adult) {
+      setError('Each infant must travel with an adult. Please adjust traveler counts.')
       return
     }
-
-    setFlight(stored)
-    runPricing(stored, 0)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flightKey])
-
-  async function runPricing(flightResult: FlatFlightResult, fareIndex: number) {
-    setPricingLoading(true)
+    setSearching(true)
     setError('')
-
-    const searchData = flowStorage.getSearchResults()
-    const fareOption = flightResult.fareOptions[fareIndex] as FareOption | undefined
-    const pricingKey = fareOption?.pricingKey ?? flightResult.pricingKey
-
-    if (!searchData?.availabilityKey || !pricingKey) {
-      setError('Missing pricing details for this flight — please search again.')
-      setPricingLoading(false)
-      return
-    }
-
+    setHasSearched(false)
     try {
-      const res = await fetch('/api/book/price', {
+      const res = await fetch('/api/book/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          key: searchData.availabilityKey,
-          pricingKey,
-          provider: flightResult.provider,
-          resultIndex: flightResult.itemNo,
+          origin, destination,
+          departDate: toApiDate(departDate),
+          adult, child, infant,
         }),
       })
-      const data: PriceApiResult = await res.json()
-
-      if (!data.ok) {
-        setError(data.error || 'This fare is no longer available. Please select a different flight.')
-        setPricing(null)
+      const data = await res.json()
+      if (!res.ok) {
+        const diagnostic = data.requestId
+          ? ` Request ID: ${data.requestId}.${data.details?.Error?.Description ? ` Provider: ${data.details.Error.Description}` : ''}`
+          : ''
+        setError(`${data.error || 'Search failed.'}${diagnostic}`)
         return
       }
 
-      setPricing(data)
+      const foundResults: FlatFlightResult[] = data.results ?? []
+      setResults(foundResults)
+      setHasSearched(true)
+      searchPreferences.saveLastSearch({ origin, destination, adult, child, infant, cabinPref })
+      flowStorage.setGuestBooking(!bookingForSelf)
 
-      // Save the priced fare — the next step needs referenceNo, totalFare,
-      // etc. and shouldn't have to re-price to get them.
-      flowStorage.savePricedFare({
-        flightKey: flightResult.flightKey,
-        key: data.key!,
-        pricingKey: pricingKey!,
-        provider: flightResult.provider,
-        referenceNo: data.referenceNo!,
-        totalFare: data.totalFare!,
-        baseFare: data.baseFare!,
-        tax: data.tax!,
-        currency: data.currency!,
-        isRefundable: data.isRefundable!,
-        fareType: data.fareType!,
-        passengerBreakup: data.passengerBreakup,
-        isNdc: fareOption?.isNdc ?? flightResult.isNdc,
-        searchKey: searchData.availabilityKey ?? undefined,
-      })
+      // Save results + search context to sessionStorage so /book/price/[flightKey]
+      // can look up the exact result the user picked without re-searching, and
+      // so the "back to results" link on later pages has something to return to.
+      flowStorage.saveSearchResults(
+  foundResults,
+  { origin, destination, departDate: toDisplayDate(departDate), adult, child, infant },
+  data.availabilityKey ?? null,
+)
     } catch {
-      setError('Something went wrong confirming this fare. Please try again.')
+      setError('Something went wrong. Please try again.')
     } finally {
-      setPricingLoading(false)
+      setSearching(false)
     }
   }
 
-  function handleSelectFareOption(index: number) {
-    if (!flight || index === selectedFareIndex) return
-    setSelectedFareIndex(index)
-    runPricing(flight, index)
-  }
+  const filteredResults = results.filter(flight => {
+    if (stopFilters.size > 0) {
+      const matchesStop = STOP_FILTERS.some(f => stopFilters.has(f.key) && f.test(flight))
+      if (!matchesStop) return false
+    }
+    if (fareTypeFilters.size > 0) {
+      const matchesFareType = FARE_TYPE_FILTERS.some(f => fareTypeFilters.has(f.key) && f.test(flight))
+      if (!matchesFareType) return false
+    }
+    if (departureFilters.size > 0) {
+      const period = departurePeriod(flight.origin?.dateTime)
+      if (!period || !departureFilters.has(period)) return false
+    }
+    return true
+  })
 
-  function handleContinue() {
-    setContinuing(true)
-    router.push(`/book/details/${encodeURIComponent(flightKey)}`)
-  }
+  const sortedResults = [...filteredResults].sort((a, b) => {
+    if (sortBy === 'price') return (a.totalFare ?? Infinity) - (b.totalFare ?? Infinity)
+    if (sortBy === 'duration') return durationMinutes(a.duration) - durationMinutes(b.duration)
+    return (a.origin?.dateTime ?? '').localeCompare(b.origin?.dateTime ?? '')
+  })
 
-  if (error && !flight) {
-    return (
-      <div style={s.page}>
-        <div style={s.root}>
-          <Link href="/book/flights" style={s.backLink}>← Back to results</Link>
-          <div style={s.errorCard}>
-            <p style={s.errorTitle}>⚠ {error}</p>
-            <Link href="/book/flights" style={s.errorLink}>← Search again</Link>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  if (!flight) {
-    return (
-      <div style={s.page}>
-        <div style={s.root}>
-          <div style={s.loadingCard}><div style={s.spinner} /></div>
-        </div>
-      </div>
-    )
-  }
-
-  const hasMultipleFares = flight.fareOptions.length > 1
-  const activeFare = flight.fareOptions[selectedFareIndex] as FareOption | undefined
+  const activeFilterCount = stopFilters.size + fareTypeFilters.size + departureFilters.size
 
   return (
     <div style={s.page}>
       <div style={s.root}>
-        <Link href="/book/flights" style={s.backLink}>← Back to results</Link>
-
+        {/* ── Header ─────────────────────────────────────────────────── */}
         <div style={s.header}>
-          <h1 style={s.heading}>Select your fare</h1>
-          <p style={s.sub}>Review the fare details, then confirm to lock in the live price.</p>
+          <h1 style={s.heading}>Book a flight</h1>
+          <p style={s.sub}>Search live fares — your travel policy is checked automatically before you book.</p>
         </div>
 
-        {/* ── Flight summary — available instantly, no API call ─────── */}
-        <div style={s.card}>
-          <div style={s.cardHeader}>
-            <div style={s.airlineBlock}>
-              <div style={s.airlineAvatar}>{flight.airline?.name?.[0] ?? '✈'}</div>
-              <div>
-                <div style={s.airlineName}>{flight.airline?.name ?? 'Unknown airline'}</div>
-                <div style={s.airlineMeta}>
-                  {flight.airline?.code} · {flight.cabin ?? 'Economy'}
-                  {(activeFare?.isNdc ?? flight.isNdc) && <span style={s.ndcTag}>NDC fare</span>}
-                </div>
-              </div>
-            </div>
+        {/* ── Search card ────────────────────────────────────────────── */}
+        <form onSubmit={handleSearch} style={s.searchCard}>
+          <div style={s.tripTypeRow}>
+            <span style={s.tripTypePill}>One way</span>
+            <span style={s.tripTypeMuted}>Round trip and multi-city coming soon</span>
           </div>
 
-          <div style={s.routeRow}>
-            <div style={s.routePoint}>
-              <span style={s.routeTime}>{formatTime(flight.origin?.dateTime)}</span>
-              <span style={s.routeCode}>{flight.origin?.code}</span>
-              {flight.origin?.terminal && <span style={s.routeTerminal}>Terminal {flight.origin.terminal}</span>}
-              <span style={s.routeDay}>{formatDayLabel(flight.origin?.dateTime)}</span>
-            </div>
-            <div style={s.routeMiddle}>
-              <span style={s.routeDuration}>{flight.duration ?? ''}</span>
-              <div style={s.routeLine} />
-              <span style={s.routeStops}>
-                {flight.stopCount === 0 ? 'Non-stop' : flight.stops.map(st => `via ${st.city}`).join(', ')}
-              </span>
-            </div>
-            <div style={{ ...s.routePoint, alignItems: 'flex-end' as const }}>
-              <span style={s.routeTime}>{formatTime(flight.destination?.dateTime)}</span>
-              <span style={s.routeCode}>{flight.destination?.code}</span>
-              {flight.destination?.terminal && <span style={s.routeTerminal}>Terminal {flight.destination.terminal}</span>}
-              <span style={s.routeDay}>{formatDayLabel(flight.destination?.dateTime)}</span>
-            </div>
-          </div>
-
-          <div style={s.metaTags}>
-            <span style={{ ...s.tag, ...(flight.isLcc ? s.tagBudget : s.tagFullService) }}>
-              {flight.isLcc ? 'Budget carrier' : 'Full-service'}
+          <label style={s.selfToggleRow}>
+            <input
+              type="checkbox"
+              checked={bookingForSelf}
+              onChange={e => setBookingForSelf(e.target.checked)}
+              style={s.selfToggleCheckbox}
+            />
+            <span style={s.selfToggleText}>
+              {bookingForSelf
+                ? 'Booking for myself — your saved travel profile will fill in your details.'
+                : 'Booking for someone else — enter their details manually.'}
             </span>
-            {flight.checkInBaggageKg && <span style={s.tag}>{flight.checkInBaggageKg}kg check-in baggage</span>}
-            {flight.availableSeats != null && <span style={s.tag}>{flight.availableSeats} seats left</span>}
-          </div>
-        </div>
+          </label>
 
-        {/* ── Fare options — one rich card per option, price + grouped ── */}
-        {/* rule sections (Baggage / Flexibility / Seats, Meals & More),   */}
-        {/* matching the structure of a standard OTA fare-comparison card. */}
-        {/* When there's only one fare option (the common case today —    */}
-        {/* confirmed real responses never show more than one), it still  */}
-        {/* renders as a single full card, not a disabled picker.         */}
-        <div style={s.card}>
-          <h2 style={s.cardTitle}>{hasMultipleFares ? 'Choose a fare' : 'Fare details'}</h2>
-          <div style={s.fareOptionList}>
-            {flight.fareOptions.map((fare, i) => {
-              const isActive = i === selectedFareIndex
-              const changeText = penaltySummary(fare.changePenalties)
-              const cancelText = penaltySummary(fare.cancelPenalties)
-              const mealsIncluded = pricing && isActive ? pricing.mealIncluded : fare.mealIncluded
-              const cabinBag = pricing && isActive ? pricing.cabinBaggageKg : flight.cabinBaggageKg
+          <div style={s.routeFieldsWrap}>
+            <div style={s.routeFields}>
+              <div style={s.routeField}>
+                <label style={s.label}>From</label>
+                <AirportDropdown
+                  value={origin}
+                  onChange={setOrigin}
+                  exclude={destination}
+                  dropdownStyle={s.codeDropdown}
+                />
+              </div>
 
-              return (
+              <button type="button" onClick={swapOriginDestination} style={s.swapBtn} title="Swap origin and destination" aria-label="Swap origin and destination">
+                ⇄
+              </button>
+
+              <div style={s.routeField}>
+                <label style={s.label}>To</label>
+                <AirportDropdown
+                  value={destination}
+                  onChange={setDestination}
+                  exclude={origin}
+                  dropdownStyle={s.codeDropdown}
+                />
+              </div>
+            </div>
+
+            {showPopularRoutes && (
+              <div style={s.popularRoutesRow}>
+                <span style={s.popularRoutesLabel}>Popular:</span>
+                {POPULAR_ROUTES.map(route => (
+                  <button
+                    key={`${route.origin}-${route.destination}`}
+                    type="button"
+                    onClick={() => applyPopularRoute(route)}
+                    style={s.popularRouteChip}
+                  >
+                    {route.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div style={s.secondaryFields}>
+              <div style={s.field}>
+                <label style={s.label}>Departure</label>
+                <input
+                  type="date" required value={departDate}
+                  onChange={e => setDepartDate(e.target.value)}
+                  min={new Date().toISOString().split('T')[0]}
+                  style={s.input}
+                />
+                {departDate && <span style={s.airportHint}>{toDisplayDate(departDate)}</span>}
+              </div>
+
+              <div style={{ ...s.field, position: 'relative' }}>
+                <label style={s.label}>Travelers</label>
                 <button
-                  key={i}
                   type="button"
-                  onClick={() => handleSelectFareOption(i)}
-                  style={{ ...s.fareCard, ...(isActive ? s.fareCardActive : {}), ...(hasMultipleFares ? {} : s.fareCardStatic) }}
+                  onClick={() => setTravelersOpen(o => !o)}
+                  style={{ ...s.input, textAlign: 'left' as const, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
                 >
-                  <div style={s.fareCardTopRow}>
-                    <div>
-                      <span style={s.fareCardType}>{fare.fareType ?? `Fare ${i + 1}`}</span>
-                      <span style={{ ...s.fareOptionRefundTag, color: fare.refundable ? '#166534' : '#9CA3AF', background: fare.refundable ? '#F0FDF4' : '#F3F4F6' }}>
-                        {fare.refundable ? 'Refundable' : 'Non-refundable'}
-                      </span>
-                    </div>
-                    {hasMultipleFares && (
-                      <div style={s.fareOptionRadio}>
-                        <div style={{ ...s.fareOptionRadioDot, ...(isActive ? s.fareOptionRadioDotActive : {}) }} />
-                      </div>
-                    )}
-                  </div>
-
-                  <div style={s.fareCardPriceRow}>
-                    <span style={s.fareCardPrice}>{fare.currency} {fare.totalFare?.toLocaleString('en-IN')}</span>
-                    <span style={s.fareCardPriceSub}>per adult</span>
-                  </div>
-
-                  <div style={s.fareRuleSection}>
-                    <span style={s.fareRuleSectionTitle}>Baggage</span>
-                    <div style={s.fareRuleLine}><span style={s.fareRuleDot} />{cabinBag ? `${cabinBag}kg cabin baggage` : 'Cabin baggage as per airline policy'}</div>
-                    <div style={s.fareRuleLine}><span style={s.fareRuleDot} />{flight.checkInBaggageKg ? `${flight.checkInBaggageKg}kg check-in baggage` : 'Check-in baggage as per airline policy'}</div>
-                  </div>
-
-                  <div style={s.fareRuleSection}>
-                    <span style={s.fareRuleSectionTitle}>Flexibility</span>
-                    <div style={s.fareRuleLine}><span style={s.fareRuleDotAmber} />Cancellation fee {cancelText ?? 'as per airline policy'}</div>
-                    <div style={s.fareRuleLine}><span style={s.fareRuleDotAmber} />Date change fee {changeText ?? 'as per airline policy'}</div>
-                    {fare.fareBasis && (
-                      <div style={s.fareRuleLine}><span style={s.fareRuleDot} />Fare basis {fare.fareBasis}</div>
-                    )}
-                  </div>
-
-                  <div style={s.fareRuleSection}>
-                    <span style={s.fareRuleSectionTitle}>Seats, meals & more</span>
-                    <div style={s.fareRuleLine}><span style={s.fareRuleDotAmber} />Seats — chargeable, select on the next step</div>
-                    <div style={mealsIncluded ? s.fareRuleLine : { ...s.fareRuleLine }}>
-                      <span style={mealsIncluded ? s.fareRuleDot : s.fareRuleDotAmber} />
-                      {mealsIncluded ? 'Complimentary meal' : 'Meals — optional, at extra cost'}
-                    </div>
-                  </div>
+                  {adult + child + infant} traveler{adult + child + infant === 1 ? '' : 's'}
                 </button>
-              )
-            })}
+
+                {travelersOpen && (
+                  <div style={s.travelersPopover}>
+                    {([
+                      { key: 'adult', label: 'Adults', sub: '12+ years', value: adult, setValue: setAdult, min: 1 },
+                      { key: 'child', label: 'Children', sub: '2–11 years', value: child, setValue: setChild, min: 0 },
+                      { key: 'infant', label: 'Infants', sub: 'Under 2 years', value: infant, setValue: setInfant, min: 0 },
+                    ] as const).map(row => (
+                      <div key={row.key} style={s.travelerRow}>
+                        <div>
+                          <div style={s.travelerRowLabel}>{row.label}</div>
+                          <div style={s.travelerRowSub}>{row.sub}</div>
+                        </div>
+                        <div style={s.travelerStepper}>
+                          <button
+                            type="button"
+                            onClick={() => row.setValue(Math.max(row.min, row.value - 1))}
+                            disabled={row.value <= row.min}
+                            style={{ ...s.stepperBtn, opacity: row.value <= row.min ? 0.4 : 1 }}
+                          >
+                            −
+                          </button>
+                          <span style={s.stepperValue}>{row.value}</span>
+                          <button
+                            type="button"
+                            onClick={() => row.setValue(Math.min(9, row.value + 1))}
+                            disabled={adult + child + infant >= 9}
+                            style={{ ...s.stepperBtn, opacity: adult + child + infant >= 9 ? 0.4 : 1 }}
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    {infant > adult && (
+                      <p style={s.travelerNote}>Each infant must travel with an adult.</p>
+                    )}
+                    <button type="button" onClick={() => setTravelersOpen(false)} style={s.travelersDoneBtn}>
+                      Done
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div style={s.field}>
+                <label style={s.label}>Cabin</label>
+                <select value={cabinPref} onChange={e => setCabinPref(e.target.value as 'Economy' | 'Premium Economy' | 'Business' | 'First')} style={s.input}>
+                  <option value="Economy">Economy</option>
+                  <option value="Premium Economy">Premium Economy</option>
+                  <option value="Business">Business</option>
+                  <option value="First">First</option>
+                </select>
+              </div>
+            </div>
           </div>
-        </div>
 
-        {/* ── Fare breakdown — live from Pricing ──────────────────────── */}
-        <div style={s.card}>
-          <h2 style={s.cardTitle}>Fare breakdown</h2>
+          <button type="submit" disabled={searching} style={{ ...s.searchBtn, opacity: searching ? 0.7 : 1 }}>
+            {searching ? (
+              <>
+                <span style={s.spinner} />
+                Searching…
+              </>
+            ) : (
+              'Search flights →'
+            )}
+          </button>
+        </form>
 
-          {pricingLoading && (
-            <div style={s.pricingLoadingRow}>
-              <div style={s.spinnerSmall} />
-              <span style={s.pricingLoadingText}>Confirming live price with the airline…</span>
+        {error && (
+          <div style={s.errorBanner}>
+            <span style={s.bannerIcon}>⚠</span> {error}
+          </div>
+        )}
+
+        {/* ── Results ────────────────────────────────────────────────── */}
+        {searching && (
+          <div style={s.loadingState}>
+            {[0, 1, 2].map(i => <div key={i} style={s.skeletonCard} />)}
+          </div>
+        )}
+
+        {hasSearched && !searching && (
+          results.length === 0 ? (
+            <div style={s.emptyState}>
+              <p style={s.emptyTitle}>No flights found</p>
+              <p style={s.emptyDesc}>Try a different date or route.</p>
             </div>
-          )}
+          ) : (
+            <div style={s.resultsWrap}>
+              {/* ── Filters ──────────────────────────────────────────── */}
+              <div style={s.filterBar}>
+                <div style={s.filterGroup}>
+                  <span style={s.filterGroupLabel}>Stops</span>
+                  <div style={s.filterChips}>
+                    {STOP_FILTERS.map(f => (
+                      <button
+                        key={f.key}
+                        type="button"
+                        onClick={() => toggleFilter(setStopFilters, f.key)}
+                        style={{ ...s.filterChip, ...(stopFilters.has(f.key) ? s.filterChipActive : {}) }}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
-          {!pricingLoading && error && (
-            <div style={s.inlineError}>
-              <p style={s.inlineErrorText}>⚠ {error}</p>
-            </div>
-          )}
+                <div style={s.filterGroup}>
+                  <span style={s.filterGroupLabel}>Fare type</span>
+                  <div style={s.filterChips}>
+                    {FARE_TYPE_FILTERS.map(f => (
+                      <button
+                        key={f.key}
+                        type="button"
+                        onClick={() => toggleFilter(setFareTypeFilters, f.key)}
+                        style={{ ...s.filterChip, ...(fareTypeFilters.has(f.key) ? s.filterChipActive : {}) }}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
-          {!pricingLoading && !error && pricing?.ok && (
-            <>
-              <div style={s.fareRow}>
-                <span style={s.fareLabel}>Base fare</span>
-                <span style={s.fareValue}>{pricing.currency} {pricing.baseFare?.toLocaleString('en-IN')}</span>
-              </div>
-              <div style={s.fareRow}>
-                <span style={s.fareLabel}>Taxes & fees</span>
-                <span style={s.fareValue}>{pricing.currency} {pricing.tax?.toLocaleString('en-IN')}</span>
-              </div>
-              <div style={{ ...s.fareRow, ...s.fareRowTotal }}>
-                <span style={s.fareTotalLabel}>Total fare</span>
-                <span style={s.fareTotalValue}>{pricing.currency} {pricing.totalFare?.toLocaleString('en-IN')}</span>
+                <div style={s.filterGroup}>
+                  <span style={s.filterGroupLabel}>Departure time</span>
+                  <div style={s.filterChips}>
+                    {DEPARTURE_FILTERS.map(f => (
+                      <button
+                        key={f.key}
+                        type="button"
+                        onClick={() => toggleFilter(setDepartureFilters, f.key)}
+                        style={{ ...s.filterChip, ...(departureFilters.has(f.key) ? s.filterChipActive : {}) }}
+                        title={f.sub}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {activeFilterCount > 0 && (
+                  <button type="button" onClick={clearAllFilters} style={s.clearFiltersBtn}>
+                    Clear filters ({activeFilterCount})
+                  </button>
+                )}
               </div>
 
-              {pricing.passengerBreakup && pricing.passengerBreakup.length > 1 && (
-                <div style={s.paxBreakup}>
-                  <p style={s.paxBreakupTitle}>Per passenger</p>
-                  {pricing.passengerBreakup.map((pax, i) => (
-                    <div key={i} style={s.paxRow}>
-                      <span style={s.paxType}>{pax.PaxType}</span>
-                      <span style={s.paxFare}>{pricing.currency} {pax.TotalFare?.toLocaleString('en-IN')}</span>
-                    </div>
+              {sortedResults.length === 0 ? (
+                <div style={s.emptyState}>
+                  <p style={s.emptyTitle}>No flights match your filters</p>
+                  <p style={s.emptyDesc}>Try clearing a filter to see more results.</p>
+                  <button type="button" onClick={clearAllFilters} style={s.clearFiltersBtnInline}>
+                    Clear all filters
+                  </button>
+                </div>
+              ) : (
+              <>
+              <div style={s.resultsHeader}>
+                <p style={s.resultsCount}>
+                  <strong>{sortedResults.length}</strong> fare{sortedResults.length === 1 ? '' : 's'} found
+                  {activeFilterCount > 0 && <span style={s.resultsCountMuted}> (of {results.length})</span>} · {origin} → {destination}
+                </p>
+                <div style={s.sortRow}>
+                  <span style={s.sortLabel}>Sort by</span>
+                  {(['price', 'duration', 'departure'] as const).map(key => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setSortBy(key)}
+                      style={{ ...s.sortBtn, ...(sortBy === key ? s.sortBtnActive : {}) }}
+                    >
+                      {key === 'price' ? 'Price' : key === 'duration' ? 'Duration' : 'Departure'}
+                    </button>
                   ))}
                 </div>
-              )}
-
-              <div style={s.fareTags}>
-                <span style={{ ...s.tag, color: pricing.isRefundable ? '#065F46' : '#9CA3AF', background: pricing.isRefundable ? '#ECFDF5' : '#F3F4F6' }}>
-                  {pricing.isRefundable ? 'Refundable' : 'Non-refundable'}
-                </span>
-                {pricing.fareType && <span style={s.tag}>{pricing.fareType}</span>}
               </div>
-            </>
-          )}
-        </div>
 
-        <button
-          type="button"
-          onClick={handleContinue}
-          disabled={continuing || pricingLoading || !pricing?.ok}
-          style={{ ...s.continueBtn, opacity: (continuing || pricingLoading || !pricing?.ok) ? 0.6 : 1 }}
-        >
-          {continuing ? 'Opening…' : 'Select this fare →'}
-        </button>
+              <div style={s.resultsList}>
+                {sortedResults.map((flight, i) => {
+                  const isNavigating = navigatingKey === flight.flightKey
+                  return (
+                    <div
+                      key={`${flight.flightKey}-${flight.pricingKey}-${i}`}
+                      style={s.resultCard}
+                    >
+                      <div style={s.resultTop}>
+                        <div style={s.airlineBlock}>
+                          <div style={s.airlineAvatar}>{flight.airline?.name?.[0] ?? '✈'}</div>
+                          <div>
+                            <div style={s.airlineName}>{flight.airline?.name ?? 'Unknown airline'}</div>
+                            <div style={s.airlineMeta}>
+                              {flight.airline?.code} · {flight.cabin ?? cabinPref}
+                              {flight.isNdc && <span style={s.ndcTag}>NDC fare</span>}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div style={s.fareBlock}>
+                          <span style={s.fareAmount}>₹{flight.totalFare?.toLocaleString('en-IN') ?? '—'}</span>
+                          <span style={{ ...s.refundBadge, color: flight.refundable ? '#065F46' : '#9CA3AF', background: flight.refundable ? '#ECFDF5' : '#F3F4F6' }}>
+                            {flight.refundable ? 'Refundable' : 'Non-refundable'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* ── Route strip ──────────────────────────────── */}
+                      <div style={s.routeRow}>
+                        <div style={s.routePoint}>
+                          <span style={s.routeTime}>{formatTime(flight.origin?.dateTime)}</span>
+                          <span style={s.routeCode}>{flight.origin?.code ?? origin}</span>
+                          <span style={s.routeDay}>{formatDayLabel(flight.origin?.dateTime)}</span>
+                        </div>
+
+                        <div style={s.routeMiddle}>
+                          <span style={s.routeDuration}>{flight.duration ?? ''}</span>
+                          <div style={s.routeLineWrap}>
+                            <div style={s.routeDot} />
+                            {flight.stopCount === 0 ? (
+                              <div style={s.routeLine} />
+                            ) : (
+                              <>
+                                <div style={{ flex: 1, height: '1px', background: '#D1D5DB' }} />
+                                {flight.stops.map((stop, si) => (
+                                  <div key={si} style={s.routeStopDot} />
+                                ))}
+                                <div style={{ flex: 1, height: '1px', background: '#D1D5DB' }} />
+                              </>
+                            )}
+                            <div style={s.routeDot} />
+                          </div>
+                          <span style={s.routeStops}>
+                            {flight.stopCount === 0
+                              ? 'Non-stop'
+                              : flight.stops.map(st => `via ${st.city}`).join(', ')}
+                          </span>
+                        </div>
+
+                        <div style={{ ...s.routePoint, alignItems: 'flex-end' as const }}>
+                          <span style={s.routeTime}>{formatTime(flight.destination?.dateTime)}</span>
+                          <span style={s.routeCode}>{flight.destination?.code ?? destination}</span>
+                          <span style={s.routeDay}>{formatDayLabel(flight.destination?.dateTime)}</span>
+                        </div>
+                      </div>
+
+                      <div style={s.resultBottom}>
+                        <div style={s.metaTags}>
+                          <span style={{ ...s.tag, ...(flight.isLcc ? s.tagBudget : s.tagFullService) }}>
+                            {flight.isLcc ? 'Budget carrier' : 'Full-service'}
+                          </span>
+                          {flight.checkInBaggageKg && <span style={s.tag}>{flight.checkInBaggageKg}kg check-in</span>}
+                          {flight.availableSeats !== undefined && flight.availableSeats <= 4 && (
+                            <span style={{ ...s.tag, color: '#92400E', background: '#FEF3C7' }}>
+                              Only {flight.availableSeats} left
+                            </span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleSelectFlight(flight)}
+                          disabled={isNavigating}
+                          style={s.selectBtn}
+                        >
+                          {isNavigating ? 'Opening…' : 'Select →'}
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+              </>
+              )}
+            </div>
+          )
+        )}
       </div>
     </div>
   )
@@ -388,96 +604,147 @@ export default function SelectFarePage() {
 
 const s: Record<string, React.CSSProperties> = {
   page: { background: '#F9FAFB', minHeight: '100vh' },
-  root: { fontFamily: "'Inter', -apple-system, sans-serif", maxWidth: '640px', margin: '0 auto', padding: '32px 24px 64px' },
-
-  backLink: { fontSize: '13px', color: '#6B7280', textDecoration: 'none', display: 'inline-block', marginBottom: '16px' },
+  root: { fontFamily: "'Inter', -apple-system, sans-serif", maxWidth: '820px', margin: '0 auto', padding: '32px 24px 64px' },
 
   header: { marginBottom: '20px' },
-  heading: { fontSize: '22px', fontWeight: 700, color: '#0A0A14', margin: '0 0 6px', letterSpacing: '-0.4px' },
-  sub: { fontSize: '13px', color: '#6B7280', margin: 0, lineHeight: 1.5 },
+  heading: { fontSize: '24px', fontWeight: 700, color: '#0A0A14', margin: '0 0 6px', letterSpacing: '-0.4px' },
+  sub: { fontSize: '14px', color: '#6B7280', margin: 0 },
 
-  loadingCard: { display: 'flex', justifyContent: 'center', padding: '80px 0' },
-  spinner: { width: '22px', height: '22px', border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%' },
-  spinnerSmall: { width: '16px', height: '16px', border: '2px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%' },
+  searchCard: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '16px', padding: '20px 20px 16px', marginBottom: '20px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' },
+  tripTypeRow: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' },
+  tripTypePill: { fontSize: '12px', fontWeight: 600, color: '#fff', background: '#000835', padding: '5px 12px', borderRadius: '999px' },
+  tripTypeMuted: { fontSize: '11px', color: '#9CA3AF' },
 
-  errorCard: { padding: '20px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '14px' },
-  errorTitle: { fontSize: '13px', color: '#DC2626', margin: '0 0 10px', lineHeight: 1.5 },
-  errorLink: { fontSize: '13px', color: '#DC2626', fontWeight: 600, textDecoration: 'underline' },
+  selfToggleRow: {
+    display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px',
+    padding: '9px 12px', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '9px', cursor: 'pointer',
+  },
+  selfToggleCheckbox: { width: '15px', height: '15px', flexShrink: 0, cursor: 'pointer', accentColor: '#000835' },
+  selfToggleText: { fontSize: '12.5px', color: '#374151', lineHeight: 1.4 },
 
-  inlineError: { padding: '12px 14px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '10px' },
-  inlineErrorText: { fontSize: '12.5px', color: '#DC2626', margin: 0 },
+  routeFieldsWrap: { display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '16px' },
+  routeFields: { display: 'flex', alignItems: 'center', gap: '0', position: 'relative', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '12px', padding: '4px' },
+  routeField: { flex: 1, display: 'flex', flexDirection: 'column', gap: '2px', padding: '10px 16px' },
 
-  pricingLoadingRow: { display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 0' },
-  pricingLoadingText: { fontSize: '12.5px', color: '#6B7280' },
+  popularRoutesRow: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' as const },
+  popularRoutesLabel: { fontSize: '11.5px', color: '#9CA3AF', fontWeight: 500 },
+  popularRouteChip: {
+    fontSize: '11.5px', fontWeight: 600, color: '#3730A3', background: '#EEF2FF',
+    border: '1px solid #E0E7FF', borderRadius: '20px', padding: '5px 12px', cursor: 'pointer',
+  },
+  swapBtn: {
+    width: '36px', height: '36px', flexShrink: 0, borderRadius: '50%', background: '#fff',
+    border: '1.5px solid #E5E7EB', color: '#000835', fontSize: '15px', cursor: 'pointer',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1,
+  },
+  label: { fontSize: '10px', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.5px' },
+  codeDropdown: { border: 'none', background: 'transparent', outline: 'none', fontSize: '13px', fontWeight: 600, color: '#111827', padding: '2px 0', width: '100%' },
+  airportHint: { fontSize: '11px', color: '#9CA3AF' },
 
-  card: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '20px', marginBottom: '16px' },
-  cardHeader: { marginBottom: '14px' },
-  cardTitle: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: '0 0 16px' },
+  secondaryFields: { display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr', gap: '10px' },
+  field: { display: 'flex', flexDirection: 'column', gap: '5px' },
+  input: { height: '42px', padding: '0 12px', fontSize: '13px', fontWeight: 500, color: '#111827', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '9px', outline: 'none' },
 
+  searchBtn: {
+    height: '46px', width: '100%', background: '#000835', color: '#fff', fontSize: '14px', fontWeight: 700,
+    border: 'none', borderRadius: '10px', cursor: 'pointer', display: 'flex', alignItems: 'center',
+    justifyContent: 'center', gap: '8px', letterSpacing: '0.2px',
+  },
+  spinner: { width: '13px', height: '13px', border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block' },
+
+  errorBanner: { display: 'flex', alignItems: 'center', gap: '8px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', color: '#DC2626', marginBottom: '16px' },
+  bannerIcon: { fontSize: '14px' },
+
+  loadingState: { display: 'flex', flexDirection: 'column', gap: '12px' },
+  skeletonCard: { height: '128px', borderRadius: '14px', background: 'linear-gradient(90deg, #F3F4F6 25%, #E5E7EB 37%, #F3F4F6 63%)', backgroundSize: '400% 100%' },
+
+  emptyState: { textAlign: 'center' as const, padding: '56px 20px', background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px' },
+  emptyTitle: { fontSize: '15px', fontWeight: 600, color: '#374151', margin: '0 0 6px' },
+  emptyDesc: { fontSize: '13px', color: '#9CA3AF', margin: 0 },
+
+  resultsWrap: { display: 'flex', flexDirection: 'column', gap: '14px' },
+  resultsHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' as const, gap: '10px' },
+  resultsCount: { fontSize: '13px', color: '#6B7280', margin: 0 },
+  resultsCountMuted: { color: '#9CA3AF' },
+  sortRow: { display: 'flex', alignItems: 'center', gap: '6px' },
+  sortLabel: { fontSize: '11px', color: '#9CA3AF', marginRight: '2px' },
+  sortBtn: { fontSize: '11px', fontWeight: 500, color: '#6B7280', background: '#fff', border: '1px solid #E5E7EB', borderRadius: '7px', padding: '5px 10px', cursor: 'pointer' },
+  sortBtnActive: { color: '#fff', background: '#000835', borderColor: '#000835' },
+
+  filterBar: {
+    display: 'flex', flexWrap: 'wrap' as const, alignItems: 'flex-start', gap: '20px',
+    background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '14px 16px',
+  },
+  filterGroup: { display: 'flex', flexDirection: 'column' as const, gap: '6px' },
+  filterGroupLabel: { fontSize: '10px', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.4px' },
+  filterChips: { display: 'flex', flexWrap: 'wrap' as const, gap: '6px' },
+  filterChip: {
+    fontSize: '12px', fontWeight: 500, color: '#374151', background: '#F9FAFB',
+    border: '1px solid #E5E7EB', borderRadius: '8px', padding: '6px 11px', cursor: 'pointer',
+  },
+  filterChipActive: { color: '#fff', background: '#000835', borderColor: '#000835', fontWeight: 600 },
+  clearFiltersBtn: {
+    fontSize: '12px', fontWeight: 600, color: '#DC2626', background: 'none', border: 'none',
+    cursor: 'pointer', alignSelf: 'flex-start', marginLeft: 'auto', marginTop: '18px',
+  },
+  clearFiltersBtnInline: {
+    fontSize: '13px', fontWeight: 600, color: '#fff', background: '#000835',
+    border: 'none', borderRadius: '8px', padding: '8px 16px', cursor: 'pointer', marginTop: '8px',
+  },
+
+  resultsList: { display: 'flex', flexDirection: 'column', gap: '12px' },
+  resultCard: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '18px', transition: 'border-color 0.15s' },
+
+  resultTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' },
   airlineBlock: { display: 'flex', alignItems: 'center', gap: '10px' },
   airlineAvatar: { width: '34px', height: '34px', borderRadius: '9px', background: '#EEF2FF', color: '#3730A3', fontSize: '14px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   airlineName: { fontSize: '13px', fontWeight: 600, color: '#111827' },
   airlineMeta: { fontSize: '11px', color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' },
   ndcTag: { fontSize: '9px', fontWeight: 700, color: '#3730A3', background: '#EEF2FF', padding: '1px 6px', borderRadius: '4px', letterSpacing: '0.3px' },
 
-  routeRow: { display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '14px', padding: '14px 0', borderTop: '1px solid #F3F4F6', borderBottom: '1px solid #F3F4F6' },
+  fareBlock: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' },
+  fareAmount: { fontSize: '19px', fontWeight: 700, color: '#0A0A14', letterSpacing: '-0.2px' },
+  refundBadge: { fontSize: '10px', fontWeight: 600, padding: '2px 8px', borderRadius: '4px' },
+
+  routeRow: { display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '16px', padding: '14px 0', borderTop: '1px solid #F3F4F6', borderBottom: '1px solid #F3F4F6' },
   routePoint: { display: 'flex', flexDirection: 'column', gap: '2px', flex: '0 0 auto', minWidth: '58px' },
   routeTime: { fontSize: '16px', fontWeight: 700, color: '#111827' },
   routeCode: { fontSize: '11px', fontWeight: 600, color: '#6B7280' },
-  routeTerminal: { fontSize: '9.5px', color: '#9CA3AF' },
   routeDay: { fontSize: '10px', color: '#9CA3AF' },
   routeMiddle: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' },
   routeDuration: { fontSize: '10px', color: '#9CA3AF', fontWeight: 500 },
-  routeLine: { width: '100%', height: '1px', background: '#D1D5DB' },
+  routeLineWrap: { display: 'flex', alignItems: 'center', width: '100%', gap: '2px' },
+  routeDot: { width: '5px', height: '5px', borderRadius: '50%', background: '#D1D5DB', flexShrink: 0 },
+  routeStopDot: { width: '7px', height: '7px', borderRadius: '50%', background: '#6B7280', flexShrink: 0, border: '1.5px solid #fff', boxShadow: '0 0 0 1.5px #9CA3AF' },
+  routeLine: { flex: 1, height: '1px', background: '#D1D5DB' },
   routeStops: { fontSize: '10px', color: '#9CA3AF' },
 
+  resultBottom: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   metaTags: { display: 'flex', gap: '6px', flexWrap: 'wrap' as const },
   tag: { fontSize: '10px', color: '#6B7280', background: '#F3F4F6', padding: '3px 9px', borderRadius: '5px', fontWeight: 500 },
   tagBudget: { color: '#7C2D12', background: '#FFF7ED' },
   tagFullService: { color: '#14532D', background: '#F0FDF4' },
 
-  fareOptionList: { display: 'flex', flexDirection: 'column' as const, gap: '12px' },
-  fareCard: {
-    display: 'flex', flexDirection: 'column' as const, width: '100%',
-    padding: '18px', background: '#F9FAFB', border: '1.5px solid #E5E7EB', borderRadius: '14px',
-    cursor: 'pointer', textAlign: 'left' as const,
+  selectBtn: { height: '34px', padding: '0 18px', background: '#000835', color: '#fff', fontSize: '12px', fontWeight: 600, border: 'none', borderRadius: '8px', cursor: 'pointer' },
+
+  travelersPopover: {
+    position: 'absolute' as const, top: 'calc(100% + 6px)', left: 0, right: 0, zIndex: 10,
+    background: '#fff', border: '1px solid #E5E7EB', borderRadius: '12px', padding: '14px',
+    boxShadow: '0 8px 24px rgba(0,0,0,0.08)',
   },
-  fareCardActive: { background: '#EEF2FF', borderColor: '#000835' },
-  fareCardStatic: { cursor: 'default' },
-  fareCardTopRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' },
-  fareCardType: { fontSize: '14px', fontWeight: 700, color: '#111827', marginRight: '8px' },
-  fareOptionRefundTag: { fontSize: '10px', fontWeight: 700, padding: '3px 9px', borderRadius: '6px' },
-  fareOptionRadio: { width: '18px', height: '18px', borderRadius: '50%', border: '2px solid #D1D5DB', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-  fareOptionRadioDot: { width: '8px', height: '8px', borderRadius: '50%', background: 'transparent' },
-  fareOptionRadioDotActive: { background: '#000835' },
-
-  fareCardPriceRow: { display: 'flex', alignItems: 'baseline', gap: '6px', marginBottom: '14px', paddingBottom: '14px', borderBottom: '1px dashed #E5E7EB' },
-  fareCardPrice: { fontSize: '20px', fontWeight: 700, color: '#0A0A14' },
-  fareCardPriceSub: { fontSize: '11px', color: '#9CA3AF' },
-
-  fareRuleSection: { marginBottom: '12px' },
-  fareRuleSectionTitle: { display: 'block', fontSize: '11px', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.4px', marginBottom: '6px' },
-  fareRuleLine: { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#374151', padding: '3px 0' },
-  fareRuleDot: { width: '6px', height: '6px', borderRadius: '50%', background: '#22C55E', flexShrink: 0 },
-  fareRuleDotAmber: { width: '6px', height: '6px', borderRadius: '50%', background: '#F59E0B', flexShrink: 0 },
-
-  fareRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0' },
-  fareLabel: { fontSize: '13px', color: '#6B7280' },
-  fareValue: { fontSize: '13px', color: '#111827', fontWeight: 500 },
-  fareRowTotal: { borderTop: '1px solid #F3F4F6', marginTop: '4px', paddingTop: '12px' },
-  fareTotalLabel: { fontSize: '14px', fontWeight: 700, color: '#111827' },
-  fareTotalValue: { fontSize: '18px', fontWeight: 700, color: '#0A0A14' },
-
-  paxBreakup: { marginTop: '12px', paddingTop: '12px', borderTop: '1px dashed #E5E7EB' },
-  paxBreakupTitle: { fontSize: '11px', fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.4px', margin: '0 0 8px' },
-  paxRow: { display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' },
-  paxType: { color: '#6B7280' },
-  paxFare: { color: '#111827', fontWeight: 500 },
-
-  fareTags: { display: 'flex', gap: '6px', marginTop: '14px' },
-
-  continueBtn: {
-    height: '48px', width: '100%', background: '#000835', color: '#fff', fontSize: '14px', fontWeight: 700,
-    border: 'none', borderRadius: '10px', cursor: 'pointer', letterSpacing: '0.2px',
+  travelerRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0' },
+  travelerRowLabel: { fontSize: '13px', fontWeight: 600, color: '#111827' },
+  travelerRowSub: { fontSize: '11px', color: '#9CA3AF' },
+  travelerStepper: { display: 'flex', alignItems: 'center', gap: '10px' },
+  stepperBtn: {
+    width: '26px', height: '26px', borderRadius: '50%', border: '1px solid #D1D5DB', background: '#fff',
+    color: '#000835', fontSize: '14px', fontWeight: 700, cursor: 'pointer', display: 'flex',
+    alignItems: 'center', justifyContent: 'center', lineHeight: 1,
+  },
+  stepperValue: { fontSize: '13px', fontWeight: 600, color: '#111827', minWidth: '16px', textAlign: 'center' as const },
+  travelerNote: { fontSize: '11px', color: '#DC2626', margin: '8px 0 0' },
+  travelersDoneBtn: {
+    width: '100%', height: '34px', marginTop: '10px', background: '#000835', color: '#fff',
+    fontSize: '12px', fontWeight: 600, border: 'none', borderRadius: '8px', cursor: 'pointer',
   },
 }
