@@ -205,6 +205,16 @@ export default function BookingDetailsPage() {
   // Guest bookings (isGuestBooking() true) skip autofill entirely and leave
   // everything editable, same as before.
   const [isSelfBooking, setIsSelfBooking] = useState(false)
+  // True only when we successfully fetched a profile (not a guest booking)
+  // but it was missing something needed to lock — surfaced as a small
+  // nudge so the gap is visible instead of the page silently staying
+  // editable with no explanation.
+  const [profileIncomplete, setProfileIncomplete] = useState(false)
+
+  // Accordion — only one of these two sections is expanded at a time.
+  // Passenger details starts open since it's almost always the first thing
+  // to fill in; seats is optional and often skipped entirely.
+  const [expandedSection, setExpandedSection] = useState<'passengers' | 'seats'>('passengers')
 
   // ── Seat state ───────────────────────────────────────────────────────────
   const [legs, setLegs] = useState<LegInfo[]>([])
@@ -341,6 +351,8 @@ export default function BookingDetailsPage() {
       )
       if (hasCoreDetails && hasPassportIfNeeded) {
         setIsSelfBooking(true)
+      } else {
+        setProfileIncomplete(true)
       }
     } catch {
       // Autofill is a convenience, not a required step — silently do
@@ -577,7 +589,24 @@ export default function BookingDetailsPage() {
           <div style={s.summaryFare}>{priced.currency} {priced.totalFare.toLocaleString('en-IN')}</div>
         </div>
 
+        {profileIncomplete && (
+          <div style={s.incompleteBanner}>
+            <span style={s.bannerIcon}>ⓘ</span>
+            <span>
+              Your travel profile is missing a few details, so you'll need to fill everything in below.{' '}
+              <Link href="/profile" style={s.incompleteBannerLink}>Complete your profile</Link> to have it autofilled next time.
+            </span>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit}>
+          {/* ── Passenger & contact details (accordion section 1) ────── */}
+          <AccordionSection
+            title="Passenger & contact details"
+            subtitle={`${passengers.length} traveler${passengers.length > 1 ? 's' : ''} · contact info`}
+            isOpen={expandedSection === 'passengers'}
+            onToggle={() => setExpandedSection(prev => prev === 'passengers' ? 'seats' : 'passengers')}
+          >
           {/* ── One card per passenger ──────────────────────────────── */}
           {passengers.map((passenger, i) => {
             const locked = i === 0 && isSelfBooking
@@ -725,11 +754,17 @@ export default function BookingDetailsPage() {
               </div>
             </div>
           </div>
+          </AccordionSection>
 
-          {/* ── Seat selection ───────────────────────────────────────── */}
+          {/* ── Seat selection (accordion section 2) ─────────────────── */}
+          <AccordionSection
+            title="Choose your seats"
+            subtitle="Optional"
+            isOpen={expandedSection === 'seats'}
+            onToggle={() => setExpandedSection(prev => prev === 'seats' ? 'passengers' : 'seats')}
+          >
           <div style={s.card}>
-            <h2 style={s.cardTitle}>Choose your seats</h2>
-            <p style={s.cardSub}>Optional — you can skip this and get a seat at check-in instead.</p>
+            <p style={s.cardSub}>You can skip this and get a seat at check-in instead.</p>
 
             {passengers.length > 1 && (
               <div style={s.travelerTabs}>
@@ -837,6 +872,7 @@ export default function BookingDetailsPage() {
               <div style={s.legendItem}><span style={{ ...s.legendSwatch, ...s.seatSelected }} /> Selected</div>
             </div>
           </div>
+          </AccordionSection>
 
           {error && (
             <div style={s.errorBanner}>
@@ -849,6 +885,34 @@ export default function BookingDetailsPage() {
           </button>
         </form>
       </div>
+    </div>
+  )
+}
+
+// Accordion wrapper for the two top-level sections on this page — only one
+// is expanded at a time (see expandedSection state above). Collapsing the
+// other section is what actually shortens the scroll; the closed section's
+// content unmounts entirely rather than just hiding, so a long passenger
+// list or a loaded seat map doesn't sit around doing nothing off-screen.
+function AccordionSection({
+  title, subtitle, isOpen, onToggle, children,
+}: {
+  title: string
+  subtitle?: string
+  isOpen: boolean
+  onToggle: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <div style={s.accordionSection}>
+      <button type="button" onClick={onToggle} style={s.accordionHeader}>
+        <span style={s.accordionHeaderText}>
+          <span style={s.accordionTitle}>{title}</span>
+          {subtitle && <span style={s.accordionSubtitle}>{subtitle}</span>}
+        </span>
+        <span style={{ ...s.accordionChevron, transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}>⌄</span>
+      </button>
+      {isOpen && <div style={s.accordionBody}>{children}</div>}
     </div>
   )
 }
@@ -920,11 +984,29 @@ const s: Record<string, React.CSSProperties> = {
   summaryFare: { fontSize: '15px', fontWeight: 700, color: '#0A0A14' },
 
   card: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '20px', marginBottom: '16px' },
+
+  accordionSection: { marginBottom: '12px' },
+  accordionHeader: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%',
+    background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '16px 18px',
+    cursor: 'pointer', font: 'inherit', textAlign: 'left' as const,
+  },
+  accordionHeaderText: { display: 'flex', flexDirection: 'column' as const, gap: '2px' },
+  accordionTitle: { fontSize: '14.5px', fontWeight: 700, color: '#111827' },
+  accordionSubtitle: { fontSize: '11.5px', color: '#9CA3AF' },
+  accordionChevron: { fontSize: '18px', color: '#9CA3AF', transition: 'transform 0.15s', flexShrink: 0, marginLeft: '10px' },
+  accordionBody: { paddingTop: '12px' },
   cardTitle: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: '8px' },
   cardSub: { fontSize: '12px', color: '#9CA3AF', margin: '0 0 16px' },
 
   lockedNote: { fontSize: '11.5px', color: '#6B7280', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '8px', padding: '8px 12px', margin: '-4px 0 16px' },
   lockedLink: { color: '#000835', fontWeight: 600, textDecoration: 'none' },
+
+  incompleteBanner: {
+    display: 'flex', alignItems: 'flex-start', gap: '8px', background: '#FFFBEB', border: '1px solid #FDE68A',
+    borderRadius: '10px', padding: '11px 14px', fontSize: '12.5px', color: '#92400E', marginBottom: '16px', lineHeight: 1.5,
+  },
+  incompleteBannerLink: { color: '#92400E', fontWeight: 700, textDecoration: 'underline' },
 
   paxTypeBadge: { fontSize: '10px', fontWeight: 700, color: '#3730A3', background: '#EEF2FF', padding: '2px 8px', borderRadius: '5px', letterSpacing: '0.3px' },
 
@@ -961,23 +1043,23 @@ const s: Record<string, React.CSSProperties> = {
   clearBtn: { fontSize: '12px', color: '#DC2626', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer' },
 
   planeCard: {
-    background: '#fff', border: '1px solid #E5E7EB', borderRadius: '18px', padding: '24px 16px', marginBottom: '16px',
-    minHeight: '200px', display: 'flex', justifyContent: 'center',
+    background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '16px 12px', marginBottom: '16px',
+    minHeight: '140px', maxHeight: '360px', overflowY: 'auto' as const, display: 'flex', justifyContent: 'center',
   },
-  planeWrap: { display: 'flex', flexDirection: 'column' as const, alignItems: 'center', gap: '6px', width: '100%' },
+  planeWrap: { display: 'flex', flexDirection: 'column' as const, alignItems: 'center', gap: '4px', width: '100%' },
   nose: {
-    width: '60px', height: '30px', background: '#F3F4F6', borderRadius: '50% 50% 0 0', marginBottom: '8px',
+    width: '44px', height: '20px', background: '#F3F4F6', borderRadius: '50% 50% 0 0', marginBottom: '6px',
     border: '1px solid #E5E7EB', borderBottom: 'none',
   },
 
-  rowLine: { display: 'flex', alignItems: 'center', gap: '10px', width: '100%', justifyContent: 'center' },
-  rowNumber: { fontSize: '10px', color: '#9CA3AF', fontWeight: 600, width: '16px', textAlign: 'center' as const, flexShrink: 0 },
-  rowSeats: { display: 'flex', alignItems: 'center', gap: '5px' },
-  aisle: { width: '16px', flexShrink: 0 },
+  rowLine: { display: 'flex', alignItems: 'center', gap: '8px', width: '100%', justifyContent: 'center' },
+  rowNumber: { fontSize: '9px', color: '#9CA3AF', fontWeight: 600, width: '14px', textAlign: 'center' as const, flexShrink: 0 },
+  rowSeats: { display: 'flex', alignItems: 'center', gap: '4px' },
+  aisle: { width: '12px', flexShrink: 0 },
 
   seatOuter: { position: 'relative' as const },
   seatBase: {
-    width: '28px', height: '28px', borderRadius: '6px', fontSize: '10px', fontWeight: 700,
+    width: '22px', height: '22px', borderRadius: '5px', fontSize: '8.5px', fontWeight: 700,
     display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', border: 'none', flexShrink: 0,
   },
   seatOpen: { background: '#fff', color: '#374151', border: '1.5px solid #D1D5DB', cursor: 'pointer' },
