@@ -77,6 +77,12 @@ export default function BookFlightsSearchPage() {
   const [infant, setInfant] = useState(0)
   const [travelersOpen, setTravelersOpen] = useState(false)
   const [cabinPref, setCabinPref] = useState<'Economy' | 'Premium Economy' | 'Business' | 'First'>('Economy')
+  // Ticked by default — the common case is booking your own travel, and the
+  // passengers page autofills slot 1 from the traveler profile whenever this
+  // is true. Unticking it means "I'm booking for someone else," so slot 1
+  // stays blank for manual entry instead of silently filling in the current
+  // employee's own passport/DOB on a colleague's booking.
+  const [bookingForSelf, setBookingForSelf] = useState(true)
 
   // Shown only until the person has searched at least once, ever — after
   // that, the remembered origin/destination (below) is more useful than a
@@ -182,6 +188,7 @@ export default function BookFlightsSearchPage() {
       setResults(foundResults)
       setHasSearched(true)
       searchPreferences.saveLastSearch({ origin, destination, adult, child, infant, cabinPref })
+      flowStorage.setGuestBooking(!bookingForSelf)
 
       // Save results + search context to sessionStorage so /book/price/[flightKey]
       // can look up the exact result the user picked without re-searching, and
@@ -237,6 +244,20 @@ export default function BookFlightsSearchPage() {
             <span style={s.tripTypePill}>One way</span>
             <span style={s.tripTypeMuted}>Round trip and multi-city coming soon</span>
           </div>
+
+          <label style={s.selfToggleRow}>
+            <input
+              type="checkbox"
+              checked={bookingForSelf}
+              onChange={e => setBookingForSelf(e.target.checked)}
+              style={s.selfToggleCheckbox}
+            />
+            <span style={s.selfToggleText}>
+              {bookingForSelf
+                ? 'Booking for myself — your saved travel profile will fill in your details.'
+                : 'Booking for someone else — enter their details manually.'}
+            </span>
+          </label>
 
           <div style={s.routeFieldsWrap}>
             <div style={s.routeFields}>
@@ -593,6 +614,13 @@ const s: Record<string, React.CSSProperties> = {
   tripTypeRow: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' },
   tripTypePill: { fontSize: '12px', fontWeight: 600, color: '#fff', background: '#000835', padding: '5px 12px', borderRadius: '999px' },
   tripTypeMuted: { fontSize: '11px', color: '#9CA3AF' },
+
+  selfToggleRow: {
+    display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px',
+    padding: '9px 12px', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '9px', cursor: 'pointer',
+  },
+  selfToggleCheckbox: { width: '15px', height: '15px', flexShrink: 0, cursor: 'pointer', accentColor: '#000835' },
+  selfToggleText: { fontSize: '12.5px', color: '#374151', lineHeight: 1.4 },
 
   routeFieldsWrap: { display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '16px' },
   routeFields: { display: 'flex', alignItems: 'center', gap: '0', position: 'relative', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '12px', padding: '4px' },
