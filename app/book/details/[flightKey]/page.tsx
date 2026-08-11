@@ -198,6 +198,14 @@ export default function BookingDetailsPage() {
   const [error, setError] = useState('')
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
 
+  // Booking-for-self (the default) locks slot-1 identity fields and contact
+  // details to whatever's saved on the traveler's profile — that profile is
+  // the corporate record of who this person is and how to reach them, so
+  // changes belong there, not as a one-off override on a single booking.
+  // Guest bookings (isGuestBooking() true) skip autofill entirely and leave
+  // everything editable, same as before.
+  const [isSelfBooking, setIsSelfBooking] = useState(false)
+
   // ── Seat state ───────────────────────────────────────────────────────────
   const [legs, setLegs] = useState<LegInfo[]>([])
   const [activeLegIndex, setActiveLegIndex] = useState(0)
@@ -226,6 +234,7 @@ export default function BookingDetailsPage() {
     // Domestic vs international drives whether passport fields are shown/required —
     // reuses the same classifyTrip logic the Rule Engine uses, built from every
     // leg of the itinerary (origin -> each stop -> destination).
+    let isInternational = false
     if (storedFlight.origin?.code && storedFlight.destination?.code) {
       const points = [
         storedFlight.origin.code,
@@ -233,7 +242,9 @@ export default function BookingDetailsPage() {
         storedFlight.destination.code,
       ]
       const classifyLegs = points.slice(0, -1).map((origin, i) => ({ origin, destination: points[i + 1] }))
-      setTripType(classifyTrip(classifyLegs))
+      const classified = classifyTrip(classifyLegs)
+      setTripType(classified)
+      isInternational = classified === 'international'
     }
 
     // Build one form per passenger, tagged with the right PaxType, based on
@@ -254,9 +265,14 @@ export default function BookingDetailsPage() {
     // silent, since this is the common case (booking for yourself). Skipped
     // entirely when this trip is flagged as being for a guest, so a
     // colleague's details are never silently overwritten with the
-    // employee's own.
+    // employee's own. isSelfBooking (and the resulting field lock) is only
+    // turned on once loadTravelerProfile() confirms there's real profile
+    // data to lock to — an employee who hasn't filled in /profile yet, or
+    // whose saved profile is missing passport details an international
+    // trip needs, must not get stuck staring at locked, empty fields with
+    // no way to complete their own booking.
     if (!flowStorage.isGuestBooking()) {
-      loadTravelerProfile()
+      loadTravelerProfile(isInternational)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flightKey])
@@ -269,18 +285,63 @@ export default function BookingDetailsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flight, legs, activeLegIndex])
 
-  async function loadTravelerProfile() {
+  async function loadTravelerProfile(isInternational: boolean) {
     try {
       const res = await fetch('/api/employees/me')
       if (!res.ok) return
       const data = await res.json()
       const profile: TravelerProfile | null = data.travelerProfile
+      const fullName: string | undefined = data.fullName
+
+      // Name comes from employees.full_name (the actual source of truth for
+      // "who is this person"), not traveler_profile — split into
+      // first/middle/last the same way the passport form expects. A single
+      // name with no spaces becomes first name only; the middle segment(s)
+      // of a 3+ word name are joined back together rather than dropped.
+      if (fullName?.trim()) {
+        const parts = fullName.trim().split(/\s+/)
+        const firstName = parts[0] ?? ''
+        const lastName = parts.length > 1 ? parts[parts.length - 1] : ''
+        const middleName = parts.length > 2 ? parts.slice(1, -1).join(' ') : ''
+        setPassengers(prev =>
+          prev.length > 0 && prev[0].paxType === 'ADT'
+            ? prev.map((p, i) => i === 0 ? { ...p, firstName, middleName, lastName } : p)
+            : prev
+        )
+      }
+
       if (!profile) return
       setPassengers(prev =>
         prev.length > 0 && prev[0].paxType === 'ADT'
           ? prev.map((p, i) => i === 0 ? applyTravelerProfile(p, profile) : p)
           : prev
       )
+      // Contact details come from the same profile — locked alongside
+      // identity fields when booking for yourself (see isSelfBooking).
+      if (profile.email) setEmail(profile.email)
+      if (profile.mobile) setMobile(profile.mobile)
+      if (profile.address) setAddress(profile.address)
+      if (profile.city) setCity(profile.city)
+      if (profile.state) setState(profile.state)
+      if (profile.zipCode) setZipCode(profile.zipCode)
+
+      // Only lock the fields once there's actually complete data to lock
+      // to — required identity + contact fields at minimum, plus passport
+      // fields specifically when this trip needs them. Otherwise an
+      // employee with an unfilled or incomplete profile would be stuck
+      // staring at locked, empty fields with no way to finish their own
+      // booking (short of leaving this page to go fill in /profile first,
+      // which the "Edit in travel profile" link still offers either way).
+      const hasCoreDetails = Boolean(
+        fullName?.trim() && profile.title && profile.gender && profile.dateOfBirth &&
+        profile.email && profile.mobile && profile.address && profile.city && profile.state && profile.zipCode
+      )
+      const hasPassportIfNeeded = !isInternational || Boolean(
+        profile.passportNumber && profile.issuingCountry && profile.nationality && profile.passportExpiryDate
+      )
+      if (hasCoreDetails && hasPassportIfNeeded) {
+        setIsSelfBooking(true)
+      }
     } catch {
       // Autofill is a convenience, not a required step — silently do
       // nothing on failure and let the employee type their details as normal.
@@ -518,17 +579,25 @@ export default function BookingDetailsPage() {
 
         <form onSubmit={handleSubmit}>
           {/* ── One card per passenger ──────────────────────────────── */}
-          {passengers.map((passenger, i) => (
+          {passengers.map((passenger, i) => {
+            const locked = i === 0 && isSelfBooking
+            return (
             <div style={s.card} key={i}>
               <h2 style={s.cardTitle}>
                 Traveler {passengers.length > 1 ? `${i + 1} of ${passengers.length}` : ''}
                 <span style={s.paxTypeBadge}>{PAX_TYPE_LABEL[passenger.paxType]}</span>
               </h2>
+              {locked && (
+                <p style={s.lockedNote}>
+                  These details come from your travel profile.{' '}
+                  <Link href="/profile" style={s.lockedLink}>Edit in travel profile →</Link>
+                </p>
+              )}
 
               <div style={s.grid3}>
                 <div style={s.field}>
                   <label style={s.label}>Title</label>
-                  <select value={passenger.title} onChange={e => updatePassenger(i, 'title', e.target.value)} style={s.input}>
+                  <select value={passenger.title} disabled={locked} onChange={e => updatePassenger(i, 'title', e.target.value)} style={{ ...s.input, ...(locked ? s.inputLocked : {}) }}>
                     {passenger.paxType === 'INF' ? (
                       <>
                         <option value="MSTR">Master</option>
@@ -545,7 +614,7 @@ export default function BookingDetailsPage() {
                 </div>
                 <div style={s.field}>
                   <label style={s.label}>Gender</label>
-                  <select value={passenger.gender} onChange={e => updatePassenger(i, 'gender', e.target.value)} style={s.input}>
+                  <select value={passenger.gender} disabled={locked} onChange={e => updatePassenger(i, 'gender', e.target.value)} style={{ ...s.input, ...(locked ? s.inputLocked : {}) }}>
                     <option value="Male">Male</option>
                     <option value="Female">Female</option>
                   </select>
@@ -553,9 +622,9 @@ export default function BookingDetailsPage() {
                 <div style={s.field}>
                   <label style={s.label}>Date of birth</label>
                   <input
-                    type="date" required value={passenger.dateOfBirth}
+                    type="date" required disabled={locked} value={passenger.dateOfBirth}
                     onChange={e => updatePassenger(i, 'dateOfBirth', e.target.value)}
-                    style={{ ...s.input, borderColor: fieldErrors[`passenger-${i}-dob`] ? '#DC2626' : undefined }}
+                    style={{ ...s.input, ...(locked ? s.inputLocked : {}), borderColor: fieldErrors[`passenger-${i}-dob`] ? '#DC2626' : undefined }}
                   />
                   {fieldErrors[`passenger-${i}-dob`] && (
                     <p style={s.fieldError}>{fieldErrors[`passenger-${i}-dob`]}</p>
@@ -566,15 +635,15 @@ export default function BookingDetailsPage() {
               <div style={s.grid3}>
                 <div style={s.field}>
                   <label style={s.label}>First name</label>
-                  <input type="text" required value={passenger.firstName} onChange={e => updatePassenger(i, 'firstName', e.target.value)} style={s.input} placeholder="As on ID" />
+                  <input type="text" required disabled={locked} value={passenger.firstName} onChange={e => updatePassenger(i, 'firstName', e.target.value)} style={{ ...s.input, ...(locked ? s.inputLocked : {}) }} placeholder="As on ID" />
                 </div>
                 <div style={s.field}>
                   <label style={s.label}>Middle name</label>
-                  <input type="text" value={passenger.middleName} onChange={e => updatePassenger(i, 'middleName', e.target.value)} style={s.input} />
+                  <input type="text" disabled={locked} value={passenger.middleName} onChange={e => updatePassenger(i, 'middleName', e.target.value)} style={{ ...s.input, ...(locked ? s.inputLocked : {}) }} />
                 </div>
                 <div style={s.field}>
                   <label style={s.label}>Last name</label>
-                  <input type="text" required value={passenger.lastName} onChange={e => updatePassenger(i, 'lastName', e.target.value)} style={s.input} placeholder="As on ID" />
+                  <input type="text" required disabled={locked} value={passenger.lastName} onChange={e => updatePassenger(i, 'lastName', e.target.value)} style={{ ...s.input, ...(locked ? s.inputLocked : {}) }} placeholder="As on ID" />
                 </div>
               </div>
 
@@ -583,46 +652,53 @@ export default function BookingDetailsPage() {
                   <div style={s.grid3}>
                     <div style={s.field}>
                       <label style={s.label}>Passport number</label>
-                      <input type="text" required value={passenger.passportNumber} onChange={e => updatePassenger(i, 'passportNumber', e.target.value)} style={s.input} />
+                      <input type="text" required disabled={locked} value={passenger.passportNumber} onChange={e => updatePassenger(i, 'passportNumber', e.target.value)} style={{ ...s.input, ...(locked ? s.inputLocked : {}) }} />
                     </div>
                     <div style={s.field}>
                       <label style={s.label}>Issuing country</label>
-                      <input type="text" required value={passenger.issuingCountry} onChange={e => updatePassenger(i, 'issuingCountry', e.target.value.toUpperCase())} style={s.input} maxLength={2} placeholder="IN" />
+                      <input type="text" required disabled={locked} value={passenger.issuingCountry} onChange={e => updatePassenger(i, 'issuingCountry', e.target.value.toUpperCase())} style={{ ...s.input, ...(locked ? s.inputLocked : {}) }} maxLength={2} placeholder="IN" />
                     </div>
                     <div style={s.field}>
                       <label style={s.label}>Nationality</label>
-                      <input type="text" required value={passenger.nationality} onChange={e => updatePassenger(i, 'nationality', e.target.value.toUpperCase())} style={s.input} maxLength={2} placeholder="IN" />
+                      <input type="text" required disabled={locked} value={passenger.nationality} onChange={e => updatePassenger(i, 'nationality', e.target.value.toUpperCase())} style={{ ...s.input, ...(locked ? s.inputLocked : {}) }} maxLength={2} placeholder="IN" />
                     </div>
                   </div>
 
                   <div style={s.field}>
                     <label style={s.label}>Passport expiry</label>
-                    <input type="date" required value={passenger.expiryDate} onChange={e => updatePassenger(i, 'expiryDate', e.target.value)} style={s.input} />
+                    <input type="date" required disabled={locked} value={passenger.expiryDate} onChange={e => updatePassenger(i, 'expiryDate', e.target.value)} style={{ ...s.input, ...(locked ? s.inputLocked : {}) }} />
                   </div>
                 </>
               )}
             </div>
-          ))}
+            )
+          })}
 
           {/* ── Contact details (shared, not per-passenger) ─────────── */}
           <div style={s.card}>
             <h2 style={s.cardTitle}>Contact details</h2>
             <p style={s.cardSub}>We'll send booking confirmations and updates here.</p>
+            {isSelfBooking && (
+              <p style={s.lockedNote}>
+                These come from your travel profile.{' '}
+                <Link href="/profile" style={s.lockedLink}>Edit in travel profile →</Link>
+              </p>
+            )}
 
             <div style={s.grid2}>
               <div style={s.field}>
                 <label style={s.label}>Email</label>
                 <input
-                  type="email" required value={email} onChange={e => setEmail(e.target.value)}
-                  style={{ ...s.input, borderColor: fieldErrors['contact-email'] ? '#DC2626' : undefined }}
+                  type="email" required disabled={isSelfBooking} value={email} onChange={e => setEmail(e.target.value)}
+                  style={{ ...s.input, ...(isSelfBooking ? s.inputLocked : {}), borderColor: fieldErrors['contact-email'] ? '#DC2626' : undefined }}
                 />
                 {fieldErrors['contact-email'] && <p style={s.fieldError}>{fieldErrors['contact-email']}</p>}
               </div>
               <div style={s.field}>
                 <label style={s.label}>Mobile</label>
                 <input
-                  type="tel" required value={mobile} onChange={e => setMobile(e.target.value)}
-                  style={{ ...s.input, borderColor: fieldErrors['contact-mobile'] ? '#DC2626' : undefined }}
+                  type="tel" required disabled={isSelfBooking} value={mobile} onChange={e => setMobile(e.target.value)}
+                  style={{ ...s.input, ...(isSelfBooking ? s.inputLocked : {}), borderColor: fieldErrors['contact-mobile'] ? '#DC2626' : undefined }}
                   placeholder="10-digit number"
                 />
                 {fieldErrors['contact-mobile'] && <p style={s.fieldError}>{fieldErrors['contact-mobile']}</p>}
@@ -631,21 +707,21 @@ export default function BookingDetailsPage() {
 
             <div style={s.field}>
               <label style={s.label}>Address</label>
-              <input type="text" required value={address} onChange={e => setAddress(e.target.value)} style={s.input} />
+              <input type="text" required disabled={isSelfBooking} value={address} onChange={e => setAddress(e.target.value)} style={{ ...s.input, ...(isSelfBooking ? s.inputLocked : {}) }} />
             </div>
 
             <div style={s.grid3}>
               <div style={s.field}>
                 <label style={s.label}>City</label>
-                <input type="text" required value={city} onChange={e => setCity(e.target.value)} style={s.input} />
+                <input type="text" required disabled={isSelfBooking} value={city} onChange={e => setCity(e.target.value)} style={{ ...s.input, ...(isSelfBooking ? s.inputLocked : {}) }} />
               </div>
               <div style={s.field}>
                 <label style={s.label}>State</label>
-                <input type="text" required value={state} onChange={e => setState(e.target.value)} style={s.input} />
+                <input type="text" required disabled={isSelfBooking} value={state} onChange={e => setState(e.target.value)} style={{ ...s.input, ...(isSelfBooking ? s.inputLocked : {}) }} />
               </div>
               <div style={s.field}>
                 <label style={s.label}>ZIP code</label>
-                <input type="text" required value={zipCode} onChange={e => setZipCode(e.target.value)} style={s.input} />
+                <input type="text" required disabled={isSelfBooking} value={zipCode} onChange={e => setZipCode(e.target.value)} style={{ ...s.input, ...(isSelfBooking ? s.inputLocked : {}) }} />
               </div>
             </div>
           </div>
@@ -847,6 +923,9 @@ const s: Record<string, React.CSSProperties> = {
   cardTitle: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: '8px' },
   cardSub: { fontSize: '12px', color: '#9CA3AF', margin: '0 0 16px' },
 
+  lockedNote: { fontSize: '11.5px', color: '#6B7280', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '8px', padding: '8px 12px', margin: '-4px 0 16px' },
+  lockedLink: { color: '#000835', fontWeight: 600, textDecoration: 'none' },
+
   paxTypeBadge: { fontSize: '10px', fontWeight: 700, color: '#3730A3', background: '#EEF2FF', padding: '2px 8px', borderRadius: '5px', letterSpacing: '0.3px' },
 
   grid2: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' },
@@ -854,6 +933,7 @@ const s: Record<string, React.CSSProperties> = {
   field: { display: 'flex', flexDirection: 'column', gap: '5px', marginBottom: '12px' },
   label: { fontSize: '11px', fontWeight: 500, color: '#374151' },
   input: { height: '38px', padding: '0 10px', fontSize: '13px', color: '#111827', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '7px', outline: 'none' },
+  inputLocked: { background: '#F3F4F6', color: '#6B7280', cursor: 'not-allowed' },
   fieldError: { fontSize: '10.5px', color: '#DC2626', margin: '2px 0 0' },
 
   // ── Seat selection styles ────────────────────────────────────────────────

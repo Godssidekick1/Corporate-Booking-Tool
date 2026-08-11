@@ -81,6 +81,7 @@ function getNavItems(role: string) {
     { label: 'Dashboard',   href: '/dashboard' },
     { label: 'Book travel', href: '/book' },
     { label: 'My trips',    href: '/bookings' },
+    { label: 'Travel profile', href: '/profile' },
   ]
   if (role === 'admin' || role === 'manager' || role === 'finance') {
     base.push({ label: 'Approvals', href: '/approvals' })
@@ -183,9 +184,6 @@ export default function DashboardPage() {
         </div>
 
         <div style={s.navFooter}>
-          <a href="/profile" style={s.travelProfileLink}>
-            ✈ My travel profile
-          </a>
           <div style={s.userInfo}>
             <div style={s.userAvatar}>{firstName[0]}</div>
             <div>
@@ -386,10 +384,6 @@ const s: Record<string, React.CSSProperties> = {
   navItems: { display: 'flex', flexDirection: 'column', gap: '1px' },
   navItem: { display: 'block', padding: '8px 10px', borderRadius: '6px', fontSize: '13px', textDecoration: 'none', transition: 'all 0.15s' },
   navFooter: { borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: '14px' },
-  travelProfileLink: {
-    display: 'block', fontSize: '12px', color: 'rgba(255,255,255,0.55)', textDecoration: 'none',
-    marginBottom: '12px', padding: '6px 2px',
-  },
   userInfo: { display: 'flex', alignItems: 'center', gap: '9px', marginBottom: '10px' },
   userAvatar: {
     width: '30px', height: '30px', borderRadius: '50%',

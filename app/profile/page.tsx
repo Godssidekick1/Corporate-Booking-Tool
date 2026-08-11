@@ -31,6 +31,12 @@ interface FormState {
   passportExpiryMonth: string
   passportExpiryYear: string
   mealPreference: string
+  email: string
+  mobile: string
+  address: string
+  city: string
+  state: string
+  zipCode: string
 }
 
 function emptyForm(): FormState {
@@ -41,6 +47,7 @@ function emptyForm(): FormState {
     passportNumber: '', issuingCountry: 'IN', nationality: 'IN',
     passportExpiryDay: '', passportExpiryMonth: '', passportExpiryYear: '',
     mealPreference: '',
+    email: '', mobile: '', address: '', city: '', state: '', zipCode: '',
   }
 }
 
@@ -114,6 +121,12 @@ function ProfilePageInner() {
           nationality: p.nationality ?? 'IN',
           passportExpiryDay: expDay, passportExpiryMonth: expMonth, passportExpiryYear: expYear,
           mealPreference: p.mealPreference ?? '',
+          email: p.email ?? '',
+          mobile: p.mobile ?? '',
+          address: p.address ?? '',
+          city: p.city ?? '',
+          state: p.state ?? '',
+          zipCode: p.zipCode ?? '',
         })
       }
     } catch {
@@ -146,6 +159,19 @@ function ProfilePageInner() {
       return
     }
 
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
+      setError('Please enter a valid email address.')
+      return
+    }
+    if (!/^[6-9]\d{9}$/.test(form.mobile)) {
+      setError('Please enter a valid 10-digit mobile number.')
+      return
+    }
+    if (!form.address.trim() || !form.city.trim() || !form.state.trim() || !form.zipCode.trim()) {
+      setError('Please complete your address, city, state, and ZIP code.')
+      return
+    }
+
     setSaving(true)
     try {
       const res = await fetch('/api/employees/me', {
@@ -162,6 +188,12 @@ function ProfilePageInner() {
             passportExpiryDate,
           } : {}),
           mealPreference: form.mealPreference || undefined,
+          email: form.email.trim(),
+          mobile: form.mobile.trim(),
+          address: form.address.trim(),
+          city: form.city.trim(),
+          state: form.state.trim(),
+          zipCode: form.zipCode.trim(),
         }),
       })
       const data = await res.json()
@@ -250,6 +282,42 @@ function ProfilePageInner() {
           </div>
 
           <div style={s.section}>
+            <h2 style={s.sectionTitle}>Contact details</h2>
+            <p style={s.sectionSub}>Your primary number and address — used for booking confirmations and saved as your corporate record.</p>
+
+            <div style={s.row}>
+              <div style={s.field}>
+                <label style={s.label}>Email</label>
+                <input type="email" required value={form.email} onChange={e => update('email', e.target.value)} style={s.input} />
+              </div>
+              <div style={s.field}>
+                <label style={s.label}>Mobile</label>
+                <input type="tel" required value={form.mobile} onChange={e => update('mobile', e.target.value)} style={s.input} placeholder="10-digit number" />
+              </div>
+            </div>
+
+            <div style={s.field}>
+              <label style={s.label}>Address</label>
+              <input type="text" required value={form.address} onChange={e => update('address', e.target.value)} style={s.input} />
+            </div>
+
+            <div style={s.row}>
+              <div style={s.field}>
+                <label style={s.label}>City</label>
+                <input type="text" required value={form.city} onChange={e => update('city', e.target.value)} style={s.input} />
+              </div>
+              <div style={s.field}>
+                <label style={s.label}>State</label>
+                <input type="text" required value={form.state} onChange={e => update('state', e.target.value)} style={s.input} />
+              </div>
+              <div style={s.field}>
+                <label style={s.label}>ZIP code</label>
+                <input type="text" required value={form.zipCode} onChange={e => update('zipCode', e.target.value)} style={s.input} />
+              </div>
+            </div>
+          </div>
+
+          <div style={s.section}>
             <div style={s.passportToggleRow}>
               <h2 style={s.sectionTitle}>Passport details</h2>
               <label style={s.toggleLabel}>
@@ -316,6 +384,7 @@ const s: Record<string, React.CSSProperties> = {
   form: { display: 'flex', flexDirection: 'column' as const, gap: '20px' },
   section: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '16px', padding: '20px' },
   sectionTitle: { fontSize: '13px', fontWeight: 700, color: '#111827', margin: '0 0 14px' },
+  sectionSub: { fontSize: '11.5px', color: '#9CA3AF', margin: '-8px 0 14px', lineHeight: 1.5 },
 
   passportToggleRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' },
   toggleLabel: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12.5px', color: '#6B7280', fontWeight: 500, cursor: 'pointer' },

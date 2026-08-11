@@ -6,12 +6,16 @@
 
 // ── Traveler profile (employees.traveler_profile) ────────────────────────────
 // One per employee — their own stable, per-person details, filled in once on
-// /profile and reused to autofill passenger slot 1 whenever they book for
-// themselves. Deliberately excludes firstName/lastName (employees.full_name
-// is the source of truth) and contact info (that's CustomerInfo, per-booking,
-// not "who is this person"). Field names mirror AddPassengerDetails'
-// PassengerDetail exactly, confirmed against a real request body, so no
-// translation layer is needed between this and the passenger form.
+// /profile and reused to autofill passenger slot 1 (plus CustomerInfo)
+// whenever they book for themselves. Deliberately excludes firstName/lastName
+// (employees.full_name is the source of truth). Identity fields mirror
+// AddPassengerDetails' PassengerDetail exactly, confirmed against a real
+// request body, so no translation layer is needed between this and the
+// passenger form. Contact fields mirror CustomerInfo the same way.
+//
+// This is the corporate record of who this person is and how to reach them —
+// when booking for yourself, these fields are locked on the booking page and
+// can only be changed here, on /profile, not overridden per-trip.
 export interface TravelerProfile {
   title: string                  // "MR" | "MRS" | "MS" | "MSTR" etc — matches PassengerDetail.Title
   gender: string                 // "Male" | "Female"
@@ -21,6 +25,13 @@ export interface TravelerProfile {
   nationality?: string
   passportExpiryDate?: string    // "DD/MM/YYYY"
   mealPreference?: string        // matches PassengerDetail.MealCode
+  // Contact details — mirrors CustomerInfo exactly, matching format below.
+  email?: string
+  mobile?: string
+  address?: string
+  city?: string
+  state?: string
+  zipCode?: string
 }
 
 export interface StopInfo {
