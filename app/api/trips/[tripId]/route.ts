@@ -64,3 +64,70 @@ export async function GET(
     expenses: expenses ?? [],
   })
 }
+
+// ── DELETE /api/trips/[tripId] ────────────────────────────────────────────
+// Soft-delete only — sets status: 'deleted' rather than removing the row.
+// A trip can have real bookings (PNRs, money already spent with an airline)
+// and trip_expenses attached via trip_id; hard-deleting would either orphan
+// those children or cascade-delete real financial records. 'deleted' is
+// kept distinct from 'cancelled' (which means the travel itself was called
+// off) so a draft someone abandons and a booked trip that fell through stay
+// separable in reporting later. The list route filters status: 'deleted'
+// out by default.
+
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ tripId: string }> }
+) {
+  const { tripId } = await params
+
+  const supabase = await createClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+  if (authError || !user) {
+    return Response.json({ error: 'Not authenticated' }, { status: 401 })
+  }
+
+  const service = createServiceClient()
+  const { data: employee } = await service
+    .from('employees')
+    .select('id')
+    .eq('id', user.id)
+    .maybeSingle()
+
+  if (!employee) {
+    return Response.json({ error: 'Employee record not found' }, { status: 404 })
+  }
+
+  const { data: trip } = await service
+    .from('trips')
+    .select('id, created_by, status')
+    .eq('id', tripId)
+    .maybeSingle()
+
+  if (!trip) {
+    return Response.json({ error: 'Trip not found' }, { status: 404 })
+  }
+
+  if (trip.created_by !== employee.id) {
+    return Response.json({ error: 'Not authorized to delete this trip' }, { status: 403 })
+  }
+
+  if (trip.status === 'deleted') {
+    return Response.json({ ok: true, trip: { id: trip.id, status: 'deleted' } })
+  }
+
+  const { data: updated, error } = await service
+    .from('trips')
+    .update({ status: 'deleted' })
+    .eq('id', tripId)
+    .select('id, status')
+    .single()
+
+  if (error || !updated) {
+    console.error('Failed to delete trip', error)
+    return Response.json({ error: 'Could not delete trip' }, { status: 500 })
+  }
+
+  return Response.json({ ok: true, trip: updated })
+}

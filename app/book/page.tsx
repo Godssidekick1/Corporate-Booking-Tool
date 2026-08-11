@@ -35,6 +35,9 @@ export default function TripsListPage() {
   const [showNewTrip, setShowNewTrip] = useState(false)
   const [tripName, setTripName] = useState('')
   const [createError, setCreateError] = useState('')
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState('')
 
   useEffect(() => {
     loadTrips()
@@ -79,6 +82,29 @@ export default function TripsListPage() {
       setCreateError('Something went wrong creating this trip.')
     } finally {
       setCreating(false)
+    }
+  }
+
+  async function handleDeleteTrip(tripId: string) {
+    setDeleteError('')
+    setDeletingId(tripId)
+    // Optimistic removal — trips is guaranteed non-null here since the
+    // delete button only renders once trips has loaded.
+    const prevTrips = trips
+    setTrips(prevTrips!.filter(t => t.id !== tripId))
+    setConfirmDeleteId(null)
+    try {
+      const res = await fetch(`/api/trips/${tripId}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        setDeleteError(data.error || 'Could not delete this trip.')
+        setTrips(prevTrips) // roll back
+      }
+    } catch {
+      setDeleteError('Something went wrong deleting this trip.')
+      setTrips(prevTrips) // roll back
+    } finally {
+      setDeletingId(null)
     }
   }
 
@@ -139,25 +165,66 @@ export default function TripsListPage() {
           </div>
         )}
 
+        {deleteError && (
+          <div style={s.errorCard}>
+            <p style={s.errorTitle}>⚠ {deleteError}</p>
+          </div>
+        )}
+
         {trips !== null && trips.length > 0 && (
           <div style={s.tripsList}>
             {trips.map(trip => (
-              <button
-                key={trip.id}
-                type="button"
-                onClick={() => router.push(`/trips/${trip.id}`)}
-                style={s.tripCard}
-              >
-                <div style={s.tripCardMain}>
-                  <span style={s.tripName}>{trip.name}</span>
-                  <span style={{ ...s.statusTag, ...(trip.status === 'open' ? s.statusOpen : s.statusOther) }}>
-                    {STATUS_LABEL[trip.status] ?? trip.status}
-                  </span>
-                </div>
-                <span style={s.tripMeta}>
-                  {trip.travel_date ? formatDate(trip.travel_date) : `Created ${formatDate(trip.created_at)}`}
-                </span>
-              </button>
+              <div key={trip.id} style={s.tripCard}>
+                {confirmDeleteId === trip.id ? (
+                  <div style={s.confirmRow}>
+                    <span style={s.confirmText}>Delete “{trip.name}”?</span>
+                    <div style={s.confirmActions}>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteId(null)}
+                        style={s.confirmCancelBtn}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        disabled={deletingId === trip.id}
+                        onClick={() => handleDeleteTrip(trip.id)}
+                        style={{ ...s.confirmDeleteBtn, opacity: deletingId === trip.id ? 0.7 : 1 }}
+                      >
+                        {deletingId === trip.id ? 'Deleting…' : 'Delete'}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => router.push(`/trips/${trip.id}`)}
+                      style={s.tripCardMainBtn}
+                    >
+                      <div style={s.tripCardMain}>
+                        <span style={s.tripName}>{trip.name}</span>
+                        <span style={{ ...s.statusTag, ...(trip.status === 'open' ? s.statusOpen : s.statusOther) }}>
+                          {STATUS_LABEL[trip.status] ?? trip.status}
+                        </span>
+                      </div>
+                      <span style={s.tripMeta}>
+                        {trip.travel_date ? formatDate(trip.travel_date) : `Created ${formatDate(trip.created_at)}`}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteId(trip.id)}
+                      style={s.deleteIconBtn}
+                      aria-label={`Delete ${trip.name}`}
+                      title="Delete trip"
+                    >
+                      🗑
+                    </button>
+                  </>
+                )}
+              </div>
             ))}
           </div>
         )}
@@ -200,9 +267,14 @@ const s: Record<string, React.CSSProperties> = {
 
   tripsList: { display: 'flex', flexDirection: 'column', gap: '10px' },
   tripCard: {
-    display: 'flex', justifyContent: 'space-between', alignItems: 'center', textAlign: 'left' as const,
-    background: '#fff', border: '1px solid #E5E7EB', borderRadius: '12px', padding: '16px 18px',
-    cursor: 'pointer', font: 'inherit', width: '100%',
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    background: '#fff', border: '1px solid #E5E7EB', borderRadius: '12px', padding: '4px 4px 4px 18px',
+    width: '100%', boxSizing: 'border-box' as const,
+  },
+  tripCardMainBtn: {
+    display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '4px', textAlign: 'left' as const,
+    background: 'none', border: 'none', cursor: 'pointer', font: 'inherit', flex: 1,
+    padding: '12px 0', minWidth: 0,
   },
   tripCardMain: { display: 'flex', alignItems: 'center', gap: '10px' },
   tripName: { fontSize: '14px', fontWeight: 600, color: '#111827' },
@@ -210,4 +282,15 @@ const s: Record<string, React.CSSProperties> = {
   statusTag: { fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '5px', letterSpacing: '0.3px', textTransform: 'uppercase' as const },
   statusOpen: { color: '#92400E', background: '#FEF3C7' },
   statusOther: { color: '#065F46', background: '#ECFDF5' },
+
+  deleteIconBtn: {
+    flexShrink: 0, width: '38px', height: '38px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+    background: 'none', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '15px', color: '#9CA3AF',
+  },
+
+  confirmRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '12px 6px 12px 12px', gap: '12px' },
+  confirmText: { fontSize: '13px', color: '#374151', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  confirmActions: { display: 'flex', gap: '8px', flexShrink: 0 },
+  confirmCancelBtn: { height: '32px', padding: '0 12px', background: '#fff', color: '#374151', fontSize: '12px', fontWeight: 500, border: '1px solid #D1D5DB', borderRadius: '7px', cursor: 'pointer' },
+  confirmDeleteBtn: { height: '32px', padding: '0 12px', background: '#DC2626', color: '#fff', fontSize: '12px', fontWeight: 600, border: 'none', borderRadius: '7px', cursor: 'pointer' },
 }

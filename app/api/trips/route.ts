@@ -43,6 +43,7 @@ export async function GET() {
     .select('id, name, status, travel_date, created_at, updated_at')
     .eq('company_id', employee.company_id)
     .eq('created_by', employee.id)
+    .neq('status', 'deleted')
     .order('updated_at', { ascending: false })
 
   if (error) {
