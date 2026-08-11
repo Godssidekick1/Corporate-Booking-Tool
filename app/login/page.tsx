@@ -33,10 +33,20 @@ export default function SignInPage() {
     const data = await res.json()
     const role = data.employee?.role
 
+    // Only tmc_admin/tc are TMC-side — every other real role (admin,
+    // manager, employee, finance, ...) is corporate-side and belongs on
+    // /dashboard. Previously this only handled role === 'admin' explicitly,
+    // so manager/employee/finance accounts fell through both branches and
+    // silently never redirected at all — stuck on /login with a valid
+    // session and no visible error, since nothing here threw.
     if (role === 'tmc_admin' || role === 'tc') {
       router.push('/tmc/dashboard')
-    } else if (role === 'admin') {
+    } else if (role) {
       router.push('/dashboard')
+    } else {
+      // No role at all (e.g. employee row missing) — same failure mode
+      // /dashboard's own fetch handler treats as unauthenticated.
+      setError('Could not determine your account role. Please contact support.')
     }
   }
 
