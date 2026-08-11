@@ -81,7 +81,6 @@ function getNavItems(role: string) {
     { label: 'Dashboard',   href: '/dashboard' },
     { label: 'Book travel', href: '/book' },
     { label: 'My trips',    href: '/bookings' },
-    { label: 'Travel profile', href: '/profile' },
   ]
   if (role === 'admin' || role === 'manager' || role === 'finance') {
     base.push({ label: 'Approvals', href: '/approvals' })
@@ -125,9 +124,9 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetch('/api/me')
-      .then(r => r.json())
-      .then((data: MeResponse) => {
-        if (!data.ok) { router.replace('/login'); return }
+      .then(async r => {
+        const data: MeResponse = await r.json()
+        if (!r.ok || !data.ok) { router.replace('/login'); return }
         setMe(data)
       })
       .catch(() => router.replace('/login'))
@@ -139,7 +138,7 @@ export default function DashboardPage() {
     router.replace('/login')
   }
 
-  if (loading || !me) return <LoadingScreen />
+  if (loading || !me || !me.employee) return <LoadingScreen />
 
   const { employee, company } = me
   const { role, full_name, band_code } = employee

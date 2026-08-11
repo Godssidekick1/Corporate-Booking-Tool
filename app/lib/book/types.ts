@@ -24,7 +24,7 @@ export interface TravelerProfile {
   issuingCountry?: string
   nationality?: string
   passportExpiryDate?: string    // "DD/MM/YYYY"
-  mealPreference?: string        // matches PassengerDetail.MealCode
+  mealPreference?: 'Non-Veg' | 'Veg' | 'Vegan' | 'Eggetarian'      // matches PassengerDetail.MealCode
   // Contact details — mirrors CustomerInfo exactly, matching format below.
   email?: string
   mobile?: string

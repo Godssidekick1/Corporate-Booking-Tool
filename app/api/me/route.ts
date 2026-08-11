@@ -114,7 +114,7 @@ function validateTravelerProfile(body: unknown): { profile?: TravelerProfile; er
       issuingCountry: (b.issuingCountry as string) || undefined,
       nationality: (b.nationality as string) || undefined,
       passportExpiryDate: (b.passportExpiryDate as string) || undefined,
-      mealPreference: (b.mealPreference as string) || undefined,
+      mealPreference: b.mealPreference as 'Non-Veg' | 'Veg' | 'Vegan' | 'Eggetarian' | undefined,
       email: b.email,
       mobile: b.mobile,
       address: (b.address as string).trim(),

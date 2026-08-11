@@ -30,7 +30,7 @@ interface FormState {
   passportExpiryDay: string
   passportExpiryMonth: string
   passportExpiryYear: string
-  mealPreference: string
+  mealPreference: '' | 'Non-Veg' | 'Veg' | 'Vegan' | 'Eggetarian'
   email: string
   mobile: string
   address: string
@@ -276,11 +276,20 @@ function ProfilePageInner() {
             </div>
 
             <div style={s.field}>
-              <label style={s.label}>Meal preference (optional)</label>
-              <input type="text" value={form.mealPreference} onChange={e => update('mealPreference', e.target.value)} style={s.input} placeholder="e.g. Vegetarian" />
-            </div>
-          </div>
-
+  <label style={s.label}>Meal preference (optional)</label>
+  <select
+    value={form.mealPreference}
+    onChange={e => update('mealPreference', e.target.value as FormState['mealPreference'])}
+    style={s.input}
+  >
+    <option value="">Select meal preference</option>
+    <option value="Non-Veg">Non-Veg</option>
+    <option value="Veg">Veg</option>
+    <option value="Vegan">Vegan</option>
+    <option value="Eggetarian">Eggetarian</option>
+  </select>
+</div>
+</div>
           <div style={s.section}>
             <h2 style={s.sectionTitle}>Contact details</h2>
             <p style={s.sectionSub}>Your primary number and address — used for booking confirmations and saved as your corporate record.</p>
