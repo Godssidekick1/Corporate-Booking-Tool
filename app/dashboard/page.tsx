@@ -81,6 +81,7 @@ function getNavItems(role: string) {
     { label: 'Dashboard',   href: '/dashboard' },
     { label: 'Book travel', href: '/book' },
     { label: 'My trips',    href: '/bookings' },
+    { label: 'Travel profile', href: '/profile' },
   ]
   if (role === 'admin' || role === 'manager' || role === 'finance') {
     base.push({ label: 'Approvals', href: '/approvals' })
