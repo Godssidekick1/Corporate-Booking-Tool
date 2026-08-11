@@ -53,6 +53,8 @@ export async function GET() {
 const VALID_TITLES = ['MR', 'MRS', 'MS', 'MSTR', 'MISS']
 const VALID_GENDERS = ['Male', 'Female']
 const DATE_RE = /^\d{2}\/\d{2}\/\d{4}$/  // DD/MM/YYYY, matches PassengerDetail's expected format
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const MOBILE_RE = /^[6-9]\d{9}$/  // Indian mobile numbers: 10 digits, starting 6-9
 
 function validateTravelerProfile(body: unknown): { profile?: TravelerProfile; error?: string } {
   if (!body || typeof body !== 'object') return { error: 'Invalid request body' }
@@ -80,6 +82,29 @@ function validateTravelerProfile(body: unknown): { profile?: TravelerProfile; er
     return { error: 'passportExpiryDate must be in DD/MM/YYYY format' }
   }
 
+  // Contact details — required as a full set. These are the corporate
+  // record of how to reach this person and are locked on the booking page
+  // once saved here, so partial/missing contact info would leave someone
+  // unable to complete a self-booking at all.
+  if (typeof b.email !== 'string' || !EMAIL_RE.test(b.email)) {
+    return { error: 'A valid email address is required' }
+  }
+  if (typeof b.mobile !== 'string' || !MOBILE_RE.test(b.mobile)) {
+    return { error: 'A valid 10-digit mobile number is required' }
+  }
+  if (typeof b.address !== 'string' || !b.address.trim()) {
+    return { error: 'Address is required' }
+  }
+  if (typeof b.city !== 'string' || !b.city.trim()) {
+    return { error: 'City is required' }
+  }
+  if (typeof b.state !== 'string' || !b.state.trim()) {
+    return { error: 'State is required' }
+  }
+  if (typeof b.zipCode !== 'string' || !b.zipCode.trim()) {
+    return { error: 'ZIP code is required' }
+  }
+
   return {
     profile: {
       title: b.title,
@@ -90,6 +115,12 @@ function validateTravelerProfile(body: unknown): { profile?: TravelerProfile; er
       nationality: (b.nationality as string) || undefined,
       passportExpiryDate: (b.passportExpiryDate as string) || undefined,
       mealPreference: b.mealPreference as 'Non-Veg' | 'Veg' | 'Vegan' | 'Eggetarian' | undefined,
+      email: b.email,
+      mobile: b.mobile,
+      address: (b.address as string).trim(),
+      city: (b.city as string).trim(),
+      state: (b.state as string).trim(),
+      zipCode: (b.zipCode as string).trim(),
     },
   }
 }
