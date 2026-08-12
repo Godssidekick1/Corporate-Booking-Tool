@@ -420,7 +420,7 @@ export default function SelectFarePage() {
 
 const s: Record<string, React.CSSProperties> = {
   page: { background: '#F9FAFB', minHeight: '100vh' },
-  root: { fontFamily: "'Inter', -apple-system, sans-serif", maxWidth: '640px', margin: '0 auto', padding: '32px 24px 64px' },
+  root: { fontFamily: "'Inter', -apple-system, sans-serif", maxWidth: '1040px', margin: '0 auto', padding: '32px 24px 64px' },
 
   backLink: { fontSize: '13px', color: '#6B7280', textDecoration: 'none', display: 'inline-block', marginBottom: '16px' },
 
@@ -468,31 +468,46 @@ const s: Record<string, React.CSSProperties> = {
   tagBudget: { color: '#7C2D12', background: '#FFF7ED' },
   tagFullService: { color: '#14532D', background: '#F0FDF4' },
 
-  fareOptionList: { display: 'flex', flexDirection: 'column' as const, gap: '12px' },
+  narrowInner: { maxWidth: '640px', margin: '0 auto' },
+
+  fareSectionHeader: { maxWidth: '640px', margin: '0 auto', marginBottom: '4px' },
+
+  // Multiple fares: horizontal scroller, fixed-width cards, snaps into view
+  // per-card. Single fare: falls back to one full-width card in the
+  // narrow 640px column, same as before — no scroller chrome for a
+  // one-option flight. Neither needs its own side padding — root already
+  // supplies that uniformly; fareOptionScroller adds a little extra right
+  // padding only so the last card has breathing room when scrolled fully right.
+  fareOptionScroller: {
+    display: 'flex', flexDirection: 'row' as const, gap: '12px', overflowX: 'auto' as const,
+    padding: '4px 16px 12px 0', marginBottom: '4px', scrollSnapType: 'x proximity' as const, WebkitOverflowScrolling: 'touch' as const,
+  },
+  fareOptionListSingle: { maxWidth: '640px', margin: '0 auto', marginBottom: '16px' },
+
   fareCard: {
-    display: 'flex', flexDirection: 'column' as const, width: '100%',
-    padding: '18px', background: '#F9FAFB', border: '1.5px solid #E5E7EB', borderRadius: '14px',
-    cursor: 'pointer', textAlign: 'left' as const,
+    display: 'flex', flexDirection: 'column' as const, width: '260px', flexShrink: 0,
+    padding: '14px', background: '#F9FAFB', border: '1.5px solid #E5E7EB', borderRadius: '12px',
+    cursor: 'pointer', textAlign: 'left' as const, scrollSnapAlign: 'start' as const,
   },
   fareCardActive: { background: '#EEF2FF', borderColor: '#000835' },
-  fareCardStatic: { cursor: 'default' },
+  fareCardStatic: { cursor: 'default', width: '100%' },
   fareCardTopRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' },
-  fareCardType: { fontSize: '14px', fontWeight: 700, color: '#111827', marginRight: '8px' },
-  fareCardBrandedDescription: { display: 'block', fontSize: '11.5px', color: '#9CA3AF', marginTop: '2px' },
-  fareOptionRefundTag: { fontSize: '10px', fontWeight: 700, padding: '3px 9px', borderRadius: '6px' },
-  fareOptionRadio: { width: '18px', height: '18px', borderRadius: '50%', border: '2px solid #D1D5DB', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-  fareOptionRadioDot: { width: '8px', height: '8px', borderRadius: '50%', background: 'transparent' },
+  fareCardType: { fontSize: '13px', fontWeight: 700, color: '#111827', marginRight: '6px' },
+  fareCardBrandedDescription: { display: 'block', fontSize: '10.5px', color: '#9CA3AF', marginTop: '2px' },
+  fareOptionRefundTag: { fontSize: '9px', fontWeight: 700, padding: '2px 7px', borderRadius: '6px' },
+  fareOptionRadio: { width: '16px', height: '16px', borderRadius: '50%', border: '2px solid #D1D5DB', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  fareOptionRadioDot: { width: '7px', height: '7px', borderRadius: '50%', background: 'transparent' },
   fareOptionRadioDotActive: { background: '#000835' },
 
-  fareCardPriceRow: { display: 'flex', alignItems: 'baseline', gap: '6px', marginBottom: '14px', paddingBottom: '14px', borderBottom: '1px dashed #E5E7EB' },
-  fareCardPrice: { fontSize: '20px', fontWeight: 700, color: '#0A0A14' },
-  fareCardPriceSub: { fontSize: '11px', color: '#9CA3AF' },
+  fareCardPriceRow: { display: 'flex', alignItems: 'baseline', gap: '5px', marginBottom: '10px', paddingBottom: '10px', borderBottom: '1px dashed #E5E7EB' },
+  fareCardPrice: { fontSize: '17px', fontWeight: 700, color: '#0A0A14' },
+  fareCardPriceSub: { fontSize: '10px', color: '#9CA3AF' },
 
-  fareRuleSection: { marginBottom: '12px' },
-  fareRuleSectionTitle: { display: 'block', fontSize: '11px', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.4px', marginBottom: '6px' },
-  fareRuleLine: { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#374151', padding: '3px 0' },
-  fareRuleDot: { width: '6px', height: '6px', borderRadius: '50%', background: '#22C55E', flexShrink: 0 },
-  fareRuleDotAmber: { width: '6px', height: '6px', borderRadius: '50%', background: '#F59E0B', flexShrink: 0 },
+  fareRuleSection: { marginBottom: '9px' },
+  fareRuleSectionTitle: { display: 'block', fontSize: '10px', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.4px', marginBottom: '5px' },
+  fareRuleLine: { display: 'flex', alignItems: 'center', gap: '7px', fontSize: '11px', color: '#374151', padding: '2px 0' },
+  fareRuleDot: { width: '5px', height: '5px', borderRadius: '50%', background: '#22C55E', flexShrink: 0 },
+  fareRuleDotAmber: { width: '5px', height: '5px', borderRadius: '50%', background: '#F59E0B', flexShrink: 0 },
 
   fareRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0' },
   fareLabel: { fontSize: '13px', color: '#6B7280' },
