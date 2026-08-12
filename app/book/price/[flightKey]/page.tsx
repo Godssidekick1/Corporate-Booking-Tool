@@ -201,58 +201,56 @@ export default function SelectFarePage() {
   return (
     <div style={s.page}>
       <div style={s.root}>
-        <div style={s.narrowInner}>
-          <Link href="/book/flights" style={s.backLink}>← Back to results</Link>
+        <Link href="/book/flights" style={s.backLink}>← Back to results</Link>
 
-          <div style={s.header}>
-            <h1 style={s.heading}>Select your fare</h1>
-            <p style={s.sub}>Review the fare details, then confirm to lock in the live price.</p>
-          </div>
+        <div style={s.header}>
+          <h1 style={s.heading}>Select your fare</h1>
+          <p style={s.sub}>Review the fare details, then confirm to lock in the live price.</p>
+        </div>
 
-          {/* ── Flight summary — available instantly, no API call ─────── */}
-          <div style={s.card}>
-            <div style={s.cardHeader}>
-              <div style={s.airlineBlock}>
-                <div style={s.airlineAvatar}>{flight.airline?.name?.[0] ?? '✈'}</div>
-                <div>
-                  <div style={s.airlineName}>{flight.airline?.name ?? 'Unknown airline'}</div>
-                  <div style={s.airlineMeta}>
-                    {flight.airline?.code} · {flight.cabin ?? 'Economy'}
-                    {(activeFare?.isNdc ?? flight.isNdc) && <span style={s.ndcTag}>NDC fare</span>}
-                  </div>
+        {/* ── Flight summary — available instantly, no API call ─────── */}
+        <div style={s.card}>
+          <div style={s.cardHeader}>
+            <div style={s.airlineBlock}>
+              <div style={s.airlineAvatar}>{flight.airline?.name?.[0] ?? '✈'}</div>
+              <div>
+                <div style={s.airlineName}>{flight.airline?.name ?? 'Unknown airline'}</div>
+                <div style={s.airlineMeta}>
+                  {flight.airline?.code} · {flight.cabin ?? 'Economy'}
+                  {(activeFare?.isNdc ?? flight.isNdc) && <span style={s.ndcTag}>NDC fare</span>}
                 </div>
               </div>
             </div>
+          </div>
 
-            <div style={s.routeRow}>
-              <div style={s.routePoint}>
-                <span style={s.routeTime}>{formatTime(flight.origin?.dateTime)}</span>
-                <span style={s.routeCode}>{flight.origin?.code}</span>
-                {flight.origin?.terminal && <span style={s.routeTerminal}>Terminal {flight.origin.terminal}</span>}
-                <span style={s.routeDay}>{formatDayLabel(flight.origin?.dateTime)}</span>
-              </div>
-              <div style={s.routeMiddle}>
-                <span style={s.routeDuration}>{flight.duration ?? ''}</span>
-                <div style={s.routeLine} />
-                <span style={s.routeStops}>
-                  {flight.stopCount === 0 ? 'Non-stop' : flight.stops.map(st => `via ${st.city}`).join(', ')}
-                </span>
-              </div>
-              <div style={{ ...s.routePoint, alignItems: 'flex-end' as const }}>
-                <span style={s.routeTime}>{formatTime(flight.destination?.dateTime)}</span>
-                <span style={s.routeCode}>{flight.destination?.code}</span>
-                {flight.destination?.terminal && <span style={s.routeTerminal}>Terminal {flight.destination.terminal}</span>}
-                <span style={s.routeDay}>{formatDayLabel(flight.destination?.dateTime)}</span>
-              </div>
+          <div style={s.routeRow}>
+            <div style={s.routePoint}>
+              <span style={s.routeTime}>{formatTime(flight.origin?.dateTime)}</span>
+              <span style={s.routeCode}>{flight.origin?.code}</span>
+              {flight.origin?.terminal && <span style={s.routeTerminal}>Terminal {flight.origin.terminal}</span>}
+              <span style={s.routeDay}>{formatDayLabel(flight.origin?.dateTime)}</span>
             </div>
-
-            <div style={s.metaTags}>
-              <span style={{ ...s.tag, ...(flight.isLcc ? s.tagBudget : s.tagFullService) }}>
-                {flight.isLcc ? 'Budget carrier' : 'Full-service'}
+            <div style={s.routeMiddle}>
+              <span style={s.routeDuration}>{flight.duration ?? ''}</span>
+              <div style={s.routeLine} />
+              <span style={s.routeStops}>
+                {flight.stopCount === 0 ? 'Non-stop' : flight.stops.map(st => `via ${st.city}`).join(', ')}
               </span>
-              {flight.checkInBaggageKg && <span style={s.tag}>{flight.checkInBaggageKg}kg check-in baggage</span>}
-              {flight.availableSeats != null && <span style={s.tag}>{flight.availableSeats} seats left</span>}
             </div>
+            <div style={{ ...s.routePoint, alignItems: 'flex-end' as const }}>
+              <span style={s.routeTime}>{formatTime(flight.destination?.dateTime)}</span>
+              <span style={s.routeCode}>{flight.destination?.code}</span>
+              {flight.destination?.terminal && <span style={s.routeTerminal}>Terminal {flight.destination.terminal}</span>}
+              <span style={s.routeDay}>{formatDayLabel(flight.destination?.dateTime)}</span>
+            </div>
+          </div>
+
+          <div style={s.metaTags}>
+            <span style={{ ...s.tag, ...(flight.isLcc ? s.tagBudget : s.tagFullService) }}>
+              {flight.isLcc ? 'Budget carrier' : 'Full-service'}
+            </span>
+            {flight.checkInBaggageKg && <span style={s.tag}>{flight.checkInBaggageKg}kg check-in baggage</span>}
+            {flight.availableSeats != null && <span style={s.tag}>{flight.availableSeats} seats left</span>}
           </div>
         </div>
 
@@ -260,14 +258,9 @@ export default function SelectFarePage() {
         {/* rule sections (Baggage / Flexibility / Seats, Meals & More),   */}
         {/* matching the structure of a standard OTA fare-comparison card. */}
         {/* When there's only one fare option (the common case today —    */}
-        {/* confirmed real responses never show more than one), it still  */}
-        {/* renders as a single full-width card, not a cramped scroller.  */}
-        {/* This section deliberately spans the wider outer root instead  */}
-        {/* of narrowInner, so 2-3 cards can sit side by side and use the */}
-        {/* space a single 640px column was wasting on wider screens.     */}
-        <div style={s.fareSectionHeader}>
-          <h2 style={s.cardTitle}>{hasMultipleFares ? 'Choose a fare' : 'Fare details'}</h2>
-        </div>
+        {/* confirmed real responses never show more than one), it renders*/}
+        {/* as a single full-width card, matching the rest of the page.   */}
+        <h2 style={s.cardTitle}>{hasMultipleFares ? 'Choose a fare' : 'Fare details'}</h2>
         <div style={hasMultipleFares ? s.fareOptionScroller : s.fareOptionListSingle}>
             {flight.fareOptions.map((fare, i) => {
               const isActive = i === selectedFareIndex
@@ -349,12 +342,11 @@ export default function SelectFarePage() {
             })}
         </div>
 
-        <div style={s.narrowInner}>
-          {/* ── Fare breakdown — live from Pricing ──────────────────────── */}
-          <div style={s.card}>
-            <h2 style={s.cardTitle}>Fare breakdown</h2>
+        {/* ── Fare breakdown — live from Pricing ──────────────────────── */}
+        <div style={s.card}>
+          <h2 style={s.cardTitle}>Fare breakdown</h2>
 
-            {pricingLoading && (
+          {pricingLoading && (
               <div style={s.pricingLoadingRow}>
                 <div style={s.spinnerSmall} />
                 <span style={s.pricingLoadingText}>Confirming live price with the airline…</span>
@@ -412,7 +404,6 @@ export default function SelectFarePage() {
         >
           {continuing ? 'Opening…' : 'Select this fare →'}
         </button>
-        </div>
       </div>
     </div>
   )
@@ -468,10 +459,6 @@ const s: Record<string, React.CSSProperties> = {
   tagBudget: { color: '#7C2D12', background: '#FFF7ED' },
   tagFullService: { color: '#14532D', background: '#F0FDF4' },
 
-  narrowInner: { maxWidth: '640px', margin: '0 auto' },
-
-  fareSectionHeader: { maxWidth: '640px', margin: '0 auto', marginBottom: '4px' },
-
   // Multiple fares: horizontal scroller, fixed-width cards, snaps into view
   // per-card. Single fare: falls back to one full-width card in the
   // narrow 640px column, same as before — no scroller chrome for a
@@ -482,11 +469,11 @@ const s: Record<string, React.CSSProperties> = {
     display: 'flex', flexDirection: 'row' as const, gap: '12px', overflowX: 'auto' as const,
     padding: '4px 16px 12px 0', marginBottom: '4px', scrollSnapType: 'x proximity' as const, WebkitOverflowScrolling: 'touch' as const,
   },
-  fareOptionListSingle: { maxWidth: '640px', margin: '0 auto', marginBottom: '16px' },
+  fareOptionListSingle: { marginBottom: '16px' },
 
   fareCard: {
-    display: 'flex', flexDirection: 'column' as const, width: '260px', flexShrink: 0,
-    padding: '14px', background: '#F9FAFB', border: '1.5px solid #E5E7EB', borderRadius: '12px',
+    display: 'flex', flexDirection: 'column' as const, width: '300px', flexShrink: 0,
+    padding: '16px', background: '#F9FAFB', border: '1.5px solid #E5E7EB', borderRadius: '12px',
     cursor: 'pointer', textAlign: 'left' as const, scrollSnapAlign: 'start' as const,
   },
   fareCardActive: { background: '#EEF2FF', borderColor: '#000835' },
