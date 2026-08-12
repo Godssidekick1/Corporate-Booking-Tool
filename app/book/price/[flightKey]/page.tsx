@@ -50,6 +50,9 @@ interface PriceApiResult {
     Tax: number
     TotalFare: number
   }[]
+  brandedFareName?: string
+  brandedFareDescription?: string
+  brandedServices?: string[]
 }
 
 function penaltySummary(lines: { paxType: string; text: string }[] | undefined): string | null {
@@ -146,6 +149,9 @@ export default function SelectFarePage() {
         passengerBreakup: data.passengerBreakup,
         isNdc: fareOption?.isNdc ?? flightResult.isNdc,
         searchKey: searchData.availabilityKey ?? undefined,
+        brandedFareName: data.brandedFareName ?? fareOption?.brandedFareName,
+        brandedFareDescription: data.brandedFareDescription ?? fareOption?.brandedFareDescription,
+        brandedServices: data.brandedServices ?? fareOption?.brandedServices,
       })
     } catch {
       setError('Something went wrong confirming this fare. Please try again.')
@@ -263,6 +269,13 @@ export default function SelectFarePage() {
               const cancelText = penaltySummary(fare.cancelPenalties)
               const mealsIncluded = pricing && isActive ? pricing.mealIncluded : fare.mealIncluded
               const cabinBag = pricing && isActive ? pricing.cabinBaggageKg : flight.cabinBaggageKg
+              // Branded fare name/description/perks refresh from the live
+              // Pricing call once this card is selected and priced, same as
+              // mealsIncluded/cabinBag above — falls back to the
+              // search-time value so the card isn't blank before pricing runs.
+              const brandedName = (pricing && isActive ? pricing.brandedFareName : undefined) ?? fare.brandedFareName
+              const brandedDescription = (pricing && isActive ? pricing.brandedFareDescription : undefined) ?? fare.brandedFareDescription
+              const brandedServices = (pricing && isActive ? pricing.brandedServices : undefined) ?? fare.brandedServices
 
               return (
                 <button
@@ -273,7 +286,7 @@ export default function SelectFarePage() {
                 >
                   <div style={s.fareCardTopRow}>
                     <div>
-                      <span style={s.fareCardType}>{fare.fareType ?? `Fare ${i + 1}`}</span>
+                      <span style={s.fareCardType}>{brandedName ?? fare.fareType ?? `Fare ${i + 1}`}</span>
                       <span style={{ ...s.fareOptionRefundTag, color: fare.refundable ? '#166534' : '#9CA3AF', background: fare.refundable ? '#F0FDF4' : '#F3F4F6' }}>
                         {fare.refundable ? 'Refundable' : 'Non-refundable'}
                       </span>
@@ -284,6 +297,9 @@ export default function SelectFarePage() {
                       </div>
                     )}
                   </div>
+                  {brandedDescription && brandedDescription !== brandedName && (
+                    <span style={s.fareCardBrandedDescription}>{brandedDescription}</span>
+                  )}
 
                   <div style={s.fareCardPriceRow}>
                     <span style={s.fareCardPrice}>{fare.currency} {fare.totalFare?.toLocaleString('en-IN')}</span>
@@ -313,6 +329,15 @@ export default function SelectFarePage() {
                       {mealsIncluded ? 'Complimentary meal' : 'Meals — optional, at extra cost'}
                     </div>
                   </div>
+
+                  {brandedServices && brandedServices.length > 0 && (
+                    <div style={s.fareRuleSection}>
+                      <span style={s.fareRuleSectionTitle}>Included with this fare</span>
+                      {brandedServices.map((service, si) => (
+                        <div key={si} style={s.fareRuleLine}><span style={s.fareRuleDot} />{service}</div>
+                      ))}
+                    </div>
+                  )}
                 </button>
               )
             })}
@@ -446,6 +471,7 @@ const s: Record<string, React.CSSProperties> = {
   fareCardStatic: { cursor: 'default' },
   fareCardTopRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' },
   fareCardType: { fontSize: '14px', fontWeight: 700, color: '#111827', marginRight: '8px' },
+  fareCardBrandedDescription: { display: 'block', fontSize: '11.5px', color: '#9CA3AF', marginTop: '2px' },
   fareOptionRefundTag: { fontSize: '10px', fontWeight: 700, padding: '3px 9px', borderRadius: '6px' },
   fareOptionRadio: { width: '18px', height: '18px', borderRadius: '50%', border: '2px solid #D1D5DB', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   fareOptionRadioDot: { width: '8px', height: '8px', borderRadius: '50%', background: 'transparent' },

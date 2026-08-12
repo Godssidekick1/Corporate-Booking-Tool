@@ -67,6 +67,11 @@ if (!key || !pricingKey || !provider || !resultIndex) {
         Tax: Number(fb.TotalTax),
         TotalFare: Number(fb.TotalFare),
       })),
+      brandedFareName: pricingInfo.BrandedFareName || undefined,
+      brandedFareDescription: pricingInfo.BrandedfareDesc || undefined,
+      brandedServices: pricingInfo.BrandedFareService
+        ? pricingInfo.BrandedFareService.split('|').map(s => s.trim()).filter(Boolean)
+        : undefined,
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Pricing failed'

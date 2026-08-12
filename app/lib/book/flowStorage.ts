@@ -42,6 +42,11 @@ export interface PricedFare {
   passengerBreakup: unknown
   isNdc?: boolean
   searchKey?: string
+  // Branded fare tier for the priced option — see FareOption in
+  // lib/book/types.ts for the same fields at the search-results stage.
+  brandedFareName?: string
+  brandedFareDescription?: string
+  brandedServices?: string[]
 }
 
 function safeGet<T>(key: string): T | null {

@@ -24,7 +24,7 @@ export interface TravelerProfile {
   issuingCountry?: string
   nationality?: string
   passportExpiryDate?: string    // "DD/MM/YYYY"
-  mealPreference?: 'Non-Veg' | 'Veg' | 'Vegan' | 'Eggetarian'      // matches PassengerDetail.MealCode
+  mealPreference?: string        // matches PassengerDetail.MealCode
   // Contact details — mirrors CustomerInfo exactly, matching format below.
   email?: string
   mobile?: string
@@ -63,6 +63,15 @@ export interface FareOption {
   mealIncluded?: boolean       // PricingInfo.Meal === "YES" — treated as chargeable/optional unless explicitly "YES"
   changePenalties: PenaltyLine[]
   cancelPenalties: PenaltyLine[]
+  // Branded fare tier — the airline's own named fare product for this
+  // option (e.g. "ECOVALU" / "ECO VALUE"), distinct from fareType (NRM/etc,
+  // an internal refundability class). brandedServices is the perk list,
+  // already split from the provider's pipe-delimited string into an array
+  // so pages don't need to know about that delimiter. All optional since
+  // not every fare/provider returns branded data.
+  brandedFareName?: string
+  brandedFareDescription?: string
+  brandedServices?: string[]
 }
 
 export interface FlatFlightResult {

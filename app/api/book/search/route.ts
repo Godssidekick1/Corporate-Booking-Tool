@@ -188,6 +188,14 @@ export async function POST(req: NextRequest) {
       mealIncluded: pricingInfo.Meal === 'YES',
       changePenalties: toPenaltyLines(pricingInfo.Penalties?.ChangePenalty),
       cancelPenalties: toPenaltyLines(pricingInfo.Penalties?.CancelPenalty),
+      brandedFareName: pricingInfo.BrandedFareName || undefined,
+      brandedFareDescription: pricingInfo.BrandedfareDesc || undefined,
+      // Provider sends one pipe-delimited string — split into an array here
+      // so pages render a list, not a raw "A|B|C" string. Empty segments
+      // (e.g. a stray leading/trailing "|") are dropped.
+      brandedServices: pricingInfo.BrandedFareService
+        ? pricingInfo.BrandedFareService.split('|').map(s => s.trim()).filter(Boolean)
+        : undefined,
     }
   })
 

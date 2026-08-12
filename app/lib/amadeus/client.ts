@@ -23,6 +23,42 @@ const CLIENT_CODE = (process.env.AMADEUS_CLIENT_CODE ?? '').trim()
 const USERNAME = (process.env.AMADEUS_USERNAME ?? '').trim()
 const PASSWORD = (process.env.AMADEUS_PASSWORD ?? '').trim()
 
+// ── Response key normalization ──────────────────────────────────────────────
+// As of Aug 2026, the provider switched its response serialization from
+// PascalCase to lowerCamelCase across the board — confirmed against real
+// Authenticate, Availability, and Pricing responses (every key, every
+// nesting depth, no PascalCase survivors, no mixed casing within a single
+// response). Rather than rewrite every type/field-access in this file and
+// every downstream route/page that reads FlightResult/PricingInfo/etc. by
+// PascalCase name, every response is normalized back to PascalCase
+// immediately after parsing, right here, before anything else touches it.
+// This is the exact inverse of the provider's change (capitalize first
+// letter only, recursively through objects and arrays), so it round-trips
+// cleanly: a field whose first letter was already uppercase is untouched.
+//
+// If the provider ever reverts to PascalCase, this becomes a no-op (every
+// key's first letter is already uppercase, so capitalizing it again changes
+// nothing) — safe to leave in place rather than needing to detect and toggle.
+function capitalizeFirstLetter(key: string): string {
+  if (!key) return key
+  return key.charAt(0).toUpperCase() + key.slice(1)
+}
+
+function normalizeKeysToPascalCase<T>(value: unknown): T {
+  if (Array.isArray(value)) {
+    return value.map(item => normalizeKeysToPascalCase(item)) as T
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, val]) => [
+        capitalizeFirstLetter(key),
+        normalizeKeysToPascalCase(val),
+      ])
+    ) as T
+  }
+  return value as T
+}
+
 // ── Error ─────────────────────────────────────────────────────────────────────
 
 export class AmadeusError extends Error {
@@ -151,6 +187,12 @@ export interface ItineraryInfo {
   Cabin: string         // "Y" (booking class code)
   BookingCode: string
   Key: string
+  // Opaque provider token, one per itinerary/leg — appeared alongside the
+  // Aug 2026 provider change, huge encoded string, never displayed. Likely
+  // needs to be echoed back unchanged on a later call (Pricing/AddPassenger)
+  // to verify this leg's fare/seat data hasn't changed since it was quoted —
+  // unconfirmed, so it's carried through defensively rather than dropped.
+  ItineraryMetadata?: string
 }
 
 export interface TaxLine {
@@ -219,6 +261,22 @@ export interface PricingInfo {
   IsGSTMandatory?: boolean
   IsNDC?: boolean
   OfferItem?: unknown
+  // Opaque provider token for this priced fare — same treatment as
+  // ItineraryMetadata above (carried through, never displayed, likely
+  // required unchanged on a later call).
+  PriceMetadata?: string
+  // Branded fare tier data — appeared alongside the Aug 2026 provider
+  // change. This is the human-facing "which fare tier" info (e.g. airlines'
+  // Basic/Standard/Flex pattern): a short tier name, a short description,
+  // and a pipe-delimited list of included perks. One PricingInfo = one
+  // selectable fare tier, so these map directly onto FareOption in
+  // lib/book/types.ts. Note BrandedfareDesc's lowercase "f" is the
+  // provider's own inconsistency (BrandedFareName and BrandedFareService
+  // both capitalize it) — kept as-is since normalizeKeysToPascalCase only
+  // capitalizes the first letter of each key, not internal casing.
+  BrandedFareName?: string        // e.g. "ECOVALU"
+  BrandedfareDesc?: string        // e.g. "ECO VALUE"
+  BrandedFareService?: string     // pipe-delimited, e.g. "PRE RESERVED SEAT ASSIGNMENT|NO SHOW FEE|REFUNDABLE TICKET|..."
 }
 
 export interface FlightResult {
@@ -540,7 +598,11 @@ console.info('[amadeus] request', { requestId, endpoint, body: sanitizeAmadeusDi
     )
   }
 
-  const json = await res.json() as T
+  const rawJson = await res.json()
+  // Normalize lowerCamelCase keys (the provider's current convention) back
+  // to PascalCase before anything downstream touches the response — see
+  // normalizeKeysToPascalCase above for why this lives here specifically.
+  const json = normalizeKeysToPascalCase<T>(rawJson)
   console.info('[amadeus] response', { requestId, endpoint, status: json.Status, error: sanitizeAmadeusDiagnostic(json.Error) })
   return json
 }
