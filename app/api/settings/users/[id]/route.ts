@@ -16,6 +16,7 @@ interface UpdateEmployeeBody {
   role?: string
   status?: string
   band?: string
+  managerId?: string | null
 }
 
 export async function PATCH(
@@ -64,9 +65,9 @@ export async function PATCH(
   }
 
   const body: UpdateEmployeeBody = await req.json()
-  const { role, status, band } = body
+  const { role, status, band, managerId } = body
 
-  const update: Record<string, string | number> = {}
+  const update: Record<string, string | number | null> = {}
 
   if (role !== undefined) {
     const normalized = role.toLowerCase() as ValidRole
@@ -111,6 +112,52 @@ export async function PATCH(
     update.status = status
   }
 
+  if (managerId !== undefined) {
+    if (managerId === null) {
+      update.manager_id = null
+    } else {
+      if (managerId === target.id) {
+        return Response.json({ error: 'An employee cannot be their own manager.' }, { status: 400 })
+      }
+
+      const { data: proposedManager, error: managerLookupError } = await service
+        .from('employees')
+        .select('id, company_id, manager_id')
+        .eq('id', managerId)
+        .eq('company_id', caller.company_id)
+        .maybeSingle()
+
+      if (managerLookupError || !proposedManager) {
+        return Response.json({ error: 'Proposed manager not found in your company' }, { status: 422 })
+      }
+
+      // Walk the proposed manager's own chain upward — if it ever reaches
+      // `target.id`, assigning this manager would create a cycle (e.g. A
+      // manages B, and this update tries to make B manage A, or a longer
+      // A -> B -> C -> A loop). Bounded to a sane depth rather than an
+      // unbounded while loop, so a data-integrity bug elsewhere (a cycle
+      // that already snuck in some other way) can't hang this request.
+      let cursor: string | null = proposedManager.manager_id
+      let depth = 0
+      while (cursor && depth < 50) {
+        if (cursor === target.id) {
+          return Response.json({
+            error: 'This would create a circular reporting chain (the proposed manager already reports up to this employee).',
+          }, { status: 400 })
+        }
+        const { data: next } = await service
+          .from('employees')
+          .select('manager_id')
+          .eq('id', cursor)
+          .maybeSingle()
+        cursor = next?.manager_id ?? null
+        depth++
+      }
+
+      update.manager_id = managerId
+    }
+  }
+
   if (Object.keys(update).length === 0) {
     return Response.json({ error: 'No fields to update' }, { status: 400 })
   }
@@ -119,7 +166,7 @@ export async function PATCH(
     .from('employees')
     .update(update)
     .eq('id', id)
-    .select('id, full_name, email, role, status, band_code')
+    .select('id, full_name, email, role, status, band_code, manager_id')
     .single()
 
   if (updateError) {
