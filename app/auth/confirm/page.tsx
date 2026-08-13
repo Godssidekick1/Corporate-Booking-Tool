@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { Suspense, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 
 // ── /auth/confirm ────────────────────────────────────────────────────────
@@ -13,9 +13,25 @@ import { useRouter, useSearchParams } from 'next/navigation'
 // page load would silently burn the token, and the real recipient's click
 // would always fail with "already used." Requiring a click means the
 // scanner's GET request only ever renders this page — harmless.
+//
+// useSearchParams() requires a Suspense boundary at the page level (Next.js
+// bails out of static prerendering otherwise — see
+// https://nextjs.org/docs/messages/missing-suspense-with-csr-bailout).
+// This route is inherently dynamic (every visit has different token_hash/
+// code params), so the fallback below is never really shown in practice,
+// but Next.js still requires the boundary to exist for the build to
+// prerender the page shell.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function AuthConfirmPage() {
+  return (
+    <Suspense fallback={<div style={styles.root} />}>
+      <AuthConfirmInner />
+    </Suspense>
+  )
+}
+
+function AuthConfirmInner() {
   const router = useRouter()
   const params = useSearchParams()
   const [loading, setLoading] = useState(false)
