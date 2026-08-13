@@ -81,17 +81,43 @@ export interface FlatFlightResult {
   itemNo: string
   cabin?: string
   bookingCode?: string
-  origin?: { code: string; name: string; city: string; dateTime: string; terminal?: string }
-  destination?: { code: string; name: string; city: string; dateTime: string; terminal?: string }
-  airline?: { code: string; name: string }
+
+  origin?: {
+    code: string
+    name: string
+    city: string
+    dateTime: string
+    terminal?: string
+  }
+
+  destination?: {
+    code: string
+    name: string
+    city: string
+    dateTime: string
+    terminal?: string
+  }
+
+  airline?: {
+    code: string
+    name: string
+  }
+
   stopCount: number
   stops: StopInfo[]
+
+  // Overall itinerary duration currently used elsewhere.
   duration?: string
+
+  // Total duration for each journey/direction, including connection time.
+  // e.g. ['12:30'] for one-way or ['12:30', '13:10'] for round-trip.
+  totalDuration?: string
+
   availableSeats?: number
   checkInBaggageKg?: string
   cabinBaggageKg?: string
   fareOptions: FareOption[]
-  // Mirrors fareOptions[0] — kept for pages still reading these directly.
+
   pricingKey?: string
   currency?: string
   totalFare?: number

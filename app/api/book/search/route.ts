@@ -52,6 +52,9 @@ export interface FareOption {
   mealIncluded: boolean | undefined   // PricingInfo.Meal === "YES" — treated as chargeable/optional unless explicitly "YES"
   changePenalties: PenaltyLine[]
   cancelPenalties: PenaltyLine[]
+  brandedFareName: string | undefined
+  brandedFareDescription: string | undefined
+  brandedServices: string[] | undefined
 }
 
 export interface FlatFlightResult {
@@ -67,6 +70,7 @@ export interface FlatFlightResult {
   stopCount: number           // 0, 1, 2 — number of stops
   stops: StopInfo[]           // intermediate stop details
   duration: string | undefined
+  totalDuration: string | undefined // whole-journey duration including layover/ground time between connecting flights, straight from Amadeus's TotalDuration[{flight:"1",text:"HH:MM"}]. Distinct from `duration`, which is only the first leg. Per explicit product guidance, layover time counts toward "how long is this trip" for policy purposes (e.g. long-haul/short-haul cabin checks) — not just airborne time.
   availableSeats: number | undefined
   checkInBaggageKg: string | undefined
   cabinBaggageKg: string | undefined
@@ -201,6 +205,18 @@ export async function POST(req: NextRequest) {
 
   const primaryFare = fareOptions[0]
 
+  // TotalDuration is a sibling field on the raw FlightResult, distinct from
+  // any single leg's Duration — it's the whole journey including
+  // layover/ground time between connecting flights. Confirmed shape from a
+  // real UAT trace: [{ flight: "1", text: "07:30" }] for a one-way search
+  // (this route only ever sends a single segment, so "1" is always the one
+  // we want — no round-trip "2" to disambiguate here). Field casing isn't
+  // guaranteed consistent with the rest of the API's PascalCase
+  // conventions, so this reads defensively across both cases rather than
+  // assuming one.
+  const totalDurationEntry = flight.TotalDuration?.[0] as Record<string, unknown> | undefined
+  const totalDurationText = (totalDurationEntry?.text ?? totalDurationEntry?.Text) as string | undefined
+
   return {
     flightKey: flight.FlightKey,
     provider: flight.Provider,
@@ -229,6 +245,7 @@ export async function POST(req: NextRequest) {
     } : undefined,
     stopCount: itineraries.length - 1,
     duration: firstLeg?.Duration,
+    totalDuration: totalDurationText,
     availableSeats: firstLeg?.AvailableSeats ? parseInt(firstLeg.AvailableSeats) || undefined : undefined,
     checkInBaggageKg: firstLeg?.Baggage?.Allowance?.CheckIn,
     cabinBaggageKg: firstLeg?.Baggage?.Allowance?.Cabin || undefined,

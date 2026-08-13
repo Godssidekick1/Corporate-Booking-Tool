@@ -5,7 +5,7 @@ import util from 'util'
 
 // ── POST /api/book/seatmap ────────────────────────────────────────────────────
 // Sits right after Price, before AddPassenger, in the booking chain
-// (search → price → seatmap → add-passenger → book → ticket).
+// (search → price → seatmap + add-passenger (details) → book → ticket).
 //
 // One call = one leg. For a connecting itinerary the frontend calls this once
 // per segment, same as how the airline's own SeatMap endpoint is scoped —

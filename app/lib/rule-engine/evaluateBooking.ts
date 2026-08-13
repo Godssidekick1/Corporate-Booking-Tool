@@ -24,6 +24,7 @@ const NUMERIC_LIMIT_KEYS = [
   'baggage_extra_bags',
   'per_diem_allowance',
   'max_trip_duration',
+  'max_seat_selection_fee',
 ] as const
 
 const BOOLEAN_ENTITLEMENT_KEYS = [
@@ -37,6 +38,13 @@ const BOOLEAN_ENTITLEMENT_KEYS = [
 
 // Tier keys — stored as numeric rank (0=Economy, 1=Premium Economy, etc.)
 // Actual value must be <= policy value (higher rank = better cabin = needs entitlement)
+// seat_selection here is NOT the same concept as max_seat_selection_fee
+// above — this would be a seat-category tier (e.g. standard/preferred/extra-
+// legroom), which has no matching config field in tmc/settings/policy yet,
+// so it silently never fires. max_seat_selection_fee (a numeric spend cap
+// on selected seat fees) is the one actually wired end-to-end. Leaving this
+// here in case a real seat-tier field gets added later — remove it if that
+// never happens, don't wire fee data into it as a workaround.
 const TIER_LIMIT_KEYS = [
   'cabin_class_short_haul',
   'cabin_class_long_haul',

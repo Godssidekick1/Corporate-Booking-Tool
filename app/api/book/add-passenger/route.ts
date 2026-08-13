@@ -2,6 +2,10 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic, CustomerInfo } from '@/app/lib/amadeus/client'
 import { NextRequest } from 'next/server'
+import { checkBookingAgainstPolicy } from '@/app/lib/rule-engine/checkBookingAgainstPolicy'
+import { buildPolicyInputsFromFlight } from '@/app/lib/rule-engine/buildPolicyInputs'
+import { startApprovalForBooking, buildReason } from '@/app/lib/approval-engine/resolveApprovalTier'
+import type { FlatFlightResult } from '@/app/lib/book/types'
 
 // ── POST /api/book/add-passenger ─────────────────────────────────────────────
 // Third step in the booking chain (search → price → add-passenger → book →
@@ -13,10 +17,17 @@ import { NextRequest } from 'next/server'
 // book-on-behalf support yet, matching how /book/search and /book/price
 // already work.
 //
-// Policy enforcement (Rule Engine) is intentionally NOT wired in here yet —
-// policy_status / policy_verdict / policy_verdict_detail are left null.
-// checkBookingAgainstPolicy(service, {...}) is the hook to call once that's
-// ready; this route only persists booking data for now.
+// Policy + Approval Engine: right after the bookings row is inserted, we run
+// checkBookingAgainstPolicy to get a verdict (green/amber/red), then hand
+// that to startApprovalForBooking to see whether the employee's assigned
+// approval_chain requires a human tier before Book (/api/book/booking) is
+// allowed to fire. The booking lands in one of:
+//   - 'approved'         — no chain assigned, or the verdict didn't meet any
+//                          tier's threshold. Employee can call Book right away.
+//   - 'pending_approval' — a tier-1 approvals row was created; employee must
+//                          wait for approver_id to act before Book is allowed.
+// /api/book/booking's gate (status must be 'approved') enforces this
+// server-side regardless of what the frontend does.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface AddPassengerBody {
@@ -105,6 +116,54 @@ export async function POST(req: NextRequest) {
       String(totalFare)
     )
 
+    // Run the Rule Engine BEFORE inserting, so the verdict can be written in
+    // the same insert rather than a follow-up update. checkBookingAgainstPolicy
+    // never throws for a normal policy pass/fail — only a missing/unconfigured
+    // policy comes back as ok:false, which we treat as "not evaluated" rather
+    // than blocking the booking outright (a TMC config gap shouldn't strand
+    // an employee mid-flow).
+    const flight = itinerary as FlatFlightResult | undefined
+    let policyStatus = 'not_evaluated'
+    let policyVerdict: string | null = null
+    let policyVerdictDetail: unknown = null
+    let reason = 'Policy could not be evaluated for this booking.'
+
+    if (flight) {
+      // customerInfo.PassengerDetails[].SeatListDetails is the final, real
+      // seat selection at submit time (flat array per passenger, already
+      // stripped of legIndex by the frontend — see toSeatListDetails in the
+      // details page). Flattened across all passengers here since only the
+      // total fee matters for max_seat_selection_fee.
+      const selectedSeatFees = customerInfo.PassengerDetails
+        .flatMap(p => p.SeatListDetails ?? [])
+        .map(seat => seat.SeatFee)
+
+      const inputs = buildPolicyInputsFromFlight({ flight, totalFare, isRefundable, selectedSeatFees })
+      const ruleResult = await checkBookingAgainstPolicy(service, {
+        employeeId: employee.id,
+        travelType: inputs.travelType,
+        totalCost: inputs.totalCost,
+        numericValues: inputs.numericValues,
+        booleanValues: inputs.booleanValues,
+        tierValues: inputs.tierValues,
+      })
+
+      if (ruleResult.ok) {
+        policyStatus = 'evaluated'
+        policyVerdict = ruleResult.verdict
+        policyVerdictDetail = { breaches: ruleResult.breaches, costTier: ruleResult.costTier }
+        reason = buildReason(ruleResult.breaches, ruleResult.costTier, totalFare)
+      } else {
+        // no_policy_group / no_policy_rules — leave policyStatus as
+        // 'not_evaluated', but still let the booking proceed to the
+        // approval step below, which will find no chain outcome to route to
+        // and fall back to auto-approved. This matches checkBookingAgainstPolicy's
+        // own doc comment: an unconfigured policy blocks Rule Engine feedback,
+        // never the booking itself.
+        reason = ruleResult.message
+      }
+    }
+
     // Insert immediately after a successful AddPassenger call — this is the
     // first point in the flow where we have a real ReferenceNo tied to real
     // passenger data, so it's the right moment to start persisting state.
@@ -116,7 +175,7 @@ export async function POST(req: NextRequest) {
         employee_id: employee.id,
         requested_for: employee.id,
         booking_type: 'flight',
-        status: 'passenger_added',
+        status: 'pending_approval',
         total_cost: totalFare,
         provider,
         provider_order_id: referenceNo,
@@ -128,7 +187,9 @@ export async function POST(req: NextRequest) {
         itinerary: itinerary ?? null,
         traveler_snapshot: customerInfo,
         fare_breakdown: { currency, isRefundable, fareType, passengerBreakup },
-        policy_status: 'not_evaluated', // Rule Engine not wired in here yet — see comment above. Column is NOT NULL, so this is a truthful placeholder, not a real verdict.
+        policy_status: policyStatus,
+        policy_verdict: policyVerdict,
+        policy_verdict_detail: policyVerdictDetail,
       })
       .select('id')
       .single()
@@ -141,11 +202,44 @@ export async function POST(req: NextRequest) {
       }, { status: 500 })
     }
 
+    // Resolve whether a human approval tier is required. If not, flip the
+    // booking straight to 'approved' so /api/book/booking's gate lets it
+    // through immediately — this keeps "no chain assigned" / "green with no
+    // matching tier" bookings from ever sitting in a pending screen.
+    let finalStatus = 'pending_approval'
+    try {
+      const outcome = await startApprovalForBooking(service, {
+        bookingId: booking.id,
+        companyId: employee.company_id,
+        employeeId: employee.id,
+        verdict: (policyVerdict as 'green' | 'amber' | 'red') ?? 'green',
+        reason,
+      })
+
+      if (!outcome.requiresApproval) {
+        finalStatus = 'approved'
+        await service.from('bookings').update({ status: 'approved' }).eq('id', booking.id)
+      } else if (!outcome.approverId) {
+        // Chain exists but couldn't resolve a real approver (no manager_id
+        // set, or no finance-role employee in the company). Surface this as
+        // its own status rather than silently stalling in 'pending_approval'
+        // with no approvals row ever created for anyone to act on.
+        finalStatus = 'approval_misconfigured'
+        await service.from('bookings').update({ status: 'approval_misconfigured' }).eq('id', booking.id)
+      }
+    } catch (approvalErr) {
+      console.error('Approval chain resolution failed after booking insert', approvalErr)
+      // Booking row already exists at 'pending_approval' — fail safe by
+      // leaving it there rather than auto-approving on an internal error.
+    }
+
     return Response.json({
       ok: true,
       bookingId: booking.id,
       referenceNo: result.ReferenceNo,
-      status: 'passengers_added',
+      status: finalStatus,
+      policyVerdict,
+      policyVerdictDetail,
     })
   } catch (err) {
     if (err instanceof AmadeusError) {

@@ -37,6 +37,41 @@ interface PassengerForm {
   expiryDate: string    // <input type="date"> value, YYYY-MM-DD — converted on submit
 }
 
+// ── Live policy preview ─────────────────────────────────────────────────────
+// Mirrors /api/book/policy-preview's response shape. A preview only — the
+// real, authoritative verdict is recomputed and stored server-side in
+// add-passenger when this form is actually submitted.
+interface PolicyPreview {
+  ok: boolean
+  verdict?: 'green' | 'amber' | 'red'
+  breaches?: { limit_key: string; kind: string; policyValue: unknown; actualValue: unknown }[]
+  costTier?: string
+  reason?: string
+  message?: string
+}
+
+const VERDICT_META: Record<string, { label: string; color: string; bg: string; border: string }> = {
+  green: { label: 'Within policy',       color: '#166534', bg: '#F0FDF4', border: '#BBF7D0' },
+  amber: { label: 'Minor policy breach', color: '#92400E', bg: '#FFFBEB', border: '#FDE68A' },
+  red:   { label: 'Policy breach',       color: '#991B1B', bg: '#FEF2F2', border: '#FECACA' },
+}
+
+const LIMIT_LABELS: Record<string, string> = {
+  max_fare_domestic: 'domestic fare limit',
+  max_fare_intl: 'international fare limit',
+  advance_booking_days: 'minimum advance booking window',
+  cabin_class_short_haul: 'cabin class entitlement (short-haul)',
+  cabin_class_long_haul: 'cabin class entitlement (long-haul)',
+  connecting_flights_allowed: 'connecting flights entitlement',
+  max_seat_selection_fee: 'seat selection spend limit',
+}
+
+function breachLine(b: { limit_key: string; kind: string; policyValue: unknown; actualValue: unknown }): string {
+  const label = LIMIT_LABELS[b.limit_key] ?? b.limit_key
+  if (b.kind === 'boolean') return `${label} is not permitted for this employee`
+  return `${label} exceeded (policy: ${b.policyValue}, actual: ${b.actualValue})`
+}
+
 function emptyPassenger(paxType: PassengerForm['paxType']): PassengerForm {
   return {
     paxType,
@@ -205,16 +240,6 @@ export default function BookingDetailsPage() {
   // Guest bookings (isGuestBooking() true) skip autofill entirely and leave
   // everything editable, same as before.
   const [isSelfBooking, setIsSelfBooking] = useState(false)
-  // True only when we successfully fetched a profile (not a guest booking)
-  // but it was missing something needed to lock — surfaced as a small
-  // nudge so the gap is visible instead of the page silently staying
-  // editable with no explanation.
-  const [profileIncomplete, setProfileIncomplete] = useState(false)
-
-  // Accordion — only one of these two sections is expanded at a time.
-  // Passenger details starts open since it's almost always the first thing
-  // to fill in; seats is optional and often skipped entirely.
-  const [expandedSection, setExpandedSection] = useState<'passengers' | 'seats'>('passengers')
 
   // ── Seat state ───────────────────────────────────────────────────────────
   const [legs, setLegs] = useState<LegInfo[]>([])
@@ -225,6 +250,10 @@ export default function BookingDetailsPage() {
   // seatsByPassenger[passengerIndex] = one SelectedSeat per leg they've picked
   const [seatsByPassenger, setSeatsByPassenger] = useState<Record<number, SelectedSeat[]>>({})
   const [hoveredSeat, setHoveredSeat] = useState<string | null>(null)
+
+  // ── Live policy preview ──────────────────────────────────────────────────
+  const [verdict, setVerdict] = useState<PolicyPreview | null>(null)
+  const [verdictLoading, setVerdictLoading] = useState(false)
 
   useEffect(() => {
     const storedFlight = flowStorage.findResultByFlightKey(flightKey)
@@ -295,6 +324,53 @@ export default function BookingDetailsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flight, legs, activeLegIndex])
 
+  // ── Live policy preview ──────────────────────────────────────────────────
+  // Debounced so rapid seat clicks (or anything else that changes
+  // seatsByPassenger) don't fire a request per click — waits 500ms after
+  // the last change before calling. Only seat selection is reactive here;
+  // fare/cabin/refundability are fixed by the time this page loads (set at
+  // Pricing), so they don't need to be in the dependency array — flight and
+  // priced only change once, on initial load.
+  useEffect(() => {
+    if (!flight || !priced) return
+
+    const seatFees = Object.values(seatsByPassenger)
+      .flat()
+      .map(s => s.SeatFee)
+
+    const timer = setTimeout(() => {
+      runPolicyPreview(seatFees)
+    }, 500)
+
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flight, priced, seatsByPassenger])
+
+  async function runPolicyPreview(selectedSeatFees: string[]) {
+    if (!flight || !priced) return
+    setVerdictLoading(true)
+    try {
+      const res = await fetch('/api/book/policy-preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          flight,
+          totalFare: priced.totalFare,
+          isRefundable: priced.isRefundable,
+          selectedSeatFees,
+        }),
+      })
+      const data: PolicyPreview = await res.json()
+      setVerdict(data)
+    } catch {
+      // Preview is a nice-to-have — silently drop it on failure rather than
+      // blocking the form with an error banner over something non-critical.
+      // The authoritative check still runs for real at submit time.
+    } finally {
+      setVerdictLoading(false)
+    }
+  }
+
   async function loadTravelerProfile(isInternational: boolean) {
     try {
       const res = await fetch('/api/employees/me')
@@ -351,8 +427,6 @@ export default function BookingDetailsPage() {
       )
       if (hasCoreDetails && hasPassportIfNeeded) {
         setIsSelfBooking(true)
-      } else {
-        setProfileIncomplete(true)
       }
     } catch {
       // Autofill is a convenience, not a required step — silently do
@@ -589,24 +663,41 @@ export default function BookingDetailsPage() {
           <div style={s.summaryFare}>{priced.currency} {priced.totalFare.toLocaleString('en-IN')}</div>
         </div>
 
-        {profileIncomplete && (
-          <div style={s.incompleteBanner}>
-            <span style={s.bannerIcon}>ⓘ</span>
-            <span>
-              Your travel profile is missing a few details, so you'll need to fill everything in below.{' '}
-              <Link href="/profile" style={s.incompleteBannerLink}>Complete your profile</Link> to have it autofilled next time.
-            </span>
+        {/* ── Live policy verdict ──────────────────────────────────── */}
+        {verdict?.ok && verdict.verdict && (
+          <div
+            style={{
+              ...s.verdictCard,
+              background: VERDICT_META[verdict.verdict].bg,
+              borderColor: VERDICT_META[verdict.verdict].border,
+              opacity: verdictLoading ? 0.6 : 1,
+            }}
+          >
+            <div style={s.verdictHeader}>
+              <span style={{ ...s.verdictDot, background: VERDICT_META[verdict.verdict].color }} />
+              <span style={{ ...s.verdictLabel, color: VERDICT_META[verdict.verdict].color }}>
+                {VERDICT_META[verdict.verdict].label}
+              </span>
+              {verdictLoading && <span style={s.verdictUpdating}>updating…</span>}
+            </div>
+            {(verdict.breaches?.length ?? 0) > 0 && (
+              <ul style={s.verdictList}>
+                {verdict.breaches!.map((b, i) => (
+                  <li key={i} style={{ ...s.verdictListItem, color: VERDICT_META[verdict.verdict!].color }}>
+                    {breachLine(b)}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p style={s.verdictFootnote}>
+              {verdict.verdict === 'green'
+                ? "You'll still need approval before this booking is confirmed — your manager will be notified."
+                : 'This will need approval before it can be confirmed with the airline.'}
+            </p>
           </div>
         )}
 
         <form onSubmit={handleSubmit}>
-          {/* ── Passenger & contact details (accordion section 1) ────── */}
-          <AccordionSection
-            title="Passenger & contact details"
-            subtitle={`${passengers.length} traveler${passengers.length > 1 ? 's' : ''} · contact info`}
-            isOpen={expandedSection === 'passengers'}
-            onToggle={() => setExpandedSection(prev => prev === 'passengers' ? 'seats' : 'passengers')}
-          >
           {/* ── One card per passenger ──────────────────────────────── */}
           {passengers.map((passenger, i) => {
             const locked = i === 0 && isSelfBooking
@@ -754,17 +845,11 @@ export default function BookingDetailsPage() {
               </div>
             </div>
           </div>
-          </AccordionSection>
 
-          {/* ── Seat selection (accordion section 2) ─────────────────── */}
-          <AccordionSection
-            title="Choose your seats"
-            subtitle="Optional"
-            isOpen={expandedSection === 'seats'}
-            onToggle={() => setExpandedSection(prev => prev === 'seats' ? 'passengers' : 'seats')}
-          >
+          {/* ── Seat selection ───────────────────────────────────────── */}
           <div style={s.card}>
-            <p style={s.cardSub}>You can skip this and get a seat at check-in instead.</p>
+            <h2 style={s.cardTitle}>Choose your seats</h2>
+            <p style={s.cardSub}>Optional — you can skip this and get a seat at check-in instead.</p>
 
             {passengers.length > 1 && (
               <div style={s.travelerTabs}>
@@ -872,7 +957,6 @@ export default function BookingDetailsPage() {
               <div style={s.legendItem}><span style={{ ...s.legendSwatch, ...s.seatSelected }} /> Selected</div>
             </div>
           </div>
-          </AccordionSection>
 
           {error && (
             <div style={s.errorBanner}>
@@ -885,34 +969,6 @@ export default function BookingDetailsPage() {
           </button>
         </form>
       </div>
-    </div>
-  )
-}
-
-// Accordion wrapper for the two top-level sections on this page — only one
-// is expanded at a time (see expandedSection state above). Collapsing the
-// other section is what actually shortens the scroll; the closed section's
-// content unmounts entirely rather than just hiding, so a long passenger
-// list or a loaded seat map doesn't sit around doing nothing off-screen.
-function AccordionSection({
-  title, subtitle, isOpen, onToggle, children,
-}: {
-  title: string
-  subtitle?: string
-  isOpen: boolean
-  onToggle: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <div style={s.accordionSection}>
-      <button type="button" onClick={onToggle} style={s.accordionHeader}>
-        <span style={s.accordionHeaderText}>
-          <span style={s.accordionTitle}>{title}</span>
-          {subtitle && <span style={s.accordionSubtitle}>{subtitle}</span>}
-        </span>
-        <span style={{ ...s.accordionChevron, transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}>⌄</span>
-      </button>
-      {isOpen && <div style={s.accordionBody}>{children}</div>}
     </div>
   )
 }
@@ -983,30 +1039,24 @@ const s: Record<string, React.CSSProperties> = {
   summaryMeta: { fontSize: '11px', color: '#9CA3AF', marginLeft: '8px' },
   summaryFare: { fontSize: '15px', fontWeight: 700, color: '#0A0A14' },
 
-  card: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '20px', marginBottom: '16px' },
-
-  accordionSection: { marginBottom: '12px' },
-  accordionHeader: {
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%',
-    background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '16px 18px',
-    cursor: 'pointer', font: 'inherit', textAlign: 'left' as const,
+  verdictCard: {
+    border: '1px solid', borderRadius: '14px', padding: '16px', marginBottom: '20px',
+    transition: 'background 0.3s ease, border-color 0.3s ease, opacity 0.2s ease',
   },
-  accordionHeaderText: { display: 'flex', flexDirection: 'column' as const, gap: '2px' },
-  accordionTitle: { fontSize: '14.5px', fontWeight: 700, color: '#111827' },
-  accordionSubtitle: { fontSize: '11.5px', color: '#9CA3AF' },
-  accordionChevron: { fontSize: '18px', color: '#9CA3AF', transition: 'transform 0.15s', flexShrink: 0, marginLeft: '10px' },
-  accordionBody: { paddingTop: '12px' },
+  verdictHeader: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' },
+  verdictDot: { width: '9px', height: '9px', borderRadius: '50%', flexShrink: 0, transition: 'background 0.3s ease' },
+  verdictLabel: { fontSize: '13px', fontWeight: 700, transition: 'color 0.3s ease' },
+  verdictUpdating: { fontSize: '11px', color: '#9CA3AF', fontWeight: 500, marginLeft: 'auto' },
+  verdictList: { margin: '8px 0 0', paddingLeft: '18px', display: 'flex', flexDirection: 'column' as const, gap: '4px' },
+  verdictListItem: { fontSize: '12px', lineHeight: 1.5 },
+  verdictFootnote: { fontSize: '11px', color: '#6B7280', margin: '10px 0 0', lineHeight: 1.5 },
+
+  card: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '20px', marginBottom: '16px' },
   cardTitle: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: '8px' },
   cardSub: { fontSize: '12px', color: '#9CA3AF', margin: '0 0 16px' },
 
   lockedNote: { fontSize: '11.5px', color: '#6B7280', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '8px', padding: '8px 12px', margin: '-4px 0 16px' },
   lockedLink: { color: '#000835', fontWeight: 600, textDecoration: 'none' },
-
-  incompleteBanner: {
-    display: 'flex', alignItems: 'flex-start', gap: '8px', background: '#FFFBEB', border: '1px solid #FDE68A',
-    borderRadius: '10px', padding: '11px 14px', fontSize: '12.5px', color: '#92400E', marginBottom: '16px', lineHeight: 1.5,
-  },
-  incompleteBannerLink: { color: '#92400E', fontWeight: 700, textDecoration: 'underline' },
 
   paxTypeBadge: { fontSize: '10px', fontWeight: 700, color: '#3730A3', background: '#EEF2FF', padding: '2px 8px', borderRadius: '5px', letterSpacing: '0.3px' },
 
@@ -1043,23 +1093,23 @@ const s: Record<string, React.CSSProperties> = {
   clearBtn: { fontSize: '12px', color: '#DC2626', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer' },
 
   planeCard: {
-    background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '16px 12px', marginBottom: '16px',
-    minHeight: '140px', maxHeight: '360px', overflowY: 'auto' as const, display: 'flex', justifyContent: 'center',
+    background: '#fff', border: '1px solid #E5E7EB', borderRadius: '18px', padding: '24px 16px', marginBottom: '16px',
+    minHeight: '200px', display: 'flex', justifyContent: 'center',
   },
-  planeWrap: { display: 'flex', flexDirection: 'column' as const, alignItems: 'center', gap: '4px', width: '100%' },
+  planeWrap: { display: 'flex', flexDirection: 'column' as const, alignItems: 'center', gap: '6px', width: '100%' },
   nose: {
-    width: '44px', height: '20px', background: '#F3F4F6', borderRadius: '50% 50% 0 0', marginBottom: '6px',
+    width: '60px', height: '30px', background: '#F3F4F6', borderRadius: '50% 50% 0 0', marginBottom: '8px',
     border: '1px solid #E5E7EB', borderBottom: 'none',
   },
 
-  rowLine: { display: 'flex', alignItems: 'center', gap: '8px', width: '100%', justifyContent: 'center' },
-  rowNumber: { fontSize: '9px', color: '#9CA3AF', fontWeight: 600, width: '14px', textAlign: 'center' as const, flexShrink: 0 },
-  rowSeats: { display: 'flex', alignItems: 'center', gap: '4px' },
-  aisle: { width: '12px', flexShrink: 0 },
+  rowLine: { display: 'flex', alignItems: 'center', gap: '10px', width: '100%', justifyContent: 'center' },
+  rowNumber: { fontSize: '10px', color: '#9CA3AF', fontWeight: 600, width: '16px', textAlign: 'center' as const, flexShrink: 0 },
+  rowSeats: { display: 'flex', alignItems: 'center', gap: '5px' },
+  aisle: { width: '16px', flexShrink: 0 },
 
   seatOuter: { position: 'relative' as const },
   seatBase: {
-    width: '22px', height: '22px', borderRadius: '5px', fontSize: '8.5px', fontWeight: 700,
+    width: '28px', height: '28px', borderRadius: '6px', fontSize: '10px', fontWeight: 700,
     display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', border: 'none', flexShrink: 0,
   },
   seatOpen: { background: '#fff', color: '#374151', border: '1.5px solid #D1D5DB', cursor: 'pointer' },

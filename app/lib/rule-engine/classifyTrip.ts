@@ -35,8 +35,16 @@ export function advanceBookingDays(departDate: string, now: Date = new Date()): 
   return Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)))
 }
 
-// Longest single leg duration, in hours -- needed to pick cabin_class_short_haul
-// vs cabin_class_long_haul (the existing policy fields split at 8 hours).
+// Longest single leg duration, in hours. NOT currently used for the
+// short-haul/long-haul cabin policy check — that's now
+// buildPolicyInputs.ts's journeyHours(flight.totalDuration), which
+// deliberately includes layover time (per explicit product/mentor
+// guidance: a long layover makes it a "long" trip even if no single
+// airborne segment exceeds 8 hours). Kept here in case a future policy
+// field genuinely wants "longest single flight segment" as a distinct
+// concept from "total journey time" — don't wire this back into the cabin
+// check without re-confirming that's actually wanted, since the two
+// definitions now disagree by design.
 export function longestLegHours(durations: string[]): number {
   let max = 0
   for (const d of durations) {

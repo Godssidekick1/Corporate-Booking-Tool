@@ -283,7 +283,7 @@ export interface FlightResult {
   IsLCC: string | boolean
   Provider: string
   FlightKey: string
-  TotalDuration?: unknown[]
+  TotalDuration?: { flight?: string; text?: string }[]
   ItemNo: string
   Itineraries: {
     Itinerary: ItineraryInfo[]
