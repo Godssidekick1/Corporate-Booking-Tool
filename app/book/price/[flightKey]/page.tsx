@@ -231,7 +231,7 @@ export default function SelectFarePage() {
 
   function handleContinue() {
     setContinuing(true)
-    router.push(`/book/seats/${encodeURIComponent(flightKey)}`)
+    router.push(`/book/details/${encodeURIComponent(flightKey)}`)
   }
 
   if (error && !flight) {
