@@ -50,9 +50,37 @@ interface PriceApiResult {
     Tax: number
     TotalFare: number
   }[]
-  brandedFareName?: string
-  brandedFareDescription?: string
-  brandedServices?: string[]
+}
+
+interface PolicyPreview {
+  ok: boolean
+  verdict?: 'green' | 'amber' | 'red'
+  breaches?: { limit_key: string; kind: string; policyValue: unknown; actualValue: unknown }[]
+  costTier?: string
+  reason?: string
+  message?: string
+}
+
+const VERDICT_META: Record<string, { label: string; color: string; bg: string; border: string }> = {
+  green: { label: 'Within policy',       color: '#166534', bg: '#F0FDF4', border: '#BBF7D0' },
+  amber: { label: 'Minor policy breach', color: '#92400E', bg: '#FFFBEB', border: '#FDE68A' },
+  red:   { label: 'Policy breach',       color: '#991B1B', bg: '#FEF2F2', border: '#FECACA' },
+}
+
+const LIMIT_LABELS: Record<string, string> = {
+  max_fare_domestic: 'domestic fare limit',
+  max_fare_intl: 'international fare limit',
+  advance_booking_days: 'minimum advance booking window',
+  cabin_class_short_haul: 'cabin class entitlement (short-haul)',
+  cabin_class_long_haul: 'cabin class entitlement (long-haul)',
+  connecting_flights_allowed: 'connecting flights entitlement',
+  max_seat_selection_fee: 'seat selection spend limit',
+}
+
+function breachLine(b: { limit_key: string; kind: string; policyValue: unknown; actualValue: unknown }): string {
+  const label = LIMIT_LABELS[b.limit_key] ?? b.limit_key
+  if (b.kind === 'boolean') return `${label} is not permitted for this employee`
+  return `${label} exceeded (policy: ${b.policyValue}, actual: ${b.actualValue})`
 }
 
 function penaltySummary(lines: { paxType: string; text: string }[] | undefined): string | null {
@@ -78,6 +106,9 @@ export default function SelectFarePage() {
   const [pricingLoading, setPricingLoading] = useState(true)
   const [error, setError] = useState('')
   const [continuing, setContinuing] = useState(false)
+  // Keyed by fare option index — every card gets its own verdict so all of
+  // them can show a border/banner at once, not just the selected one.
+  const [verdicts, setVerdicts] = useState<Record<number, PolicyPreview>>({})
 
   useEffect(() => {
     const stored = flowStorage.findResultByFlightKey(flightKey)
@@ -94,8 +125,43 @@ export default function SelectFarePage() {
 
     setFlight(stored)
     runPricing(stored, 0)
+    loadAllFareVerdicts(stored)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flightKey])
+
+  // ── Policy preview, per fare option ─────────────────────────────────────
+  // Uses each fare option's own search-time totalFare/refundable — NOT the
+  // live-priced value — so this can run once for every card up front
+  // without an extra real Amadeus Pricing call per option (runPricing only
+  // prices the selected fare, on purpose, to avoid hammering the airline
+  // for cards the traveler may never pick). This is a preview, same caveat
+  // as everywhere else it's used: the authoritative verdict is recomputed
+  // at add-passenger, against the actually-priced fare, right before a
+  // bookings row is created.
+  async function loadAllFareVerdicts(flightResult: FlatFlightResult) {
+    const results = await Promise.all(
+      flightResult.fareOptions.map(async (fare, i) => {
+        try {
+          const res = await fetch('/api/book/policy-preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              flight: flightResult,
+              totalFare: fare.totalFare ?? flightResult.totalFare ?? 0,
+              isRefundable: fare.refundable ?? flightResult.refundable ?? false,
+            }),
+          })
+          const data: PolicyPreview = await res.json()
+          return [i, data] as const
+        } catch {
+          // Same as elsewhere: a preview failing shouldn't block the page.
+          // That fare's card just won't show a border/banner.
+          return [i, { ok: false }] as const
+        }
+      })
+    )
+    setVerdicts(Object.fromEntries(results))
+  }
 
   async function runPricing(flightResult: FlatFlightResult, fareIndex: number) {
     setPricingLoading(true)
@@ -149,9 +215,6 @@ export default function SelectFarePage() {
         passengerBreakup: data.passengerBreakup,
         isNdc: fareOption?.isNdc ?? flightResult.isNdc,
         searchKey: searchData.availabilityKey ?? undefined,
-        brandedFareName: data.brandedFareName ?? fareOption?.brandedFareName,
-        brandedFareDescription: data.brandedFareDescription ?? fareOption?.brandedFareDescription,
-        brandedServices: data.brandedServices ?? fareOption?.brandedServices,
       })
     } catch {
       setError('Something went wrong confirming this fare. Please try again.')
@@ -168,7 +231,7 @@ export default function SelectFarePage() {
 
   function handleContinue() {
     setContinuing(true)
-    router.push(`/book/details/${encodeURIComponent(flightKey)}`)
+    router.push(`/book/seats/${encodeURIComponent(flightKey)}`)
   }
 
   if (error && !flight) {
@@ -258,34 +321,35 @@ export default function SelectFarePage() {
         {/* rule sections (Baggage / Flexibility / Seats, Meals & More),   */}
         {/* matching the structure of a standard OTA fare-comparison card. */}
         {/* When there's only one fare option (the common case today —    */}
-        {/* confirmed real responses never show more than one), it renders*/}
-        {/* as a single full-width card, matching the rest of the page.   */}
-        <h2 style={s.cardTitle}>{hasMultipleFares ? 'Choose a fare' : 'Fare details'}</h2>
-        <div style={hasMultipleFares ? s.fareOptionScroller : s.fareOptionListSingle}>
+        {/* confirmed real responses never show more than one), it still  */}
+        {/* renders as a single full card, not a disabled picker.         */}
+        <div style={s.card}>
+          <h2 style={s.cardTitle}>{hasMultipleFares ? 'Choose a fare' : 'Fare details'}</h2>
+          <div style={s.fareOptionList}>
             {flight.fareOptions.map((fare, i) => {
               const isActive = i === selectedFareIndex
               const changeText = penaltySummary(fare.changePenalties)
               const cancelText = penaltySummary(fare.cancelPenalties)
               const mealsIncluded = pricing && isActive ? pricing.mealIncluded : fare.mealIncluded
               const cabinBag = pricing && isActive ? pricing.cabinBaggageKg : flight.cabinBaggageKg
-              // Branded fare name/description/perks refresh from the live
-              // Pricing call once this card is selected and priced, same as
-              // mealsIncluded/cabinBag above — falls back to the
-              // search-time value so the card isn't blank before pricing runs.
-              const brandedName = (pricing && isActive ? pricing.brandedFareName : undefined) ?? fare.brandedFareName
-              const brandedDescription = (pricing && isActive ? pricing.brandedFareDescription : undefined) ?? fare.brandedFareDescription
-              const brandedServices = (pricing && isActive ? pricing.brandedServices : undefined) ?? fare.brandedServices
+              const fareVerdict = verdicts[i]
+              const verdictColor = fareVerdict?.ok && fareVerdict.verdict ? VERDICT_META[fareVerdict.verdict] : null
 
               return (
                 <button
                   key={i}
                   type="button"
                   onClick={() => handleSelectFareOption(i)}
-                  style={{ ...s.fareCard, ...(isActive ? s.fareCardActive : {}), ...(hasMultipleFares ? {} : s.fareCardStatic) }}
+                  style={{
+                    ...s.fareCard,
+                    ...(isActive ? s.fareCardActive : {}),
+                    ...(hasMultipleFares ? {} : s.fareCardStatic),
+                    ...(verdictColor ? { borderColor: verdictColor.border, borderWidth: '2px' } : {}),
+                  }}
                 >
                   <div style={s.fareCardTopRow}>
                     <div>
-                      <span style={s.fareCardType}>{brandedName ?? fare.fareType ?? `Fare ${i + 1}`}</span>
+                      <span style={s.fareCardType}>{fare.fareType ?? `Fare ${i + 1}`}</span>
                       <span style={{ ...s.fareOptionRefundTag, color: fare.refundable ? '#166534' : '#9CA3AF', background: fare.refundable ? '#F0FDF4' : '#F3F4F6' }}>
                         {fare.refundable ? 'Refundable' : 'Non-refundable'}
                       </span>
@@ -296,8 +360,23 @@ export default function SelectFarePage() {
                       </div>
                     )}
                   </div>
-                  {brandedDescription && brandedDescription !== brandedName && (
-                    <span style={s.fareCardBrandedDescription}>{brandedDescription}</span>
+
+                  {verdictColor && (
+                    <div style={{ ...s.fareVerdictBanner, background: verdictColor.bg, borderColor: verdictColor.border }}>
+                      <div style={s.fareVerdictHeader}>
+                        <span style={{ ...s.fareVerdictDot, background: verdictColor.color }} />
+                        <span style={{ ...s.fareVerdictLabel, color: verdictColor.color }}>{verdictColor.label}</span>
+                      </div>
+                      {(fareVerdict!.breaches?.length ?? 0) > 0 && (
+                        <ul style={s.fareVerdictList}>
+                          {fareVerdict!.breaches!.map((b, bi) => (
+                            <li key={bi} style={{ ...s.fareVerdictListItem, color: verdictColor.color }}>
+                              {breachLine(b)}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
                   )}
 
                   <div style={s.fareCardPriceRow}>
@@ -328,18 +407,10 @@ export default function SelectFarePage() {
                       {mealsIncluded ? 'Complimentary meal' : 'Meals — optional, at extra cost'}
                     </div>
                   </div>
-
-                  {brandedServices && brandedServices.length > 0 && (
-                    <div style={s.fareRuleSection}>
-                      <span style={s.fareRuleSectionTitle}>Included with this fare</span>
-                      {brandedServices.map((service, si) => (
-                        <div key={si} style={s.fareRuleLine}><span style={s.fareRuleDot} />{service}</div>
-                      ))}
-                    </div>
-                  )}
                 </button>
               )
             })}
+          </div>
         </div>
 
         {/* ── Fare breakdown — live from Pricing ──────────────────────── */}
@@ -347,9 +418,9 @@ export default function SelectFarePage() {
           <h2 style={s.cardTitle}>Fare breakdown</h2>
 
           {pricingLoading && (
-              <div style={s.pricingLoadingRow}>
-                <div style={s.spinnerSmall} />
-                <span style={s.pricingLoadingText}>Confirming live price with the airline…</span>
+            <div style={s.pricingLoadingRow}>
+              <div style={s.spinnerSmall} />
+              <span style={s.pricingLoadingText}>Confirming live price with the airline…</span>
             </div>
           )}
 
@@ -411,7 +482,7 @@ export default function SelectFarePage() {
 
 const s: Record<string, React.CSSProperties> = {
   page: { background: '#F9FAFB', minHeight: '100vh' },
-  root: { fontFamily: "'Inter', -apple-system, sans-serif", maxWidth: '1040px', margin: '0 auto', padding: '32px 24px 64px' },
+  root: { fontFamily: "'Inter', -apple-system, sans-serif", maxWidth: '640px', margin: '0 auto', padding: '32px 24px 64px' },
 
   backLink: { fontSize: '13px', color: '#6B7280', textDecoration: 'none', display: 'inline-block', marginBottom: '16px' },
 
@@ -459,42 +530,37 @@ const s: Record<string, React.CSSProperties> = {
   tagBudget: { color: '#7C2D12', background: '#FFF7ED' },
   tagFullService: { color: '#14532D', background: '#F0FDF4' },
 
-  // Multiple fares: horizontal scroller, fixed-width cards, snaps into view
-  // per-card. Single fare: falls back to one full-width card in the
-  // narrow 640px column, same as before — no scroller chrome for a
-  // one-option flight. Neither needs its own side padding — root already
-  // supplies that uniformly; fareOptionScroller adds a little extra right
-  // padding only so the last card has breathing room when scrolled fully right.
-  fareOptionScroller: {
-    display: 'flex', flexDirection: 'row' as const, gap: '12px', overflowX: 'auto' as const,
-    padding: '4px 16px 12px 0', marginBottom: '4px', scrollSnapType: 'x proximity' as const, WebkitOverflowScrolling: 'touch' as const,
-  },
-  fareOptionListSingle: { marginBottom: '16px' },
-
+  fareOptionList: { display: 'flex', flexDirection: 'column' as const, gap: '12px' },
   fareCard: {
-    display: 'flex', flexDirection: 'column' as const, width: '300px', flexShrink: 0,
-    padding: '16px', background: '#F9FAFB', border: '1.5px solid #E5E7EB', borderRadius: '12px',
-    cursor: 'pointer', textAlign: 'left' as const, scrollSnapAlign: 'start' as const,
+    display: 'flex', flexDirection: 'column' as const, width: '100%',
+    padding: '18px', background: '#F9FAFB', border: '1.5px solid #E5E7EB', borderRadius: '14px',
+    cursor: 'pointer', textAlign: 'left' as const,
   },
   fareCardActive: { background: '#EEF2FF', borderColor: '#000835' },
-  fareCardStatic: { cursor: 'default', width: '100%' },
+  fareCardStatic: { cursor: 'default' },
   fareCardTopRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' },
-  fareCardType: { fontSize: '13px', fontWeight: 700, color: '#111827', marginRight: '6px' },
-  fareCardBrandedDescription: { display: 'block', fontSize: '10.5px', color: '#9CA3AF', marginTop: '2px' },
-  fareOptionRefundTag: { fontSize: '9px', fontWeight: 700, padding: '2px 7px', borderRadius: '6px' },
-  fareOptionRadio: { width: '16px', height: '16px', borderRadius: '50%', border: '2px solid #D1D5DB', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-  fareOptionRadioDot: { width: '7px', height: '7px', borderRadius: '50%', background: 'transparent' },
+
+  fareVerdictBanner: { border: '1px solid', borderRadius: '10px', padding: '10px 12px', margin: '10px 0' },
+  fareVerdictHeader: { display: 'flex', alignItems: 'center', gap: '7px' },
+  fareVerdictDot: { width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0 },
+  fareVerdictLabel: { fontSize: '12px', fontWeight: 700 },
+  fareVerdictList: { margin: '6px 0 0', paddingLeft: '16px', display: 'flex', flexDirection: 'column' as const, gap: '3px' },
+  fareVerdictListItem: { fontSize: '11px', lineHeight: 1.5, textAlign: 'left' as const },
+  fareCardType: { fontSize: '14px', fontWeight: 700, color: '#111827', marginRight: '8px' },
+  fareOptionRefundTag: { fontSize: '10px', fontWeight: 700, padding: '3px 9px', borderRadius: '6px' },
+  fareOptionRadio: { width: '18px', height: '18px', borderRadius: '50%', border: '2px solid #D1D5DB', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  fareOptionRadioDot: { width: '8px', height: '8px', borderRadius: '50%', background: 'transparent' },
   fareOptionRadioDotActive: { background: '#000835' },
 
-  fareCardPriceRow: { display: 'flex', alignItems: 'baseline', gap: '5px', marginBottom: '10px', paddingBottom: '10px', borderBottom: '1px dashed #E5E7EB' },
-  fareCardPrice: { fontSize: '17px', fontWeight: 700, color: '#0A0A14' },
-  fareCardPriceSub: { fontSize: '10px', color: '#9CA3AF' },
+  fareCardPriceRow: { display: 'flex', alignItems: 'baseline', gap: '6px', marginBottom: '14px', paddingBottom: '14px', borderBottom: '1px dashed #E5E7EB' },
+  fareCardPrice: { fontSize: '20px', fontWeight: 700, color: '#0A0A14' },
+  fareCardPriceSub: { fontSize: '11px', color: '#9CA3AF' },
 
-  fareRuleSection: { marginBottom: '9px' },
-  fareRuleSectionTitle: { display: 'block', fontSize: '10px', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.4px', marginBottom: '5px' },
-  fareRuleLine: { display: 'flex', alignItems: 'center', gap: '7px', fontSize: '11px', color: '#374151', padding: '2px 0' },
-  fareRuleDot: { width: '5px', height: '5px', borderRadius: '50%', background: '#22C55E', flexShrink: 0 },
-  fareRuleDotAmber: { width: '5px', height: '5px', borderRadius: '50%', background: '#F59E0B', flexShrink: 0 },
+  fareRuleSection: { marginBottom: '12px' },
+  fareRuleSectionTitle: { display: 'block', fontSize: '11px', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.4px', marginBottom: '6px' },
+  fareRuleLine: { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#374151', padding: '3px 0' },
+  fareRuleDot: { width: '6px', height: '6px', borderRadius: '50%', background: '#22C55E', flexShrink: 0 },
+  fareRuleDotAmber: { width: '6px', height: '6px', borderRadius: '50%', background: '#F59E0B', flexShrink: 0 },
 
   fareRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0' },
   fareLabel: { fontSize: '13px', color: '#6B7280' },
