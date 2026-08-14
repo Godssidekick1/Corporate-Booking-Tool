@@ -38,6 +38,36 @@ interface MeResponse {
   employeeCount: number
 }
 
+// ── Approval summary (manager/admin/finance) ────────────────────────────
+// Real data now — count + oldest 3 names of whoever's waiting on THIS
+// person specifically, from /api/approvals?summary=1.
+interface ApprovalSummary {
+  pendingCount: number
+  oldestNames: string[]
+}
+
+// ── Actionable bookings (employee's own) ────────────────────────────────
+// The traveler's own bookings sitting in a state that needs them to come
+// back — approved-and-ready-to-confirm, still pending, rejected, or
+// misconfigured. From /api/bookings/actionable.
+interface ActionableBooking {
+  id: string
+  status: string
+  totalCost: number
+  itinerary: {
+    origin?: { code: string; city: string }
+    destination?: { code: string; city: string }
+  } | null
+  updatedAt: string
+}
+
+const ACTIONABLE_META: Record<string, { label: string; cta: string }> = {
+  approved: { label: 'Ready to confirm', cta: 'Confirm now →' },
+  pending_approval: { label: 'Awaiting approval', cta: 'View status →' },
+  rejected: { label: 'Rejected', cta: 'See why →' },
+  approval_misconfigured: { label: 'Needs admin attention', cta: 'View →' },
+}
+
 function getChecklist(company: Company | null, employeeCount: number) {
   const hasPolicy = !!(company?.settings?.approvalModel)
   return [
@@ -95,33 +125,12 @@ function getNavItems(role: string) {
   return base
 }
 
-function getStats(role: string) {
-  if (role === 'admin' || role === 'finance') {
-    return [
-      { label: 'Bookings this month', value: '0', sub: 'No bookings yet' },
-      { label: 'Pending approvals',   value: '0', sub: 'Nothing to action' },
-      { label: 'Policy compliance',   value: '—', sub: 'Starts once bookings are made' },
-      { label: 'Total spend (MTD)',    value: '—', sub: 'No spend recorded' },
-    ]
-  }
-  if (role === 'manager') {
-    return [
-      { label: 'Team bookings',     value: '0', sub: 'No bookings yet' },
-      { label: 'Pending approvals', value: '0', sub: 'Nothing to action' },
-      { label: 'Team spend (MTD)',  value: '—', sub: 'No spend recorded' },
-    ]
-  }
-  return [
-    { label: 'My trips this year', value: '0', sub: 'No trips yet' },
-    { label: 'Pending approval',   value: '0', sub: 'Nothing pending' },
-    { label: 'Total spend (YTD)',  value: '—', sub: 'No spend recorded' },
-  ]
-}
-
 export default function DashboardPage() {
   const router = useRouter()
   const [me, setMe] = useState<MeResponse | null>(null)
   const [loading, setLoading] = useState(true)
+  const [approvalSummary, setApprovalSummary] = useState<ApprovalSummary | null>(null)
+  const [actionableBookings, setActionableBookings] = useState<ActionableBooking[]>([])
 
   useEffect(() => {
     fetch('/api/me')
@@ -129,6 +138,22 @@ export default function DashboardPage() {
         const data: MeResponse = await r.json()
         if (!r.ok || !data.ok) { router.replace('/login'); return }
         setMe(data)
+
+        // Fetch role-appropriate data once we know who's logged in — the
+        // approver summary only makes sense for admin/manager/finance, the
+        // actionable-bookings banner is relevant to everyone (an admin can
+        // also be a traveler on their own bookings).
+        if (['admin', 'manager', 'finance'].includes(data.employee.role)) {
+          fetch('/api/approvals?summary=1')
+            .then(res => res.json())
+            .then(d => { if (d.ok) setApprovalSummary({ pendingCount: d.pendingCount, oldestNames: d.oldestNames }) })
+            .catch(() => {})
+        }
+
+        fetch('/api/bookings/actionable')
+          .then(res => res.json())
+          .then(d => { if (d.ok) setActionableBookings(d.bookings) })
+          .catch(() => {})
       })
       .catch(() => router.replace('/login'))
       .finally(() => setLoading(false))
@@ -144,11 +169,24 @@ export default function DashboardPage() {
   const { employee, company } = me
   const { role, full_name, band_code } = employee
   const navItems = getNavItems(role)
-  const stats = getStats(role)
   const firstName = full_name?.split(' ')[0] ?? 'there'
   const checklist = getChecklist(company, me.employeeCount ?? 0)
   const completedCount = checklist.filter(i => i.done).length
   const showChecklist = role === 'admin' && !(company?.setup_completed ?? false)
+  const isApproverRole = role === 'admin' || role === 'manager' || role === 'finance'
+
+  const stats = isApproverRole
+    ? [
+        { label: 'Bookings this month', value: '0', sub: 'No bookings yet' },
+        { label: 'Pending approvals',   value: String(approvalSummary?.pendingCount ?? 0), sub: approvalSummary?.pendingCount ? 'Needs your action' : 'Nothing to action' },
+        { label: 'Policy compliance',   value: '—', sub: 'Starts once bookings are made' },
+        { label: 'Total spend (MTD)',    value: '—', sub: 'No spend recorded' },
+      ]
+    : [
+        { label: 'My trips this year', value: '0', sub: 'No trips yet' },
+        { label: 'Pending approval',   value: String(actionableBookings.filter(b => b.status === 'pending_approval').length), sub: 'Awaiting your approver' },
+        { label: 'Total spend (YTD)',  value: '—', sub: 'No spend recorded' },
+      ]
 
   return (
     <div style={s.root}>
@@ -177,6 +215,9 @@ export default function DashboardPage() {
                   fontWeight: active ? 500 : 400,
                 }}>
                   {item.label}
+                  {item.href === '/approvals' && (approvalSummary?.pendingCount ?? 0) > 0 && (
+                    <span style={s.navBadge}>{approvalSummary!.pendingCount}</span>
+                  )}
                 </a>
               )
             })}
@@ -250,6 +291,36 @@ export default function DashboardPage() {
           </div>
         )}
 
+        {/* ── "Your booking needs you" banner — any role, since even an   */}
+        {/* admin/manager can be a traveler on their own bookings ────── */}
+        {actionableBookings.length > 0 && (
+          <div style={s.actionBanner}>
+            <div style={s.actionBannerHeader}>
+              <span style={s.actionBannerIcon}>✈</span>
+              <p style={s.actionBannerTitle}>
+                {actionableBookings.length === 1 ? 'You have a booking that needs attention' : `You have ${actionableBookings.length} bookings that need attention`}
+              </p>
+            </div>
+            <div style={s.actionBannerList}>
+              {actionableBookings.slice(0, 3).map(b => {
+                const meta = ACTIONABLE_META[b.status] ?? { label: b.status, cta: 'View →' }
+                const route = b.itinerary?.origin && b.itinerary?.destination
+                  ? `${b.itinerary.origin.code} → ${b.itinerary.destination.code}`
+                  : 'Booking'
+                return (
+                  <a key={b.id} href={`/book/confirm/${b.id}`} style={s.actionBannerRow}>
+                    <div>
+                      <span style={s.actionBannerRoute}>{route}</span>
+                      <span style={s.actionBannerStatus}>{meta.label}</span>
+                    </div>
+                    <span style={s.actionBannerCta}>{meta.cta}</span>
+                  </a>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
         {role === 'employee' && (
           <div style={s.infoBanner}>
             <span style={s.infoBannerText}>
@@ -293,13 +364,30 @@ export default function DashboardPage() {
           />
         </Section>
 
-        {(role === 'admin' || role === 'manager' || role === 'finance') && (
+        {isApproverRole && (
           <Section title="Pending approvals" linkLabel="View all" linkHref="/approvals">
-            <EmptyState
-              icon="✔"
-              title="No pending approvals"
-              desc="Out-of-policy booking requests will show up here for you to action."
-            />
+            {approvalSummary && approvalSummary.pendingCount > 0 ? (
+              <div style={s.approvalPreviewList}>
+                {approvalSummary.oldestNames.map((name, i) => (
+                  <a key={i} href="/approvals" style={s.approvalPreviewRow}>
+                    <span style={s.approvalPreviewDot} />
+                    <span style={s.approvalPreviewName}>{name}</span>
+                    <span style={s.approvalPreviewArrow}>→</span>
+                  </a>
+                ))}
+                {approvalSummary.pendingCount > 3 && (
+                  <a href="/approvals" style={s.approvalPreviewMore}>
+                    +{approvalSummary.pendingCount - 3} more waiting →
+                  </a>
+                )}
+              </div>
+            ) : (
+              <EmptyState
+                icon="✔"
+                title="No pending approvals"
+                desc="Out-of-policy booking requests will show up here for you to action."
+              />
+            )}
           </Section>
         )}
       </main>
@@ -382,7 +470,11 @@ const s: Record<string, React.CSSProperties> = {
   companyDot: { width: '6px', height: '6px', borderRadius: '50%', background: '#22C55E', flexShrink: 0 },
   companyName: { fontSize: '12px', color: 'rgba(255,255,255,0.7)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
   navItems: { display: 'flex', flexDirection: 'column', gap: '1px' },
-  navItem: { display: 'block', padding: '8px 10px', borderRadius: '6px', fontSize: '13px', textDecoration: 'none', transition: 'all 0.15s' },
+  navItem: { display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 10px', borderRadius: '6px', fontSize: '13px', textDecoration: 'none', transition: 'all 0.15s' },
+  navBadge: {
+    fontSize: '10px', fontWeight: 700, color: '#000835', background: '#fff',
+    borderRadius: '999px', padding: '1px 6px', minWidth: '15px', textAlign: 'center' as const,
+  },
   navFooter: { borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: '14px' },
   userInfo: { display: 'flex', alignItems: 'center', gap: '9px', marginBottom: '10px' },
   userAvatar: {
@@ -413,6 +505,20 @@ const s: Record<string, React.CSSProperties> = {
   checkLabel: { fontSize: '12px', fontWeight: 500, margin: '0 0 1px' },
   checkDesc: { fontSize: '11px', color: '#6B7280', margin: 0 },
   checkCta: { fontSize: '11px', fontWeight: 600, color: '#000835', textDecoration: 'none', flexShrink: 0, marginTop: '1px' },
+
+  actionBanner: { background: '#EEF2FF', border: '1px solid #C7D2FE', borderRadius: '10px', padding: '16px 18px', marginBottom: '20px' },
+  actionBannerHeader: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' },
+  actionBannerIcon: { fontSize: '15px' },
+  actionBannerTitle: { fontSize: '13px', fontWeight: 700, color: '#3730A3', margin: 0 },
+  actionBannerList: { display: 'flex', flexDirection: 'column' as const, gap: '6px' },
+  actionBannerRow: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    background: '#fff', borderRadius: '8px', padding: '10px 12px', textDecoration: 'none',
+  },
+  actionBannerRoute: { fontSize: '12.5px', fontWeight: 600, color: '#111827', marginRight: '8px' },
+  actionBannerStatus: { fontSize: '11px', color: '#6B7280' },
+  actionBannerCta: { fontSize: '11.5px', fontWeight: 600, color: '#000835' },
+
   infoBanner: { background: '#EEF2FF', border: '1px solid #C7D2FE', borderRadius: '8px', padding: '11px 14px', marginBottom: '20px' },
   infoBannerText: { fontSize: '12px', color: '#3730A3', lineHeight: '1.55' },
   statsRow: { display: 'grid', gap: '14px', marginBottom: '20px' },
@@ -424,6 +530,17 @@ const s: Record<string, React.CSSProperties> = {
   sectionHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' },
   sectionTitle: { fontSize: '13px', fontWeight: 600, color: '#111827', margin: 0 },
   sectionLink: { fontSize: '11px', color: '#000835', textDecoration: 'none', fontWeight: 500 },
+
+  approvalPreviewList: { display: 'flex', flexDirection: 'column' as const, gap: '6px' },
+  approvalPreviewRow: {
+    display: 'flex', alignItems: 'center', gap: '8px',
+    padding: '9px 10px', borderRadius: '7px', background: '#F9FAFB', textDecoration: 'none',
+  },
+  approvalPreviewDot: { width: '6px', height: '6px', borderRadius: '50%', background: '#F59E0B', flexShrink: 0 },
+  approvalPreviewName: { flex: 1, fontSize: '12.5px', fontWeight: 500, color: '#111827' },
+  approvalPreviewArrow: { fontSize: '11px', color: '#9CA3AF' },
+  approvalPreviewMore: { fontSize: '11.5px', fontWeight: 600, color: '#000835', textDecoration: 'none', padding: '4px 10px' },
+
   emptyState: { display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '24px 0', textAlign: 'center' as const },
   emptyIcon: { fontSize: '22px', width: '48px', height: '48px', borderRadius: '50%', background: '#F9FAFB', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '10px' },
   emptyTitle: { fontSize: '13px', fontWeight: 600, color: '#374151', margin: '0 0 4px' },

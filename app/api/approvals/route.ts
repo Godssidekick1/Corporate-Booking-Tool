@@ -42,7 +42,10 @@ interface BookingSummary {
   status: string
 }
 
-export async function GET() {
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url)
+  const summaryOnly = searchParams.get('summary') === '1'
+
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -70,13 +73,17 @@ export async function GET() {
       .eq('approver_id', caller.id)
       .eq('status', 'pending')
       .order('created_at', { ascending: true }), // oldest-waiting-first — the ones that have sat longest surface at the top
-    service
-      .from('approvals')
-      .select('id, booking_id, tier, status, reason, decision_note, verdict, actioned_at, created_at')
-      .eq('approver_id', caller.id)
-      .in('status', ['approved', 'rejected'])
-      .gte('actioned_at', thirtyDaysAgo)
-      .order('actioned_at', { ascending: false }),
+    // History is only needed for the full page, not the dashboard summary —
+    // skip the query entirely rather than fetch and discard it.
+    summaryOnly
+      ? Promise.resolve({ data: [], error: null })
+      : service
+          .from('approvals')
+          .select('id, booking_id, tier, status, reason, decision_note, verdict, actioned_at, created_at')
+          .eq('approver_id', caller.id)
+          .in('status', ['approved', 'rejected'])
+          .gte('actioned_at', thirtyDaysAgo)
+          .order('actioned_at', { ascending: false }),
   ])
 
   if (pendingResult.error || historyResult.error) {
@@ -89,7 +96,7 @@ export async function GET() {
   const allApprovals: ApprovalRow[] = [...(pendingResult.data ?? []), ...(historyResult.data ?? [])]
 
   if (allApprovals.length === 0) {
-    return Response.json({ ok: true, pending: [], history: [] })
+    return Response.json(summaryOnly ? { ok: true, pendingCount: 0, oldestNames: [] } : { ok: true, pending: [], history: [] })
   }
 
   const bookingIds = Array.from(new Set(allApprovals.map(a => a.booking_id)))
@@ -112,6 +119,24 @@ export async function GET() {
     .in('id', employeeIds)
 
   const travelerById = new Map((travelers ?? []).map(t => [t.id, t]))
+
+  if (summaryOnly) {
+    // Oldest 3 — pendingResult is already ordered ascending by created_at,
+    // so this is just the first 3 traveler names, not a re-sort.
+    const oldestNames = (pendingResult.data ?? [])
+      .slice(0, 3)
+      .map(a => {
+        const booking = bookingById.get(a.booking_id)
+        const traveler = booking ? travelerById.get(booking.employee_id) : undefined
+        return traveler?.full_name ?? 'Unknown traveler'
+      })
+
+    return Response.json({
+      ok: true,
+      pendingCount: (pendingResult.data ?? []).length,
+      oldestNames,
+    })
+  }
 
   function enrich(a: ApprovalRow) {
     const booking = bookingById.get(a.booking_id)

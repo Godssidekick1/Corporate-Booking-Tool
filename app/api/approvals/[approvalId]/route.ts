@@ -106,7 +106,7 @@ export async function PATCH(
   if (decision === 'reject') {
     await service
       .from('bookings')
-      .update({ status: 'rejected' })
+      .update({ status: 'rejected', updated_at: new Date().toISOString() })
       .eq('id', booking.id)
 
     return Response.json({ ok: true, bookingStatus: 'rejected' })
@@ -119,7 +119,7 @@ export async function PATCH(
     // Shouldn't happen in practice (every approval created by the engine
     // sets chain_id), but fail toward finalizing rather than leaving the
     // booking stuck if it somehow does.
-    await service.from('bookings').update({ status: 'approved' }).eq('id', booking.id)
+    await service.from('bookings').update({ status: 'approved', updated_at: new Date().toISOString() }).eq('id', booking.id)
     return Response.json({ ok: true, bookingStatus: 'approved' })
   }
 
@@ -135,12 +135,12 @@ export async function PATCH(
     })
 
     if (!outcome.requiresApproval) {
-      await service.from('bookings').update({ status: 'approved' }).eq('id', booking.id)
+      await service.from('bookings').update({ status: 'approved', updated_at: new Date().toISOString() }).eq('id', booking.id)
       return Response.json({ ok: true, bookingStatus: 'approved' })
     }
 
     if (!outcome.approverId) {
-      await service.from('bookings').update({ status: 'approval_misconfigured' }).eq('id', booking.id)
+      await service.from('bookings').update({ status: 'approval_misconfigured', updated_at: new Date().toISOString() }).eq('id', booking.id)
       return Response.json({ ok: true, bookingStatus: 'approval_misconfigured' })
     }
 
