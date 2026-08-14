@@ -11,12 +11,12 @@ import { NextRequest } from 'next/server'
 //
 // ── PATCH /api/book/[bookingId] ───────────────────────────────────────────────
 // Corrects passenger/contact details on a booking that hasn't been booked
-// with the airline yet. Only valid while status === 'passenger_added' —
-// that's the window between AddPassengerDetails (registers passenger data
-// against the priced session) and Booking (which actually creates the PNR).
-// Since no PNR exists yet at this stage, re-calling AddPassengerDetails with
-// corrected data on the same Key/ReferenceNo is the correct way to fix a
-// typo — not a modification to a live reservation. Never re-runs pricing;
+// with the airline yet. Valid while status is 'pending_approval' or
+// 'approved' — the window between AddPassengerDetails (registers passenger
+// data against the priced session) and Booking (which actually creates the
+// PNR). Since no PNR exists yet at this stage, re-calling AddPassengerDetails
+// with corrected data on the same Key/ReferenceNo is the correct way to fix
+// a typo — not a modification to a live reservation. Never re-runs pricing;
 // fare/itinerary are untouched by this endpoint.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -103,7 +103,13 @@ export async function PATCH(
     return Response.json({ error: 'Not authorized to edit this booking' }, { status: 403 })
   }
 
-  if (booking.status !== 'passenger_added') {
+  // Editable any time before Book actually commits the PNR — that covers
+  // both 'pending_approval' (still waiting on a human tier) and 'approved'
+  // (cleared, but the employee hasn't clicked Confirm yet). Previously
+  // gated on 'passenger_added', a status the approval-engine-aware
+  // add-passenger/route.ts never writes, which made this endpoint
+  // unreachable for every real booking.
+  if (booking.status !== 'pending_approval' && booking.status !== 'approved') {
     return Response.json({
       error: 'This booking has already moved past the passenger details step and can no longer be edited here.',
     }, { status: 409 })

@@ -4,7 +4,7 @@ import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic } from '@/app/lib/amad
 import { NextRequest } from 'next/server'
 import util from 'util'
 
-// ── POST /api/book/booking ────────────────────────────────────────────────────
+// ── POST /api/book/book ───────────────────────────────────────────────────────
 // Fourth step (search → price → add-passenger → book → ticket). Commits the
 // booking with the airline. BookingResponse has no PnrNo — the PNR only
 // becomes available from the Ticket step, so bookings.pnr stays null here
@@ -15,17 +15,6 @@ import util from 'util'
 // Takes bookingId (from add-passenger's response) rather than re-sending all
 // booking details — this route loads what it needs from the bookings row
 // itself, so the frontend only needs to carry the id forward from here on.
-//
-// Status gate: only 'approved' may proceed to the real airline Book call —
-// NOT 'passenger_added' (that status no longer exists in the flow at all).
-// add-passenger now inserts bookings at 'pending_approval', then the
-// Approval Engine (see resolveApprovalTier.ts) either flips it straight to
-// 'approved' (no chain assigned, or verdict didn't meet any tier's
-// threshold) or leaves it pending a human approver. This gate is what
-// actually enforces that server-side — the frontend's confirm page only
-// shows the Confirm button once status is 'approved', but that's a UX
-// nicety, not the real enforcement. Someone hitting this endpoint directly
-// with a pending/misconfigured/rejected bookingId must still be blocked here.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface BookBody {
@@ -73,6 +62,16 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Not authorized to act on this booking' }, { status: 403 })
   }
 
+  // Status gate: only 'approved' may proceed to the real airline Book call —
+  // NOT 'passenger_added' (that status no longer exists in the flow at all).
+  // add-passenger now inserts bookings at 'pending_approval', then the
+  // Approval Engine (see resolveApprovalTier.ts) either flips it straight to
+  // 'approved' (no chain assigned, or verdict didn't meet any tier's
+  // threshold) or leaves it pending a human approver. This gate is what
+  // actually enforces that server-side — the frontend's confirm page only
+  // shows the Confirm button once status is 'approved', but that's a UX
+  // nicety, not the real enforcement. Someone hitting this endpoint directly
+  // with a pending/misconfigured/rejected bookingId must still be blocked here.
   if (booking.status !== 'approved') {
     return Response.json({
       error: booking.status === 'pending_approval'
