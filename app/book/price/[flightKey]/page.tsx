@@ -323,9 +323,8 @@ export default function SelectFarePage() {
         {/* When there's only one fare option (the common case today —    */}
         {/* confirmed real responses never show more than one), it still  */}
         {/* renders as a single full card, not a disabled picker.         */}
-        <div style={s.card}>
-          <h2 style={s.cardTitle}>{hasMultipleFares ? 'Choose a fare' : 'Fare details'}</h2>
-          <div style={s.fareOptionList}>
+        <h2 style={s.cardTitle}>{hasMultipleFares ? 'Choose a fare' : 'Fare details'}</h2>
+        <div style={hasMultipleFares ? s.fareOptionScroller : s.fareOptionList}>
             {flight.fareOptions.map((fare, i) => {
               const isActive = i === selectedFareIndex
               const changeText = penaltySummary(fare.changePenalties)
@@ -343,7 +342,7 @@ export default function SelectFarePage() {
                   style={{
                     ...s.fareCard,
                     ...(isActive ? s.fareCardActive : {}),
-                    ...(hasMultipleFares ? {} : s.fareCardStatic),
+                    ...(hasMultipleFares ? s.fareCardScrollItem : s.fareCardStatic),
                     ...(verdictColor ? { borderColor: verdictColor.border, borderWidth: '2px' } : {}),
                   }}
                 >
@@ -410,7 +409,6 @@ export default function SelectFarePage() {
                 </button>
               )
             })}
-          </div>
         </div>
 
         {/* ── Fare breakdown — live from Pricing ──────────────────────── */}
@@ -482,7 +480,7 @@ export default function SelectFarePage() {
 
 const s: Record<string, React.CSSProperties> = {
   page: { background: '#F9FAFB', minHeight: '100vh' },
-  root: { fontFamily: "'Inter', -apple-system, sans-serif", maxWidth: '640px', margin: '0 auto', padding: '32px 24px 64px' },
+  root: { fontFamily: "'Inter', -apple-system, sans-serif", maxWidth: '1040px', margin: '0 auto', padding: '32px 24px 64px' },
 
   backLink: { fontSize: '13px', color: '#6B7280', textDecoration: 'none', display: 'inline-block', marginBottom: '16px' },
 
@@ -531,6 +529,13 @@ const s: Record<string, React.CSSProperties> = {
   tagFullService: { color: '#14532D', background: '#F0FDF4' },
 
   fareOptionList: { display: 'flex', flexDirection: 'column' as const, gap: '12px' },
+  // Multiple fares: horizontal scroller, fixed-width cards, snaps into
+  // view per-card. Single fare falls back to fareOptionList above — one
+  // full-width card, no scroller chrome for a one-option flight.
+  fareOptionScroller: {
+    display: 'flex', flexDirection: 'row' as const, gap: '12px', overflowX: 'auto' as const,
+    padding: '4px 16px 12px 0', scrollSnapType: 'x proximity' as const, WebkitOverflowScrolling: 'touch' as const,
+  },
   fareCard: {
     display: 'flex', flexDirection: 'column' as const, width: '100%',
     padding: '18px', background: '#F9FAFB', border: '1.5px solid #E5E7EB', borderRadius: '14px',
@@ -538,6 +543,7 @@ const s: Record<string, React.CSSProperties> = {
   },
   fareCardActive: { background: '#EEF2FF', borderColor: '#000835' },
   fareCardStatic: { cursor: 'default' },
+  fareCardScrollItem: { width: '300px', flexShrink: 0, scrollSnapAlign: 'start' as const },
   fareCardTopRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' },
 
   fareVerdictBanner: { border: '1px solid', borderRadius: '10px', padding: '10px 12px', margin: '10px 0' },

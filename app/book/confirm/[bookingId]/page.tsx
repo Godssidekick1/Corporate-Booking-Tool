@@ -10,6 +10,11 @@ interface Booking {
   provider: string
   provider_order_id: string
   total_cost: number
+  policy_verdict: 'green' | 'amber' | 'red' | null
+  policy_verdict_detail: {
+    breaches?: { limit_key: string; kind: string; policyValue: unknown; actualValue: unknown }[]
+    costTier?: string
+  } | null
   itinerary: {
     airline?: { code: string; name: string }
     origin?: { code: string; name: string; city: string; dateTime: string }
@@ -42,8 +47,39 @@ interface Booking {
   } | null
 }
 
+interface LatestApproval {
+  id: string
+  tier: number
+  status: 'pending' | 'approved' | 'rejected'
+  reason: string | null
+  decision_note: string | null
+  approverName: string | null
+}
+
 const PAX_TYPE_LABEL: Record<string, string> = {
   ADT: 'Adult', CHD: 'Child', INF: 'Infant',
+}
+
+const VERDICT_META: Record<string, { label: string; color: string; bg: string; border: string }> = {
+  green: { label: 'Within policy',       color: '#166534', bg: '#F0FDF4', border: '#BBF7D0' },
+  amber: { label: 'Minor policy breach', color: '#92400E', bg: '#FFFBEB', border: '#FDE68A' },
+  red:   { label: 'Policy breach',       color: '#991B1B', bg: '#FEF2F2', border: '#FECACA' },
+}
+
+const LIMIT_LABELS: Record<string, string> = {
+  max_fare_domestic: 'domestic fare limit',
+  max_fare_intl: 'international fare limit',
+  advance_booking_days: 'minimum advance booking window',
+  cabin_class_short_haul: 'cabin class entitlement (short-haul)',
+  cabin_class_long_haul: 'cabin class entitlement (long-haul)',
+  connecting_flights_allowed: 'connecting flights entitlement',
+  max_seat_selection_fee: 'seat selection spend limit',
+}
+
+function breachLine(b: { limit_key: string; kind: string; policyValue: unknown; actualValue: unknown }): string {
+  const label = LIMIT_LABELS[b.limit_key] ?? b.limit_key
+  if (b.kind === 'boolean') return `${label} is not permitted for this employee`
+  return `${label} exceeded (policy: ${b.policyValue}, actual: ${b.actualValue})`
 }
 
 // Legs aren't stored with their own flight numbers on the itinerary — only
@@ -79,6 +115,7 @@ export default function ConfirmBookingPage() {
   const bookingId = params.bookingId
 
   const [booking, setBooking] = useState<Booking | null>(null)
+  const [latestApproval, setLatestApproval] = useState<LatestApproval | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [confirming, setConfirming] = useState(false)
@@ -89,8 +126,20 @@ export default function ConfirmBookingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookingId])
 
-  async function loadBooking() {
-    setLoading(true)
+  // While waiting on a human approval, poll every 8s so the employee sees
+  // the moment an approver acts without needing to refresh manually. Stops
+  // itself once status leaves 'pending_approval'.
+  useEffect(() => {
+    if (booking?.status !== 'pending_approval') return
+    const interval = setInterval(() => {
+      loadBooking({ silent: true })
+    }, 8000)
+    return () => clearInterval(interval)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [booking?.status])
+
+  async function loadBooking(opts?: { silent?: boolean }) {
+    if (!opts?.silent) setLoading(true)
     setLoadError('')
     try {
       const res = await fetch(`/api/book/${bookingId}`)
@@ -100,20 +149,19 @@ export default function ConfirmBookingPage() {
         return
       }
       setBooking(data.booking)
+      setLatestApproval(data.latestApproval ?? null)
 
-      // If this booking has already moved past passenger_added (e.g. the
+      // If this booking has already moved past the pre-Book stage (e.g. the
       // user hit back after confirming, or refreshed after clicking Book),
       // send them forward to wherever they actually are instead of letting
       // them try to re-book an already-booked reservation.
-      if (data.booking.status === 'held') {
-        router.replace(`/book/ticket/${bookingId}`)
-      } else if (data.booking.status === 'ticketed') {
+      if (data.booking.status === 'held' || data.booking.status === 'ticketed') {
         router.replace(`/book/ticket/${bookingId}`)
       }
     } catch {
       setLoadError('Something went wrong loading this booking.')
     } finally {
-      setLoading(false)
+      if (!opts?.silent) setLoading(false)
     }
   }
 
@@ -177,6 +225,8 @@ export default function ConfirmBookingPage() {
     infantCount > 0 && `${infantCount} infant${infantCount > 1 ? 's' : ''}`,
   ].filter(Boolean)
 
+  const editableStatuses = ['pending_approval', 'approved', 'approval_misconfigured']
+
   return (
     <div style={s.page}>
       <div style={s.root}>
@@ -184,6 +234,31 @@ export default function ConfirmBookingPage() {
           <h1 style={s.heading}>Review & confirm</h1>
           <p style={s.sub}>This is the final step before booking with the airline — check the details below carefully.</p>
         </div>
+
+        {/* ── Policy verdict ───────────────────────────────────────── */}
+        {booking.policy_verdict && (
+          <div style={{
+            ...s.verdictCard,
+            background: VERDICT_META[booking.policy_verdict].bg,
+            borderColor: VERDICT_META[booking.policy_verdict].border,
+          }}>
+            <div style={s.verdictHeader}>
+              <span style={{ ...s.verdictDot, background: VERDICT_META[booking.policy_verdict].color }} />
+              <span style={{ ...s.verdictLabel, color: VERDICT_META[booking.policy_verdict].color }}>
+                {VERDICT_META[booking.policy_verdict].label}
+              </span>
+            </div>
+            {(booking.policy_verdict_detail?.breaches?.length ?? 0) > 0 && (
+              <ul style={s.verdictList}>
+                {booking.policy_verdict_detail!.breaches!.map((b, i) => (
+                  <li key={i} style={{ ...s.verdictListItem, color: VERDICT_META[booking.policy_verdict!].color }}>
+                    {breachLine(b)}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
 
         {/* ── Flight ───────────────────────────────────────────────── */}
         {booking.itinerary && (
@@ -219,7 +294,7 @@ export default function ConfirmBookingPage() {
                   <span style={s.travelerCount}>({travelerCountParts.join(', ')})</span>
                 )}
               </h2>
-              {booking.status === 'passenger_added' && (
+              {editableStatuses.includes(booking.status) && (
                 <Link href={`/book/passengers/edit/${bookingId}`} style={s.editLink}>Edit →</Link>
               )}
             </div>
@@ -300,27 +375,66 @@ export default function ConfirmBookingPage() {
           )}
         </div>
 
-        <div style={s.noticeCard}>
-          <p style={s.noticeText}>
-            Clicking below will confirm this booking directly with the airline. This step typically can't be undone —
-            double-check the traveler's name and dates match their passport exactly.
-          </p>
-        </div>
-
         {error && (
           <div style={s.errorBanner}>
             <span style={s.bannerIcon}>⚠</span> {error}
           </div>
         )}
 
-        <button
-          type="button"
-          onClick={handleConfirmBooking}
-          disabled={confirming}
-          style={{ ...s.confirmBtn, opacity: confirming ? 0.7 : 1 }}
-        >
-          {confirming ? 'Booking…' : 'Confirm booking →'}
-        </button>
+        {/* ── Action area — depends on approval status ────────────────── */}
+        {booking.status === 'pending_approval' && (
+          <div style={s.waitingCard}>
+            <div style={s.spinnerSmall} />
+            <div>
+              <p style={s.waitingTitle}>
+                Waiting for approval{latestApproval?.approverName ? ` from ${latestApproval.approverName}` : ''}
+              </p>
+              <p style={s.waitingSub}>
+                You'll be able to confirm this booking with the airline as soon as it's approved. This page updates automatically.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {booking.status === 'rejected' && (
+          <div style={s.rejectedCard}>
+            <p style={s.rejectedTitle}>This booking was rejected</p>
+            {latestApproval?.decision_note && (
+              <p style={s.rejectedNote}>“{latestApproval.decision_note}”</p>
+            )}
+            <p style={s.waitingSub}>
+              Contact your manager or TMC if you have questions, or start a new search to try again.
+            </p>
+          </div>
+        )}
+
+        {booking.status === 'approval_misconfigured' && (
+          <div style={s.rejectedCard}>
+            <p style={s.rejectedTitle}>Approval routing isn't set up correctly</p>
+            <p style={s.waitingSub}>
+              This booking needs approval but we couldn't find who should approve it (e.g. no manager is assigned to you yet). Contact your TMC or corporate admin.
+            </p>
+          </div>
+        )}
+
+        {booking.status === 'approved' && (
+          <>
+            <div style={s.noticeCard}>
+              <p style={s.noticeText}>
+                Clicking below will confirm this booking directly with the airline. This step typically can't be undone —
+                double-check the traveler's name and dates match their passport exactly.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleConfirmBooking}
+              disabled={confirming}
+              style={{ ...s.confirmBtn, opacity: confirming ? 0.7 : 1 }}
+            >
+              {confirming ? 'Booking…' : 'Confirm booking →'}
+            </button>
+          </>
+        )}
       </div>
     </div>
   )
@@ -340,6 +454,13 @@ const s: Record<string, React.CSSProperties> = {
   errorCard: { padding: '20px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '14px' },
   errorTitle: { fontSize: '13px', color: '#DC2626', margin: '0 0 10px', lineHeight: 1.5 },
   errorLink: { fontSize: '13px', color: '#DC2626', fontWeight: 600, textDecoration: 'underline' },
+
+  verdictCard: { border: '1px solid', borderRadius: '14px', padding: '16px', marginBottom: '16px' },
+  verdictHeader: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' },
+  verdictDot: { width: '9px', height: '9px', borderRadius: '50%', flexShrink: 0 },
+  verdictLabel: { fontSize: '13px', fontWeight: 700 },
+  verdictList: { margin: '8px 0 0', paddingLeft: '18px', display: 'flex', flexDirection: 'column' as const, gap: '4px' },
+  verdictListItem: { fontSize: '12px', lineHeight: 1.5 },
 
   card: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '20px', marginBottom: '16px' },
   cardTitle: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: 0 },
@@ -383,6 +504,15 @@ const s: Record<string, React.CSSProperties> = {
 
   errorBanner: { display: 'flex', alignItems: 'center', gap: '8px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', color: '#DC2626', marginBottom: '16px' },
   bannerIcon: { fontSize: '14px' },
+
+  waitingCard: { display: 'flex', alignItems: 'flex-start', gap: '12px', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '18px 16px', marginBottom: '16px' },
+  waitingTitle: { fontSize: '14px', fontWeight: 700, color: '#111827', margin: '0 0 4px' },
+  waitingSub: { fontSize: '12px', color: '#6B7280', margin: 0, lineHeight: 1.5 },
+  spinnerSmall: { width: '18px', height: '18px', border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%', flexShrink: 0, marginTop: '2px' },
+
+  rejectedCard: { background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '14px', padding: '16px', marginBottom: '16px' },
+  rejectedTitle: { fontSize: '14px', fontWeight: 700, color: '#991B1B', margin: '0 0 6px' },
+  rejectedNote: { fontSize: '12px', color: '#991B1B', margin: '0 0 8px', lineHeight: 1.5, fontStyle: 'italic' },
 
   confirmBtn: {
     height: '48px', width: '100%', background: '#000835', color: '#fff', fontSize: '14px', fontWeight: 700,
