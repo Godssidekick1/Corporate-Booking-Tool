@@ -104,10 +104,18 @@ export async function PATCH(
   }
 
   if (decision === 'reject') {
-    await service
+    const { error: rejectError } = await service
       .from('bookings')
       .update({ status: 'rejected', updated_at: new Date().toISOString() })
       .eq('id', booking.id)
+
+    if (rejectError) {
+      console.error('Approval decided but failed to flip booking to rejected', rejectError, { bookingId: booking.id })
+      return Response.json({
+        ok: false,
+        error: 'Your decision was recorded, but the booking status could not be updated. Please contact support.',
+      }, { status: 500 })
+    }
 
     return Response.json({ ok: true, bookingStatus: 'rejected' })
   }
@@ -119,7 +127,19 @@ export async function PATCH(
     // Shouldn't happen in practice (every approval created by the engine
     // sets chain_id), but fail toward finalizing rather than leaving the
     // booking stuck if it somehow does.
-    await service.from('bookings').update({ status: 'approved', updated_at: new Date().toISOString() }).eq('id', booking.id)
+    const { error: finalizeError } = await service
+      .from('bookings')
+      .update({ status: 'approved', updated_at: new Date().toISOString() })
+      .eq('id', booking.id)
+
+    if (finalizeError) {
+      console.error('Approval decided but failed to flip booking to approved (no chain_id)', finalizeError, { bookingId: booking.id })
+      return Response.json({
+        ok: false,
+        error: 'Your decision was recorded, but the booking status could not be updated. Please contact support.',
+      }, { status: 500 })
+    }
+
     return Response.json({ ok: true, bookingStatus: 'approved' })
   }
 
@@ -135,12 +155,36 @@ export async function PATCH(
     })
 
     if (!outcome.requiresApproval) {
-      await service.from('bookings').update({ status: 'approved', updated_at: new Date().toISOString() }).eq('id', booking.id)
+      const { error: finalizeError } = await service
+        .from('bookings')
+        .update({ status: 'approved', updated_at: new Date().toISOString() })
+        .eq('id', booking.id)
+
+      if (finalizeError) {
+        console.error('Approval decided but failed to flip booking to approved', finalizeError, { bookingId: booking.id })
+        return Response.json({
+          ok: false,
+          error: 'Your decision was recorded, but the booking status could not be updated. Please contact support.',
+        }, { status: 500 })
+      }
+
       return Response.json({ ok: true, bookingStatus: 'approved' })
     }
 
     if (!outcome.approverId) {
-      await service.from('bookings').update({ status: 'approval_misconfigured', updated_at: new Date().toISOString() }).eq('id', booking.id)
+      const { error: misconfigError } = await service
+        .from('bookings')
+        .update({ status: 'approval_misconfigured', updated_at: new Date().toISOString() })
+        .eq('id', booking.id)
+
+      if (misconfigError) {
+        console.error('Approval decided but failed to flip booking to approval_misconfigured', misconfigError, { bookingId: booking.id })
+        return Response.json({
+          ok: false,
+          error: 'Your decision was recorded, but the booking status could not be updated. Please contact support.',
+        }, { status: 500 })
+      }
+
       return Response.json({ ok: true, bookingStatus: 'approval_misconfigured' })
     }
 

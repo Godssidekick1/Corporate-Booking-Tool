@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { formatTime, formatDayLabel } from '@/app/lib/book/types'
 
 // ── /approvals ────────────────────────────────────────────────────────────
@@ -63,6 +64,7 @@ function timeAgo(iso: string): string {
 }
 
 export default function ApprovalsPage() {
+  const router = useRouter()
   const [pending, setPending] = useState<ApprovalItem[]>([])
   const [history, setHistory] = useState<ApprovalItem[]>([])
   const [tab, setTab] = useState<'pending' | 'history'>('pending')
@@ -71,9 +73,27 @@ export default function ApprovalsPage() {
   const [actingOn, setActingOn] = useState<string | null>(null)
   const [noteDraft, setNoteDraft] = useState<Record<string, string>>({})
 
+  // Once the approver has decided on at least one item this visit, this
+  // page's pending list is no longer a safe place to land on via browser
+  // back — it may show an item as still-pending when it's actually been
+  // decided (approved/rejected), or an approve button that would now hit
+  // the 409 "already actioned" guard server-side. Rather than let back
+  // reopen that stale state, redirect forward to /dashboard instead.
+  const hasDecidedRef = useRef(false)
+
   useEffect(() => {
     load()
   }, [])
+
+  useEffect(() => {
+    function handlePopState() {
+      if (hasDecidedRef.current) {
+        router.replace('/dashboard')
+      }
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [router])
 
   async function load() {
     setLoading(true)
@@ -108,6 +128,8 @@ export default function ApprovalsPage() {
         setError(data.error || 'Could not record your decision.')
         return
       }
+      hasDecidedRef.current = true
+
       // Reload rather than patch state locally — a decision can create a
       // NEW pending row for the next tier (a different approver, so it
       // won't show here), or flip the booking to approved/misconfigured;
@@ -125,8 +147,19 @@ export default function ApprovalsPage() {
   return (
     <div style={s.page}>
       <div style={s.header}>
-        <h1 style={s.heading}>Approvals</h1>
-        <p style={s.sub}>Bookings waiting on your sign-off, and what you've decided in the last 30 days.</p>
+        <div style={s.headerRow}>
+          <div>
+            <h1 style={s.heading}>Approvals</h1>
+            <p style={s.sub}>Bookings waiting on your sign-off, and what you've decided in the last 30 days.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => router.replace('/dashboard')}
+            style={s.backBtn}
+          >
+            ← Back to dashboard
+          </button>
+        </div>
       </div>
 
       <div style={s.tabs}>
@@ -240,8 +273,13 @@ const s: Record<string, React.CSSProperties> = {
   page: { fontFamily: "'Inter', -apple-system, sans-serif", padding: '32px', maxWidth: '760px', margin: '0 auto' },
 
   header: { marginBottom: '20px' },
+  headerRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' as const },
   heading: { fontSize: '22px', fontWeight: 700, color: '#0A0A14', margin: '0 0 6px', letterSpacing: '-0.4px' },
   sub: { fontSize: '13px', color: '#6B7280', margin: 0, lineHeight: 1.5 },
+  backBtn: {
+    flexShrink: 0, height: '40px', padding: '0 16px', background: '#000835', color: '#fff', border: 'none',
+    borderRadius: '10px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' as const,
+  },
 
   tabs: { display: 'flex', gap: '8px', marginBottom: '20px' },
   tab: {

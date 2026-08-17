@@ -126,6 +126,19 @@ export default function ConfirmBookingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookingId])
 
+  // Reaching this page means passenger details are already submitted
+  // (add-passenger already ran) — there's no valid "go back and redo
+  // seatmap/pricing" state past this point, that would desync from the
+  // booking row that already exists server-side. Browser back should land
+  // on the dashboard, not on stale sessionStorage-driven booking steps.
+  useEffect(() => {
+    function handlePopState() {
+      router.replace('/dashboard')
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [router])
+
   // While waiting on a human approval, poll every 8s so the employee sees
   // the moment an approver acts without needing to refresh manually. Stops
   // itself once status leaves 'pending_approval'.
@@ -181,7 +194,7 @@ export default function ConfirmBookingPage() {
         return
       }
 
-      router.push(`/book/ticket/${bookingId}`)
+      router.replace(`/book/ticket/${bookingId}`)
     } catch {
       setError('Something went wrong completing the booking. Please try again.')
     } finally {
@@ -383,17 +396,26 @@ export default function ConfirmBookingPage() {
 
         {/* ── Action area — depends on approval status ────────────────── */}
         {booking.status === 'pending_approval' && (
-          <div style={s.waitingCard}>
-            <div style={s.spinnerSmall} />
-            <div>
-              <p style={s.waitingTitle}>
-                Waiting for approval{latestApproval?.approverName ? ` from ${latestApproval.approverName}` : ''}
-              </p>
-              <p style={s.waitingSub}>
-                You'll be able to confirm this booking with the airline as soon as it's approved. This page updates automatically.
-              </p>
+          <>
+            <div style={s.waitingCard}>
+              <div style={s.spinnerSmall} />
+              <div>
+                <p style={s.waitingTitle}>
+                  Waiting for approval{latestApproval?.approverName ? ` from ${latestApproval.approverName}` : ''}
+                </p>
+                <p style={s.waitingSub}>
+                  You'll be able to confirm this booking with the airline as soon as it's approved. This page updates automatically, or check back from your dashboard any time.
+                </p>
+              </div>
             </div>
-          </div>
+            <button
+              type="button"
+              onClick={() => router.replace('/dashboard')}
+              style={s.dashboardBtn}
+            >
+              Go back to dashboard
+            </button>
+          </>
         )}
 
         {booking.status === 'rejected' && (
@@ -517,5 +539,9 @@ const s: Record<string, React.CSSProperties> = {
   confirmBtn: {
     height: '48px', width: '100%', background: '#000835', color: '#fff', fontSize: '14px', fontWeight: 700,
     border: 'none', borderRadius: '10px', cursor: 'pointer', letterSpacing: '0.2px',
+  },
+  dashboardBtn: {
+    height: '48px', width: '100%', background: '#fff', color: '#000835', fontSize: '14px', fontWeight: 700,
+    border: '1.5px solid #000835', borderRadius: '10px', cursor: 'pointer', letterSpacing: '0.2px',
   },
 }

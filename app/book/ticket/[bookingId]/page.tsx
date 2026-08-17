@@ -131,6 +131,19 @@ export default function TicketPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookingId])
 
+  // Once ticketed (or in the process of being ticketed), the PNR already
+  // exists with the airline — there's no earlier booking step (seatmap,
+  // pricing, passenger details) that's still valid to return to. Browser
+  // back should land on the dashboard rather than reopen those stale
+  // sessionStorage-driven pages.
+  useEffect(() => {
+    function handlePopState() {
+      router.replace('/dashboard')
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [router])
+
   async function loadAndMaybeTicket() {
     setLoading(true)
     setError('')
@@ -400,7 +413,7 @@ export default function TicketPage() {
             </div>
 
             <div style={s.doneLinks}>
-              <Link href="/book" style={s.doneLink}>Book another flight →</Link>
+              <Link href="/bookings" style={s.doneLink}>View my tickets →</Link>
               <Link href="/dashboard" style={s.doneLinkSecondary}>← Back to dashboard</Link>
             </div>
           </>

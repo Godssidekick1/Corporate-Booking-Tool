@@ -132,32 +132,68 @@ export default function DashboardPage() {
   const [approvalSummary, setApprovalSummary] = useState<ApprovalSummary | null>(null)
   const [actionableBookings, setActionableBookings] = useState<ActionableBooking[]>([])
 
-  useEffect(() => {
-    fetch('/api/me')
-      .then(async r => {
-        const data: MeResponse = await r.json()
-        if (!r.ok || !data.ok) { router.replace('/login'); return }
-        setMe(data)
+  // Split out from the mount effect so it can also be called on refocus —
+  // approving/rejecting/booking happens on other pages (/approvals,
+  // /book/confirm/[id]), and this dashboard instance can stay mounted
+  // across client-side navigation, so a mount-only fetch would keep
+  // showing stale statuses (e.g. a booking stuck showing "pending
+  // approval" here even after it was actually approved elsewhere).
+  async function loadDashboardData(opts?: { silent?: boolean }) {
+    if (!opts?.silent) setLoading(true)
+    try {
+      const r = await fetch('/api/me')
+      const data: MeResponse = await r.json()
+      if (!r.ok || !data.ok) { router.replace('/login'); return }
+      setMe(data)
 
-        // Fetch role-appropriate data once we know who's logged in — the
-        // approver summary only makes sense for admin/manager/finance, the
-        // actionable-bookings banner is relevant to everyone (an admin can
-        // also be a traveler on their own bookings).
-        if (['admin', 'manager', 'finance'].includes(data.employee.role)) {
-          fetch('/api/approvals?summary=1')
-            .then(res => res.json())
-            .then(d => { if (d.ok) setApprovalSummary({ pendingCount: d.pendingCount, oldestNames: d.oldestNames }) })
-            .catch(() => {})
-        }
-
-        fetch('/api/bookings/actionable')
+      // Fetch role-appropriate data once we know who's logged in — the
+      // approver summary only makes sense for admin/manager/finance, the
+      // actionable-bookings banner is relevant to everyone (an admin can
+      // also be a traveler on their own bookings).
+      if (['admin', 'manager', 'finance'].includes(data.employee.role)) {
+        fetch('/api/approvals?summary=1')
           .then(res => res.json())
-          .then(d => { if (d.ok) setActionableBookings(d.bookings) })
+          .then(d => { if (d.ok) setApprovalSummary({ pendingCount: d.pendingCount, oldestNames: d.oldestNames }) })
           .catch(() => {})
-      })
-      .catch(() => router.replace('/login'))
-      .finally(() => setLoading(false))
+      }
+
+      fetch('/api/bookings/actionable')
+        .then(res => res.json())
+        .then(d => { if (d.ok) setActionableBookings(d.bookings) })
+        .catch(() => {})
+    } catch {
+      router.replace('/login')
+    } finally {
+      if (!opts?.silent) setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadDashboardData()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router])
+
+  // Refetch whenever the dashboard tab/window regains focus, or the page
+  // is restored from bfcache (e.g. browser back landing on /dashboard).
+  // Covers: approved something on /approvals then tabbed back, or hit
+  // back and the browser served the cached dashboard without a real
+  // reload — either way this brings actionableBookings/approvalSummary
+  // up to date instead of showing whatever was true at mount time.
+  useEffect(() => {
+    function handleFocus() {
+      loadDashboardData({ silent: true })
+    }
+    function handlePageShow(e: PageTransitionEvent) {
+      if (e.persisted) loadDashboardData({ silent: true })
+    }
+    window.addEventListener('focus', handleFocus)
+    window.addEventListener('pageshow', handlePageShow)
+    return () => {
+      window.removeEventListener('focus', handleFocus)
+      window.removeEventListener('pageshow', handlePageShow)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   async function handleSignOut() {
     await supabase.auth.signOut()
