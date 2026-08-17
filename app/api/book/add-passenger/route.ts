@@ -127,6 +127,13 @@ export async function POST(req: NextRequest) {
     let policyVerdict: string | null = null
     let policyVerdictDetail: unknown = null
     let reason = 'Policy could not be evaluated for this booking.'
+    // Needed later for startApprovalForBooking's chain lookup (chains are
+    // scoped by band + travel_type) — declared here so it's in scope
+    // outside the `if (flight)` block below. Falls back to
+    // 'flight_domestic' if itinerary is somehow missing, since chains still
+    // need SOME travel_type to look up against; a missing itinerary is
+    // already an edge case checkBookingAgainstPolicy can't evaluate either.
+    let travelTypeForApproval: string = 'flight_domestic'
 
     if (flight) {
       // customerInfo.PassengerDetails[].SeatListDetails is the final, real
@@ -139,6 +146,7 @@ export async function POST(req: NextRequest) {
         .map(seat => seat.SeatFee)
 
       const inputs = buildPolicyInputsFromFlight({ flight, totalFare, isRefundable, selectedSeatFees })
+      travelTypeForApproval = inputs.travelType
       const ruleResult = await checkBookingAgainstPolicy(service, {
         employeeId: employee.id,
         travelType: inputs.travelType,
@@ -204,14 +212,19 @@ export async function POST(req: NextRequest) {
 
     // Resolve whether a human approval tier is required. If not, flip the
     // booking straight to 'approved' so /api/book/booking's gate lets it
-    // through immediately — this keeps "no chain assigned" / "green with no
-    // matching tier" bookings from ever sitting in a pending screen.
+    // through immediately. requiresApproval is false for three distinct
+    // reasons, all handled the same way here: no chain configured for this
+    // band/travel_type, the verdict didn't meet any tier's min_verdict
+    // threshold, or the first eligible tier was approver_type 'self' (band
+    // exempt from approval — startApprovalForBooking already logged that
+    // as its own approvals row with status 'approved').
     let finalStatus = 'pending_approval'
     try {
       const outcome = await startApprovalForBooking(service, {
         bookingId: booking.id,
         companyId: employee.company_id,
         employeeId: employee.id,
+        travelType: travelTypeForApproval,
         verdict: (policyVerdict as 'green' | 'amber' | 'red') ?? 'green',
         reason,
       })

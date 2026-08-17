@@ -3,46 +3,60 @@ import type { Verdict, VerdictBreach } from '@/app/lib/rule-engine/evaluateBooki
 
 type ServiceClient = ReturnType<typeof createServiceClient>
 
-// Verdict severity ordering, so "does this tier's min_verdict apply" can be
-// a simple >= comparison instead of a chain of if/else.
+// ── Approval Engine v2 ───────────────────────────────────────────────────
+// Chains are resolved by (company_id, band_id, travel_type) — mirrors how
+// policy_rules resolves by (company_id/tmc_id, band_code, travel_type).
+// There is no per-employee chain assignment anymore: every employee in a
+// given band automatically uses that band's chain for that travel type.
+// This directly supports band-scoped approval authority (e.g. an L3/L4
+// manager approving for L1/L2 travelers) — see approver_type: 'manager'
+// below, which resolves via manager_id same as before, and 'any_manager_at'
+// which resolves via band rank instead of the reporting line, for cases
+// where the traveler's own manager_id isn't the intended approver.
+//
+// tiers (jsonb on approval_chains) shape — walked in tier order:
+//   { tier: number, approver_type: ApproverType, min_verdict: Verdict,
+//     approver_user_id?: string,      // only for 'specific_user'
+//     min_band_rank?: number }        // only for 'any_manager_at'
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ApproverType = 'manager' | 'finance_role' | 'specific_user' | 'admin' | 'self' | 'any_manager_at'
+
+export interface ChainTier {
+  tier: number
+  approver_type: ApproverType
+  min_verdict: string
+  approver_user_id?: string | null
+  min_band_rank?: number | null
+}
+
 const VERDICT_RANK: Record<Verdict, number> = { green: 0, amber: 1, red: 2 }
 
 // ── verdictRank ──────────────────────────────────────────────────────────
-// min_verdict on approval_chain_tiers comes straight from a DB select(),
-// typed as `string` since Supabase can't enforce the CHECK constraint at
-// the type level. If a row ever holds something other than
-// 'green'/'amber'/'red' — a typo from free-form chain-builder UI, a NULL
-// from an old migration, an empty string — VERDICT_RANK[badValue] would be
-// `undefined`, and `rank >= undefined` is always false in JS. That would
-// silently skip a tier that was meant to require approval, which is the
-// wrong direction to fail for something enforcing spend policy. Unknown
-// values are treated as 'red' (the strictest tier) instead, so a
-// misconfigured tier blocks and gets noticed/escalated rather than quietly
-// never firing.
+// tiers is jsonb with no DB-level CHECK on min_verdict's contents, so an
+// unrecognized value is even more possible here than the old column-based
+// design. Unknown values fail toward 'red' (strictest) rather than
+// silently never triggering — wrong direction to fail for spend policy.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function verdictRank(value: string): number {
   if (value in VERDICT_RANK) return VERDICT_RANK[value as Verdict]
-  console.error(`approval_chain_tiers.min_verdict has an unrecognized value: "${value}" — treating as 'red' (strictest) rather than silently skipping this tier.`)
+  console.error(`approval_chains.tiers has an unrecognized min_verdict: "${value}" — treating as 'red' (strictest) rather than silently skipping this tier.`)
   return VERDICT_RANK.red
 }
 
 export interface TierOutcome {
-  // No human approval needed at all — either no chain is assigned, the
-  // chain has no tiers, or tier 1's min_verdict isn't met by this verdict.
-  // Caller should mark the booking 'approved' immediately.
   requiresApproval: boolean
   approvalId?: string
   tier?: number
   approverId?: string
+  // True when this tier resolved to approver_type 'self' — the caller
+  // should still log a record to `approvals` (status pre-set to 'approved',
+  // no human ever acted), just never block the booking on it.
+  selfApproved?: boolean
 }
 
 // ── buildReason ────────────────────────────────────────────────────────────
-// Turns the breaches array from evaluateBooking into the human-readable,
-// system-generated explanation stored in approvals.reason. Kept separate
-// from evaluateBooking itself since that module has no DB/label knowledge.
-// ─────────────────────────────────────────────────────────────────────────────
-
 const LIMIT_LABELS: Record<string, string> = {
   max_fare_domestic: 'domestic fare limit',
   max_fare_intl: 'international fare limit',
@@ -64,6 +78,7 @@ const LIMIT_LABELS: Record<string, string> = {
   cabin_class_long_haul: 'cabin class entitlement (long-haul)',
   seat_selection: 'seat selection entitlement',
   carrier_tier: 'preferred carrier tier',
+  max_seat_selection_fee: 'seat selection spend limit',
 }
 
 export function buildReason(breaches: VerdictBreach[], costTier: string, totalCost: number): string {
@@ -87,18 +102,58 @@ export function buildReason(breaches: VerdictBreach[], costTier: string, totalCo
   return parts.length > 0 ? parts.join('; ') : 'Within policy'
 }
 
-// ── resolveApproverForTier ───────────────────────────────────────────────────
-// Turns a tier's approver_type into an actual employee id.
+// ── resolveChainForEmployee ──────────────────────────────────────────────────
+// Looks up the employee's band, then the (company, band, travel_type) chain.
+// Returns null if either lookup comes up empty — a missing band or a band
+// with no configured chain both mean "no chain applies," same as the old
+// design's "no assignment" case.
 // ─────────────────────────────────────────────────────────────────────────────
 
+async function resolveChainForEmployee(
+  service: ServiceClient,
+  employeeId: string,
+  companyId: string,
+  travelType: string
+): Promise<{ chainId: string; tiers: ChainTier[] } | null> {
+  const { data: employee } = await service
+    .from('employees')
+    .select('band_code')
+    .eq('id', employeeId)
+    .maybeSingle()
+
+  if (!employee?.band_code) return null
+
+  const { data: band } = await service
+    .from('bands')
+    .select('id')
+    .eq('company_id', companyId)
+    .eq('code', employee.band_code)
+    .maybeSingle()
+
+  if (!band) return null
+
+  const { data: chain } = await service
+    .from('approval_chains')
+    .select('id, tiers')
+    .eq('company_id', companyId)
+    .eq('band_id', band.id)
+    .eq('travel_type', travelType)
+    .maybeSingle()
+
+  if (!chain) return null
+
+  return { chainId: chain.id, tiers: (chain.tiers as ChainTier[] | null) ?? [] }
+}
+
+// ── resolveApproverForTier ───────────────────────────────────────────────────
 async function resolveApproverForTier(
   service: ServiceClient,
-  tier: { approver_type: string; approver_user_id: string | null },
+  tier: ChainTier,
   employeeId: string,
   companyId: string
 ): Promise<string | null> {
   if (tier.approver_type === 'specific_user') {
-    return tier.approver_user_id
+    return tier.approver_user_id ?? null
   }
 
   if (tier.approver_type === 'manager') {
@@ -108,6 +163,42 @@ async function resolveApproverForTier(
       .eq('id', employeeId)
       .maybeSingle()
     return employee?.manager_id ?? null
+  }
+
+  // Band-scoped authority: approve via ANY active manager/admin whose own
+  // band rank is >= min_band_rank, regardless of the traveler's specific
+  // manager_id. This is what makes "an L4 manager can approve for L1/L2
+  // travelers" expressible even when the traveler's direct manager_id
+  // points somewhere else, or isn't set at all. Picks the lowest-rank
+  // qualifying approver (closest in seniority to the traveler) rather than
+  // always escalating to the most senior person available.
+  if (tier.approver_type === 'any_manager_at') {
+    const minRank = tier.min_band_rank ?? 0
+    const { data: candidates } = await service
+      .from('employees')
+      .select('id, band_code, bands:band_code(rank)')
+      .eq('company_id', companyId)
+      .in('role', ['manager', 'admin'])
+      .eq('status', 'active')
+
+    // bands:band_code(rank) FK-embed syntax isn't used elsewhere in this
+    // codebase and its behavior here is unverified — resolve rank via a
+    // manual second query instead, consistent with how the rest of this
+    // file avoids relying on embed inference.
+    if (!candidates || candidates.length === 0) return null
+
+    const { data: bandRanks } = await service
+      .from('bands')
+      .select('code, rank')
+      .eq('company_id', companyId)
+
+    const rankByCode = new Map((bandRanks ?? []).map(b => [b.code, b.rank]))
+    const qualifying = candidates
+      .map(c => ({ id: c.id, rank: rankByCode.get((c as { band_code: string | null }).band_code ?? '') ?? -1 }))
+      .filter(c => c.rank >= minRank)
+      .sort((a, b) => a.rank - b.rank)
+
+    return qualifying[0]?.id ?? null
   }
 
   if (tier.approver_type === 'finance_role' || tier.approver_type === 'admin') {
@@ -128,57 +219,67 @@ async function resolveApproverForTier(
 }
 
 // ── startApprovalForBooking ───────────────────────────────────────────────────
-// Called once, right after a booking is inserted (post AddPassenger) with its
-// policy verdict known. Resolves the employee's assigned chain and creates
-// ONLY the first tier whose min_verdict is met — later tiers are created
-// lazily by advanceApprovalChain once the prior tier is approved.
-// ─────────────────────────────────────────────────────────────────────────────
-
 export async function startApprovalForBooking(
   service: ServiceClient,
   params: {
     bookingId: string
     companyId: string
     employeeId: string
+    travelType: string
     verdict: Verdict
     reason: string
   }
 ): Promise<TierOutcome> {
-  const { bookingId, companyId, employeeId, verdict, reason } = params
+  const { bookingId, companyId, employeeId, travelType, verdict, reason } = params
 
-  const { data: assignment } = await service
-    .from('employee_approval_chains')
-    .select('chain_id')
-    .eq('employee_id', employeeId)
-    .maybeSingle()
+  const chain = await resolveChainForEmployee(service, employeeId, companyId, travelType)
 
-  if (!assignment) {
-    // No chain assigned to this employee — nothing to route to, so the
-    // booking proceeds without human approval regardless of verdict. This
-    // is a TMC/admin configuration gap, not a policy pass.
+  if (!chain || chain.tiers.length === 0) {
+    // No chain configured for this band/travel type — nothing to route to.
+    // Same fallback as before: proceeds without human approval rather than
+    // stranding the employee on a TMC configuration gap.
     return { requiresApproval: false }
   }
 
-  const { data: tiers } = await service
-    .from('approval_chain_tiers')
-    .select('id, tier, approver_type, approver_user_id, min_verdict')
-    .eq('chain_id', assignment.chain_id)
-    .order('tier', { ascending: true })
-
-  const firstTier = (tiers ?? []).find(t => verdictRank(verdict) >= verdictRank(t.min_verdict))
+  const sortedTiers = [...chain.tiers].sort((a, b) => a.tier - b.tier)
+  const firstTier = sortedTiers.find(t => verdictRank(verdict) >= verdictRank(t.min_verdict))
 
   if (!firstTier) {
     return { requiresApproval: false }
   }
 
+  if (firstTier.approver_type === 'self') {
+    // Log a record but never block. status is pre-set to 'approved' with no
+    // real approver_id — approver_id is NOT NULL on the existing approvals
+    // table, so the traveler themself is recorded as their own approver,
+    // with the reason field making clear this was a self-approval, not a
+    // real review.
+    const { data: approval, error } = await service
+      .from('approvals')
+      .insert({
+        company_id: companyId,
+        booking_id: bookingId,
+        approver_id: employeeId,
+        tier: firstTier.tier,
+        status: 'approved',
+        reason: `Self-approved (band exempt from approval): ${reason}`,
+        chain_id: chain.chainId,
+        verdict,
+        actioned_at: new Date().toISOString(),
+      })
+      .select('id')
+      .single()
+
+    if (error || !approval) {
+      throw new Error(`Failed to log self-approval record: ${error?.message ?? 'unknown error'}`)
+    }
+
+    return { requiresApproval: false, selfApproved: true, approvalId: approval.id, tier: firstTier.tier }
+  }
+
   const approverId = await resolveApproverForTier(service, firstTier, employeeId, companyId)
 
   if (!approverId) {
-    // Chain is misconfigured (e.g. employee has no manager_id, or no
-    // finance-role employee exists in this company) — fail safe by NOT
-    // silently approving. Surface this distinctly so the UI can tell the
-    // employee to contact an admin rather than showing a generic pending
-    // screen that will never resolve.
     return { requiresApproval: true, tier: firstTier.tier, approverId: undefined }
   }
 
@@ -191,7 +292,7 @@ export async function startApprovalForBooking(
       tier: firstTier.tier,
       status: 'pending',
       reason,
-      chain_id: assignment.chain_id,
+      chain_id: chain.chainId,
       verdict,
     })
     .select('id')
@@ -205,11 +306,6 @@ export async function startApprovalForBooking(
 }
 
 // ── advanceApprovalChain ──────────────────────────────────────────────────────
-// Called after a tier is approved. Creates the next tier's row if one exists
-// and its min_verdict is met by the booking's stored verdict; otherwise
-// signals the caller to mark the booking fully approved.
-// ─────────────────────────────────────────────────────────────────────────────
-
 export async function advanceApprovalChain(
   service: ServiceClient,
   params: {
@@ -224,17 +320,41 @@ export async function advanceApprovalChain(
 ): Promise<TierOutcome> {
   const { bookingId, companyId, employeeId, chainId, completedTier, verdict, reason } = params
 
-  const { data: nextTier } = await service
-    .from('approval_chain_tiers')
-    .select('id, tier, approver_type, approver_user_id, min_verdict')
-    .eq('chain_id', chainId)
-    .gt('tier', completedTier)
-    .order('tier', { ascending: true })
-    .limit(1)
+  const { data: chain } = await service
+    .from('approval_chains')
+    .select('tiers')
+    .eq('id', chainId)
     .maybeSingle()
+
+  const tiers = ((chain?.tiers as ChainTier[] | null) ?? []).sort((a, b) => a.tier - b.tier)
+  const nextTier = tiers.find(t => t.tier > completedTier)
 
   if (!nextTier || verdictRank(verdict) < verdictRank(nextTier.min_verdict)) {
     return { requiresApproval: false }
+  }
+
+  if (nextTier.approver_type === 'self') {
+    const { data: approval, error } = await service
+      .from('approvals')
+      .insert({
+        company_id: companyId,
+        booking_id: bookingId,
+        approver_id: employeeId,
+        tier: nextTier.tier,
+        status: 'approved',
+        reason: `Self-approved (band exempt from approval): ${reason}`,
+        chain_id: chainId,
+        verdict,
+        actioned_at: new Date().toISOString(),
+      })
+      .select('id')
+      .single()
+
+    if (error || !approval) {
+      throw new Error(`Failed to log self-approval record: ${error?.message ?? 'unknown error'}`)
+    }
+
+    return { requiresApproval: false, selfApproved: true, approvalId: approval.id, tier: nextTier.tier }
   }
 
   const approverId = await resolveApproverForTier(service, nextTier, employeeId, companyId)
