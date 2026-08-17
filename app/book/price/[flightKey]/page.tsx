@@ -205,6 +205,7 @@ export default function SelectFarePage() {
         key: data.key!,
         pricingKey: pricingKey!,
         provider: flightResult.provider,
+        resultIndex: flightResult.itemNo,
         referenceNo: data.referenceNo!,
         totalFare: data.totalFare!,
         baseFare: data.baseFare!,

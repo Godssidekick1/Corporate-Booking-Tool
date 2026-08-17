@@ -63,6 +63,15 @@ function timeAgo(iso: string): string {
   return `${days}d ago`
 }
 
+// A pending approval sitting this long risks running into the stale-key
+// recovery path on Book (or just leaving a traveler stuck) — flagged as
+// urgent so it doesn't get buried under newer, less time-critical requests.
+const URGENT_HOURS = 10
+
+function hoursPending(iso: string): number {
+  return (Date.now() - new Date(iso).getTime()) / 3_600_000
+}
+
 export default function ApprovalsPage() {
   const router = useRouter()
   const [pending, setPending] = useState<ApprovalItem[]>([])
@@ -143,6 +152,7 @@ export default function ApprovalsPage() {
   }
 
   const list = tab === 'pending' ? pending : history
+  const urgentCount = pending.filter(item => hoursPending(item.createdAt) >= URGENT_HOURS).length
 
   return (
     <div style={s.page}>
@@ -160,6 +170,14 @@ export default function ApprovalsPage() {
             ← Back to dashboard
           </button>
         </div>
+        {urgentCount > 0 && (
+          <div style={s.urgentBanner}>
+            <span style={s.urgentBannerIcon}>⏱</span>
+            {urgentCount === 1
+              ? '1 request has been waiting more than 10 hours.'
+              : `${urgentCount} requests have been waiting more than 10 hours.`}
+          </div>
+        )}
       </div>
 
       <div style={s.tabs}>
@@ -185,9 +203,10 @@ export default function ApprovalsPage() {
             const verdictMeta = item.verdict ? VERDICT_META[item.verdict] : null
             const statusMeta = item.status !== 'pending' ? STATUS_META[item.status] : null
             const itinerary = item.booking?.itinerary
+            const isUrgent = tab === 'pending' && hoursPending(item.createdAt) >= URGENT_HOURS
 
             return (
-              <div key={item.approvalId} style={s.card}>
+              <div key={item.approvalId} style={{ ...s.card, ...(isUrgent ? s.cardUrgent : {}) }}>
                 <div style={s.cardTop}>
                   <div>
                     <div style={s.travelerName}>{item.traveler?.fullName ?? 'Unknown traveler'}</div>
@@ -197,6 +216,9 @@ export default function ApprovalsPage() {
                     </div>
                   </div>
                   <div style={s.badges}>
+                    {isUrgent && (
+                      <span style={s.urgentBadge}>⏱ Urgent</span>
+                    )}
                     {verdictMeta && (
                       <span style={{ ...s.badge, color: verdictMeta.color, background: verdictMeta.bg }}>{verdictMeta.label}</span>
                     )}
@@ -280,6 +302,15 @@ const s: Record<string, React.CSSProperties> = {
     flexShrink: 0, height: '40px', padding: '0 16px', background: '#000835', color: '#fff', border: 'none',
     borderRadius: '10px', fontSize: '13px', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' as const,
   },
+  urgentBanner: {
+    display: 'flex', alignItems: 'center', gap: '8px', background: '#FEF2F2', border: '1px solid #FECACA',
+    borderRadius: '10px', padding: '10px 14px', fontSize: '12.5px', fontWeight: 600, color: '#991B1B', marginTop: '14px',
+  },
+  urgentBannerIcon: { fontSize: '13px' },
+  urgentBadge: {
+    fontSize: '10.5px', fontWeight: 700, padding: '3px 9px', borderRadius: '6px', whiteSpace: 'nowrap' as const,
+    color: '#991B1B', background: '#FEF2F2', border: '1px solid #FECACA',
+  },
 
   tabs: { display: 'flex', gap: '8px', marginBottom: '20px' },
   tab: {
@@ -305,6 +336,7 @@ const s: Record<string, React.CSSProperties> = {
 
   list: { display: 'flex', flexDirection: 'column' as const, gap: '14px' },
   card: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '18px' },
+  cardUrgent: { borderColor: '#FECACA', boxShadow: '0 0 0 1px #FECACA' },
   cardTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px', gap: '10px' },
   travelerName: { fontSize: '14.5px', fontWeight: 700, color: '#111827' },
   travelerSub: { fontSize: '11.5px', color: '#9CA3AF', marginTop: '2px' },

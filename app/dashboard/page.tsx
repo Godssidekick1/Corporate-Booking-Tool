@@ -43,6 +43,7 @@ interface MeResponse {
 // person specifically, from /api/approvals?summary=1.
 interface ApprovalSummary {
   pendingCount: number
+  urgentCount: number
   oldestNames: string[]
 }
 
@@ -153,7 +154,7 @@ export default function DashboardPage() {
       if (['admin', 'manager', 'finance'].includes(data.employee.role)) {
         fetch('/api/approvals?summary=1')
           .then(res => res.json())
-          .then(d => { if (d.ok) setApprovalSummary({ pendingCount: d.pendingCount, oldestNames: d.oldestNames }) })
+          .then(d => { if (d.ok) setApprovalSummary({ pendingCount: d.pendingCount, urgentCount: d.urgentCount ?? 0, oldestNames: d.oldestNames }) })
           .catch(() => {})
       }
 

@@ -32,6 +32,7 @@ export interface PricedFare {
   key: string
   pricingKey: string
   provider: string
+  resultIndex: string
   referenceNo: string
   totalFare: number
   baseFare: number

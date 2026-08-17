@@ -40,6 +40,10 @@ interface AddPassengerBody {
                             // they are never the same value.
   pricingKey: string
   provider: string
+  resultIndex: string      // ResultIndex from /book/price — needed later to
+                            // silently re-run Pricing if this booking's
+                            // amadeus_key/session has expired by the time
+                            // approval comes through and Booking is called.
   referenceNo: string      // ReferenceNo from /book/price
   totalFare: number        // TotalFare from /book/price — becomes bookings.total_cost
   currency: string
@@ -76,7 +80,7 @@ export async function POST(req: NextRequest) {
 
   const body: AddPassengerBody = await req.json()
   const {
-    key, pricingKey, provider, referenceNo, totalFare, currency, isRefundable, fareType,
+    key, pricingKey, provider, resultIndex, referenceNo, totalFare, currency, isRefundable, fareType,
     passengerBreakup, isNdc, searchKey, tripId, itinerary, customerInfo,
   } = body
 
@@ -189,6 +193,7 @@ export async function POST(req: NextRequest) {
         provider_order_id: referenceNo,
         amadeus_key: key,
         pricing_key: pricingKey,
+        result_index: resultIndex ?? null,
         search_key: searchKey ?? null,
         trip_id: tripId ?? null,
         is_ndc: isNdc ?? null,

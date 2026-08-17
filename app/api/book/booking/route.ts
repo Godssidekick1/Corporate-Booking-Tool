@@ -1,6 +1,6 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
-import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic } from '@/app/lib/amadeus/client'
+import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic, CustomerInfo } from '@/app/lib/amadeus/client'
 import { NextRequest } from 'next/server'
 import util from 'util'
 
@@ -19,6 +19,52 @@ import util from 'util'
 
 interface BookBody {
   bookingId: string
+}
+
+// Shared by both the initial Booking attempt and the retry after a
+// silent re-price/re-AddPassenger recovery (see the session-expiry catch
+// below) — same persistence logic either way.
+async function finalizeHeld(
+  service: ReturnType<typeof createServiceClient>,
+  bookingId: string,
+  result: Awaited<ReturnType<typeof amadeus.booking>>
+) {
+  // BookingResponse itself has no top-level PNR — it only appears nested
+  // inside AirBookingResponse[0] once the airline confirms. bookings.pnr
+  // is also set again in /api/book/ticket (Ticket's response is the
+  // authoritative source), so this is a best-effort early capture.
+  const pnr = result.AirBookingResponse?.[0]?.PNR ?? null
+
+  const { error: updateError } = await service
+    .from('bookings')
+    .update({
+      status: 'held',
+      pnr,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', bookingId)
+
+  if (updateError) {
+    // The airline has confirmed the booking — this is a persistence
+    // failure on our side, not a booking failure. There's no PNR at this
+    // stage (BookingResponse doesn't return one — only Ticket does), so
+    // there's nothing further to surface beyond the reference itself.
+    console.error('Booking confirmed by airline but failed to save status', updateError, { bookingId, referenceNo: result.ReferenceNo })
+    return Response.json({
+      ok: true,
+      bookingId,
+      referenceNo: result.ReferenceNo,
+      status: 'held',
+      warning: 'Booking confirmed but there was an issue saving it — contact support with this reference if it does not appear in your bookings shortly.',
+    })
+  }
+
+  return Response.json({
+    ok: true,
+    bookingId,
+    referenceNo: result.ReferenceNo,
+    status: 'held',
+  })
 }
 
 export async function POST(req: NextRequest) {
@@ -48,7 +94,7 @@ export async function POST(req: NextRequest) {
 
   const { data: booking } = await service
     .from('bookings')
-    .select('id, employee_id, company_id, status, provider, provider_order_id, amadeus_key')
+    .select('id, employee_id, company_id, status, provider, provider_order_id, amadeus_key, pricing_key, search_key, result_index, total_cost, traveler_snapshot')
     .eq('id', bookingId)
     .maybeSingle()
 
@@ -84,49 +130,96 @@ export async function POST(req: NextRequest) {
     }, { status: 409 })
   }
 
-  try {
-    const result = await amadeus.booking(
-      booking.amadeus_key,
-      booking.provider_order_id,
-      booking.provider
-    )
-
-    // BookingResponse itself has no top-level PNR — it only appears nested
-    // inside AirBookingResponse[0] once the airline confirms. bookings.pnr
-    // is also set again in /api/book/ticket (Ticket's response is the
-    // authoritative source), so this is a best-effort early capture.
-    const pnr = result.AirBookingResponse?.[0]?.PNR ?? null
-
-    const { error: updateError } = await service
-      .from('bookings')
-      .update({
-        status: 'held',
-        pnr,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', bookingId)
-
-    if (updateError) {
-      // The airline has confirmed the booking — this is a persistence
-      // failure on our side, not a booking failure. There's no PNR at this
-      // stage (BookingResponse doesn't return one — only Ticket does), so
-      // there's nothing further to surface beyond the reference itself.
-      console.error('Booking confirmed by airline but failed to save status', updateError, { bookingId, referenceNo: result.ReferenceNo })
-      return Response.json({
-        ok: true,
-        bookingId,
-        referenceNo: result.ReferenceNo,
-        status: 'held',
-        warning: 'Booking confirmed but there was an issue saving it — contact support with this reference if it does not appear in your bookings shortly.',
-      })
-    }
-
+  if (!booking.amadeus_key || !booking.provider_order_id) {
+    // Shouldn't happen for a booking that reached 'approved' (both are set
+    // at AddPassenger time, before pending_approval/approved is possible),
+    // but fail with a clear message rather than calling Booking with a
+    // missing key.
+    console.error('Booking is approved but missing amadeus_key/provider_order_id', { bookingId })
     return Response.json({
-      ok: true,
-      bookingId,
-      referenceNo: result.ReferenceNo,
-      status: 'held',
-    })
+      error: 'This booking is missing required data and cannot be confirmed with the airline. Please contact support.',
+    }, { status: 500 })
+  }
+
+  try {
+    let bookingKey: string = booking.amadeus_key
+    let bookingReferenceNo: string = booking.provider_order_id
+
+    try {
+      const result = await amadeus.booking(bookingKey, bookingReferenceNo, booking.provider)
+      return await finalizeHeld(service, bookingId, result)
+    } catch (err) {
+      // A booking that sat in pending_approval for a while can outlive the
+      // GDS-side session tied to its stored amadeus_key/provider_order_id —
+      // by the time an approver acts, "Result Session Expired" (or similar)
+      // comes back from Booking even though withSession already re-auths
+      // and retries once internally. That internal retry only refreshes
+      // SessionID; it replays the SAME Key, which is itself scoped to the
+      // now-dead session and can't be revived by re-authenticating alone.
+      //
+      // Recovery: replay Pricing -> AddPassengerDetails from what's already
+      // stored on this row (search_key, pricing_key, result_index,
+      // total_cost, traveler_snapshot) to mint a fresh Key/ReferenceNo under
+      // the current session, save those onto the booking, then retry
+      // Booking exactly once more. Only attempted for a session/key-expiry
+      // style failure — any other Booking failure (fare bust, seat gone,
+      // etc.) falls straight through to the normal error path below rather
+      // than masking a real failure behind a confusing re-price attempt.
+      const isStaleKey =
+        err instanceof AmadeusError &&
+        /session/i.test(err.message)
+
+      if (!isStaleKey) throw err
+
+      if (!booking.search_key || !booking.pricing_key || !booking.result_index || !booking.traveler_snapshot) {
+        // Can't recover without the original pricing inputs — surface the
+        // original error rather than a confusing "missing data" one.
+        console.error('Booking session expired and this booking is missing data needed to auto-recover', {
+          bookingId,
+          hasSearchKey: !!booking.search_key,
+          hasPricingKey: !!booking.pricing_key,
+          hasResultIndex: !!booking.result_index,
+          hasTravelerSnapshot: !!booking.traveler_snapshot,
+        })
+        throw err
+      }
+
+      console.info('[book/booking] session/key expired — re-pricing and re-submitting passenger details before retrying Booking', { bookingId })
+
+      const freshPricing = await amadeus.pricing(
+        booking.search_key,
+        booking.pricing_key,
+        booking.provider,
+        booking.result_index
+      )
+
+      const freshAddPassenger = await amadeus.addPassenger(
+        freshPricing.Key,
+        freshPricing.ReferenceNo,
+        booking.traveler_snapshot as CustomerInfo,
+        String(booking.total_cost),
+        String(booking.total_cost)
+      )
+
+      bookingKey = freshPricing.Key
+      bookingReferenceNo = freshAddPassenger.ReferenceNo ?? freshPricing.ReferenceNo
+
+      const { error: refreshError } = await service
+        .from('bookings')
+        .update({
+          amadeus_key: bookingKey,
+          provider_order_id: bookingReferenceNo,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', bookingId)
+
+      if (refreshError) {
+        console.error('Re-priced booking successfully but failed to save refreshed key/reference', refreshError, { bookingId })
+      }
+
+      const retryResult = await amadeus.booking(bookingKey, bookingReferenceNo, booking.provider)
+      return await finalizeHeld(service, bookingId, retryResult)
+    }
   } catch (err) {
     if (err instanceof AmadeusError) {
       console.error('Booking error', {

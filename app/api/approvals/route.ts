@@ -131,9 +131,18 @@ export async function GET(req: Request) {
         return traveler?.full_name ?? 'Unknown traveler'
       })
 
+    // Same 10-hour urgency threshold as the full approvals page — surfaced
+    // here too so the dashboard summary can flag it before the approver
+    // even opens the queue.
+    const URGENT_MS = 10 * 60 * 60 * 1000
+    const urgentCount = (pendingResult.data ?? [])
+      .filter(a => Date.now() - new Date(a.created_at).getTime() >= URGENT_MS)
+      .length
+
     return Response.json({
       ok: true,
       pendingCount: (pendingResult.data ?? []).length,
+      urgentCount,
       oldestNames,
     })
   }

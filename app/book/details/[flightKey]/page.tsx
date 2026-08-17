@@ -551,6 +551,7 @@ export default function BookingDetailsPage() {
           key: priced.key,
           pricingKey: priced.pricingKey,
           provider: priced.provider,
+          resultIndex: priced.resultIndex,
           referenceNo: priced.referenceNo,
           totalFare: priced.totalFare,
           currency: priced.currency,
