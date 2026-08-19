@@ -52,6 +52,17 @@ export async function GET() {
         .select('id', { count: 'exact', head: true })
         .eq('company_id', employee.company_id)
 
+  // Company-wide, not just this employee's own bookings — the setup
+  // checklist item is "has anyone at this company made a booking yet",
+  // same scope as employeeCount above (company-level onboarding progress,
+  // not a personal stat).
+  const { count: bookingCount } = isTmcSide
+    ? { count: 0 }
+    : await service
+        .from('bookings')
+        .select('id', { count: 'exact', head: true })
+        .eq('company_id', employee.company_id)
+
   // For TCs, load their granted permissions and company access so the
   // frontend can render a restricted view of the TMC dashboard/settings.
   // tmc_admin has full access implicitly and never needs these checked.
@@ -72,6 +83,7 @@ export async function GET() {
     employee,
     company: company ?? null,
     employeeCount: employeeCount ?? 0,
+    hasBookings: (bookingCount ?? 0) > 0,
     permissions,
     companyAccess,
   })

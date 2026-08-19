@@ -160,15 +160,27 @@ export default function TicketPage() {
       // A booking that reached this page at status 'held' hasn't been
       // ticketed yet — issue the ticket automatically rather than making
       // the user click a second button right after "Confirm booking".
-      // If it's already 'ticketed' (e.g. a refresh), there's nothing to do.
+      // Every other status means this page was reached out of sequence
+      // (direct URL, stale bookmark, browser back before the popstate
+      // guard existed, etc.) — redirect to wherever that status actually
+      // belongs rather than rendering a ticket page with no PNR/ticket data.
       if (data.booking.status === 'held') {
         await issueTicket()
-      } else if (data.booking.status === 'passenger_added') {
-        // Booking hasn't been placed with the airline yet — this page has
-        // nothing to do until Confirm Booking runs. Can happen from a stale
-        // bookmark/link, or a direct URL edit.
-        setError('This booking hasn\u2019t been confirmed with the airline yet.')
+      } else if (data.booking.status === 'ticketed') {
+        // Already done — nothing to do, page renders normally below.
+      } else if (data.booking.status === 'pending_approval' || data.booking.status === 'approved') {
         router.replace(`/book/confirm/${bookingId}`)
+      } else if (
+        data.booking.status === 'rejected' ||
+        data.booking.status === 'approval_misconfigured' ||
+        data.booking.status === 'failed' ||
+        data.booking.status === 'cancelled' ||
+        data.booking.status === 'passenger_added' // dead status, kept for safety
+      ) {
+        // Nothing left to do on this booking — send to the dashboard rather
+        // than showing a ticket page for something that never got ticketed
+        // and never will.
+        router.replace('/dashboard')
       }
     } catch {
       setError('Something went wrong loading this booking.')

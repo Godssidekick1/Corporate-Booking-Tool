@@ -261,7 +261,10 @@ export default function BookingDetailsPage() {
     const meta = flowStorage.getSearchMeta()
 
     if (!storedFlight || !storedPriced) {
-      setLoadError('We couldn\u2019t find your priced fare for this flight — it may have expired. Please search again.')
+      // No priced fare in sessionStorage → this step wasn't reached by
+      // actually going through search -> select -> price. Redirect
+      // immediately rather than showing an error page to click through.
+      router.replace('/book/flights')
       return
     }
 

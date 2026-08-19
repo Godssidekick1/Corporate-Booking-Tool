@@ -114,12 +114,11 @@ export default function SelectFarePage() {
     const stored = flowStorage.findResultByFlightKey(flightKey)
 
     if (!stored) {
-      // sessionStorage doesn't have this — either a stale link/refresh long
-      // after the tab's results expired, or the flightKey is just wrong.
-      // Either way, there's no flight data to show, so send back to search
-      // rather than showing a broken page.
-      setError('This flight is no longer available. Please search again.')
-      setPricingLoading(false)
+      // No flightKey → flight page-in-page workflow protection: this step
+      // is only reachable by actually selecting a search result, never by
+      // typing/bookmarking the URL directly. Redirect immediately rather
+      // than rendering an error state the person has to click through.
+      router.replace('/book/flights')
       return
     }
 

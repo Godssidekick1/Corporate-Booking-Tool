@@ -36,6 +36,7 @@ interface MeResponse {
   employee: Employee
   company: Company | null
   employeeCount: number
+  hasBookings: boolean
 }
 
 // ── Approval summary (manager/admin/finance) ────────────────────────────
@@ -62,6 +63,32 @@ interface ActionableBooking {
   updatedAt: string
 }
 
+interface RecentBooking {
+  id: string
+  status: string
+  pnr: string | null
+  totalCost: number | null
+  itinerary: {
+    origin?: { code: string; city: string }
+    destination?: { code: string; city: string }
+  } | null
+  fareBreakdown: { currency?: string } | null
+  createdAt: string
+  travelerName: string | null
+  isOwn: boolean
+}
+
+const RECENT_STATUS_META: Record<string, { label: string; color: string; bg: string }> = {
+  ticketed:               { label: 'Ticketed',        color: '#166534', bg: '#DCFCE7' },
+  held:                   { label: 'Booked',          color: '#1E40AF', bg: '#DBEAFE' },
+  approved:               { label: 'Approved',        color: '#1E40AF', bg: '#DBEAFE' },
+  pending_approval:       { label: 'Pending approval', color: '#92400E', bg: '#FEF3C7' },
+  rejected:               { label: 'Rejected',        color: '#991B1B', bg: '#FEE2E2' },
+  approval_misconfigured: { label: 'Needs attention',  color: '#991B1B', bg: '#FEE2E2' },
+  failed:                 { label: 'Failed',          color: '#991B1B', bg: '#FEE2E2' },
+  cancelled:              { label: 'Cancelled',       color: '#6B7280', bg: '#F3F4F6' },
+}
+
 const ACTIONABLE_META: Record<string, { label: string; cta: string }> = {
   approved: { label: 'Ready to confirm', cta: 'Confirm now →' },
   pending_approval: { label: 'Awaiting approval', cta: 'View status →' },
@@ -69,7 +96,7 @@ const ACTIONABLE_META: Record<string, { label: string; cta: string }> = {
   approval_misconfigured: { label: 'Needs admin attention', cta: 'View →' },
 }
 
-function getChecklist(company: Company | null, employeeCount: number) {
+function getChecklist(company: Company | null, employeeCount: number, hasBookings: boolean) {
   const hasPolicy = !!(company?.settings?.approvalModel)
   return [
     {
@@ -100,7 +127,7 @@ function getChecklist(company: Company | null, employeeCount: number) {
       id: 'booking',
       label: 'Make your first booking',
       desc: 'Search for a flight, hotel, or car rental.',
-      done: false,
+      done: hasBookings,
       href: '/book',
       cta: 'Start booking',
     },
@@ -132,6 +159,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
   const [approvalSummary, setApprovalSummary] = useState<ApprovalSummary | null>(null)
   const [actionableBookings, setActionableBookings] = useState<ActionableBooking[]>([])
+  const [recentBookings, setRecentBookings] = useState<RecentBooking[]>([])
 
   // Split out from the mount effect so it can also be called on refocus —
   // approving/rejecting/booking happens on other pages (/approvals,
@@ -161,6 +189,11 @@ export default function DashboardPage() {
       fetch('/api/bookings/actionable')
         .then(res => res.json())
         .then(d => { if (d.ok) setActionableBookings(d.bookings) })
+        .catch(() => {})
+
+      fetch('/api/bookings/recent?limit=5')
+        .then(res => res.json())
+        .then(d => { if (d.ok) setRecentBookings(d.bookings) })
         .catch(() => {})
     } catch {
       router.replace('/login')
@@ -207,7 +240,7 @@ export default function DashboardPage() {
   const { role, full_name, band_code } = employee
   const navItems = getNavItems(role)
   const firstName = full_name?.split(' ')[0] ?? 'there'
-  const checklist = getChecklist(company, me.employeeCount ?? 0)
+  const checklist = getChecklist(company, me.employeeCount ?? 0, me.hasBookings ?? false)
   const completedCount = checklist.filter(i => i.done).length
   const showChecklist = role === 'admin' && !(company?.setup_completed ?? false)
   const isApproverRole = role === 'admin' || role === 'manager' || role === 'finance'
@@ -388,17 +421,49 @@ export default function DashboardPage() {
         </div>
 
         <Section title="Recent bookings" linkLabel="View all" linkHref="/bookings">
-          <EmptyState
-            icon="✈"
-            title="No bookings yet"
-            desc={
-              role === 'employee'
-                ? 'Start a trip request and your manager will be notified for approval.'
-                : 'When your team starts booking, their trips will appear here.'
-            }
-            cta="Make your first booking →"
-            ctaHref="/book"
-          />
+          {recentBookings.length > 0 ? (
+            <div style={s.recentBookingsList}>
+              {recentBookings.map(b => {
+                const meta = RECENT_STATUS_META[b.status] ?? { label: b.status, color: '#6B7280', bg: '#F3F4F6' }
+                const it = b.itinerary
+                const currency = b.fareBreakdown?.currency ?? ''
+                return (
+                  <a key={b.id} href={`/book/ticket/${b.id}`} style={s.recentBookingRow}>
+                    <div>
+                      <div style={s.recentBookingRoute}>
+                        {it?.origin && it?.destination
+                          ? `${it.origin.code} → ${it.destination.code}`
+                          : 'Flight booking'}
+                      </div>
+                      <div style={s.recentBookingSub}>
+                        {!b.isOwn && b.travelerName ? `${b.travelerName} · ` : ''}
+                        {new Date(b.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+                        {b.pnr ? ` · PNR ${b.pnr}` : ''}
+                      </div>
+                    </div>
+                    <div style={s.recentBookingRight}>
+                      {b.totalCost != null && (
+                        <span style={s.recentBookingFare}>{currency} {b.totalCost.toLocaleString('en-IN')}</span>
+                      )}
+                      <span style={{ ...s.recentBookingBadge, color: meta.color, background: meta.bg }}>{meta.label}</span>
+                    </div>
+                  </a>
+                )
+              })}
+            </div>
+          ) : (
+            <EmptyState
+              icon="✈"
+              title="No bookings yet"
+              desc={
+                role === 'employee'
+                  ? 'Start a trip request and your manager will be notified for approval.'
+                  : 'When your team starts booking, their trips will appear here.'
+              }
+              cta="Make your first booking →"
+              ctaHref="/book"
+            />
+          )}
         </Section>
 
         {isApproverRole && (
@@ -577,6 +642,17 @@ const s: Record<string, React.CSSProperties> = {
   approvalPreviewName: { flex: 1, fontSize: '12.5px', fontWeight: 500, color: '#111827' },
   approvalPreviewArrow: { fontSize: '11px', color: '#9CA3AF' },
   approvalPreviewMore: { fontSize: '11.5px', fontWeight: 600, color: '#000835', textDecoration: 'none', padding: '4px 10px' },
+
+  recentBookingsList: { display: 'flex', flexDirection: 'column' as const, gap: '6px' },
+  recentBookingRow: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px',
+    padding: '10px 12px', borderRadius: '9px', background: '#F9FAFB', textDecoration: 'none',
+  },
+  recentBookingRoute: { fontSize: '13px', fontWeight: 600, color: '#111827' },
+  recentBookingSub: { fontSize: '11px', color: '#9CA3AF', marginTop: '2px' },
+  recentBookingRight: { display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 },
+  recentBookingFare: { fontSize: '12px', fontWeight: 600, color: '#374151' },
+  recentBookingBadge: { fontSize: '10.5px', fontWeight: 700, padding: '3px 9px', borderRadius: '6px', whiteSpace: 'nowrap' as const },
 
   emptyState: { display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '24px 0', textAlign: 'center' as const },
   emptyIcon: { fontSize: '22px', width: '48px', height: '48px', borderRadius: '50%', background: '#F9FAFB', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '10px' },
