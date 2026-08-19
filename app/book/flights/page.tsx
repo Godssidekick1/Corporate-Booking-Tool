@@ -1,7 +1,7 @@
 'use client'
 
-import { Suspense, useEffect, useState } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import AirportDropdown from '@/app/components/AirportDropdown'
 import { flowStorage } from '@/app/lib/book/flowStorage'
 import { searchPreferences } from '@/app/lib/book/searchPreferences'
@@ -66,9 +66,8 @@ const POPULAR_ROUTES = [
   { origin: 'DEL', destination: 'GOI', label: 'Delhi → Goa' },
 ] as const
 
-function BookFlightsSearchPageInner() {
+export default function BookFlightsSearchPage() {
   const router = useRouter()
-  const searchParams = useSearchParams()
 
   const [origin, setOrigin] = useState('')
   const [destination, setDestination] = useState('')
@@ -91,7 +90,15 @@ function BookFlightsSearchPageInner() {
   const [showPopularRoutes, setShowPopularRoutes] = useState(false)
 
   useEffect(() => {
-    const tripId = searchParams.get('tripId')
+    // Deliberately NOT using useSearchParams() here — Next.js 16's Cache
+    // Components can serve a stale/delayed value through that hook right
+    // after a client-side navigation (a known RSC-commit-ordering issue:
+    // the URL bar is correct but the hook hasn't caught up yet), which was
+    // silently dropping tripId on the "+ Add flight" -> /book/flights
+    // handoff even though the link itself was correct. Reading the actual
+    // browser URL directly sidesteps that — this only needs to run once,
+    // on mount, so there's no ongoing-reactivity reason to prefer the hook.
+    const tripId = new URLSearchParams(window.location.search).get('tripId')
     if (tripId) flowStorage.setTripId(tripId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -609,17 +616,7 @@ function BookFlightsSearchPageInner() {
   )
 }
 
-// useSearchParams() requires a Suspense boundary — without this, the page
-// fails to statically render/build. Falls back to a plain spinner while
-// the search-params-dependent inner component mounts (near-instant on the
-// client; this only matters for the initial static shell).
-export default function BookFlightsSearchPage() {
-  return (
-    <Suspense fallback={<div style={s.page}><div style={s.root} /></div>}>
-      <BookFlightsSearchPageInner />
-    </Suspense>
-  )
-}
+
 
 const s: Record<string, React.CSSProperties> = {
   page: { background: '#F9FAFB', minHeight: '100vh' },
