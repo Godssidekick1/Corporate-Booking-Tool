@@ -65,6 +65,83 @@ export async function GET(
   })
 }
 
+// ── PATCH /api/trips/[tripId] ─────────────────────────────────────────────
+// Updates a trip's status. Currently only used to mark a trip complete once
+// the traveler is done planning/traveling — kept narrow (only 'completed'
+// accepted) rather than a general-purpose status setter, since 'cancelled'
+// and 'deleted' have their own dedicated flows (DELETE below) with their
+// own semantics, and 'open'/'active' aren't something the UI currently
+// needs to set explicitly.
+
+const PATCHABLE_STATUSES = ['completed'] as const
+
+interface PatchTripBody {
+  status: typeof PATCHABLE_STATUSES[number]
+}
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ tripId: string }> }
+) {
+  const { tripId } = await params
+
+  const supabase = await createClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+  if (authError || !user) {
+    return Response.json({ error: 'Not authenticated' }, { status: 401 })
+  }
+
+  const service = createServiceClient()
+  const { data: employee } = await service
+    .from('employees')
+    .select('id')
+    .eq('id', user.id)
+    .maybeSingle()
+
+  if (!employee) {
+    return Response.json({ error: 'Employee record not found' }, { status: 404 })
+  }
+
+  const { data: trip } = await service
+    .from('trips')
+    .select('id, created_by, status')
+    .eq('id', tripId)
+    .maybeSingle()
+
+  if (!trip) {
+    return Response.json({ error: 'Trip not found' }, { status: 404 })
+  }
+
+  if (trip.created_by !== employee.id) {
+    return Response.json({ error: 'Not authorized to edit this trip' }, { status: 403 })
+  }
+
+  const body: PatchTripBody = await req.json()
+
+  if (!PATCHABLE_STATUSES.includes(body.status)) {
+    return Response.json({ error: `status must be one of: ${PATCHABLE_STATUSES.join(', ')}` }, { status: 400 })
+  }
+
+  if (trip.status === 'deleted' || trip.status === 'cancelled') {
+    return Response.json({ error: `This trip is ${trip.status} and can't be marked complete.` }, { status: 409 })
+  }
+
+  const { data: updated, error } = await service
+    .from('trips')
+    .update({ status: body.status })
+    .eq('id', tripId)
+    .select('id, status')
+    .single()
+
+  if (error || !updated) {
+    console.error('Failed to update trip status', error, { tripId, status: body.status })
+    return Response.json({ error: 'Could not update this trip.' }, { status: 500 })
+  }
+
+  return Response.json({ ok: true, trip: updated })
+}
+
 // ── DELETE /api/trips/[tripId] ────────────────────────────────────────────
 // Soft-delete only — sets status: 'deleted' rather than removing the row.
 // A trip can have real bookings (PNRs, money already spent with an airline)

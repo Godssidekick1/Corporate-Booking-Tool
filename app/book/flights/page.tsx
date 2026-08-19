@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import AirportDropdown from '@/app/components/AirportDropdown'
 import { flowStorage } from '@/app/lib/book/flowStorage'
 import { searchPreferences } from '@/app/lib/book/searchPreferences'
@@ -66,8 +66,9 @@ const POPULAR_ROUTES = [
   { origin: 'DEL', destination: 'GOI', label: 'Delhi → Goa' },
 ] as const
 
-export default function BookFlightsSearchPage() {
+function BookFlightsSearchPageInner() {
   const router = useRouter()
+  const searchParams = useSearchParams()
 
   const [origin, setOrigin] = useState('')
   const [destination, setDestination] = useState('')
@@ -88,6 +89,12 @@ export default function BookFlightsSearchPage() {
   // that, the remembered origin/destination (below) is more useful than a
   // generic popular-route suggestion.
   const [showPopularRoutes, setShowPopularRoutes] = useState(false)
+
+  useEffect(() => {
+    const tripId = searchParams.get('tripId')
+    if (tripId) flowStorage.setTripId(tripId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     const lastOrigin = searchPreferences.getLastOrigin()
@@ -599,6 +606,18 @@ export default function BookFlightsSearchPage() {
         )}
       </div>
     </div>
+  )
+}
+
+// useSearchParams() requires a Suspense boundary — without this, the page
+// fails to statically render/build. Falls back to a plain spinner while
+// the search-params-dependent inner component mounts (near-instant on the
+// client; this only matters for the initial static shell).
+export default function BookFlightsSearchPage() {
+  return (
+    <Suspense fallback={<div style={s.page}><div style={s.root} /></div>}>
+      <BookFlightsSearchPageInner />
+    </Suspense>
   )
 }
 

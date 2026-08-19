@@ -58,7 +58,45 @@ export async function GET(
     return Response.json({ error: 'Not authorized to view this booking' }, { status: 403 })
   }
 
-  return Response.json({ ok: true, booking })
+  // Most recent approval action on this booking — drives the "waiting for
+  // approval from X" / rejection-note UI on the confirm page. Ordered by
+  // tier descending: for a multi-tier chain the traveler cares about
+  // whichever tier is currently active (pending) or was decided last, not
+  // the first tier that happened to be created first.
+  const { data: latestApprovalRow } = await service
+    .from('approvals')
+    .select('id, tier, status, reason, decision_note, approver_id')
+    .eq('booking_id', bookingId)
+    .order('tier', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  let latestApproval = null
+
+  if (latestApprovalRow) {
+    let approverName: string | null = null
+
+    if (latestApprovalRow.approver_id) {
+      const { data: approver } = await service
+        .from('employees')
+        .select('full_name')
+        .eq('id', latestApprovalRow.approver_id)
+        .maybeSingle()
+
+      approverName = approver?.full_name ?? null
+    }
+
+    latestApproval = {
+      id: latestApprovalRow.id,
+      tier: latestApprovalRow.tier,
+      status: latestApprovalRow.status,
+      reason: latestApprovalRow.reason,
+      decision_note: latestApprovalRow.decision_note,
+      approverName,
+    }
+  }
+
+  return Response.json({ ok: true, booking, latestApproval })
 }
 
 interface PatchBody {

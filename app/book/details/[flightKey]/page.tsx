@@ -560,6 +560,7 @@ export default function BookingDetailsPage() {
           passengerBreakup: priced.passengerBreakup,
           isNdc: priced.isNdc,
           searchKey: priced.searchKey,
+          tripId: flowStorage.getTripId(),
           itinerary: flight,
           customerInfo: {
             Email: email,
@@ -598,6 +599,7 @@ export default function BookingDetailsPage() {
 
       // add-passenger created the bookings row — from here on the flow is
       // keyed by bookingId, not flightKey, and sessionStorage is done being used.
+      flowStorage.clearTripId()
       router.push(`/book/confirm/${data.bookingId}`)
     } catch {
       setError('Something went wrong saving passenger details. Please try again.')

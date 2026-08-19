@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
 
   const { data: bookings, error } = await service
     .from('bookings')
-    .select('id, status, pnr, total_cost, itinerary, traveler_snapshot, fare_breakdown, created_at')
+    .select('id, status, pnr, total_cost, itinerary, traveler_snapshot, fare_breakdown, trip_id, created_at')
     .eq('employee_id', employee.id)
     .order('created_at', { ascending: false })
     .limit(limit)
@@ -49,5 +49,65 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'Could not load your bookings' }, { status: 500 })
   }
 
-  return Response.json({ ok: true, bookings: bookings ?? [] })
+  interface TripRow {
+    id: string
+    name: string
+    status: string
+    travel_date: string | null
+    created_at: string
+  }
+
+  interface BookingRow {
+    id: string
+    status: string
+    pnr: string | null
+    total_cost: number | null
+    itinerary: unknown
+    traveler_snapshot: unknown
+    fare_breakdown: unknown
+    trip_id: string | null
+    created_at: string
+  }
+
+  // Every trip that owns at least one of these bookings, plus any trip the
+  // employee has with zero bookings yet (a trip they created but haven't
+  // started booking flights for — still worth showing so it doesn't look
+  // like it vanished). Scoped to this employee's own trips, same ownership
+  // model as /api/trips.
+  const { data: ownedTrips } = await service
+    .from('trips')
+    .select('id, name, status, travel_date, created_at')
+    .eq('created_by', employee.id)
+    .neq('status', 'deleted')
+    .order('created_at', { ascending: false })
+
+  const tripById = new Map<string, TripRow>((ownedTrips ?? []).map(t => [t.id, t as TripRow]))
+
+  // Bookings without a trip_id (booked before trip-linking existed, or any
+  // future path that still allows it) are grouped under a null "trip" —
+  // the frontend renders these as a flat "Other flights" section.
+  const grouped = new Map<string, { trip: TripRow; bookings: BookingRow[] }>()
+  const ungrouped: BookingRow[] = []
+
+  for (const booking of (bookings ?? []) as BookingRow[]) {
+    if (booking.trip_id && tripById.has(booking.trip_id)) {
+      const trip = tripById.get(booking.trip_id)!
+      if (!grouped.has(trip.id)) grouped.set(trip.id, { trip, bookings: [] })
+      grouped.get(trip.id)!.bookings.push(booking)
+    } else {
+      ungrouped.push(booking)
+    }
+  }
+
+  // Trips with zero bookings still show up, sorted alongside the ones that
+  // have bookings (most-recently-created trip first, matching /api/trips'
+  // own ordering) — a newly created empty trip shouldn't look lost.
+  for (const trip of (ownedTrips ?? []) as TripRow[]) {
+    if (!grouped.has(trip.id)) grouped.set(trip.id, { trip, bookings: [] })
+  }
+
+  const trips = Array.from(grouped.values())
+    .sort((a, b) => new Date(b.trip.created_at).getTime() - new Date(a.trip.created_at).getTime())
+
+  return Response.json({ ok: true, trips, ungroupedBookings: ungrouped })
 }

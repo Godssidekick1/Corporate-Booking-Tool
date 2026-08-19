@@ -441,6 +441,14 @@ export default function ConfirmBookingPage() {
 
         {booking.status === 'approved' && (
           <>
+            {latestApproval?.decision_note && (
+              <div style={s.approverNoteCard}>
+                <p style={s.approverNoteLabel}>
+                  Note from {latestApproval.approverName ?? 'your approver'}
+                </p>
+                <p style={s.approverNoteText}>“{latestApproval.decision_note}”</p>
+              </div>
+            )}
             <div style={s.noticeCard}>
               <p style={s.noticeText}>
                 Clicking below will confirm this booking directly with the airline. This step typically can't be undone —
@@ -521,6 +529,9 @@ const s: Record<string, React.CSSProperties> = {
   metaTags: { display: 'flex', gap: '6px' },
   tag: { fontSize: '10px', color: '#6B7280', background: '#F3F4F6', padding: '3px 9px', borderRadius: '5px', fontWeight: 500 },
 
+  approverNoteCard: { background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '12px', padding: '14px 16px', marginBottom: '16px' },
+  approverNoteLabel: { fontSize: '11.5px', fontWeight: 700, color: '#1D4ED8', margin: '0 0 4px', textTransform: 'uppercase' as const, letterSpacing: '0.4px' },
+  approverNoteText: { fontSize: '13.5px', color: '#1E3A8A', margin: 0, lineHeight: 1.5, fontStyle: 'italic' as const },
   noticeCard: { background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '12px', padding: '14px 16px', marginBottom: '16px' },
   noticeText: { fontSize: '12px', color: '#92400E', margin: 0, lineHeight: 1.5 },
 

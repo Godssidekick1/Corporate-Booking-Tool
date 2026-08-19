@@ -45,6 +45,8 @@ export default function TripWorkspacePage() {
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [completing, setCompleting] = useState(false)
+  const [completeError, setCompleteError] = useState('')
 
   useEffect(() => {
     loadTrip()
@@ -73,6 +75,29 @@ export default function TripWorkspacePage() {
 
   const flightBookings = bookings.filter(b => b.booking_type === 'flight')
   const hotelBookings = bookings.filter(b => b.booking_type === 'hotel')
+
+  async function handleMarkComplete() {
+    if (!trip) return
+    setCompleteError('')
+    setCompleting(true)
+    try {
+      const res = await fetch(`/api/trips/${trip.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'completed' }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setCompleteError(data.error || 'Could not mark this trip complete.')
+        return
+      }
+      setTrip(prev => prev ? { ...prev, status: 'completed' } : prev)
+    } catch {
+      setCompleteError('Something went wrong marking this trip complete.')
+    } finally {
+      setCompleting(false)
+    }
+  }
 
   if (loading) {
     return (
@@ -103,8 +128,23 @@ export default function TripWorkspacePage() {
         <Link href="/book" style={s.backLink}>← Your trips</Link>
 
         <div style={s.header}>
-          <h1 style={s.heading}>{trip.name}</h1>
-          <p style={s.sub}>Add flights, hotels, and expenses for this trip.</p>
+          <div style={s.headerTop}>
+            <div>
+              <div style={s.titleRow}>
+                <h1 style={s.heading}>{trip.name}</h1>
+                <span style={{ ...s.statusTag, ...(trip.status === 'completed' ? s.statusCompleted : s.statusOpen) }}>
+                  {trip.status === 'completed' ? 'Completed' : trip.status === 'open' ? 'Planning' : trip.status}
+                </span>
+              </div>
+              <p style={s.sub}>Add flights, hotels, and expenses for this trip.</p>
+            </div>
+            {trip.status !== 'completed' && trip.status !== 'cancelled' && (
+              <button type="button" onClick={handleMarkComplete} disabled={completing} style={{ ...s.completeBtn, opacity: completing ? 0.6 : 1 }}>
+                {completing ? 'Marking complete…' : '✓ Mark trip complete'}
+              </button>
+            )}
+          </div>
+          {completeError && <p style={s.completeErrorText}>⚠ {completeError}</p>}
         </div>
 
         {/* ── Flights ──────────────────────────────────────────────── */}
@@ -193,8 +233,18 @@ const s: Record<string, React.CSSProperties> = {
   backLink: { fontSize: '13px', color: '#6B7280', textDecoration: 'none', display: 'inline-block', marginBottom: '16px' },
 
   header: { marginBottom: '24px' },
-  heading: { fontSize: '24px', fontWeight: 700, color: '#0A0A14', margin: '0 0 6px', letterSpacing: '-0.4px' },
+  headerTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' as const },
+  titleRow: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' },
+  heading: { fontSize: '24px', fontWeight: 700, color: '#0A0A14', margin: 0, letterSpacing: '-0.4px' },
   sub: { fontSize: '14px', color: '#6B7280', margin: 0 },
+  statusTag: { fontSize: '10px', fontWeight: 700, padding: '3px 9px', borderRadius: '6px', letterSpacing: '0.3px', textTransform: 'uppercase' as const },
+  statusOpen: { color: '#92400E', background: '#FEF3C7' },
+  statusCompleted: { color: '#166534', background: '#DCFCE7' },
+  completeBtn: {
+    flexShrink: 0, height: '36px', padding: '0 14px', background: '#fff', color: '#166534', fontSize: '12.5px', fontWeight: 600,
+    border: '1px solid #BBF7D0', borderRadius: '8px', cursor: 'pointer', whiteSpace: 'nowrap' as const,
+  },
+  completeErrorText: { fontSize: '12.5px', color: '#DC2626', margin: '10px 0 0' },
 
   loadingCard: { display: 'flex', justifyContent: 'center', padding: '80px 0' },
   spinner: { width: '22px', height: '22px', border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%' },
