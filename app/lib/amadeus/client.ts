@@ -745,7 +745,8 @@ export const amadeus = {
     referenceNo: string,
     customerInfo: CustomerInfo,
     totalAmount: string = '0',
-    grandTotalFare: string = '0'
+    grandTotalFare: string = '0',
+    ssrAmount: string = '0'
   ): Promise<AddPassengerResponse> {
     const json = await withSession<AmadeusEnvelope & AddPassengerResponse>(
       'Flight/AddPassengerDetails',
@@ -761,7 +762,7 @@ export const amadeus = {
         },
         SSRInfo: [],
         TotalAmount: totalAmount,
-        SSRAmount: 0,
+        SSRAmount: ssrAmount,
         Discount: 0,
         GrandTotalFare: grandTotalFare,
         IsGSTProvided: false,

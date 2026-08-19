@@ -44,6 +44,7 @@ interface Booking {
     isRefundable: boolean
     fareType: string
     passengerBreakup?: { PaxType: string; BaseFare: number; Tax: number; TotalFare: number }[]
+    seatFees?: number
   } | null
 }
 
@@ -372,6 +373,20 @@ export default function ConfirmBookingPage() {
             </div>
           )}
 
+          <div style={s.fareRow}>
+            <span style={s.fareLabel}>Fare</span>
+            <span style={s.fareValue}>
+              {booking.fare_breakdown?.currency ?? ''} {((booking.total_cost ?? 0) - (booking.fare_breakdown?.seatFees ?? 0)).toLocaleString('en-IN')}
+            </span>
+          </div>
+          {!!booking.fare_breakdown?.seatFees && (
+            <div style={s.fareRow}>
+              <span style={s.fareLabel}>Seat selection</span>
+              <span style={s.fareValue}>
+                {booking.fare_breakdown?.currency ?? ''} {booking.fare_breakdown.seatFees.toLocaleString('en-IN')}
+              </span>
+            </div>
+          )}
           <div style={s.fareRow}>
             <span style={s.fareLabel}>Total</span>
             <span style={s.fareValue}>

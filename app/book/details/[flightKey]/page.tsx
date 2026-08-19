@@ -543,6 +543,16 @@ export default function BookingDetailsPage() {
 
     setSubmitting(true)
 
+    // Seat fees are collected separately from fare pricing (seat selection
+    // happens after Pricing, against SeatMap, not against the priced fare
+    // itself) — roll them into the total here so what's charged/displayed/
+    // policy-checked actually reflects what the traveler picked, not just
+    // the base priced fare from before seat selection.
+    const totalSeatFees = Object.values(seatsByPassenger)
+      .flat()
+      .reduce((sum, seat) => sum + (Number(seat.SeatFee) || 0), 0)
+    const grandTotalFare = priced.totalFare + totalSeatFees
+
     try {
       const res = await fetch('/api/book/add-passenger', {
         method: 'POST',
@@ -553,7 +563,8 @@ export default function BookingDetailsPage() {
           provider: priced.provider,
           resultIndex: priced.resultIndex,
           referenceNo: priced.referenceNo,
-          totalFare: priced.totalFare,
+          totalFare: grandTotalFare,
+          seatFees: totalSeatFees,
           currency: priced.currency,
           isRefundable: priced.isRefundable,
           fareType: priced.fareType,

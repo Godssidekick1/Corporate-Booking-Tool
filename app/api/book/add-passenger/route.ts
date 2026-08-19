@@ -45,7 +45,14 @@ interface AddPassengerBody {
                             // amadeus_key/session has expired by the time
                             // approval comes through and Booking is called.
   referenceNo: string      // ReferenceNo from /book/price
-  totalFare: number        // TotalFare from /book/price — becomes bookings.total_cost
+  totalFare: number        // Grand total from /book/details — priced fare
+                            // PLUS any seat selection fees, already summed
+                            // client-side. Becomes bookings.total_cost, and
+                            // is what's actually charged/policy-checked.
+  seatFees?: number        // Just the seat-fee portion of totalFare above,
+                            // kept separately so the fare breakdown can
+                            // show it as its own line item rather than
+                            // silently folding it into a bigger fare number.
   currency: string
   isRefundable: boolean
   fareType: string
@@ -80,7 +87,7 @@ export async function POST(req: NextRequest) {
 
   const body: AddPassengerBody = await req.json()
   const {
-    key, pricingKey, provider, resultIndex, referenceNo, totalFare, currency, isRefundable, fareType,
+    key, pricingKey, provider, resultIndex, referenceNo, totalFare, seatFees, currency, isRefundable, fareType,
     passengerBreakup, isNdc, searchKey, tripId, itinerary, customerInfo,
   } = body
 
@@ -117,7 +124,8 @@ export async function POST(req: NextRequest) {
       referenceNo,
       customerInfo,
       String(totalFare),
-      String(totalFare)
+      String(totalFare),
+      String(seatFees ?? 0)
     )
 
     // Run the Rule Engine BEFORE inserting, so the verdict can be written in
@@ -199,7 +207,7 @@ export async function POST(req: NextRequest) {
         is_ndc: isNdc ?? null,
         itinerary: itinerary ?? null,
         traveler_snapshot: customerInfo,
-        fare_breakdown: { currency, isRefundable, fareType, passengerBreakup },
+        fare_breakdown: { currency, isRefundable, fareType, passengerBreakup, seatFees: seatFees ?? 0 },
         policy_status: policyStatus,
         policy_verdict: policyVerdict,
         policy_verdict_detail: policyVerdictDetail,
