@@ -121,6 +121,7 @@ export default function ConfirmBookingPage() {
   const [loadError, setLoadError] = useState('')
   const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState('')
+  const [errorCode, setErrorCode] = useState<string | null>(null)
 
   useEffect(() => {
     loadBooking()
@@ -182,6 +183,7 @@ export default function ConfirmBookingPage() {
   async function handleConfirmBooking() {
     setConfirming(true)
     setError('')
+    setErrorCode(null)
     try {
       const res = await fetch('/api/book/booking', {
         method: 'POST',
@@ -192,6 +194,13 @@ export default function ConfirmBookingPage() {
 
       if (!data.ok) {
         setError(data.error || 'Could not complete the booking. Please try again.')
+        setErrorCode(data.code ?? null)
+        if (data.code === 'SEARCH_EXPIRED') {
+          // Server already marked this booking 'failed' — refetch so the
+          // page stops showing the now-stale 'approved' action buttons
+          // alongside the Search again prompt.
+          loadBooking({ silent: true })
+        }
         return
       }
 
@@ -409,6 +418,16 @@ export default function ConfirmBookingPage() {
           </div>
         )}
 
+        {errorCode === 'SEARCH_EXPIRED' && (
+          <button
+            type="button"
+            onClick={() => router.push('/book/flights')}
+            style={s.confirmBtn}
+          >
+            Search again →
+          </button>
+        )}
+
         {/* ── Action area — depends on approval status ────────────────── */}
         {booking.status === 'pending_approval' && (
           <>
@@ -450,6 +469,15 @@ export default function ConfirmBookingPage() {
             <p style={s.rejectedTitle}>Approval routing isn't set up correctly</p>
             <p style={s.waitingSub}>
               This booking needs approval but we couldn't find who should approve it (e.g. no manager is assigned to you yet). Contact your TMC or corporate admin.
+            </p>
+          </div>
+        )}
+
+        {booking.status === 'failed' && errorCode !== 'SEARCH_EXPIRED' && (
+          <div style={s.rejectedCard}>
+            <p style={s.rejectedTitle}>This booking couldn't be completed</p>
+            <p style={s.waitingSub}>
+              Something went wrong confirming this with the airline. Contact your TMC or corporate admin if this keeps happening.
             </p>
           </div>
         )}

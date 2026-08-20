@@ -186,12 +186,49 @@ export async function POST(req: NextRequest) {
 
       console.info('[book/booking] session/key expired — re-pricing and re-submitting passenger details before retrying Booking', { bookingId })
 
-      const freshPricing = await amadeus.pricing(
-        booking.search_key,
-        booking.pricing_key,
-        booking.provider,
-        booking.result_index
-      )
+      let freshPricing
+      try {
+        freshPricing = await amadeus.pricing(
+          booking.search_key,
+          booking.pricing_key,
+          booking.provider,
+          booking.result_index
+        )
+      } catch (pricingErr) {
+        // If Pricing ITSELF fails with a session/expiry-style error even
+        // right after a fresh Authenticate, the problem isn't the
+        // SessionID — it's that the original Availability/search_key is
+        // too old to reuse at all. Availability results appear to have
+        // their own expiry, separate from (and possibly shorter-lived
+        // relative to how long this booking sat waiting for approval
+        // than) the session TTL — Amadeus reuses the same generic
+        // "Result Session Expired" message for both cases, so there's no
+        // way to distinguish them from the error text alone. Once we're
+        // here, replaying with the same search_key can't succeed no
+        // matter how many times we re-authenticate — the only real fix
+        // is a brand new search. Surface that plainly instead of letting
+        // a raw GDS error reach the traveler.
+        const isAlsoStale = pricingErr instanceof AmadeusError && /session/i.test(pricingErr.message)
+        if (isAlsoStale) {
+          console.error('Recovery re-pricing also failed with a session/expiry error — search_key itself is stale, not just the session', {
+            bookingId,
+            searchKey: booking.search_key,
+            bookingCreatedRelativeToNow: 'unknown — check bookings.created_at for this bookingId',
+          })
+          const { error: staleUpdateError } = await service
+            .from('bookings')
+            .update({ status: 'failed', updated_at: new Date().toISOString() })
+            .eq('id', bookingId)
+          if (staleUpdateError) {
+            console.error('Failed to mark booking as failed after unrecoverable stale search', staleUpdateError, { bookingId })
+          }
+          return Response.json({
+            error: 'This search has expired — it was priced too long ago to confirm with the airline now. Please search for this flight again and re-book.',
+            code: 'SEARCH_EXPIRED',
+          }, { status: 409 })
+        }
+        throw pricingErr
+      }
 
       const freshAddPassenger = await amadeus.addPassenger(
         freshPricing.Key,

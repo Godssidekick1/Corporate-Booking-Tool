@@ -1,5 +1,5 @@
 import { createClient } from '@/utils/supabase/server'
-import { amadeus } from '@/app/lib/amadeus/client'
+import { amadeus, type PricingResponse } from '@/app/lib/amadeus/client'
 import { NextRequest } from 'next/server'
 
 // POST /api/book/price
@@ -8,6 +8,52 @@ import { NextRequest } from 'next/server'
 // (can genuinely happen: fare expired, seat bucket sold out between search
 // and selection), we tell the user clearly rather than silently pricing a
 // different flight than the one they picked.
+
+// The real Pricing response is shaped just like Availability — nested
+// under AirPricingResponse[0].PricingInfos.PricingInfo[0], NOT flat
+// top-level fields. There is no PassengerFareBreakup field either; the
+// per-passenger breakdown is FareBreakDowns.FareBreakDown[], one entry
+// per PaxType, same pattern as Availability's FareInfos.
+//
+// Exported so other callers that need a fresh price (e.g.
+// /api/approvals/[approvalId]/refresh-fare, which re-prices a booking an
+// approver is reviewing) can reuse the exact same extraction instead of
+// re-deriving this traversal independently and risking it drifting out of
+// sync with reality.
+export function extractPricingDetails(pricing: PricingResponse) {
+  const flight = pricing.AirPricingResponse?.[0]
+  const pricingInfo = flight?.PricingInfos?.PricingInfo?.[0]
+  const fareBreakdown = pricingInfo?.FareBreakDowns?.FareBreakDown ?? []
+
+  if (!pricingInfo) return null
+
+  return {
+    key: pricing.Key,
+    referenceNo: pricing.ReferenceNo,
+    totalFare: pricingInfo.Total?.Fare ? Number(pricingInfo.Total.Fare) : undefined,
+    baseFare: pricingInfo.Total?.BaseFare ? Number(pricingInfo.Total.BaseFare) : undefined,
+    tax: pricingInfo.Total?.OtherTax ? Number(pricingInfo.Total.OtherTax) : undefined,
+    currency: pricingInfo.Currency,
+    isRefundable: fareBreakdown[0]?.Refundable === 'Refundable',
+    fareType: pricingInfo.FareType,
+    fareBasis: pricingInfo.FareInfos?.FareInfo?.[0]?.PaxFareBasis || undefined,
+    mealIncluded: pricingInfo.Meal === 'YES',
+    cabinBaggageKg: flight?.Itineraries?.Itinerary?.[0]?.Baggage?.Allowance?.Cabin || undefined,
+    changePenalties: (pricingInfo.Penalties?.ChangePenalty ?? []).map(p => ({ paxType: p.PaxType, text: p.Text.trim() })),
+    cancelPenalties: (pricingInfo.Penalties?.CancelPenalty ?? []).map(p => ({ paxType: p.PaxType, text: p.Text.trim() })),
+    passengerBreakup: fareBreakdown.map(fb => ({
+      PaxType: fb.PaxType,
+      BaseFare: Number(fb.BaseFare),
+      Tax: Number(fb.TotalTax),
+      TotalFare: Number(fb.TotalFare),
+    })),
+    brandedFareName: pricingInfo.BrandedFareName || undefined,
+    brandedFareDescription: pricingInfo.BrandedfareDesc || undefined,
+    brandedServices: pricingInfo.BrandedFareService
+      ? pricingInfo.BrandedFareService.split('|').map(s => s.trim()).filter(Boolean)
+      : undefined,
+  }
+}
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
@@ -29,50 +75,16 @@ if (!key || !pricingKey || !provider || !resultIndex) {
   try {
     
     const pricing = await amadeus.pricing(key, pricingKey, provider, resultIndex)
+    const details = extractPricingDetails(pricing)
 
-    // The real Pricing response is shaped just like Availability — nested
-    // under AirPricingResponse[0].PricingInfos.PricingInfo[0], NOT flat
-    // top-level fields. There is no PassengerFareBreakup field either; the
-    // per-passenger breakdown is FareBreakDowns.FareBreakDown[], one entry
-    // per PaxType, same pattern as Availability's FareInfos.
-    const flight = pricing.AirPricingResponse?.[0]
-    const pricingInfo = flight?.PricingInfos?.PricingInfo?.[0]
-    const fareBreakdown = pricingInfo?.FareBreakDowns?.FareBreakDown ?? []
-
-    if (!pricingInfo) {
+    if (!details) {
       return Response.json({
         ok: false,
         error: 'Pricing succeeded but returned no fare details. Please try again.',
       }, { status: 200 })
     }
 
-    return Response.json({
-      ok: true,
-      key: pricing.Key,
-      referenceNo: pricing.ReferenceNo,
-      totalFare: pricingInfo.Total?.Fare ? Number(pricingInfo.Total.Fare) : undefined,
-      baseFare: pricingInfo.Total?.BaseFare ? Number(pricingInfo.Total.BaseFare) : undefined,
-      tax: pricingInfo.Total?.OtherTax ? Number(pricingInfo.Total.OtherTax) : undefined,
-      currency: pricingInfo.Currency,
-      isRefundable: fareBreakdown[0]?.Refundable === 'Refundable',
-      fareType: pricingInfo.FareType,
-      fareBasis: pricingInfo.FareInfos?.FareInfo?.[0]?.PaxFareBasis || undefined,
-      mealIncluded: pricingInfo.Meal === 'YES',
-      cabinBaggageKg: flight?.Itineraries?.Itinerary?.[0]?.Baggage?.Allowance?.Cabin || undefined,
-      changePenalties: (pricingInfo.Penalties?.ChangePenalty ?? []).map(p => ({ paxType: p.PaxType, text: p.Text.trim() })),
-      cancelPenalties: (pricingInfo.Penalties?.CancelPenalty ?? []).map(p => ({ paxType: p.PaxType, text: p.Text.trim() })),
-      passengerBreakup: fareBreakdown.map(fb => ({
-        PaxType: fb.PaxType,
-        BaseFare: Number(fb.BaseFare),
-        Tax: Number(fb.TotalTax),
-        TotalFare: Number(fb.TotalFare),
-      })),
-      brandedFareName: pricingInfo.BrandedFareName || undefined,
-      brandedFareDescription: pricingInfo.BrandedfareDesc || undefined,
-      brandedServices: pricingInfo.BrandedFareService
-        ? pricingInfo.BrandedFareService.split('|').map(s => s.trim()).filter(Boolean)
-        : undefined,
-    })
+    return Response.json({ ok: true, ...details })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Pricing failed'
 

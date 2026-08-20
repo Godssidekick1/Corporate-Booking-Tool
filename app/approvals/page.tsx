@@ -80,6 +80,7 @@ export default function ApprovalsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [actingOn, setActingOn] = useState<string | null>(null)
+  const [refreshingId, setRefreshingId] = useState<string | null>(null)
   const [noteDraft, setNoteDraft] = useState<Record<string, string>>({})
 
   // Once the approver has decided on at least one item this visit, this
@@ -120,6 +121,27 @@ export default function ApprovalsPage() {
       setError('Something went wrong loading approvals.')
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function handleRefreshFare(approvalId: string) {
+    setRefreshingId(approvalId)
+    setError('')
+    try {
+      const res = await fetch(`/api/approvals/${approvalId}/refresh-fare`, { method: 'POST' })
+      const data = await res.json()
+      if (!data.ok) {
+        setError(data.error || 'Could not refresh the fare for this booking.')
+        return
+      }
+      // The refreshed price/verdict is now saved server-side — reload the
+      // queue so this card shows the new numbers rather than patching
+      // fields in locally and risking drift from what's actually stored.
+      await load()
+    } catch {
+      setError('Something went wrong refreshing the fare. Please try again.')
+    } finally {
+      setRefreshingId(null)
     }
   }
 
@@ -242,7 +264,20 @@ export default function ApprovalsPage() {
 
                 <div style={s.costRow}>
                   <span style={s.costLabel}>Total cost</span>
-                  <span style={s.costValue}>₹{item.booking?.totalCost?.toLocaleString('en-IN') ?? '—'}</span>
+                  <div style={s.costRight}>
+                    <span style={s.costValue}>₹{item.booking?.totalCost?.toLocaleString('en-IN') ?? '—'}</span>
+                    {tab === 'pending' && (
+                      <button
+                        type="button"
+                        onClick={() => handleRefreshFare(item.approvalId)}
+                        disabled={refreshingId === item.approvalId || actingOn === item.approvalId}
+                        style={{ ...s.refreshFareBtn, opacity: refreshingId === item.approvalId ? 0.6 : 1 }}
+                        title="Get the current price and policy check for this fare before deciding"
+                      >
+                        {refreshingId === item.approvalId ? 'Refreshing…' : '↻ Refresh fare'}
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {item.reason && (
@@ -353,7 +388,12 @@ const s: Record<string, React.CSSProperties> = {
 
   costRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' },
   costLabel: { fontSize: '11.5px', color: '#9CA3AF' },
+  costRight: { display: 'flex', alignItems: 'center', gap: '10px' },
   costValue: { fontSize: '15px', fontWeight: 700, color: '#0A0A14' },
+  refreshFareBtn: {
+    fontSize: '11px', fontWeight: 600, color: '#374151', background: '#F9FAFB',
+    border: '1px solid #E5E7EB', borderRadius: '7px', padding: '5px 10px', cursor: 'pointer', whiteSpace: 'nowrap' as const,
+  },
 
   reasonBox: { fontSize: '12px', color: '#6B7280', lineHeight: 1.5, background: '#F9FAFB', borderRadius: '8px', padding: '10px 12px', marginBottom: '10px' },
   noteBox: { fontSize: '12px', color: '#6B7280', fontStyle: 'italic' as const, marginBottom: '10px' },
