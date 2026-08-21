@@ -3,22 +3,41 @@ import type { Verdict, VerdictBreach } from '@/app/lib/rule-engine/evaluateBooki
 
 type ServiceClient = ReturnType<typeof createServiceClient>
 
-// ── Approval Engine v2 ───────────────────────────────────────────────────
-// Chains are resolved by (company_id, band_id, travel_type) — mirrors how
-// policy_rules resolves by (company_id/tmc_id, band_code, travel_type).
-// There is no per-employee chain assignment anymore: every employee in a
-// given band automatically uses that band's chain for that travel type.
-// This directly supports band-scoped approval authority (e.g. an L3/L4
-// manager approving for L1/L2 travelers) — see approver_type: 'manager'
-// below, which resolves via manager_id same as before, and 'any_manager_at'
-// which resolves via band rank instead of the reporting line, for cases
-// where the traveler's own manager_id isn't the intended approver.
+// ── Approval Engine v3 ───────────────────────────────────────────────────
+// Chains are assigned directly to a specific employee by a TMC/admin —
+// there is no band-based lookup anymore. A chain is resolved by
+// (employee_id, category), where category collapses travelType's finer
+// granularity (flight_domestic, flight_international, hotel, ...) into
+// exactly two routing buckets:
+//   'flights_hotels' — flight_domestic, flight_international, hotel, etc.
+//   'misc'            — everything else (car rentals, expenses, ...)
+// Policy rules (the Rule Engine) still use the finer travelType split for
+// evaluating limits — this collapsing is ONLY for approval routing.
+//
+// approver_type: 'manager' still resolves via manager_id, 'any_manager_at'
+// still resolves via band rank among active managers/admins — both
+// unchanged from before, since who's ELIGIBLE to approve is still a
+// legitimate band-scoped concept even though WHICH chain applies to a
+// given employee is no longer derived from their band.
 //
 // tiers (jsonb on approval_chains) shape — walked in tier order:
 //   { tier: number, approver_type: ApproverType, min_verdict: Verdict,
 //     approver_user_id?: string,      // only for 'specific_user'
 //     min_band_rank?: number }        // only for 'any_manager_at'
 // ─────────────────────────────────────────────────────────────────────────────
+
+export type ApprovalCategory = 'flights_hotels' | 'misc'
+
+// ── categoryForTravelType ──────────────────────────────────────────────────
+// The only place travelType's finer granularity gets collapsed to a
+// routing category. Anything starting with 'flight' or 'hotel' is
+// flights_hotels; everything else (car_rental, misc expenses, and any
+// future travel type nobody's thought of yet) defaults to misc rather than
+// silently matching neither bucket.
+export function categoryForTravelType(travelType: string): ApprovalCategory {
+  if (travelType.startsWith('flight') || travelType.startsWith('hotel')) return 'flights_hotels'
+  return 'misc'
+}
 
 export type ApproverType = 'manager' | 'finance_role' | 'specific_user' | 'admin' | 'self' | 'any_manager_at'
 
@@ -103,41 +122,24 @@ export function buildReason(breaches: VerdictBreach[], costTier: string, totalCo
 }
 
 // ── resolveChainForEmployee ──────────────────────────────────────────────────
-// Looks up the employee's band, then the (company, band, travel_type) chain.
-// Returns null if either lookup comes up empty — a missing band or a band
-// with no configured chain both mean "no chain applies," same as the old
-// design's "no assignment" case.
+// Looks up the chain assigned directly to this employee for this category.
+// Returns null if none exists — "no chain assigned to this employee yet"
+// means the same thing the old "no band-wide chain configured" meant:
+// nothing to route to.
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function resolveChainForEmployee(
   service: ServiceClient,
   employeeId: string,
-  companyId: string,
   travelType: string
 ): Promise<{ chainId: string; tiers: ChainTier[] } | null> {
-  const { data: employee } = await service
-    .from('employees')
-    .select('band_code')
-    .eq('id', employeeId)
-    .maybeSingle()
-
-  if (!employee?.band_code) return null
-
-  const { data: band } = await service
-    .from('bands')
-    .select('id')
-    .eq('company_id', companyId)
-    .eq('code', employee.band_code)
-    .maybeSingle()
-
-  if (!band) return null
+  const category = categoryForTravelType(travelType)
 
   const { data: chain } = await service
     .from('approval_chains')
     .select('id, tiers')
-    .eq('company_id', companyId)
-    .eq('band_id', band.id)
-    .eq('travel_type', travelType)
+    .eq('employee_id', employeeId)
+    .eq('category', category)
     .maybeSingle()
 
   if (!chain) return null
@@ -232,12 +234,12 @@ export async function startApprovalForBooking(
 ): Promise<TierOutcome> {
   const { bookingId, companyId, employeeId, travelType, verdict, reason } = params
 
-  const chain = await resolveChainForEmployee(service, employeeId, companyId, travelType)
+  const chain = await resolveChainForEmployee(service, employeeId, travelType)
 
   if (!chain || chain.tiers.length === 0) {
-    // No chain configured for this band/travel type — nothing to route to.
-    // Same fallback as before: proceeds without human approval rather than
-    // stranding the employee on a TMC configuration gap.
+    // No chain assigned to this employee for this category — nothing to
+    // route to. Same fallback as before: proceeds without human approval
+    // rather than stranding the employee on a TMC configuration gap.
     return { requiresApproval: false }
   }
 

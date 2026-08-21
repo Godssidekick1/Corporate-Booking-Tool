@@ -226,11 +226,11 @@ export async function POST(req: NextRequest) {
     // Resolve whether a human approval tier is required. If not, flip the
     // booking straight to 'approved' so /api/book/booking's gate lets it
     // through immediately. requiresApproval is false for three distinct
-    // reasons, all handled the same way here: no chain configured for this
-    // band/travel_type, the verdict didn't meet any tier's min_verdict
-    // threshold, or the first eligible tier was approver_type 'self' (band
-    // exempt from approval — startApprovalForBooking already logged that
-    // as its own approvals row with status 'approved').
+    // reasons, all handled the same way here: no chain assigned to this
+    // employee for this category, the verdict didn't meet any tier's
+    // min_verdict threshold, or the first eligible tier was approver_type
+    // 'self' (exempt from approval — startApprovalForBooking already
+    // logged that as its own approvals row with status 'approved').
     let finalStatus = 'pending_approval'
     try {
       const outcome = await startApprovalForBooking(service, {

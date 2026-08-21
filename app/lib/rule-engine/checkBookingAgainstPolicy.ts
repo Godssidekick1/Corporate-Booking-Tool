@@ -1,5 +1,5 @@
 import { createServiceClient } from '@/utils/supabase/service'
-import { resolveEffectivePolicy } from './resolveEffectivePolicy'
+import { resolveEffectivePolicy, PolicyBlocked } from './resolveEffectivePolicy'
 import { evaluateBooking, VerdictResult } from './evaluateBooking'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
@@ -15,7 +15,7 @@ export interface BookingCheckInput {
 
 export type RuleEngineResult =
   | { ok: true; policyGroupName: string; bandCode: string } & VerdictResult
-  | { ok: false; reason: 'no_policy_group' | 'no_policy_rules'; message: string }
+  | PolicyBlocked
 
 // ── checkBookingAgainstPolicy ─────────────────────────────────────────────────
 // The Rule Engine's single entry point. Resolves the employee's effective

@@ -1,15 +1,21 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import SearchableSelect, { SearchableOption } from '@/app/components/SearchableSelect'
 
 // ── /tmc/settings/approvals ─────────────────────────────────────────────
-// TMC-side chain builder. One chain per (company, band, travel_type) — pick
-// a company, pick a band, pick a travel type, build an ordered list of
-// tiers. Mirrors tmc/settings/policy's company-selector pattern.
+// Per-employee chain builder. Pick a company, pick an employee (both via
+// searchable/typable dropdowns), then build an ordered tier list for each
+// of the two routing categories — flights_hotels and misc — shown side by
+// side as separate cards. Replaces the old band+travel_type model: chains
+// are assigned directly to a specific employee, not derived from their
+// band.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface Company { id: string; name: string }
 interface Band { id: string; code: string; rank: number }
+interface Employee { id: string; full_name: string; email: string; band_code: string | null; status: string }
+type ApprovalCategory = 'flights_hotels' | 'misc'
 interface ChainTier {
   tier: number
   approver_type: 'manager' | 'finance_role' | 'specific_user' | 'admin' | 'self' | 'any_manager_at'
@@ -19,18 +25,16 @@ interface ChainTier {
 }
 interface ExistingChain {
   id: string
-  band_id: string
-  travel_type: string
+  employee_id: string
+  category: ApprovalCategory
   tiers: ChainTier[]
   version: number
 }
 
-const TRAVEL_TYPES = [
-  { value: 'flight_domestic', label: 'Domestic flight' },
-  { value: 'flight_international', label: 'International flight' },
-  { value: 'hotel', label: 'Hotel' },
-  { value: 'car_rental', label: 'Car rental' },
-]
+const CATEGORY_META: Record<ApprovalCategory, { label: string; desc: string }> = {
+  flights_hotels: { label: 'Flights & hotels', desc: 'Approver chain for flight and hotel bookings.' },
+  misc: { label: 'Miscellaneous', desc: 'Approver chain for car rentals, expenses, and anything else — often routed to Finance.' },
+}
 
 const APPROVER_TYPE_META: Record<string, { label: string; desc: string }> = {
   manager: { label: "Traveler's manager", desc: 'Resolves via the employee\u2019s assigned manager (manager_id).' },
@@ -38,7 +42,7 @@ const APPROVER_TYPE_META: Record<string, { label: string; desc: string }> = {
   finance_role: { label: 'Finance', desc: 'Any active employee with the Finance role.' },
   admin: { label: 'Corporate admin', desc: 'Any active employee with the Admin role.' },
   specific_user: { label: 'Specific person', desc: 'A named employee, regardless of role.' },
-  self: { label: 'Self-approve (no review)', desc: 'Auto-approved and logged \u2014 no human ever has to act. Use for bands exempt from approval (e.g. MD, CEO).' },
+  self: { label: 'Self-approve (no review)', desc: 'Auto-approved and logged \u2014 no human ever has to act. Use for employees exempt from approval (e.g. MD, CEO).' },
 }
 
 function emptyTier(nextNumber: number): ChainTier {
@@ -49,15 +53,20 @@ export default function TmcApprovalsPage() {
   const [companies, setCompanies] = useState<Company[]>([])
   const [selectedCompanyId, setSelectedCompanyId] = useState('')
   const [bands, setBands] = useState<Band[]>([])
+  const [employees, setEmployees] = useState<Employee[]>([])
   const [chains, setChains] = useState<ExistingChain[]>([])
-  const [selectedBandId, setSelectedBandId] = useState('')
-  const [selectedTravelType, setSelectedTravelType] = useState('flight_domestic')
-  const [tiers, setTiers] = useState<ChainTier[]>([])
-  const [employees, setEmployees] = useState<{ id: string; full_name: string }[]>([])
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState('')
+
+  // Both category cards' tier lists live here at once, keyed by category —
+  // this is what lets the two cards be edited independently and saved
+  // independently, per the "side by side" decision.
+  const [tiersByCategory, setTiersByCategory] = useState<Record<ApprovalCategory, ChainTier[]>>({
+    flights_hotels: [], misc: [],
+  })
 
   const [loadingCompanies, setLoadingCompanies] = useState(true)
   const [loadingChains, setLoadingChains] = useState(false)
-  const [saving, setSaving] = useState(false)
+  const [savingCategory, setSavingCategory] = useState<ApprovalCategory | null>(null)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
@@ -69,20 +78,24 @@ export default function TmcApprovalsPage() {
   }, [])
 
   useEffect(() => {
-    if (!selectedCompanyId) { setBands([]); setChains([]); return }
+    if (!selectedCompanyId) { setBands([]); setEmployees([]); setChains([]); setSelectedEmployeeId(''); return }
     loadChainsForCompany(selectedCompanyId)
-    fetch(`/api/tmc/employee-assignments?companyId=${selectedCompanyId}`)
-      .then(r => r.json())
-      .then(d => { if (d.ok) setEmployees(d.employees.map((e: { id: string; full_name: string }) => ({ id: e.id, full_name: e.full_name }))) })
-      .catch(() => {})
+    setSelectedEmployeeId('')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCompanyId])
 
   useEffect(() => {
-    if (!selectedBandId || !selectedTravelType) { setTiers([]); return }
-    const existing = chains.find(c => c.band_id === selectedBandId && c.travel_type === selectedTravelType)
-    setTiers(existing ? existing.tiers.map(t => ({ ...t })) : [])
-  }, [selectedBandId, selectedTravelType, chains])
+    if (!selectedEmployeeId) {
+      setTiersByCategory({ flights_hotels: [], misc: [] })
+      return
+    }
+    const flightsHotels = chains.find(c => c.employee_id === selectedEmployeeId && c.category === 'flights_hotels')
+    const misc = chains.find(c => c.employee_id === selectedEmployeeId && c.category === 'misc')
+    setTiersByCategory({
+      flights_hotels: flightsHotels ? flightsHotels.tiers.map(t => ({ ...t })) : [],
+      misc: misc ? misc.tiers.map(t => ({ ...t })) : [],
+    })
+  }, [selectedEmployeeId, chains])
 
   async function loadChainsForCompany(companyId: string) {
     setLoadingChains(true)
@@ -95,8 +108,8 @@ export default function TmcApprovalsPage() {
         return
       }
       setBands(data.bands)
+      setEmployees(data.employees)
       setChains(data.chains)
-      if (data.bands.length > 0 && !selectedBandId) setSelectedBandId(data.bands[0].id)
     } catch {
       setError('Something went wrong loading approval chains.')
     } finally {
@@ -104,20 +117,30 @@ export default function TmcApprovalsPage() {
     }
   }
 
-  function addTier() {
-    setTiers(prev => [...prev, emptyTier(prev.length > 0 ? Math.max(...prev.map(t => t.tier)) + 1 : 1)])
+  function addTier(category: ApprovalCategory) {
+    setTiersByCategory(prev => {
+      const current = prev[category]
+      const nextNumber = current.length > 0 ? Math.max(...current.map(t => t.tier)) + 1 : 1
+      return { ...prev, [category]: [...current, emptyTier(nextNumber)] }
+    })
   }
 
-  function removeTier(tierNumber: number) {
-    setTiers(prev => prev.filter(t => t.tier !== tierNumber).map((t, i) => ({ ...t, tier: i + 1 })))
+  function removeTier(category: ApprovalCategory, tierNumber: number) {
+    setTiersByCategory(prev => ({
+      ...prev,
+      [category]: prev[category].filter(t => t.tier !== tierNumber).map((t, i) => ({ ...t, tier: i + 1 })),
+    }))
   }
 
-  function updateTier(tierNumber: number, patch: Partial<ChainTier>) {
-    setTiers(prev => prev.map(t => t.tier === tierNumber ? { ...t, ...patch } : t))
+  function updateTier(category: ApprovalCategory, tierNumber: number, patch: Partial<ChainTier>) {
+    setTiersByCategory(prev => ({
+      ...prev,
+      [category]: prev[category].map(t => t.tier === tierNumber ? { ...t, ...patch } : t),
+    }))
   }
 
-  async function handleSave() {
-    setSaving(true)
+  async function handleSave(category: ApprovalCategory) {
+    setSavingCategory(category)
     setError('')
     setSuccess('')
     try {
@@ -126,9 +149,9 @@ export default function TmcApprovalsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           companyId: selectedCompanyId,
-          bandId: selectedBandId,
-          travelType: selectedTravelType,
-          tiers,
+          employeeId: selectedEmployeeId,
+          category,
+          tiers: tiersByCategory[category],
         }),
       })
       const data = await res.json()
@@ -136,165 +159,169 @@ export default function TmcApprovalsPage() {
         setError(data.error || 'Could not save this chain.')
         return
       }
-      setSuccess('Approval chain saved.')
+      setSuccess(`${CATEGORY_META[category].label} chain saved.`)
       loadChainsForCompany(selectedCompanyId)
     } catch {
       setError('Something went wrong saving this chain.')
     } finally {
-      setSaving(false)
+      setSavingCategory(null)
     }
   }
 
-  const selectedBand = bands.find(b => b.id === selectedBandId)
+  const companyOptions: SearchableOption[] = companies.map(c => ({ id: c.id, label: c.name }))
+  const employeeOptions: SearchableOption[] = employees.map(e => ({
+    id: e.id,
+    label: e.full_name,
+    sublabel: [e.email, e.band_code].filter(Boolean).join(' · '),
+  }))
+  const approverOptions: SearchableOption[] = employees
+    .filter(e => e.status === 'active')
+    .map(e => ({ id: e.id, label: e.full_name, sublabel: e.email }))
+
+  const selectedEmployee = employees.find(e => e.id === selectedEmployeeId)
 
   return (
     <div style={s.page}>
       <div style={s.header}>
         <h1 style={s.heading}>Approval chains</h1>
-        <p style={s.sub}>Configure who approves out-of-policy bookings, per band and travel type.</p>
+        <p style={s.sub}>Assign who approves out-of-policy bookings, per employee — one chain for flights &amp; hotels, one for everything else.</p>
       </div>
 
-      <div style={s.selectorRow}>
-        <select
-          value={selectedCompanyId}
-          onChange={e => { setSelectedCompanyId(e.target.value); setSelectedBandId('') }}
-          style={s.select}
-          disabled={loadingCompanies}
-        >
-          <option value="">Select a company…</option>
-          {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
+      <div style={s.selectorGrid}>
+        <div style={s.selectorField}>
+          <label style={s.selectorLabel}>Company</label>
+          <SearchableSelect
+            value={selectedCompanyId}
+            onChange={id => setSelectedCompanyId(id)}
+            options={companyOptions}
+            placeholder={loadingCompanies ? 'Loading companies…' : 'Search for a company…'}
+            disabled={loadingCompanies}
+            emptyMessage="No companies found"
+          />
+        </div>
+
+        {selectedCompanyId && (
+          <div style={s.selectorField}>
+            <label style={s.selectorLabel}>Employee</label>
+            <SearchableSelect
+              value={selectedEmployeeId}
+              onChange={id => setSelectedEmployeeId(id)}
+              options={employeeOptions}
+              placeholder={loadingChains ? 'Loading employees…' : 'Search for an employee…'}
+              disabled={loadingChains}
+              emptyMessage="No employees found"
+            />
+          </div>
+        )}
       </div>
 
       {error && <div style={s.errorBanner}><span style={s.bannerIcon}>⚠</span> {error}</div>}
       {success && <div style={s.successBanner}><span style={s.bannerIcon}>✓</span> {success}</div>}
 
-      {selectedCompanyId && !loadingChains && (
+      {selectedEmployeeId && selectedEmployee && !loadingChains && (
         <>
-          <div style={s.tabRow}>
-            {bands.map(b => (
-              <button
-                key={b.id}
-                type="button"
-                onClick={() => setSelectedBandId(b.id)}
-                style={{ ...s.bandTab, ...(selectedBandId === b.id ? s.bandTabActive : {}) }}
-              >
-                {b.code}
-              </button>
-            ))}
+          <div style={s.employeeHeader}>
+            <span style={s.employeeName}>{selectedEmployee.full_name}</span>
+            <span style={s.employeeMeta}>{[selectedEmployee.email, selectedEmployee.band_code].filter(Boolean).join(' · ')}</span>
           </div>
 
-          <div style={s.travelTypeRow}>
-            {TRAVEL_TYPES.map(tt => (
-              <button
-                key={tt.value}
-                type="button"
-                onClick={() => setSelectedTravelType(tt.value)}
-                style={{ ...s.travelTypeTab, ...(selectedTravelType === tt.value ? s.travelTypeTabActive : {}) }}
-              >
-                {tt.label}
-              </button>
-            ))}
-          </div>
-
-          {selectedBand && (
-            <div style={s.card}>
-              <div style={s.cardHeader}>
-                <h2 style={s.cardTitle}>
-                  {selectedBand.code} · {TRAVEL_TYPES.find(t => t.value === selectedTravelType)?.label}
-                </h2>
-                <p style={s.cardSub}>
-                  Tiers are checked in order. A booking's verdict (green/amber/red) determines which tier applies —
-                  the first tier whose minimum verdict is met is the one that's created.
-                </p>
-              </div>
-
-              {tiers.length === 0 && (
-                <div style={s.emptyTiers}>
-                  No tiers configured — bookings for this band/travel type will be auto-approved with no review.
-                </div>
-              )}
-
-              <div style={s.tierList}>
-                {tiers.map(tier => (
-                  <div key={tier.tier} style={s.tierCard}>
-                    <div style={s.tierHeader}>
-                      <span style={s.tierBadge}>Tier {tier.tier}</span>
-                      <button type="button" onClick={() => removeTier(tier.tier)} style={s.removeBtn}>Remove</button>
-                    </div>
-
-                    <div style={s.tierFields}>
-                      <div style={s.field}>
-                        <label style={s.label}>Triggers at</label>
-                        <select
-                          value={tier.min_verdict}
-                          onChange={e => updateTier(tier.tier, { min_verdict: e.target.value as ChainTier['min_verdict'] })}
-                          style={s.input}
-                        >
-                          <option value="green">Green or worse (always)</option>
-                          <option value="amber">Amber or worse</option>
-                          <option value="red">Red only</option>
-                        </select>
-                      </div>
-
-                      <div style={s.field}>
-                        <label style={s.label}>Approver</label>
-                        <select
-                          value={tier.approver_type}
-                          onChange={e => updateTier(tier.tier, { approver_type: e.target.value as ChainTier['approver_type'] })}
-                          style={s.input}
-                        >
-                          {Object.entries(APPROVER_TYPE_META).map(([key, meta]) => (
-                            <option key={key} value={key}>{meta.label}</option>
-                          ))}
-                        </select>
-                        <p style={s.fieldHint}>{APPROVER_TYPE_META[tier.approver_type].desc}</p>
-                      </div>
-
-                      {tier.approver_type === 'specific_user' && (
-                        <div style={s.field}>
-                          <label style={s.label}>Person</label>
-                          <select
-                            value={tier.approver_user_id ?? ''}
-                            onChange={e => updateTier(tier.tier, { approver_user_id: e.target.value })}
-                            style={s.input}
-                          >
-                            <option value="">Select…</option>
-                            {employees.map(emp => <option key={emp.id} value={emp.id}>{emp.full_name}</option>)}
-                          </select>
-                        </div>
-                      )}
-
-                      {tier.approver_type === 'any_manager_at' && (
-                        <div style={s.field}>
-                          <label style={s.label}>Minimum band rank</label>
-                          <select
-                            value={tier.min_band_rank ?? ''}
-                            onChange={e => updateTier(tier.tier, { min_band_rank: Number(e.target.value) })}
-                            style={s.input}
-                          >
-                            <option value="">Select…</option>
-                            {bands.map(b => <option key={b.id} value={b.rank}>{b.code} (rank {b.rank}) or above</option>)}
-                          </select>
-                        </div>
-                      )}
-                    </div>
+          <div style={s.categoryGrid}>
+            {(['flights_hotels', 'misc'] as const).map(category => {
+              const tiers = tiersByCategory[category]
+              return (
+                <div key={category} style={s.card}>
+                  <div style={s.cardHeader}>
+                    <h2 style={s.cardTitle}>{CATEGORY_META[category].label}</h2>
+                    <p style={s.cardSub}>{CATEGORY_META[category].desc}</p>
                   </div>
-                ))}
-              </div>
 
-              <button type="button" onClick={addTier} style={s.addTierBtn}>+ Add tier</button>
+                  {tiers.length === 0 && (
+                    <div style={s.emptyTiers}>
+                      No tiers configured — bookings in this category will be auto-approved with no review.
+                    </div>
+                  )}
 
-              <button
-                type="button"
-                onClick={handleSave}
-                disabled={saving}
-                style={{ ...s.saveBtn, opacity: saving ? 0.7 : 1 }}
-              >
-                {saving ? 'Saving…' : 'Save chain'}
-              </button>
-            </div>
-          )}
+                  <div style={s.tierList}>
+                    {tiers.map(tier => (
+                      <div key={tier.tier} style={s.tierCard}>
+                        <div style={s.tierHeader}>
+                          <span style={s.tierBadge}>Tier {tier.tier}</span>
+                          <button type="button" onClick={() => removeTier(category, tier.tier)} style={s.removeBtn}>Remove</button>
+                        </div>
+
+                        <div style={s.tierFields}>
+                          <div style={s.field}>
+                            <label style={s.label}>Triggers at</label>
+                            <select
+                              value={tier.min_verdict}
+                              onChange={e => updateTier(category, tier.tier, { min_verdict: e.target.value as ChainTier['min_verdict'] })}
+                              style={s.input}
+                            >
+                              <option value="green">Green or worse (always)</option>
+                              <option value="amber">Amber or worse</option>
+                              <option value="red">Red only</option>
+                            </select>
+                          </div>
+
+                          <div style={s.field}>
+                            <label style={s.label}>Approver</label>
+                            <select
+                              value={tier.approver_type}
+                              onChange={e => updateTier(category, tier.tier, { approver_type: e.target.value as ChainTier['approver_type'] })}
+                              style={s.input}
+                            >
+                              {Object.entries(APPROVER_TYPE_META).map(([key, meta]) => (
+                                <option key={key} value={key}>{meta.label}</option>
+                              ))}
+                            </select>
+                            <p style={s.fieldHint}>{APPROVER_TYPE_META[tier.approver_type].desc}</p>
+                          </div>
+
+                          {tier.approver_type === 'specific_user' && (
+                            <div style={s.field}>
+                              <label style={s.label}>Person</label>
+                              <SearchableSelect
+                                value={tier.approver_user_id ?? ''}
+                                onChange={id => updateTier(category, tier.tier, { approver_user_id: id })}
+                                options={approverOptions}
+                                placeholder="Search for a person…"
+                                emptyMessage="No employees found"
+                              />
+                            </div>
+                          )}
+
+                          {tier.approver_type === 'any_manager_at' && (
+                            <div style={s.field}>
+                              <label style={s.label}>Minimum band rank</label>
+                              <select
+                                value={tier.min_band_rank ?? ''}
+                                onChange={e => updateTier(category, tier.tier, { min_band_rank: Number(e.target.value) })}
+                                style={s.input}
+                              >
+                                <option value="">Select…</option>
+                                {bands.map(b => <option key={b.id} value={b.rank}>{b.code} (rank {b.rank}) or above</option>)}
+                              </select>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <button type="button" onClick={() => addTier(category)} style={s.addTierBtn}>+ Add tier</button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleSave(category)}
+                    disabled={savingCategory === category}
+                    style={{ ...s.saveBtn, opacity: savingCategory === category ? 0.7 : 1 }}
+                  >
+                    {savingCategory === category ? 'Saving…' : `Save ${CATEGORY_META[category].label.toLowerCase()} chain`}
+                  </button>
+                </div>
+              )
+            })}
+          </div>
         </>
       )}
 
@@ -306,17 +333,15 @@ export default function TmcApprovalsPage() {
 }
 
 const s: Record<string, React.CSSProperties> = {
-  page: { fontFamily: "'Inter', -apple-system, sans-serif", padding: '32px', maxWidth: '820px', margin: '0 auto' },
+  page: { fontFamily: "'Inter', -apple-system, sans-serif", padding: '32px', maxWidth: '1100px', margin: '0 auto' },
 
   header: { marginBottom: '20px' },
   heading: { fontSize: '22px', fontWeight: 700, color: '#0A0A14', margin: '0 0 6px', letterSpacing: '-0.4px' },
   sub: { fontSize: '13px', color: '#6B7280', margin: 0, lineHeight: 1.5 },
 
-  selectorRow: { marginBottom: '20px' },
-  select: {
-    height: '38px', padding: '0 12px', fontSize: '13px', color: '#111827',
-    background: '#fff', border: '1px solid #E5E7EB', borderRadius: '8px', outline: 'none', minWidth: '260px',
-  },
+  selectorGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '20px', maxWidth: '640px' },
+  selectorField: { display: 'flex', flexDirection: 'column' as const, gap: '5px' },
+  selectorLabel: { fontSize: '11px', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.4px' },
 
   errorBanner: { display: 'flex', alignItems: 'center', gap: '8px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', color: '#DC2626', marginBottom: '16px' },
   successBanner: { display: 'flex', alignItems: 'center', gap: '8px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', color: '#166534', marginBottom: '16px' },
@@ -325,21 +350,13 @@ const s: Record<string, React.CSSProperties> = {
   loadingRow: { display: 'flex', justifyContent: 'center', padding: '60px 0' },
   spinner: { width: '22px', height: '22px', border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%' },
 
-  tabRow: { display: 'flex', gap: '6px', marginBottom: '12px', flexWrap: 'wrap' as const },
-  bandTab: {
-    fontSize: '13px', fontWeight: 600, color: '#6B7280', background: '#fff', border: '1px solid #E5E7EB',
-    borderRadius: '8px', padding: '7px 14px', cursor: 'pointer',
-  },
-  bandTabActive: { color: '#fff', background: '#000835', borderColor: '#000835' },
+  employeeHeader: { display: 'flex', alignItems: 'baseline', gap: '10px', marginBottom: '16px', flexWrap: 'wrap' as const },
+  employeeName: { fontSize: '16px', fontWeight: 700, color: '#111827' },
+  employeeMeta: { fontSize: '12.5px', color: '#9CA3AF' },
 
-  travelTypeRow: { display: 'flex', gap: '6px', marginBottom: '20px', flexWrap: 'wrap' as const },
-  travelTypeTab: {
-    fontSize: '12px', fontWeight: 600, color: '#6B7280', background: '#F9FAFB', border: '1px solid #E5E7EB',
-    borderRadius: '7px', padding: '6px 12px', cursor: 'pointer',
-  },
-  travelTypeTabActive: { color: '#000835', background: '#EEF2FF', borderColor: '#000835' },
+  categoryGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '18px' },
 
-  card: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '20px' },
+  card: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '20px', display: 'flex', flexDirection: 'column' as const },
   cardHeader: { marginBottom: '16px' },
   cardTitle: { fontSize: '15px', fontWeight: 700, color: '#111827', margin: '0 0 6px' },
   cardSub: { fontSize: '12px', color: '#9CA3AF', margin: 0, lineHeight: 1.5 },
@@ -352,8 +369,8 @@ const s: Record<string, React.CSSProperties> = {
   tierBadge: { fontSize: '11px', fontWeight: 700, color: '#3730A3', background: '#EEF2FF', padding: '3px 9px', borderRadius: '6px' },
   removeBtn: { fontSize: '11.5px', color: '#DC2626', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 },
 
-  tierFields: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' },
-  field: { display: 'flex', flexDirection: 'column' as const, gap: '5px' },
+  tierFields: { display: 'flex', flexDirection: 'column' as const, gap: '12px' },
+  field: { display: 'flex', flexDirection: 'column' as const, gap: '5px', position: 'relative' as const },
   label: { fontSize: '11px', fontWeight: 500, color: '#374151' },
   input: { height: '36px', padding: '0 10px', fontSize: '12.5px', color: '#111827', background: '#fff', border: '1px solid #E5E7EB', borderRadius: '7px', outline: 'none' },
   fieldHint: { fontSize: '10.5px', color: '#9CA3AF', margin: '2px 0 0', lineHeight: 1.4 },
@@ -364,6 +381,6 @@ const s: Record<string, React.CSSProperties> = {
   },
   saveBtn: {
     height: '42px', width: '100%', background: '#000835', color: '#fff', fontSize: '13.5px', fontWeight: 700,
-    border: 'none', borderRadius: '9px', cursor: 'pointer',
+    border: 'none', borderRadius: '9px', cursor: 'pointer', marginTop: 'auto',
   },
 }

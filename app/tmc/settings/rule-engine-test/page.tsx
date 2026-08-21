@@ -215,7 +215,14 @@ export default function RuleEngineTestPage() {
         <div style={s.resultCard}>
           {!result.ok ? (
             <div style={s.blockedBanner}>
-              <p style={s.blockedTitle}>⚠ {result.reason === 'no_policy_group' ? 'No policy group assigned' : 'No policy rules configured'}</p>
+              <p style={s.blockedTitle}>
+                ⚠ {
+                  result.reason === 'no_band' ? 'No band assigned'
+                  : result.reason === 'no_policy_group' ? 'No policy group linked'
+                  : result.reason === 'overlapping_policy_groups' ? 'Overlapping policy groups'
+                  : 'No policy rules configured'
+                }
+              </p>
               <p style={s.blockedMsg}>{result.message}</p>
             </div>
           ) : (
