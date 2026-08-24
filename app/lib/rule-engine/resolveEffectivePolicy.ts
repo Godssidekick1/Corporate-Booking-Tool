@@ -1,4 +1,5 @@
 import { createServiceClient } from '@/utils/supabase/service'
+import { getLinkedPolicyGroups, groupsCoveringRank } from './linkedPolicyGroups'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
 
@@ -82,19 +83,9 @@ export async function resolveEffectivePolicy(
 
   const bandRank = bandRow.rank
 
-  // All groups linked to this company. Fetched as two separate queries
-  // (link rows, then group rows) rather than a Supabase FK-embed — same
-  // reasoning used everywhere else in this codebase: embed-alias inference
-  // isn't relied on elsewhere, so this stays consistent rather than
-  // introducing untested syntax in a path this central.
-  const { data: links } = await service
-    .from('company_policy_groups')
-    .select('policy_group_id')
-    .eq('company_id', employee.company_id)
+  const groups = await getLinkedPolicyGroups(service, employee.company_id)
 
-  const groupIds = (links ?? []).map(l => l.policy_group_id)
-
-  if (groupIds.length === 0) {
+  if (groups.length === 0) {
     return {
       ok: false,
       reason: 'no_policy_group',
@@ -102,20 +93,7 @@ export async function resolveEffectivePolicy(
     }
   }
 
-  const { data: groups } = await service
-    .from('policy_groups')
-    .select('id, name, min_band_rank, max_band_rank')
-    .in('id', groupIds)
-
-  // NULL min/max means "unbounded on that side" (a group with no explicit
-  // range set covers every rank) — matches how a TMC admin would reasonably
-  // expect an unrestricted group to behave, rather than silently matching
-  // nothing.
-  const matchingGroups = (groups ?? []).filter(g => {
-    const withinMin = g.min_band_rank === null || bandRank >= g.min_band_rank
-    const withinMax = g.max_band_rank === null || bandRank <= g.max_band_rank
-    return withinMin && withinMax
-  })
+  const matchingGroups = groupsCoveringRank(groups, bandRank)
 
   if (matchingGroups.length === 0) {
     return {

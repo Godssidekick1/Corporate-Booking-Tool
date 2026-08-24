@@ -1,147 +1,113 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import {
+  CATEGORIES,
+  ALL_FIELDS,
+  type CategoryDef,
+  type FieldDef,
+} from '@/app/lib/policy/fields'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface Company { id: string; name: string }
 
 interface PolicyGroup {
-  id: string; name: string; description: string | null; employeeCount: number
+  id: string
+  name: string
+  code: string | null
+  description: string | null
+  min_band_rank: number | null
+  max_band_rank: number | null
+  companyCount: number
 }
 
 interface RuleRow {
-  band_code: string; travel_type: string; limit_key: string
-  limit_value: number | null; limit_bool: boolean | null
+  band_rank: number
+  travel_type: string
+  limit_key: string
+  limit_value: number | null
+  limit_bool: boolean | null
 }
 
-interface EmployeeAssignment {
-  id: string; full_name: string; email: string
-  band_code: string | null; status: string; policyGroupId: string | null
+interface CompanyLink {
+  policyGroupId: string
+  assignedAt: string
+  group: {
+    id: string
+    name: string
+    code: string | null
+    min_band_rank: number | null
+    max_band_rank: number | null
+  } | null
 }
 
-// ── Field definitions ─────────────────────────────────────────────────────────
+// ── Rank helpers ──────────────────────────────────────────────────────────────
+// Rules are keyed by integer band_rank, not a company's band codes — a shared
+// template has no single company's labels to key against, and mapping a rank
+// back to whatever a company calls it ("L1", "A1", "1") is resolveEffectivePolicy's
+// job at read time.
 
-type FieldKind = 'numeric' | 'boolean' | 'tier'
+const UNBOUNDED_RANKS = [1, 2, 3, 4, 5]
+const MAX_RANK_SPAN = 20
 
-interface TierOption { label: string; value: number }
+function ranksForGroup(group: Pick<PolicyGroup, 'min_band_rank' | 'max_band_rank'>): number[] {
+  const { min_band_rank: min, max_band_rank: max } = group
 
-interface FieldDef {
-  key: string; label: string; unit?: string; kind: FieldKind
-  travelType: string; options?: TierOption[]
-  // Whole-number fields (star ratings, day counts, bag counts) round on entry.
-  // Currency/₹ fields are left decimal-friendly since paise amounts are valid.
-  wholeNumber?: boolean
+  // An unbounded group covers every rank, but a table needs a finite set of
+  // rows — fall back to the common 1..5 shape and let the admin narrow the
+  // group's range if they need something else.
+  if (min === null && max === null) return UNBOUNDED_RANKS
+
+  const from = min ?? 1
+  const to = max ?? Math.max(from, UNBOUNDED_RANKS[UNBOUNDED_RANKS.length - 1])
+  const span = Math.min(to - from + 1, MAX_RANK_SPAN)
+
+  return Array.from({ length: Math.max(span, 1) }, (_, i) => from + i)
 }
 
-const CABIN_CLASS_OPTIONS: TierOption[] = [
-  { label: 'Economy',         value: 0 },
-  { label: 'Premium Economy', value: 1 },
-  { label: 'Business',        value: 2 },
-  { label: 'First',           value: 3 },
-]
-
-// NOTE: carrier_tier and red_eye_restricted are kept per product decision,
-// but are NOT yet read by evaluateBooking.ts — toggling them today has no
-// effect on booking evaluation. Same caveat applies to refundable_fare_required,
-// connecting_flights_allowed, and personal_trips_allowed. Wire these into
-// NUMERIC_LIMIT_KEYS / BOOLEAN_ENTITLEMENT_KEYS before relying on them.
-const CARRIER_OPTIONS: TierOption[] = [
-  { label: 'Budget only',    value: 0 },
-  { label: 'Full-service',   value: 1 },
-]
-
-interface CategoryDef {
-  id: string; label: string; description?: string
-  color: string; textColor: string; fields: FieldDef[]
+function rangeLabel(g: Pick<PolicyGroup, 'min_band_rank' | 'max_band_rank'>): string {
+  if (g.min_band_rank === null && g.max_band_rank === null) return 'All ranks'
+  if (g.min_band_rank === null) return `Up to rank ${g.max_band_rank}`
+  if (g.max_band_rank === null) return `Rank ${g.min_band_rank}+`
+  if (g.min_band_rank === g.max_band_rank) return `Rank ${g.min_band_rank}`
+  return `Ranks ${g.min_band_rank}–${g.max_band_rank}`
 }
-
-const CATEGORIES: CategoryDef[] = [
-  {
-    id: 'flight', label: 'Flights', color: '#EEF2FF', textColor: '#3730A3',
-    fields: [
-      { key: 'max_fare_domestic',           label: 'Max domestic fare',         unit: '₹',    kind: 'numeric', travelType: 'flight' },
-      { key: 'max_fare_intl',               label: 'Max international fare',    unit: '₹',    kind: 'numeric', travelType: 'flight' },
-      { key: 'cabin_class_short_haul',      label: 'Cabin class (short haul)',              kind: 'tier',    travelType: 'flight', options: CABIN_CLASS_OPTIONS },
-      { key: 'cabin_class_long_haul',       label: 'Cabin class (long haul >8h)',            kind: 'tier',    travelType: 'flight', options: CABIN_CLASS_OPTIONS },
-      { key: 'max_seat_selection_fee',      label: 'Max seat selection spend',   unit: '₹',    kind: 'numeric', travelType: 'flight' },
-      { key: 'carrier_tier',                label: 'Carrier tier',                           kind: 'tier',    travelType: 'flight', options: CARRIER_OPTIONS },
-      { key: 'advance_booking_days',        label: 'Min. advance booking',      unit: 'days', kind: 'numeric', travelType: 'flight', wholeNumber: true },
-      { key: 'baggage_extra_bags',          label: 'Extra bags allowed',        unit: 'bags', kind: 'numeric', travelType: 'flight', wholeNumber: true },
-      { key: 'refundable_fare_required',    label: 'Refundable fare required',               kind: 'boolean', travelType: 'flight' },
-      { key: 'connecting_flights_allowed',  label: 'Connecting flights allowed',              kind: 'boolean', travelType: 'flight' },
-      { key: 'red_eye_restricted',          label: 'Red-eye flights restricted',              kind: 'boolean', travelType: 'flight' },
-      { key: 'personal_trips_allowed',      label: 'Personal trips allowed',                  kind: 'boolean', travelType: 'flight' },
-    ],
-  },
-  {
-    id: 'hotel', label: 'Hotels', color: '#F0FDF4', textColor: '#14532D',
-    fields: [
-      { key: 'max_rate_major_city', label: 'Max rate (major city)', unit: '₹/night', kind: 'numeric', travelType: 'hotel' },
-      { key: 'max_rate_other_city', label: 'Max rate (other city)', unit: '₹/night', kind: 'numeric', travelType: 'hotel' },
-      { key: 'max_hotel_stars',     label: 'Max hotel stars',       unit: '★',        kind: 'numeric', travelType: 'hotel', wholeNumber: true },
-      { key: 'breakfast_included',  label: 'Breakfast included',                      kind: 'boolean', travelType: 'hotel' },
-    ],
-  },
-  {
-    id: 'car', label: 'Ground transport', color: '#FFF7ED', textColor: '#7C2D12',
-    description: 'Set a cap for self-booked rentals, and whether company-arranged transport is a separate option.',
-    fields: [
-      { key: 'max_car_rate_per_day',        label: 'Max self-arranged car rental rate', unit: '₹/day', kind: 'numeric', travelType: 'car' },
-      { key: 'sponsored_transport_allowed', label: 'Company-arranged transport allowed', kind: 'boolean', travelType: 'car' },
-    ],
-  },
-  {
-    id: 'general', label: 'General', color: '#F5F3FF', textColor: '#4C1D95',
-    fields: [
-      { key: 'per_diem_allowance',   label: 'Per-diem allowance', unit: '₹/day', kind: 'numeric', travelType: 'general' },
-      { key: 'max_trip_duration',    label: 'Max trip duration',  unit: 'days',  kind: 'numeric', travelType: 'general', wholeNumber: true },
-    ],
-  },
-  {
-    id: 'approval', label: 'Approval thresholds', color: '#F9FAFB', textColor: '#374151',
-    fields: [
-      { key: 'auto_approve_under',      label: 'Auto-approve under',                unit: '₹', kind: 'numeric', travelType: 'approval' },
-      { key: 'finance_approval_over',   label: 'Finance approval required over',    unit: '₹', kind: 'numeric', travelType: 'approval' },
-    ],
-  },
-]
-
-const ALL_FIELDS: FieldDef[] = CATEGORIES.flatMap(c => c.fields)
-const BAND_CODES = ['L1', 'L2', 'L3', 'L4', 'L5']
-const BAND_LABELS: Record<string, string> = { L1: 'Junior', L2: 'Associate', L3: 'Senior', L4: 'Manager', L5: 'Director' }
 
 // ── Grid helpers ──────────────────────────────────────────────────────────────
 
 type CellVal = number | boolean | null
+// Keyed by String(rank) — object keys are strings in JS, so keeping the
+// conversion explicit avoids silent number/string key mismatches.
 type Grid = Record<string, Record<string, CellVal>>
 
-function buildEmptyGrid(): Grid {
+function buildEmptyGrid(ranks: number[]): Grid {
   const g: Grid = {}
-  for (const b of BAND_CODES) {
-    g[b] = {}
-    for (const f of ALL_FIELDS) g[b][f.key] = f.kind === 'boolean' ? false : null
+  for (const rank of ranks) {
+    g[String(rank)] = {}
+    for (const f of ALL_FIELDS) g[String(rank)][f.key] = f.kind === 'boolean' ? false : null
   }
   return g
 }
 
-function rowsToGrid(rows: RuleRow[]): Grid {
-  const g = buildEmptyGrid()
+function rowsToGrid(rows: RuleRow[], ranks: number[]): Grid {
+  const g = buildEmptyGrid(ranks)
   for (const r of rows) {
-    if (!g[r.band_code]) g[r.band_code] = {}
-    g[r.band_code][r.limit_key] = r.limit_value ?? r.limit_bool ?? null
+    const key = String(r.band_rank)
+    if (!g[key]) g[key] = {}
+    g[key][r.limit_key] = r.limit_value ?? r.limit_bool ?? null
   }
   return g
 }
 
-function gridToRules(grid: Grid): RuleRow[] {
+function gridToRules(grid: Grid, ranks: number[]): RuleRow[] {
   const rows: RuleRow[] = []
-  for (const band of BAND_CODES) {
+  for (const rank of ranks) {
     for (const f of ALL_FIELDS) {
-      const val = grid[band]?.[f.key]
+      const val = grid[String(rank)]?.[f.key]
       if (val === null || val === undefined) continue
       rows.push({
-        band_code: band,
+        band_rank: rank,
         travel_type: f.travelType,
         limit_key: f.key,
         limit_value: f.kind !== 'boolean' ? Number(val) : null,
@@ -156,16 +122,16 @@ function gridToRules(grid: Grid): RuleRow[] {
 // denominator here — they're real config, just not counted as "completion"
 // factors, since a correctly-configured "false" isn't meaningfully less done
 // than a correctly-configured "true".
-function countSetFields(grid: Grid, category: CategoryDef): { set: number; total: number } {
+function countSetFields(grid: Grid, category: CategoryDef, ranks: number[]): { set: number; total: number } {
   const countableFields = category.fields.filter(f => f.kind !== 'boolean')
   let set = 0
-  for (const band of BAND_CODES) {
+  for (const rank of ranks) {
     for (const f of countableFields) {
-      const val = grid[band]?.[f.key]
+      const val = grid[String(rank)]?.[f.key]
       if (val !== null && val !== undefined) set++
     }
   }
-  return { set, total: BAND_CODES.length * countableFields.length }
+  return { set, total: ranks.length * countableFields.length }
 }
 
 // Small style helper that depends on state — kept OUTSIDE the `s` styles
@@ -184,24 +150,32 @@ function groupIndicatorStyle(active: boolean): React.CSSProperties {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function TmcPolicyPage() {
-  const [tab, setTab] = useState<'rules' | 'employees'>('rules')
-  const [companies, setCompanies] = useState<Company[]>([])
-  const [selectedCompanyId, setSelectedCompanyId] = useState('')
+  const [tab, setTab] = useState<'groups' | 'companies'>('groups')
+
   const [groups, setGroups] = useState<PolicyGroup[]>([])
+  const [search, setSearch] = useState('')
   const [selectedGroupId, setSelectedGroupId] = useState('')
-  const [employees, setEmployees] = useState<EmployeeAssignment[]>([])
-  const [grid, setGrid] = useState<Grid>(buildEmptyGrid())
+
+  const [grid, setGrid] = useState<Grid>({})
   const [version, setVersion] = useState(0)
   const [openCategories, setOpenCategories] = useState<Record<string, boolean>>({ flight: true })
 
-  const [loadingCompanies, setLoadingCompanies] = useState(true)
-  const [loadingGroups, setLoadingGroups] = useState(false)
+  const [companies, setCompanies] = useState<Company[]>([])
+  const [selectedCompanyId, setSelectedCompanyId] = useState('')
+  const [links, setLinks] = useState<CompanyLink[]>([])
+  const [linkGroupId, setLinkGroupId] = useState('')
+
+  const [loadingGroups, setLoadingGroups] = useState(true)
   const [loadingRules, setLoadingRules] = useState(false)
-  const [loadingEmployees, setLoadingEmployees] = useState(false)
+  const [loadingCompanies, setLoadingCompanies] = useState(false)
+  const [loadingLinks, setLoadingLinks] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [linking, setLinking] = useState(false)
+
   const [showGroupForm, setShowGroupForm] = useState(false)
-  const [groupForm, setGroupForm] = useState({ name: '', description: '' })
+  const [groupForm, setGroupForm] = useState({ name: '', code: '', description: '', minBandRank: '', maxBandRank: '' })
   const [groupSubmitting, setGroupSubmitting] = useState(false)
+
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [dirty, setDirty] = useState(false)
@@ -214,117 +188,130 @@ export default function TmcPolicyPage() {
     successTimer.current = setTimeout(() => setSuccess(''), 4000)
   }
 
+  const selectedGroup = groups.find(g => g.id === selectedGroupId)
+  const ranks = selectedGroup ? ranksForGroup(selectedGroup) : []
+
+  // ── Loaders ─────────────────────────────────────────────────────────────────
+
+  // Debounced so typing in the search box doesn't fire a request per keystroke.
+  // Also covers the initial load — it runs once on mount with an empty term.
   useEffect(() => {
+    const t = setTimeout(() => loadGroups(search), 250)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search])
+
+  useEffect(() => {
+    if (!selectedGroupId || !selectedGroup) { setGrid({}); setVersion(0); setDirty(false); return }
+    loadRules(selectedGroupId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedGroupId])
+
+  useEffect(() => {
+    if (tab !== 'companies' || companies.length > 0) return
+    setLoadingCompanies(true)
     fetch('/api/tmc/companies')
       .then(r => r.json())
       .then(d => { if (d.ok) setCompanies(d.companies) })
       .finally(() => setLoadingCompanies(false))
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab])
 
   useEffect(() => {
-    if (!selectedCompanyId) { setGroups([]); setSelectedGroupId(''); return }
-    loadGroups(selectedCompanyId)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!selectedCompanyId) { setLinks([]); return }
+    loadLinks(selectedCompanyId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCompanyId])
 
-  useEffect(() => {
-    if (!selectedCompanyId || !selectedGroupId) { setGrid(buildEmptyGrid()); setVersion(0); setDirty(false); return }
-    loadRules(selectedCompanyId, selectedGroupId)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCompanyId, selectedGroupId])
-
-  useEffect(() => {
-    if (tab !== 'employees' || !selectedCompanyId) return
-    loadEmployees(selectedCompanyId)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, selectedCompanyId])
-
-  async function loadGroups(companyId: string) {
+  async function loadGroups(searchTerm: string) {
     setLoadingGroups(true); setError('')
     try {
-      const d = await fetch(`/api/tmc/policy-groups?companyId=${companyId}`).then(r => r.json())
+      const qs = searchTerm.trim() ? `?search=${encodeURIComponent(searchTerm.trim())}` : ''
+      const d = await fetch(`/api/tmc/policy-groups${qs}`).then(r => r.json())
       if (!d.ok) { setError(d.error || 'Could not load policy groups.'); return }
-      setGroups(d.groups); setSelectedGroupId('')
+      setGroups(d.groups)
     } finally { setLoadingGroups(false) }
   }
 
-  async function loadRules(companyId: string, groupId: string) {
+  async function loadRules(groupId: string) {
     setLoadingRules(true); setError('')
     try {
-      const d = await fetch(`/api/tmc/policy-rules?companyId=${companyId}&groupId=${groupId}`).then(r => r.json())
+      const d = await fetch(`/api/tmc/policy-rules?groupId=${groupId}`).then(r => r.json())
       if (!d.ok) { setError(d.error || 'Could not load rules.'); return }
-      setGrid(rowsToGrid(d.rows)); setVersion(d.version); setDirty(false)
+      const group = groups.find(g => g.id === groupId)
+      setGrid(rowsToGrid(d.rows, group ? ranksForGroup(group) : UNBOUNDED_RANKS))
+      setVersion(d.version)
+      setDirty(false)
     } finally { setLoadingRules(false) }
   }
 
-  async function loadEmployees(companyId: string) {
-    setLoadingEmployees(true); setError('')
+  async function loadLinks(companyId: string) {
+    setLoadingLinks(true); setError('')
     try {
-      const d = await fetch(`/api/tmc/employee-assignments?companyId=${companyId}`).then(r => r.json())
-      if (!d.ok) { setError(d.error || 'Could not load employees.'); return }
-      setEmployees(d.employees)
-    } finally { setLoadingEmployees(false) }
+      const d = await fetch(`/api/tmc/company-policy-groups?companyId=${companyId}`).then(r => r.json())
+      if (!d.ok) { setError(d.error || 'Could not load linked groups.'); return }
+      setLinks(d.links)
+    } finally { setLoadingLinks(false) }
   }
+
+  // ── Group actions ───────────────────────────────────────────────────────────
 
   async function handleCreateGroup(e: React.FormEvent) {
     e.preventDefault(); setGroupSubmitting(true); setError('')
     try {
       const d = await fetch('/api/tmc/policy-groups', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ companyId: selectedCompanyId, ...groupForm }),
+        body: JSON.stringify({
+          name: groupForm.name,
+          code: groupForm.code || undefined,
+          description: groupForm.description || undefined,
+          minBandRank: groupForm.minBandRank === '' ? null : Number(groupForm.minBandRank),
+          maxBandRank: groupForm.maxBandRank === '' ? null : Number(groupForm.maxBandRank),
+        }),
       }).then(r => r.json())
       if (!d.ok) { setError(d.error || 'Could not create group.'); return }
-      setGroupForm({ name: '', description: '' }); setShowGroupForm(false)
-      await loadGroups(selectedCompanyId)
+      setGroupForm({ name: '', code: '', description: '', minBandRank: '', maxBandRank: '' })
+      setShowGroupForm(false)
+      await loadGroups(search)
       setSelectedGroupId(d.group.id)
       showSuccess('Policy group created.')
     } finally { setGroupSubmitting(false) }
   }
 
   async function handleDeleteGroup(id: string, name: string) {
-    if (!confirm(`Delete "${name}"? This only works if no employees are assigned.`)) return
+    if (!confirm(`Delete "${name}"? This only works if no companies are using it.`)) return
     setError('')
     const d = await fetch(`/api/tmc/policy-groups/${id}`, { method: 'DELETE' }).then(r => r.json())
     if (!d.ok) { setError(d.error || 'Could not delete group.'); return }
     showSuccess('Policy group deleted.')
     if (selectedGroupId === id) setSelectedGroupId('')
-    loadGroups(selectedCompanyId)
+    loadGroups(search)
   }
 
-  async function handleAssignGroup(employeeId: string, policyGroupId: string) {
-    setError('')
-    const d = await fetch('/api/tmc/employee-assignments', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ employeeId, policyGroupId }),
-    }).then(r => r.json())
-    if (!d.ok) { setError(d.error || 'Could not assign group.'); return }
-    setEmployees(prev => prev.map(e => e.id === employeeId ? { ...e, policyGroupId } : e))
-    showSuccess('Policy group assigned.')
-  }
-
-  function handleCellChange(band: string, key: string, value: CellVal) {
-    setGrid(prev => ({ ...prev, [band]: { ...prev[band], [key]: value } }))
+  function handleCellChange(rank: number, key: string, value: CellVal) {
+    setGrid(prev => ({ ...prev, [String(rank)]: { ...prev[String(rank)], [key]: value } }))
     setDirty(true); setSuccess('')
   }
 
   // Whole-number fields round on entry so "why can I type 3.7 stars" can't
   // happen again — currency (₹) fields are left as-is since paise amounts
   // are legitimate.
-  function handleNumericInputChange(band: string, field: FieldDef, raw: string) {
-    if (raw === '') { handleCellChange(band, field.key, null); return }
+  function handleNumericInputChange(rank: number, field: FieldDef, raw: string) {
+    if (raw === '') { handleCellChange(rank, field.key, null); return }
     const n = Number(raw)
     if (Number.isNaN(n)) return
-    handleCellChange(band, field.key, field.wholeNumber ? Math.round(n) : n)
+    handleCellChange(rank, field.key, field.wholeNumber ? Math.round(n) : n)
   }
 
   async function handleSaveRules() {
+    if (!selectedGroup) return
     setSaving(true); setError(''); setSuccess('')
     try {
-      const rules = gridToRules(grid)
+      const rules = gridToRules(grid, ranks)
       if (rules.length === 0) { setError('Set at least one value before saving.'); return }
       const d = await fetch('/api/tmc/policy-rules', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ companyId: selectedCompanyId, policyGroupId: selectedGroupId, rules }),
+        body: JSON.stringify({ policyGroupId: selectedGroupId, rules }),
       }).then(r => r.json())
       if (!d.ok) { setError(d.error || 'Could not save rules.'); return }
       setVersion(d.newVersion); setDirty(false)
@@ -332,11 +319,43 @@ export default function TmcPolicyPage() {
     } finally { setSaving(false) }
   }
 
+  // ── Link actions ────────────────────────────────────────────────────────────
+
+  async function handleLinkGroup() {
+    if (!selectedCompanyId || !linkGroupId) return
+    setLinking(true); setError('')
+    try {
+      const d = await fetch('/api/tmc/company-policy-groups', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ companyId: selectedCompanyId, policyGroupId: linkGroupId }),
+      }).then(r => r.json())
+      if (!d.ok) { setError(d.error || 'Could not link group.'); return }
+      setLinkGroupId('')
+      await loadLinks(selectedCompanyId)
+      loadGroups(search)
+      showSuccess('Policy group linked.')
+    } finally { setLinking(false) }
+  }
+
+  async function handleUnlinkGroup(policyGroupId: string, name: string) {
+    if (!confirm(`Unlink "${name}" from this company? Employees in its rank range will have no policy until another group covers them.`)) return
+    setError('')
+    const d = await fetch(
+      `/api/tmc/company-policy-groups?companyId=${selectedCompanyId}&policyGroupId=${policyGroupId}`,
+      { method: 'DELETE' }
+    ).then(r => r.json())
+    if (!d.ok) { setError(d.error || 'Could not unlink group.'); return }
+    await loadLinks(selectedCompanyId)
+    loadGroups(search)
+    showSuccess('Policy group unlinked.')
+  }
+
   function toggleCategory(id: string) {
     setOpenCategories(prev => ({ ...prev, [id]: !prev[id] }))
   }
 
-  const selectedGroup = groups.find(g => g.id === selectedGroupId)
+  const linkedIds = new Set(links.map(l => l.policyGroupId))
+  const linkableGroups = groups.filter(g => !linkedIds.has(g.id))
 
   return (
     <div style={s.root}>
@@ -344,40 +363,21 @@ export default function TmcPolicyPage() {
       <div style={s.pageHeader}>
         <div>
           <h1 style={s.heading}>Policy editor</h1>
-          <p style={s.sub}>Configure travel policy per client, by policy group and band.</p>
-        </div>
-      </div>
-
-      {/* ── Selector ─────────────────────────────────────────────── */}
-      <div style={s.selectorRow}>
-        <div style={s.field}>
-          <label style={s.label}>Company</label>
-          <select
-            value={selectedCompanyId}
-            onChange={e => {
-              if (dirty && !confirm('You have unsaved policy changes. Switch companies and discard them?')) return
-              setSelectedCompanyId(e.target.value); setTab('rules')
-            }}
-            style={s.select}
-            disabled={loadingCompanies}
-          >
-            <option value="">{loadingCompanies ? 'Loading…' : 'Select a company…'}</option>
-            {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          <p style={s.sub}>
+            Build reusable policy groups by band rank, then link them to client companies.
+          </p>
         </div>
       </div>
 
       {/* ── Tabs ─────────────────────────────────────────────────── */}
-      {selectedCompanyId && (
-        <div style={s.tabRow}>
-          <button onClick={() => setTab('rules')} style={{ ...s.tabBtn, ...(tab === 'rules' ? s.tabActive : {}) }}>
-            Policy rules
-          </button>
-          <button onClick={() => setTab('employees')} style={{ ...s.tabBtn, ...(tab === 'employees' ? s.tabActive : {}) }}>
-            Employee assignments
-          </button>
-        </div>
-      )}
+      <div style={s.tabRow}>
+        <button onClick={() => setTab('groups')} style={{ ...s.tabBtn, ...(tab === 'groups' ? s.tabActive : {}) }}>
+          Policy groups
+        </button>
+        <button onClick={() => setTab('companies')} style={{ ...s.tabBtn, ...(tab === 'companies' ? s.tabActive : {}) }}>
+          Company assignments
+        </button>
+      </div>
 
       {/* ── Banners ──────────────────────────────────────────────── */}
       {error && (
@@ -393,17 +393,17 @@ export default function TmcPolicyPage() {
       )}
 
       {/* ══════════════════════════════════════════════════════════ */}
-      {/* RULES TAB                                                  */}
+      {/* GROUPS TAB                                                 */}
       {/* ══════════════════════════════════════════════════════════ */}
-      {selectedCompanyId && tab === 'rules' && (
+      {tab === 'groups' && (
         <>
-          {/* ── Policy groups panel ──────────────────────────────── */}
           <div style={s.card}>
             <div style={s.cardHeader}>
               <div>
                 <h2 style={s.cardTitle}>Policy groups</h2>
                 <p style={s.cardSub}>
-                  A policy group holds one set of band limits. Assign each employee to a group.
+                  A group holds one set of limits for a range of band ranks, and can be
+                  reused across any number of client companies.
                 </p>
               </div>
               <button onClick={() => setShowGroupForm(v => !v)} style={s.ghostBtn}>
@@ -414,30 +414,61 @@ export default function TmcPolicyPage() {
             {showGroupForm && (
               <form onSubmit={handleCreateGroup} style={s.groupForm}>
                 <input
-                  type="text" required placeholder="Group name — e.g. Standard, Executive, Contractor"
+                  type="text" required placeholder="Group name — e.g. Standard, Executive"
                   value={groupForm.name}
                   onChange={e => setGroupForm(p => ({ ...p, name: e.target.value }))}
-                  style={{ ...s.input, flex: 2 }}
+                  style={{ ...s.input, flex: 2, minWidth: 180 }}
                   autoFocus
+                />
+                <input
+                  type="text" placeholder="Code (optional)"
+                  value={groupForm.code}
+                  onChange={e => setGroupForm(p => ({ ...p, code: e.target.value }))}
+                  style={{ ...s.input, flex: 1, minWidth: 120 }}
+                />
+                <input
+                  type="number" placeholder="Min rank" min={0}
+                  value={groupForm.minBandRank}
+                  onChange={e => setGroupForm(p => ({ ...p, minBandRank: e.target.value }))}
+                  style={{ ...s.input, width: 100 }}
+                />
+                <input
+                  type="number" placeholder="Max rank" min={0}
+                  value={groupForm.maxBandRank}
+                  onChange={e => setGroupForm(p => ({ ...p, maxBandRank: e.target.value }))}
+                  style={{ ...s.input, width: 100 }}
                 />
                 <input
                   type="text" placeholder="Description (optional)"
                   value={groupForm.description}
                   onChange={e => setGroupForm(p => ({ ...p, description: e.target.value }))}
-                  style={{ ...s.input, flex: 3 }}
+                  style={{ ...s.input, flex: 2, minWidth: 180 }}
                 />
                 <button type="submit" disabled={groupSubmitting} style={{ ...s.primaryBtn, opacity: groupSubmitting ? 0.7 : 1 }}>
                   {groupSubmitting ? 'Creating…' : 'Create group'}
                 </button>
+                <p style={s.formHint}>
+                  Leave the rank fields empty for a group that covers every rank.
+                </p>
               </form>
             )}
+
+            <input
+              type="search"
+              placeholder="Search groups by name or code…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              style={{ ...s.input, width: '100%', marginBottom: 16 }}
+            />
 
             {loadingGroups ? (
               <p style={s.muted}>Loading groups…</p>
             ) : groups.length === 0 ? (
               <div style={s.emptyGroups}>
-                <p style={s.emptyTitle}>No policy groups yet</p>
-                <p style={s.emptyDesc}>Create a group to start configuring band limits for this company.</p>
+                <p style={s.emptyTitle}>{search ? 'No groups match that search' : 'No policy groups yet'}</p>
+                <p style={s.emptyDesc}>
+                  {search ? 'Try a different name or code.' : 'Create a group to start configuring limits by band rank.'}
+                </p>
               </div>
             ) : (
               <div style={s.groupGrid}>
@@ -464,11 +495,15 @@ export default function TmcPolicyPage() {
                         title="Delete group"
                       >✕</button>
                     </div>
+                    <div style={s.groupCardTags}>
+                      <span style={s.rangeBadge}>{rangeLabel(g)}</span>
+                      {g.code && <span style={s.codeBadge}>{g.code}</span>}
+                    </div>
                     {g.description && <p style={s.groupCardDesc}>{g.description}</p>}
                     <p style={s.groupCardMeta}>
-                      {g.employeeCount === 0
-                        ? 'No employees assigned'
-                        : `${g.employeeCount} employee${g.employeeCount === 1 ? '' : 's'}`}
+                      {g.companyCount === 0
+                        ? 'Not used by any company'
+                        : `Used by ${g.companyCount} compan${g.companyCount === 1 ? 'y' : 'ies'}`}
                     </p>
                   </div>
                 ))}
@@ -477,11 +512,13 @@ export default function TmcPolicyPage() {
           </div>
 
           {/* ── Rules editor ─────────────────────────────────────── */}
-          {selectedGroupId && (
+          {selectedGroupId && selectedGroup && (
             <div style={s.card}>
               <div style={s.rulesTopBar}>
                 <div>
-                  <h2 style={s.cardTitle}>{selectedGroup?.name}</h2>
+                  <h2 style={s.cardTitle}>
+                    {selectedGroup.name} <span style={s.rangeInline}>· {rangeLabel(selectedGroup)}</span>
+                  </h2>
                   <p style={s.cardSub}>
                     {version === 0
                       ? 'No rules saved yet — configure below and save.'
@@ -504,6 +541,14 @@ export default function TmcPolicyPage() {
                 </div>
               </div>
 
+              {/* Blast radius: a shared template's limits apply everywhere it's linked. */}
+              {selectedGroup.companyCount > 1 && (
+                <div style={s.blastBanner}>
+                  This group is shared by <strong>{selectedGroup.companyCount} companies</strong>.
+                  Saving changes the policy in force for all of them.
+                </div>
+              )}
+
               {loadingRules ? (
                 <div style={s.loadingRules}>
                   <div style={s.spinner} />
@@ -513,10 +558,9 @@ export default function TmcPolicyPage() {
                 <div style={s.categories}>
                   {CATEGORIES.map((cat, ci) => {
                     const open = !!openCategories[cat.id]
-                    const { set, total } = countSetFields(grid, cat)
+                    const { set, total } = countSetFields(grid, cat, ranks)
                     return (
                       <div key={cat.id} style={{ ...s.categoryBlock, marginTop: ci === 0 ? 0 : 12 }}>
-                        {/* Category header */}
                         <button
                           onClick={() => toggleCategory(cat.id)}
                           style={{ ...s.categoryHeader, background: cat.color }}
@@ -535,7 +579,6 @@ export default function TmcPolicyPage() {
                           </span>
                         </button>
 
-                        {/* Collapsible table */}
                         {open && (
                           <div style={s.tableInner}>
                             {cat.description && <p style={s.categoryDesc}>{cat.description}</p>}
@@ -543,7 +586,7 @@ export default function TmcPolicyPage() {
                               <table style={s.table}>
                                 <thead>
                                   <tr>
-                                    <th style={{ ...s.th, ...s.stickyCol, width: 160 }}>Band</th>
+                                    <th style={{ ...s.th, ...s.stickyCol, width: 120 }}>Band rank</th>
                                     {cat.fields.map(f => (
                                       <th key={f.key} style={{ ...s.th, minWidth: f.kind === 'tier' ? 160 : f.kind === 'boolean' ? 90 : 120 }}>
                                         <span style={s.colLabel}>{f.label}</span>
@@ -553,16 +596,15 @@ export default function TmcPolicyPage() {
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {BAND_CODES.map((band, ri) => (
-                                    <tr key={band} style={{ background: ri % 2 === 0 ? '#fff' : '#FAFAFA' }}>
+                                  {ranks.map((rank, ri) => (
+                                    <tr key={rank} style={{ background: ri % 2 === 0 ? '#fff' : '#FAFAFA' }}>
                                       <td style={{ ...s.td, ...s.stickyCol }}>
                                         <div style={s.bandCell}>
-                                          <span style={s.bandBadge}>{band}</span>
-                                          <span style={s.bandLabel}>{BAND_LABELS[band]}</span>
+                                          <span style={s.bandBadge}>Rank {rank}</span>
                                         </div>
                                       </td>
                                       {cat.fields.map(f => {
-                                        const val = grid[band]?.[f.key]
+                                        const val = grid[String(rank)]?.[f.key]
                                         if (f.kind === 'boolean') {
                                           return (
                                             <td key={f.key} style={{ ...s.td, textAlign: 'center' as const }}>
@@ -570,13 +612,10 @@ export default function TmcPolicyPage() {
                                                 <input
                                                   type="checkbox"
                                                   checked={Boolean(val)}
-                                                  onChange={e => handleCellChange(band, f.key, e.target.checked)}
+                                                  onChange={e => handleCellChange(rank, f.key, e.target.checked)}
                                                   style={{ display: 'none' }}
                                                 />
-                                                <span style={{
-                                                  ...s.toggle,
-                                                  background: val ? '#000835' : '#E5E7EB',
-                                                }}>
+                                                <span style={{ ...s.toggle, background: val ? '#000835' : '#E5E7EB' }}>
                                                   <span style={{
                                                     ...s.toggleKnob,
                                                     transform: val ? 'translateX(14px)' : 'translateX(0)',
@@ -591,7 +630,7 @@ export default function TmcPolicyPage() {
                                             <td key={f.key} style={s.td}>
                                               <select
                                                 value={val === null || val === undefined ? '' : String(val)}
-                                                onChange={e => handleCellChange(band, f.key, e.target.value === '' ? null : Number(e.target.value))}
+                                                onChange={e => handleCellChange(rank, f.key, e.target.value === '' ? null : Number(e.target.value))}
                                                 style={s.tierSelect}
                                               >
                                                 <option value="">— not set —</option>
@@ -607,7 +646,7 @@ export default function TmcPolicyPage() {
                                             <input
                                               type="number"
                                               value={val === null || val === undefined ? '' : Number(val)}
-                                              onChange={e => handleNumericInputChange(band, f, e.target.value)}
+                                              onChange={e => handleNumericInputChange(rank, f, e.target.value)}
                                               placeholder="—"
                                               min={0}
                                               step={f.wholeNumber ? 1 : 'any'}
@@ -629,7 +668,6 @@ export default function TmcPolicyPage() {
                 </div>
               )}
 
-              {/* Sticky save bar when dirty */}
               {dirty && (
                 <div style={s.stickyBar}>
                   <span style={s.stickyBarText}>You have unsaved changes.</span>
@@ -644,78 +682,107 @@ export default function TmcPolicyPage() {
       )}
 
       {/* ══════════════════════════════════════════════════════════ */}
-      {/* EMPLOYEES TAB                                              */}
+      {/* COMPANIES TAB                                              */}
       {/* ══════════════════════════════════════════════════════════ */}
-      {selectedCompanyId && tab === 'employees' && (
+      {tab === 'companies' && (
         <div style={s.card}>
           <div style={s.cardHeader}>
             <div>
-              <h2 style={s.cardTitle}>Employee assignments</h2>
-              <p style={s.cardSub}>Each employee belongs to exactly one policy group. Reassigning replaces their current group.</p>
+              <h2 style={s.cardTitle}>Company assignments</h2>
+              <p style={s.cardSub}>
+                Link policy groups to a company so their rank ranges cover every band.
+                Ranges may not overlap — an employee must match exactly one group.
+              </p>
             </div>
           </div>
 
-          {loadingEmployees ? (
-            <p style={s.muted}>Loading employees…</p>
-          ) : employees.length === 0 ? (
-            <div style={s.emptyGroups}>
-              <p style={s.emptyTitle}>No employees found</p>
-              <p style={s.emptyDesc}>Employees invited to this company will appear here.</p>
-            </div>
-          ) : groups.length === 0 ? (
-            <div style={s.emptyGroups}>
-              <p style={s.emptyTitle}>No policy groups yet</p>
-              <p style={s.emptyDesc}>Switch to the Policy rules tab and create a group first.</p>
-            </div>
-          ) : (
-            <div style={s.tableWrap}>
-              <table style={s.table}>
-                <thead>
-                  <tr>
-                    {['Employee', 'Email', 'Band', 'Status', 'Policy group'].map(h => (
-                      <th key={h} style={s.th}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {employees.map((emp, i) => (
-                    <tr key={emp.id} style={{ background: i % 2 === 0 ? '#fff' : '#FAFAFA' }}>
-                      <td style={s.td}>
-                        <div style={s.empCell}>
-                          <div style={s.empAvatar}>{emp.full_name?.[0]?.toUpperCase() ?? '?'}</div>
-                          <span style={s.empName}>{emp.full_name}</span>
-                        </div>
-                      </td>
-                      <td style={{ ...s.td, color: '#6B7280', fontSize: '12px' }}>{emp.email}</td>
-                      <td style={s.td}>
-                        {emp.band_code
-                          ? <span style={s.bandBadge}>{emp.band_code}</span>
-                          : <span style={s.muted}>—</span>}
-                      </td>
-                      <td style={s.td}>
-                        <span style={{
-                          ...s.statusBadge,
-                          background: emp.status === 'active' ? '#ECFDF5' : '#F3F4F6',
-                          color: emp.status === 'active' ? '#065F46' : '#6B7280',
-                        }}>
-                          {emp.status}
-                        </span>
-                      </td>
-                      <td style={s.td}>
-                        <select
-                          value={emp.policyGroupId ?? ''}
-                          onChange={e => handleAssignGroup(emp.id, e.target.value)}
-                          style={s.tierSelect}
-                        >
-                          <option value="" disabled>Unassigned</option>
-                          {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-                        </select>
-                      </td>
-                    </tr>
+          <div style={{ ...s.field, maxWidth: 320, marginBottom: 20 }}>
+            <label style={s.label}>Company</label>
+            <select
+              value={selectedCompanyId}
+              onChange={e => setSelectedCompanyId(e.target.value)}
+              style={s.select}
+              disabled={loadingCompanies}
+            >
+              <option value="">{loadingCompanies ? 'Loading…' : 'Select a company…'}</option>
+              {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+
+          {selectedCompanyId && (
+            <>
+              <div style={s.linkRow}>
+                <select
+                  value={linkGroupId}
+                  onChange={e => setLinkGroupId(e.target.value)}
+                  style={{ ...s.select, flex: 1 }}
+                >
+                  <option value="">Select a policy group to link…</option>
+                  {linkableGroups.map(g => (
+                    <option key={g.id} value={g.id}>
+                      {g.name} · {rangeLabel(g)}
+                    </option>
                   ))}
-                </tbody>
-              </table>
-            </div>
+                </select>
+                <button
+                  onClick={handleLinkGroup}
+                  disabled={!linkGroupId || linking}
+                  style={{ ...s.primaryBtn, opacity: !linkGroupId || linking ? 0.5 : 1 }}
+                >
+                  {linking ? 'Linking…' : 'Link group'}
+                </button>
+              </div>
+
+              {loadingLinks ? (
+                <p style={s.muted}>Loading linked groups…</p>
+              ) : links.length === 0 ? (
+                <div style={s.emptyGroups}>
+                  <p style={s.emptyTitle}>No policy groups linked</p>
+                  <p style={s.emptyDesc}>
+                    Until a group is linked, this company&apos;s bookings are not checked
+                    against any policy.
+                  </p>
+                </div>
+              ) : (
+                <div style={s.tableWrap}>
+                  <table style={s.table}>
+                    <thead>
+                      <tr>
+                        {['Policy group', 'Code', 'Rank coverage', 'Linked', ''].map(h => (
+                          <th key={h} style={s.th}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {links.map((l, i) => (
+                        <tr key={l.policyGroupId} style={{ background: i % 2 === 0 ? '#fff' : '#FAFAFA' }}>
+                          <td style={{ ...s.td, fontSize: 13, fontWeight: 500, color: '#111827' }}>
+                            {l.group?.name ?? '—'}
+                          </td>
+                          <td style={s.td}>
+                            {l.group?.code ? <span style={s.codeBadge}>{l.group.code}</span> : <span style={s.muted}>—</span>}
+                          </td>
+                          <td style={s.td}>
+                            {l.group ? <span style={s.rangeBadge}>{rangeLabel(l.group)}</span> : <span style={s.muted}>—</span>}
+                          </td>
+                          <td style={{ ...s.td, fontSize: 12, color: '#6B7280' }}>
+                            {new Date(l.assignedAt).toLocaleDateString()}
+                          </td>
+                          <td style={{ ...s.td, textAlign: 'right' as const }}>
+                            <button
+                              onClick={() => handleUnlinkGroup(l.policyGroupId, l.group?.name ?? 'this group')}
+                              style={s.unlinkBtn}
+                            >
+                              Unlink
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
@@ -735,7 +802,6 @@ const s: Record<string, React.CSSProperties> = {
   heading: { fontSize: 22, fontWeight: 700, color: '#0A0A14', margin: '0 0 4px', letterSpacing: '-0.4px' },
   sub: { fontSize: 13, color: '#6B7280', margin: 0 },
 
-  selectorRow: { marginBottom: 20, maxWidth: 320 },
   field: { display: 'flex', flexDirection: 'column', gap: 6 },
   label: { fontSize: 11, fontWeight: 600, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.6px' },
   select: { height: 40, padding: '0 12px', fontSize: 13, color: '#111827', background: '#fff', border: '1px solid #D1D5DB', borderRadius: 8, outline: 'none' },
@@ -747,31 +813,41 @@ const s: Record<string, React.CSSProperties> = {
 
   errorBanner: { display: 'flex', alignItems: 'center', gap: 8, background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#DC2626', marginBottom: 16 },
   successBanner: { display: 'flex', alignItems: 'center', gap: 8, background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#065F46', marginBottom: 16 },
+  blastBanner: { background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#92400E', marginBottom: 16, lineHeight: 1.5 },
   bannerIcon: { fontSize: 14, flexShrink: 0 },
   bannerClose: { marginLeft: 'auto', background: 'transparent', border: 'none', color: '#DC2626', cursor: 'pointer', fontSize: 13 },
 
   card: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: 12, padding: 20, marginBottom: 16, position: 'relative' },
-  cardHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 },
+  cardHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, gap: 16 },
   cardTitle: { fontSize: 14, fontWeight: 600, color: '#111827', margin: '0 0 3px' },
-  cardSub: { fontSize: 12, color: '#9CA3AF', margin: 0 },
+  cardSub: { fontSize: 12, color: '#9CA3AF', margin: 0, lineHeight: 1.5 },
 
-  groupForm: { display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' },
+  groupForm: { display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' },
+  formHint: { fontSize: 11, color: '#9CA3AF', margin: 0, width: '100%' },
   ghostBtn: { height: 34, padding: '0 14px', background: '#fff', color: '#374151', fontSize: 12, fontWeight: 500, border: '1px solid #D1D5DB', borderRadius: 7, cursor: 'pointer', whiteSpace: 'nowrap' },
   primaryBtn: { height: 36, padding: '0 18px', background: '#000835', color: '#fff', fontSize: 13, fontWeight: 600, border: 'none', borderRadius: 7, cursor: 'pointer', whiteSpace: 'nowrap' },
+  unlinkBtn: { height: 28, padding: '0 12px', background: '#fff', color: '#DC2626', fontSize: 12, fontWeight: 500, border: '1px solid #FECACA', borderRadius: 6, cursor: 'pointer' },
+
+  linkRow: { display: 'flex', gap: 10, marginBottom: 20, alignItems: 'center', flexWrap: 'wrap' },
 
   emptyGroups: { padding: '24px 0', textAlign: 'center' },
   emptyTitle: { fontSize: 13, fontWeight: 600, color: '#374151', margin: '0 0 4px' },
   emptyDesc: { fontSize: 12, color: '#9CA3AF', margin: 0 },
 
-  groupGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 },
+  groupGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 },
   groupCard: { border: '1.5px solid', borderRadius: 10, padding: '14px 16px', cursor: 'pointer', transition: 'all 0.15s', position: 'relative' },
-  groupCardTop: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 },
+  groupCardTop: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 },
   groupCardName: { fontSize: 13, fontWeight: 600, color: '#111827', flex: 1 },
+  groupCardTags: { display: 'flex', gap: 6, marginBottom: 6, flexWrap: 'wrap' },
   groupCardDesc: { fontSize: 11, color: '#9CA3AF', margin: '0 0 6px', lineHeight: 1.4 },
   groupCardMeta: { fontSize: 11, color: '#9CA3AF', margin: 0 },
   groupCardDelete: { background: 'transparent', border: 'none', color: '#D1D5DB', cursor: 'pointer', fontSize: 12, padding: '0 2px', flexShrink: 0 },
 
-  rulesTopBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 },
+  rangeBadge: { display: 'inline-block', padding: '2px 7px', background: '#EEF2FF', color: '#3730A3', fontSize: 10, fontWeight: 600, borderRadius: 4 },
+  codeBadge: { display: 'inline-block', padding: '2px 7px', background: '#F3F4F6', color: '#4B5563', fontSize: 10, fontWeight: 600, borderRadius: 4, fontFamily: 'ui-monospace, monospace' },
+  rangeInline: { fontSize: 12, fontWeight: 400, color: '#9CA3AF' },
+
+  rulesTopBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20, gap: 16 },
   rulesActions: { display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 },
   unsavedBadge: { fontSize: 11, fontWeight: 500, color: '#92400E', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 4, padding: '3px 8px' },
 
@@ -796,7 +872,6 @@ const s: Record<string, React.CSSProperties> = {
 
   bandCell: { display: 'flex', alignItems: 'center', gap: 8 },
   bandBadge: { display: 'inline-block', padding: '2px 7px', background: '#EEF2FF', color: '#3730A3', fontSize: 10, fontWeight: 700, borderRadius: 4, flexShrink: 0 },
-  bandLabel: { fontSize: 11, color: '#9CA3AF' },
 
   numInput: { width: 100, height: 30, padding: '0 8px', fontSize: 12, color: '#111827', background: '#F9FAFB', border: '1px solid transparent', borderRadius: 5, outline: 'none' },
   tierSelect: { height: 30, padding: '0 8px', fontSize: 12, color: '#111827', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 5, outline: 'none', cursor: 'pointer', minWidth: 140 },
@@ -812,9 +887,4 @@ const s: Record<string, React.CSSProperties> = {
   stickyBar: { position: 'sticky', bottom: 0, left: 0, right: 0, background: '#000835', borderRadius: '0 0 12px 12px', padding: '12px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 16 },
   stickyBarText: { fontSize: 13, color: 'rgba(255,255,255,0.7)' },
   stickyBarBtn: { height: 34, padding: '0 18px', background: '#fff', color: '#000835', fontSize: 13, fontWeight: 700, border: 'none', borderRadius: 6, cursor: 'pointer' },
-
-  empCell: { display: 'flex', alignItems: 'center', gap: 9 },
-  empAvatar: { width: 28, height: 28, borderRadius: '50%', background: '#EEF2FF', color: '#3730A3', fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-  empName: { fontSize: 13, fontWeight: 500, color: '#111827' },
-  statusBadge: { display: 'inline-block', padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 500 },
 }

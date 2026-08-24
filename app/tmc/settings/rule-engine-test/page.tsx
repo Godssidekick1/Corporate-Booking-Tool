@@ -76,7 +76,7 @@ export default function RuleEngineTestPage() {
   useEffect(() => {
     if (!selectedCompanyId) { setEmployees([]); setSelectedEmployeeId(''); return }
     setLoadingEmployees(true)
-    fetch(`/api/tmc/employee-assignments?companyId=${selectedCompanyId}`)
+    fetch(`/api/tmc/employees?companyId=${selectedCompanyId}`)
       .then(r => r.json())
       .then(data => { if (data.ok) setEmployees(data.employees) })
       .finally(() => setLoadingEmployees(false))

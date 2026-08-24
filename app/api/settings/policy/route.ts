@@ -1,77 +1,45 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
-import { NextRequest } from 'next/server'
+import { getLinkedPolicyGroups, groupsCoveringRank } from '@/app/lib/rule-engine/linkedPolicyGroups'
 
-// ── GET /api/settings/policy?groupId=<uuid|null> ────────────────────────────
-// Returns the latest non-deleted version's rules for the given policy group
-// (or ungrouped rules if groupId is omitted), merged with the TMC's master
-// rules so the admin can see inherited + locked values alongside their own.
+// ── GET /api/settings/policy ─────────────────────────────────────────────────
+// Read-only view of the policy in force for the corporate admin's company.
 //
-// ── POST /api/settings/policy ────────────────────────────────────────────────
-// Inserts a new version of rules. Never updates or deletes existing rows —
-// each save is a new version, preserving full history for audit purposes.
-// Rejects the save entirely if the submitted rows attempt to change a rule
-// that the TMC has locked.
+// Under the Policy Master model the TMC owns all policy: groups are TMC-level
+// templates shared across clients, so a corporate admin editing one would
+// silently change limits for every other company using the same template.
+// Corporate admins therefore read here and edit nothing — there is no POST.
+//
+// Rules are stored against an integer band_rank, which is company-agnostic by
+// design. This route maps each rank back through the company's own `bands` rows
+// so the admin sees their own labels ("L3 · Senior") rather than bare ranks.
+//
+// Version history and deletion remain TMC-admin actions, exposed under
+// /api/tmc/policy-rules — deliberately not surfaced here.
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface PolicyRuleInput {
-  band: string
+interface EffectiveRow {
+  band_code: string
+  band_rank: number
   travel_type: string
   limit_key: string
-  limit_value: number
-  policy_group_id?: string | null
+  limit_value: number | null
+  limit_bool: boolean | null
+  policy_group_id: string
+  group_name: string
 }
 
-async function getEmployeeContext(userId: string, service: ReturnType<typeof createServiceClient>) {
-  const { data: employee, error } = await service
-    .from('employees')
-    .select('company_id, role')
-    .eq('id', userId)
-    .single()
+type UnresolvedReason = 'no_policy_group' | 'overlapping_policy_groups' | 'no_policy_rules'
 
-  if (error || !employee) return null
-  return employee
+interface UnresolvedBand {
+  band_code: string
+  band_label: string
+  band_rank: number
+  reason: UnresolvedReason
+  detail: string
 }
 
-async function getLatestVersionRows(
-  service: ReturnType<typeof createServiceClient>,
-  companyId: string,
-  policyGroupId: string | null
-) {
-  // Find the latest non-deleted version number for this scope
-  let versionQuery = service
-    .from('policy_rules')
-    .select('version')
-    .eq('company_id', companyId)
-    .is('deleted_at', null)
-    .order('version', { ascending: false })
-    .limit(1)
-
-  versionQuery = policyGroupId
-    ? versionQuery.eq('policy_group_id', policyGroupId)
-    : versionQuery.is('policy_group_id', null)
-
-  const { data: latest } = await versionQuery.maybeSingle()
-
-  if (!latest) return { version: 0, rows: [] }
-
-  let rowsQuery = service
-    .from('policy_rules')
-    .select('id, band_id, band_code, travel_type, limit_key, limit_value, locked, version')
-    .eq('company_id', companyId)
-    .eq('version', latest.version)
-    .is('deleted_at', null)
-
-  rowsQuery = policyGroupId
-    ? rowsQuery.eq('policy_group_id', policyGroupId)
-    : rowsQuery.is('policy_group_id', null)
-
-  const { data: rows } = await rowsQuery
-
-  return { version: latest.version, rows: rows ?? [] }
-}
-
-export async function GET(req: NextRequest) {
+export async function GET() {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -80,7 +48,12 @@ export async function GET(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const employee = await getEmployeeContext(user.id, service)
+
+  const { data: employee } = await service
+    .from('employees')
+    .select('company_id, role')
+    .eq('id', user.id)
+    .single()
 
   if (!employee) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
@@ -91,197 +64,134 @@ export async function GET(req: NextRequest) {
   }
 
   const companyId = employee.company_id
-  const groupIdParam = req.nextUrl.searchParams.get('groupId')
-  const policyGroupId = groupIdParam && groupIdParam !== 'null' ? groupIdParam : null
 
-  // Company's own current rules for this group
-  const { version, rows } = await getLatestVersionRows(service, companyId, policyGroupId)
+  const { data: bands } = await service
+    .from('bands')
+    .select('code, label, rank')
+    .eq('company_id', companyId)
+    .order('rank')
 
-  // TMC master rules — for display as "inherited" values. These are never
-  // editable here; they're shown so the admin can see what they're overriding.
-  const { data: company } = await service
-    .from('companies')
-    .select('tmc_id')
-    .eq('id', companyId)
-    .single()
+  const groups = await getLinkedPolicyGroups(service, companyId)
 
-  let tmcRows: { band_code: string; travel_type: string; limit_key: string; limit_value: number; locked: boolean }[] = []
-  if (company?.tmc_id) {
-    const { data: tmcVersionRow } = await service
-      .from('policy_rules')
-      .select('version')
-      .eq('tmc_id', company.tmc_id)
-      .is('deleted_at', null)
-      .order('version', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-
-    if (tmcVersionRow) {
-      const { data } = await service
-        .from('policy_rules')
-        .select('band_code, travel_type, limit_key, limit_value, locked')
-        .eq('tmc_id', company.tmc_id)
-        .eq('version', tmcVersionRow.version)
-        .is('deleted_at', null)
-      tmcRows = data ?? []
-    }
+  if (groups.length === 0) {
+    return Response.json({
+      ok: true,
+      managedByTmc: true,
+      bands: bands ?? [],
+      groups: [],
+      rows: [],
+      unresolved: (bands ?? []).map(b => ({
+        band_code: b.code,
+        band_label: b.label,
+        band_rank: b.rank,
+        reason: 'no_policy_group' as const,
+        detail: 'No policy group has been linked to this company yet.',
+      })),
+    })
   }
 
-  // Available policy groups for this company, so the frontend can offer a selector
-  const { data: groups } = await service
-    .from('policy_groups')
-    .select('id, name, description')
-    .eq('company_id', companyId)
-    .order('name')
+  // Latest live version per group, then that version's rules. Fetched per
+  // group rather than in one sweep because each group versions independently,
+  // so there is no single version number to filter on — and pulling every
+  // version to reduce in JS would grow with save history.
+  const ruleSets = await Promise.all(
+    groups.map(async group => {
+      const { data: latest } = await service
+        .from('policy_rules')
+        .select('version')
+        .eq('policy_group_id', group.id)
+        .is('deleted_at', null)
+        .order('version', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (!latest) return { group, version: 0, rules: [] }
+
+      const { data: rules } = await service
+        .from('policy_rules')
+        .select('band_rank, travel_type, limit_key, limit_value, limit_bool')
+        .eq('policy_group_id', group.id)
+        .eq('version', latest.version)
+        .is('deleted_at', null)
+
+      return { group, version: latest.version, rules: rules ?? [] }
+    })
+  )
+
+  const ruleSetByGroupId = new Map(ruleSets.map(rs => [rs.group.id, rs]))
+
+  const rows: EffectiveRow[] = []
+  const unresolved: UnresolvedBand[] = []
+
+  for (const band of bands ?? []) {
+    const covering = groupsCoveringRank(groups, band.rank)
+
+    if (covering.length === 0) {
+      unresolved.push({
+        band_code: band.code,
+        band_label: band.label,
+        band_rank: band.rank,
+        reason: 'no_policy_group',
+        detail: `No policy group covers rank ${band.rank}.`,
+      })
+      continue
+    }
+
+    // Mirrors resolveEffectivePolicy: more than one match is a configuration
+    // error surfaced as such, never silently resolved by picking one.
+    if (covering.length > 1) {
+      unresolved.push({
+        band_code: band.code,
+        band_label: band.label,
+        band_rank: band.rank,
+        reason: 'overlapping_policy_groups',
+        detail: `Rank ${band.rank} is covered by more than one group (${covering.map(g => g.name).join(', ')}).`,
+      })
+      continue
+    }
+
+    const group = covering[0]
+    const ruleSet = ruleSetByGroupId.get(group.id)
+    const bandRules = (ruleSet?.rules ?? []).filter(r => r.band_rank === band.rank)
+
+    if (bandRules.length === 0) {
+      unresolved.push({
+        band_code: band.code,
+        band_label: band.label,
+        band_rank: band.rank,
+        reason: 'no_policy_rules',
+        detail: `"${group.name}" has no rules configured at rank ${band.rank}.`,
+      })
+      continue
+    }
+
+    for (const rule of bandRules) {
+      rows.push({
+        band_code: band.code,
+        band_rank: band.rank,
+        travel_type: rule.travel_type,
+        limit_key: rule.limit_key,
+        limit_value: rule.limit_value,
+        limit_bool: rule.limit_bool,
+        policy_group_id: group.id,
+        group_name: group.name,
+      })
+    }
+  }
 
   return Response.json({
     ok: true,
-    version,
+    managedByTmc: true,
+    bands: bands ?? [],
+    groups: ruleSets.map(rs => ({
+      id: rs.group.id,
+      name: rs.group.name,
+      code: rs.group.code,
+      min_band_rank: rs.group.min_band_rank,
+      max_band_rank: rs.group.max_band_rank,
+      version: rs.version,
+    })),
     rows,
-    tmcRows,
-    groups: groups ?? [],
-    policyGroupId,
+    unresolved,
   })
 }
-
-export async function POST(req: NextRequest) {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
-
-  const service = createServiceClient()
-  const employee = await getEmployeeContext(user.id, service)
-
-  if (!employee) {
-    return Response.json({ error: 'Employee record not found' }, { status: 404 })
-  }
-
-  if (employee.role !== 'admin') {
-    return Response.json({ error: 'Only admins can update policy' }, { status: 403 })
-  }
-
-  const companyId = employee.company_id
-  const { policy, policyGroupId }: { policy: PolicyRuleInput[]; policyGroupId: string | null } =
-    await req.json()
-
-  if (!policy || !Array.isArray(policy) || policy.length === 0) {
-    return Response.json({ error: 'Policy data is required' }, { status: 400 })
-  }
-
-  // If a policyGroupId was given, confirm it actually belongs to this company —
-  // prevents cross-tenant writes via a forged id.
-  if (policyGroupId) {
-    const { data: group } = await service
-      .from('policy_groups')
-      .select('id')
-      .eq('id', policyGroupId)
-      .eq('company_id', companyId)
-      .maybeSingle()
-
-    if (!group) {
-      return Response.json({ error: 'Policy group not found for this company' }, { status: 404 })
-    }
-  }
-
-  const { data: bands, error: bandsError } = await service
-    .from('bands')
-    .select('id, code')
-    .eq('company_id', companyId)
-
-  if (bandsError || !bands) {
-    return Response.json({ error: 'Could not load bands' }, { status: 500 })
-  }
-  const bandMap = Object.fromEntries(bands.map(b => [b.code, b.id]))
-
-  // ── Load the current version's rows to check for locked-row violations ────
-  const { version: currentVersion, rows: currentRows } = await getLatestVersionRows(
-    service,
-    companyId,
-    policyGroupId
-  )
-
-  const lockedKeySet = new Set(
-    currentRows
-      .filter(r => r.locked)
-      .map(r => `${r.band_code}::${r.travel_type}::${r.limit_key}`)
-  )
-
-  // ── Build the new version's rows, deduping within this submission ─────────
-  const seen = new Set<string>()
-  const newRows: object[] = []
-
-  for (const input of policy) {
-    const bandId = bandMap[input.band]
-    if (!bandId) {
-      return Response.json({ error: `Unknown band: ${input.band}` }, { status: 400 })
-    }
-
-    const dedupeKey = `${input.band}::${input.travel_type}::${input.limit_key}`
-
-    if (seen.has(dedupeKey)) {
-      return Response.json(
-        { error: `Duplicate rule submitted for band ${input.band}, ${input.travel_type}, ${input.limit_key}` },
-        { status: 400 }
-      )
-    }
-    seen.add(dedupeKey)
-
-    if (lockedKeySet.has(dedupeKey)) {
-      return Response.json(
-        {
-          error: `This rule is locked by your TMC and cannot be edited: ${input.travel_type} / ${input.limit_key} (band ${input.band})`,
-          code: 'LOCKED_RULE_EDIT_ATTEMPTED',
-        },
-        { status: 403 }
-      )
-    }
-
-    newRows.push({
-      company_id: companyId,
-      tmc_id: null,
-      policy_group_id: policyGroupId,
-      band_id: bandId,
-      band_code: input.band,
-      travel_type: input.travel_type,
-      limit_key: input.limit_key,
-      limit_value: Number(input.limit_value),
-      locked: false, // admins never set locked — only the TMC can, from tmc/policy
-      version: currentVersion + 1,
-      updated_by: user.id,
-    })
-  }
-
-  // Carry forward any locked rows unchanged into the new version, so the new
-  // version is a complete, self-contained snapshot rather than a partial diff.
-  for (const row of currentRows) {
-    if (!row.locked) continue
-    newRows.push({
-      company_id: companyId,
-      tmc_id: null,
-      policy_group_id: policyGroupId,
-      band_id: row.band_id,
-      band_code: row.band_code,
-      travel_type: row.travel_type,
-      limit_key: row.limit_key,
-      limit_value: row.limit_value,
-      locked: true,
-      version: currentVersion + 1,
-      updated_by: user.id,
-    })
-  }
-
-  const { error: insertError } = await service.from('policy_rules').insert(newRows)
-
-  if (insertError) {
-    return Response.json({ error: insertError.message }, { status: 500 })
-  }
-
-  return Response.json({ ok: true, newVersion: currentVersion + 1 })
-}
-
-// ── DELETE /api/settings/policy ──────────────────────────────────────────────
-// Note: version deletion is a TMC-admin action (per product decision), not
-// exposed here for corporate admins. See tmc/policy route once built.

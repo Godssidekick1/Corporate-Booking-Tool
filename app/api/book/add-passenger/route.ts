@@ -174,11 +174,12 @@ export async function POST(req: NextRequest) {
         policyVerdictDetail = { breaches: ruleResult.breaches, costTier: ruleResult.costTier }
         reason = buildReason(ruleResult.breaches, ruleResult.costTier, totalFare)
       } else {
-        // no_policy_group / no_policy_rules — leave policyStatus as
-        // 'not_evaluated', but still let the booking proceed to the
-        // approval step below, which will find no chain outcome to route to
-        // and fall back to auto-approved. This matches checkBookingAgainstPolicy's
-        // own doc comment: an unconfigured policy blocks Rule Engine feedback,
+        // no_band / no_policy_group / overlapping_policy_groups /
+        // no_policy_rules — leave policyStatus as 'not_evaluated', but
+        // still let the booking proceed to the approval step below, which
+        // will find no chain outcome to route to and fall back to
+        // auto-approved. This matches checkBookingAgainstPolicy's own doc
+        // comment: an unconfigured policy blocks Rule Engine feedback,
         // never the booking itself.
         reason = ruleResult.message
       }
