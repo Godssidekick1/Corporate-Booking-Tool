@@ -130,7 +130,18 @@ export default function SettingsPolicyPage() {
 
       {error && <div style={s.errorBanner}>✕ {error}</div>}
 
-      {!loading && unresolved.length > 0 && (
+      {/* Distinct from "no policy linked": without bands there is nothing for a
+          rank range to match, so the fix is to configure bands, not to chase
+          the TMC for a policy group. */}
+      {!loading && bands.length === 0 && (
+        <div style={s.infoBanner}>
+          <strong>No employee bands are configured for your company.</strong>
+          {' '}Travel policy applies per band, so nothing can take effect until
+          bands exist. Ask your TMC to set them up.
+        </div>
+      )}
+
+      {!loading && bands.length > 0 && unresolved.length > 0 && (
         <div style={s.infoBanner}>
           <strong>
             {unresolved.length === bands.length
