@@ -1,40 +1,39 @@
 import { createServiceClient } from '@/utils/supabase/service'
 import type { Verdict, VerdictBreach } from '@/app/lib/rule-engine/evaluateBooking'
 import {
-  getLinkedApprovalTemplates,
-  templatesCovering,
+  resolveTemplateForEmployee,
   type ChainMode,
   type ChainQuorum,
 } from './linkedApprovalTemplates'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
 
-// â”€â”€ Approval Engine v3 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Chains are assigned directly to a specific employee by a TMC/admin â€”
+// ── Approval Engine v3 ───────────────────────────────────────────────────
+// Chains are assigned directly to a specific employee by a TMC/admin —
 // there is no band-based lookup anymore. A chain is resolved by
 // (employee_id, category), where category collapses travelType's finer
 // granularity (flight_domestic, flight_international, hotel, ...) into
 // exactly two routing buckets:
-//   'flights_hotels' â€” flight_domestic, flight_international, hotel, etc.
-//   'misc'            â€” everything else (car rentals, expenses, ...)
+//   'flights_hotels' — flight_domestic, flight_international, hotel, etc.
+//   'misc'            — everything else (car rentals, expenses, ...)
 // Policy rules (the Rule Engine) still use the finer travelType split for
-// evaluating limits â€” this collapsing is ONLY for approval routing.
+// evaluating limits — this collapsing is ONLY for approval routing.
 //
 // approver_type: 'manager' still resolves via manager_id, 'any_manager_at'
-// still resolves via band rank among active managers/admins â€” both
+// still resolves via band rank among active managers/admins — both
 // unchanged from before, since who's ELIGIBLE to approve is still a
 // legitimate band-scoped concept even though WHICH chain applies to a
 // given employee is no longer derived from their band.
 //
-// tiers (jsonb on approval_chains) shape â€” walked in tier order:
+// tiers (jsonb on approval_chains) shape — walked in tier order:
 //   { tier: number, approver_type: ApproverType, min_verdict: Verdict,
 //     approver_user_id?: string,      // only for 'specific_user'
 //     min_band_rank?: number }        // only for 'any_manager_at'
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 
 export type ApprovalCategory = 'flights_hotels' | 'misc'
 
-// â”€â”€ categoryForTravelType â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── categoryForTravelType ──────────────────────────────────────────────────
 // The only place travelType's finer granularity gets collapsed to a
 // routing category. Anything starting with 'flight' or 'hotel' is
 // flights_hotels; everything else (car_rental, misc expenses, and any
@@ -57,16 +56,16 @@ export interface ChainTier {
 
 const VERDICT_RANK: Record<Verdict, number> = { green: 0, amber: 1, red: 2 }
 
-// â”€â”€ verdictRank â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── verdictRank ──────────────────────────────────────────────────────────
 // tiers is jsonb with no DB-level CHECK on min_verdict's contents, so an
 // unrecognized value is even more possible here than the old column-based
 // design. Unknown values fail toward 'red' (strictest) rather than
-// silently never triggering â€” wrong direction to fail for spend policy.
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// silently never triggering — wrong direction to fail for spend policy.
+// ─────────────────────────────────────────────────────────────────────────────
 
 function verdictRank(value: string): number {
   if (value in VERDICT_RANK) return VERDICT_RANK[value as Verdict]
-  console.error(`approval_chains.tiers has an unrecognized min_verdict: "${value}" â€” treating as 'red' (strictest) rather than silently skipping this tier.`)
+  console.error(`approval_chains.tiers has an unrecognized min_verdict: "${value}" — treating as 'red' (strictest) rather than silently skipping this tier.`)
   return VERDICT_RANK.red
 }
 
@@ -75,7 +74,7 @@ export interface TierOutcome {
   approvalId?: string
   tier?: number
   approverId?: string
-  // True when this tier resolved to approver_type 'self' â€” the caller
+  // True when this tier resolved to approver_type 'self' — the caller
   // should still log a record to `approvals` (status pre-set to 'approved',
   // no human ever acted), just never block the booking on it.
   selfApproved?: boolean
@@ -84,13 +83,13 @@ export interface TierOutcome {
   approvalIds?: string[]
   approverIds?: string[]
   // Set when a template applied but not one of its approvers could be
-  // resolved to a real person â€” e.g. the tier wants a finance user and the
+  // resolved to a real person — e.g. the tier wants a finance user and the
   // company has none active. The booking is NOT held on an approval nobody
   // can see; the caller decides what to do, but this says why.
   unresolvedApprovers?: boolean
 }
 
-// â”€â”€ buildReason â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── buildReason ────────────────────────────────────────────────────────────
 const LIMIT_LABELS: Record<string, string> = {
   max_fare_domestic: 'domestic fare limit',
   max_fare_intl: 'international fare limit',
@@ -128,25 +127,27 @@ export function buildReason(breaches: VerdictBreach[], costTier: string, totalCo
   }
 
   if (costTier === 'finance_approval') {
-    parts.push(`total cost â‚¹${totalCost} exceeds the finance approval threshold`)
+    parts.push(`total cost ₹${totalCost} exceeds the finance approval threshold`)
   } else if (costTier === 'within_finance_limit') {
-    parts.push(`total cost â‚¹${totalCost} is above auto-approval but within finance limits`)
+    parts.push(`total cost ₹${totalCost} is above auto-approval but within finance limits`)
   }
 
   return parts.length > 0 ? parts.join('; ') : 'Within policy'
 }
 
-// â”€â”€ resolveChainForEmployee â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Resolves which approval template applies, by the same route the policy
-// engine takes: employee -> band_code -> that company's own bands row -> rank
-// -> which of the company's linked templates covers that rank in this
-// category.
+// ── resolveChainForEmployee ──────────────────────────────────────────────────
+// Which approval template applies to this employee for this booking.
 //
-// Chains used to be assigned per (employee, category), which meant a template
-// had to be hand-built for every person and anyone missed silently bypassed
-// approval entirely. Coverage is now inherited from the employee's band, so a
-// new hire is routed the moment they have a band.
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Assignment is per employee, not per band. A spend limit genuinely is a
+// band-level concept, but an approver is not: two people at the same rank
+// routinely report to different managers, so a rank-wide route can't express
+// the ordinary case. Bands still decide WHO may approve — 'any_manager_at' is
+// rank-scoped — just not WHICH chain applies.
+//
+// An explicit assignment wins; the company default catches everyone else, so a
+// new hire is routed from day one rather than silently bypassing approval
+// until somebody remembers to configure them.
+// ─────────────────────────────────────────────────────────────────────────────
 
 export interface ResolvedChain {
   templateId: string
@@ -163,57 +164,23 @@ async function resolveChainForEmployee(
   travelType: string
 ): Promise<ResolvedChain | null> {
   const category = categoryForTravelType(travelType)
+  const resolved = await resolveTemplateForEmployee(service, employeeId, companyId, category)
 
-  const { data: employee } = await service
-    .from('employees')
-    .select('band_code')
-    .eq('id', employeeId)
-    .maybeSingle()
-
-  if (!employee?.band_code) return null
-
-  const { data: bandRow } = await service
-    .from('bands')
-    .select('rank')
-    .eq('company_id', companyId)
-    .eq('code', employee.band_code)
-    .maybeSingle()
-
-  if (!bandRow) return null
-
-  const templates = await getLinkedApprovalTemplates(service, companyId)
-  const matching = templatesCovering(templates, category, bandRow.rank)
-
-  if (matching.length === 0) return null
-
-  if (matching.length > 1) {
-    // Constraint triggers on company_approval_templates and
-    // approval_template_band_ranks should make this unreachable. If it
-    // happens anyway, routing to an arbitrary one would silently apply the
-    // wrong approvers, so refuse and let the no-chain path handle it while
-    // leaving a trace to act on.
-    console.error(
-      `Multiple approval templates cover rank ${bandRow.rank} for category "${category}" at company ${companyId}: ` +
-      matching.map(t => t.name).join(', ')
-    )
-    return null
-  }
-
-  const template = matching[0]
+  if (!resolved) return null
 
   return {
-    templateId: template.id,
-    name: template.name,
-    mode: template.mode,
-    quorum: template.quorum,
-    tiers: template.tiers,
+    templateId: resolved.template.id,
+    name: resolved.template.name,
+    mode: resolved.template.mode,
+    quorum: resolved.template.quorum,
+    tiers: resolved.template.tiers,
   }
 }
 
-// â”€â”€ eligibleTiers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── eligibleTiers ────────────────────────────────────────────────────────────
 // The tier entries this booking's verdict actually triggers, in tier order.
 // Shared by both modes: sequential takes the first, parallel takes all of them.
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 
 function eligibleTiers(tiers: ChainTier[], verdict: Verdict): ChainTier[] {
   return [...tiers]
@@ -221,7 +188,7 @@ function eligibleTiers(tiers: ChainTier[], verdict: Verdict): ChainTier[] {
     .filter(t => verdictRank(verdict) >= verdictRank(t.min_verdict))
 }
 
-// â”€â”€ resolveApproverForTier â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── resolveApproverForTier ───────────────────────────────────────────────────
 async function resolveApproverForTier(
   service: ServiceClient,
   tier: ChainTier,
@@ -258,7 +225,7 @@ async function resolveApproverForTier(
       .eq('status', 'active')
 
     // bands:band_code(rank) FK-embed syntax isn't used elsewhere in this
-    // codebase and its behavior here is unverified â€” resolve rank via a
+    // codebase and its behavior here is unverified — resolve rank via a
     // manual second query instead, consistent with how the rest of this
     // file avoids relying on embed inference.
     if (!candidates || candidates.length === 0) return null

@@ -1,13 +1,13 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
-import { getTemplateBandRanks } from '@/app/lib/approval-engine/linkedApprovalTemplates'
 import { NextRequest } from 'next/server'
 
 // ── GET /api/tmc/approval-templates?search=<text> ────────────────────────────
-// Lists the caller's TMC's approval templates. Like policy groups these are
-// reusable across clients, so there is no companyId — but scoping stops at the
-// TMC boundary; a template is never visible to another TMC.
+// Lists the caller's TMC's approval templates. A template is the reusable
+// SHAPE of a chain — its approvers, its mode, its verdict thresholds. Who it
+// applies to is decided separately, per employee, via
+// /api/tmc/approval-assignments.
 //
 // ── POST /api/tmc/approval-templates ─────────────────────────────────────────
 // Creates a template. `mode` is a single enum rather than two flags, so
@@ -39,21 +39,14 @@ interface CreateTemplateBody {
   mode?: string
   quorum?: string
   tiers?: ChainTierInput[]
-  bandRanks?: number[]
-}
-
-export function normaliseBandRanks(input: unknown): number[] {
-  if (!Array.isArray(input)) return []
-  const cleaned = input.map(Number).filter(n => Number.isInteger(n) && n >= 0)
-  return Array.from(new Set(cleaned)).sort((a, b) => a - b)
 }
 
 // ── validateTiers ────────────────────────────────────────────────────────────
 // Sequential chains need distinct tier numbers, since the engine walks them in
 // order. Parallel chains don't: every entry is raised at once and the engine
 // normalises them onto a single tier number, so duplicates are meaningless
-// rather than wrong. Validating the same way in both modes would reject
-// perfectly valid parallel setups.
+// rather than wrong. Validating both modes the same way would reject perfectly
+// valid parallel setups.
 // ─────────────────────────────────────────────────────────────────────────────
 export function validateTiers(tiers: ChainTierInput[], mode: string): string | null {
   if (!Array.isArray(tiers)) return 'tiers must be an array'
@@ -76,16 +69,16 @@ export function validateTiers(tiers: ChainTierInput[], mode: string): string | n
       return `Invalid min_verdict: ${t.min_verdict}`
     }
     if (t.approver_type === 'specific_user' && !t.approver_user_id) {
-      return `Tier ${t.tier}: specific_user requires approver_user_id`
+      return `Tier ${t.tier}: specific_user requires a chosen person`
     }
     if (t.approver_type === 'any_manager_at' && (t.min_band_rank === undefined || t.min_band_rank === null)) {
       return `Tier ${t.tier}: any_manager_at requires min_band_rank`
     }
   }
 
-  // A parallel group of one is a sequential chain of one written confusingly.
+  // A parallel group of one is a sequential chain of one, written confusingly.
   if (mode === 'parallel' && tiers.length < 2) {
-    return 'Parallel mode needs at least two approvers — use sequential for a single approver'
+    return 'Parallel mode needs at least two approvers — use multi-tier for a single approver'
   }
 
   return null
@@ -124,19 +117,31 @@ export async function GET(req: NextRequest) {
   }
 
   const templateIds = (templates ?? []).map(t => t.id)
-  const ranksByTemplate = await getTemplateBandRanks(service, templateIds)
 
-  // Company count per template, so an admin can gauge blast radius before
-  // editing something shared. templateIds is already TMC-scoped above, and
-  // links are only ever created when company and template share a TMC.
-  const countByTemplate = new Map<string, number>()
+  // How many employees are routed through each template, so an admin can see
+  // the blast radius before editing something shared. Counted across the whole
+  // TMC: templateIds is already TMC-scoped, and an assignment is only ever
+  // created for an employee at a company in that TMC.
+  const usageByTemplate = new Map<string, number>()
+  const defaultForByTemplate = new Map<string, number>()
+
   if (templateIds.length > 0) {
-    const { data: links } = await service
-      .from('company_approval_templates')
+    const { data: assignments } = await service
+      .from('employee_approval_templates')
       .select('template_id')
       .in('template_id', templateIds)
-    for (const l of links ?? []) {
-      countByTemplate.set(l.template_id, (countByTemplate.get(l.template_id) ?? 0) + 1)
+
+    for (const a of assignments ?? []) {
+      usageByTemplate.set(a.template_id, (usageByTemplate.get(a.template_id) ?? 0) + 1)
+    }
+
+    const { data: defaults } = await service
+      .from('company_default_approval_templates')
+      .select('template_id')
+      .in('template_id', templateIds)
+
+    for (const d of defaults ?? []) {
+      defaultForByTemplate.set(d.template_id, (defaultForByTemplate.get(d.template_id) ?? 0) + 1)
     }
   }
 
@@ -144,8 +149,8 @@ export async function GET(req: NextRequest) {
     ok: true,
     templates: (templates ?? []).map(t => ({
       ...t,
-      bandRanks: ranksByTemplate.get(t.id) ?? [],
-      companyCount: countByTemplate.get(t.id) ?? 0,
+      employeeCount: usageByTemplate.get(t.id) ?? 0,
+      defaultForCompanies: defaultForByTemplate.get(t.id) ?? 0,
     })),
   })
 }
@@ -169,7 +174,6 @@ export async function POST(req: NextRequest) {
   const mode = body.mode ?? 'sequential'
   const quorum = body.quorum ?? 'all'
   const tiers = body.tiers ?? []
-  const bandRanks = normaliseBandRanks(body.bandRanks)
 
   if (!name?.trim()) {
     return Response.json({ error: 'name is required' }, { status: 400 })
@@ -223,23 +227,8 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: error.message }, { status: 500 })
   }
 
-  // A brand-new template is linked to nothing, so its ranks can't collide with
-  // another template yet. Inserted after the template so the FK holds, and
-  // rolled back on failure rather than leaving coverage that doesn't match
-  // what was asked for.
-  if (bandRanks.length > 0) {
-    const { error: rankError } = await service
-      .from('approval_template_band_ranks')
-      .insert(bandRanks.map(band_rank => ({ template_id: template.id, band_rank })))
-
-    if (rankError) {
-      await service.from('approval_chain_templates').delete().eq('id', template.id)
-      return Response.json({ error: rankError.message }, { status: 500 })
-    }
-  }
-
   return Response.json(
-    { ok: true, template: { ...template, bandRanks, companyCount: 0 } },
+    { ok: true, template: { ...template, employeeCount: 0, defaultForCompanies: 0 } },
     { status: 201 }
   )
 }

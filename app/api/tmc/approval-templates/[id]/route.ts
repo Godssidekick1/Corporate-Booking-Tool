@@ -1,26 +1,21 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
-import { getTemplateBandRanks } from '@/app/lib/approval-engine/linkedApprovalTemplates'
-import { MODES, QUORUMS, normaliseBandRanks, validateTiers } from '../route'
+import { MODES, QUORUMS, validateTiers } from '../route'
 import { NextRequest } from 'next/server'
 
 // ── PATCH /api/tmc/approval-templates/[id] ───────────────────────────────────
-// Edits a template's identity, its tiers, its mode, or the band ranks it
-// covers.
+// Edits a template's identity, its approvers, or its mode.
 //
-// Switching mode re-validates the tiers, because the two modes have different
+// Switching mode re-validates the tiers, because the modes have different
 // rules: sequential needs distinct tier numbers, parallel needs at least two
 // approvers. Flipping the toggle on a chain the other mode can't express
 // should fail with that reason rather than saving something the engine will
-// interpret differently than intended.
-//
-// Rank edits apply as a diff (insert added, delete removed) rather than
-// delete-all-then-reinsert, so an unchanged rank never momentarily disappears
-// and leaves bookings resolving to no template mid-edit.
+// read differently than intended.
 //
 // ── DELETE /api/tmc/approval-templates/[id] ──────────────────────────────────
-// Blocked while any company is still linked.
+// Blocked while any employee is routed through it, or while it is a company's
+// default.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface UpdateTemplateBody {
@@ -36,7 +31,6 @@ interface UpdateTemplateBody {
     approver_user_id?: string | null
     min_band_rank?: number | null
   }[]
-  bandRanks?: number[]
 }
 
 export async function PATCH(
@@ -73,7 +67,6 @@ export async function PATCH(
   }
 
   const body: UpdateTemplateBody = await req.json()
-
   const fields: Record<string, unknown> = {}
 
   if (body.name !== undefined) {
@@ -110,76 +103,36 @@ export async function PATCH(
     if (body.tiers !== undefined) fields.tiers = body.tiers
   }
 
-  if (Object.keys(fields).length > 0) {
-    const { data: caller } = await service
-      .from('employees')
-      .select('id')
-      .eq('id', user.id)
-      .maybeSingle()
-
-    fields.version = template.version + 1
-    fields.updated_by = caller?.id ?? null
-
-    const { error: updateError } = await service
-      .from('approval_chain_templates')
-      .update(fields)
-      .eq('id', id)
-
-    if (updateError) {
-      if (updateError.code === '23505') {
-        return Response.json({
-          error: `Another template already uses that ${updateError.message.includes('code') ? 'code' : 'name'}`,
-        }, { status: 409 })
-      }
-      return Response.json({ error: updateError.message }, { status: 500 })
-    }
+  if (Object.keys(fields).length === 0) {
+    return Response.json({ error: 'Nothing to update' }, { status: 400 })
   }
 
-  if (body.bandRanks !== undefined) {
-    const desired = normaliseBandRanks(body.bandRanks)
-    const current = (await getTemplateBandRanks(service, [id])).get(id) ?? []
+  const { data: caller } = await service
+    .from('employees')
+    .select('id')
+    .eq('id', user.id)
+    .maybeSingle()
 
-    const toAdd = desired.filter(r => !current.includes(r))
-    const toRemove = current.filter(r => !desired.includes(r))
+  fields.version = template.version + 1
+  fields.updated_by = caller?.id ?? null
 
-    if (toRemove.length > 0) {
-      const { error: removeError } = await service
-        .from('approval_template_band_ranks')
-        .delete()
-        .eq('template_id', id)
-        .in('band_rank', toRemove)
-
-      if (removeError) {
-        return Response.json({ error: removeError.message }, { status: 500 })
-      }
-    }
-
-    if (toAdd.length > 0) {
-      const { error: addError } = await service
-        .from('approval_template_band_ranks')
-        .insert(toAdd.map(band_rank => ({ template_id: id, band_rank })))
-
-      if (addError) {
-        // 23P01 comes from approval_template_band_ranks_no_overlap: another
-        // template already covers this rank in the same category at a company
-        // using this one.
-        if (addError.code === '23P01') {
-          return Response.json({ error: addError.message }, { status: 409 })
-        }
-        return Response.json({ error: addError.message }, { status: 500 })
-      }
-    }
-  }
-
-  const bandRanks = (await getTemplateBandRanks(service, [id])).get(id) ?? []
-
-  const { data: updated } = await service
+  const { data: updated, error: updateError } = await service
     .from('approval_chain_templates')
-    .select('id, name, code, description, category, mode, quorum, tiers, version, created_at')
+    .update(fields)
     .eq('id', id)
+    .select('id, name, code, description, category, mode, quorum, tiers, version, created_at')
     .single()
 
-  return Response.json({ ok: true, template: { ...updated, bandRanks } })
+  if (updateError) {
+    if (updateError.code === '23505') {
+      return Response.json({
+        error: `Another template already uses that ${updateError.message.includes('code') ? 'code' : 'name'}`,
+      }, { status: 409 })
+    }
+    return Response.json({ error: updateError.message }, { status: 500 })
+  }
+
+  return Response.json({ ok: true, template: updated })
 }
 
 export async function DELETE(
@@ -215,14 +168,25 @@ export async function DELETE(
     return Response.json({ error: 'This template belongs to a different TMC' }, { status: 403 })
   }
 
-  const { count } = await service
-    .from('company_approval_templates')
+  const { count: assignedCount } = await service
+    .from('employee_approval_templates')
+    .select('employee_id', { count: 'exact', head: true })
+    .eq('template_id', id)
+
+  if (assignedCount && assignedCount > 0) {
+    return Response.json({
+      error: `${assignedCount} employee${assignedCount > 1 ? 's are' : ' is'} routed through "${template.name}". Reassign them before deleting.`,
+    }, { status: 409 })
+  }
+
+  const { count: defaultCount } = await service
+    .from('company_default_approval_templates')
     .select('company_id', { count: 'exact', head: true })
     .eq('template_id', id)
 
-  if (count && count > 0) {
+  if (defaultCount && defaultCount > 0) {
     return Response.json({
-      error: `${count} compan${count > 1 ? 'ies are' : 'y is'} still using "${template.name}". Unlink them before deleting.`,
+      error: `"${template.name}" is the default for ${defaultCount} compan${defaultCount > 1 ? 'ies' : 'y'}. Change their default before deleting.`,
     }, { status: 409 })
   }
 

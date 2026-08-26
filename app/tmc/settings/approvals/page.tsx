@@ -1,12 +1,14 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import TmcShell from '@/app/components/TmcShell'
+
+// NOTE: no TmcShell here. app/tmc/settings/layout.tsx already supplies the
+// Settings sidebar and page chrome for everything under /tmc/settings —
+// wrapping again nests a second sidebar inside the first.
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface Company { id: string; name: string }
-interface Band { code: string; label: string; rank: number }
 
 type ApproverType = 'manager' | 'finance_role' | 'specific_user' | 'admin' | 'self' | 'any_manager_at'
 type ChainMode = 'sequential' | 'parallel'
@@ -29,40 +31,33 @@ interface Template {
   mode: ChainMode
   quorum: ChainQuorum
   tiers: ChainTier[]
-  bandRanks: number[]
-  companyCount: number
+  employeeCount: number
+  defaultForCompanies: number
   version: number
 }
 
-interface CompanyLink {
-  templateId: string
-  assignedAt: string
-  template: {
-    id: string
-    name: string
-    code: string | null
-    category: string
-    mode: ChainMode
-    quorum: ChainQuorum
-    bandRanks: number[]
-  } | null
+interface RosterEmployee {
+  id: string
+  full_name: string
+  email: string
+  band_code: string | null
+  status: string
+  assignments: Record<string, string | null>
 }
-
-interface CompanyEmployee { id: string; full_name: string; email: string }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const CATEGORIES: { value: string; label: string; hint: string }[] = [
-  { value: 'flights_hotels', label: 'Flights & hotels', hint: 'Flight and hotel bookings' },
-  { value: 'misc', label: 'Everything else', hint: 'Car rental, expenses, anything else' },
+const CATEGORIES: { value: string; label: string }[] = [
+  { value: 'flights_hotels', label: 'Flights & hotels' },
+  { value: 'misc', label: 'Everything else' },
 ]
 
-const APPROVER_TYPES: { value: ApproverType; label: string; needs?: 'user' | 'rank' }[] = [
-  { value: 'manager',        label: "The traveller's manager" },
-  { value: 'any_manager_at', label: 'Any manager at rank…', needs: 'rank' },
+const APPROVER_TYPES: { value: ApproverType; label: string }[] = [
+  { value: 'manager',        label: "The traveller's own manager" },
+  { value: 'any_manager_at', label: 'Any manager at rank…' },
   { value: 'finance_role',   label: 'Finance' },
   { value: 'admin',          label: 'Company admin' },
-  { value: 'specific_user',  label: 'A specific person…', needs: 'user' },
+  { value: 'specific_user',  label: 'A specific person…' },
   { value: 'self',           label: 'No review needed (auto-approve)' },
 ]
 
@@ -72,81 +67,42 @@ const VERDICTS: { value: 'green' | 'amber' | 'red'; label: string }[] = [
   { value: 'red',   label: 'Red only' },
 ]
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-// Accepts "1-3, 7" / "1 4 7" / "2". Unparseable chunks are dropped rather than
-// rejected, so a half-typed value doesn't throw mid-edit.
-function parseRankSpec(spec: string): number[] {
-  const ranks = new Set<number>()
-  for (const chunk of spec.split(/[,\s]+/)) {
-    if (!chunk) continue
-    const range = chunk.match(/^(\d+)\s*[-–]\s*(\d+)$/)
-    if (range) {
-      const from = Number(range[1]); const to = Number(range[2])
-      if (from <= to && to - from <= 50) for (let r = from; r <= to; r++) ranks.add(r)
-      continue
-    }
-    const single = Number(chunk)
-    if (Number.isInteger(single) && single >= 0) ranks.add(single)
-  }
-  return Array.from(ranks).sort((a, b) => a - b)
+function emptyTier(n: number): ChainTier {
+  return { tier: n, approver_type: 'manager', min_verdict: 'amber' }
 }
 
-function ranksLabel(bandRanks: number[]): string {
-  if (bandRanks.length === 0) return 'No ranks yet'
-  const parts: string[] = []
-  let runStart = bandRanks[0]
-  let previous = bandRanks[0]
-  for (let i = 1; i <= bandRanks.length; i++) {
-    const current = bandRanks[i]
-    if (current === previous + 1) { previous = current; continue }
-    if (runStart === previous) parts.push(String(runStart))
-    else if (previous === runStart + 1) parts.push(`${runStart}, ${previous}`)
-    else parts.push(`${runStart}–${previous}`)
-    runStart = current; previous = current
-  }
-  return `${bandRanks.length === 1 ? 'Rank' : 'Ranks'} ${parts.join(', ')}`
-}
-
-function emptyTier(nextNumber: number): ChainTier {
-  return { tier: nextNumber, approver_type: 'manager', min_verdict: 'amber' }
-}
-
-function categoryLabel(value: string): string {
-  return CATEGORIES.find(c => c.value === value)?.label ?? value
+function categoryLabel(v: string): string {
+  return CATEGORIES.find(c => c.value === v)?.label ?? v
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function TmcApprovalsPage() {
-  const [tab, setTab] = useState<'templates' | 'companies'>('templates')
+  const [tab, setTab] = useState<'templates' | 'assignments'>('templates')
 
   const [templates, setTemplates] = useState<Template[]>([])
   const [selectedId, setSelectedId] = useState('')
   const [loadingTemplates, setLoadingTemplates] = useState(true)
 
-  // Draft state for the selected template's editor.
   const [draftTiers, setDraftTiers] = useState<ChainTier[]>([])
   const [draftMode, setDraftMode] = useState<ChainMode>('sequential')
   const [draftQuorum, setDraftQuorum] = useState<ChainQuorum>('all')
-  const [draftRanks, setDraftRanks] = useState('')
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
 
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ name: '', code: '', category: 'flights_hotels', rankSpec: '' })
+  const [form, setForm] = useState({ name: '', code: '', category: 'flights_hotels' })
   const [creating, setCreating] = useState(false)
 
   const [companies, setCompanies] = useState<Company[]>([])
-  const [selectedCompanyId, setSelectedCompanyId] = useState('')
-  const [links, setLinks] = useState<CompanyLink[]>([])
-  const [companyBands, setCompanyBands] = useState<Band[]>([])
-  const [linkTemplateId, setLinkTemplateId] = useState('')
-  const [loadingLinks, setLoadingLinks] = useState(false)
-  const [linking, setLinking] = useState(false)
-
-  // Only needed for 'specific_user' tiers, and only meaningful per company.
-  const [employees, setEmployees] = useState<CompanyEmployee[]>([])
+  const [companyId, setCompanyId] = useState('')
+  const [category, setCategory] = useState('flights_hotels')
+  const [roster, setRoster] = useState<RosterEmployee[]>([])
+  const [defaults, setDefaults] = useState<Record<string, string | null>>({})
+  const [selectedEmployees, setSelectedEmployees] = useState<Set<string>>(new Set())
+  const [bulkTemplateId, setBulkTemplateId] = useState('')
+  const [loadingRoster, setLoadingRoster] = useState(false)
+  const [busy, setBusy] = useState(false)
 
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -163,30 +119,30 @@ export default function TmcApprovalsPage() {
   useEffect(() => { loadTemplates() }, [])
 
   useEffect(() => {
-    if (tab !== 'companies' || companies.length > 0) return
+    if (tab !== 'assignments' || companies.length > 0) return
     fetch('/api/tmc/companies').then(r => r.json())
       .then(d => { if (d.ok) setCompanies(d.companies) })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab])
 
   useEffect(() => {
-    if (!selectedCompanyId) { setLinks([]); setCompanyBands([]); setEmployees([]); return }
-    loadLinks(selectedCompanyId)
-    fetch(`/api/tmc/employees?companyId=${selectedCompanyId}`).then(r => r.json())
-      .then(d => { if (d.ok) setEmployees(d.employees) })
+    if (!companyId) { setRoster([]); setDefaults({}); return }
+    loadRoster(companyId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCompanyId])
+  }, [companyId])
 
-  // Reset the editor whenever a different template is selected.
   useEffect(() => {
-    if (!selected) { setDraftTiers([]); setDraftRanks(''); setDirty(false); return }
+    if (!selected) { setDraftTiers([]); setDirty(false); return }
     setDraftTiers(selected.tiers)
     setDraftMode(selected.mode)
     setDraftQuorum(selected.quorum)
-    setDraftRanks(selected.bandRanks.join(', '))
     setDirty(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId])
+
+  // Clearing the selection when the category changes avoids carrying a
+  // multi-select from one category's routing into another's.
+  useEffect(() => { setSelectedEmployees(new Set()); setBulkTemplateId('') }, [category, companyId])
 
   async function loadTemplates() {
     setLoadingTemplates(true); setError('')
@@ -197,13 +153,13 @@ export default function TmcApprovalsPage() {
     } finally { setLoadingTemplates(false) }
   }
 
-  async function loadLinks(companyId: string) {
-    setLoadingLinks(true); setError('')
+  async function loadRoster(id: string) {
+    setLoadingRoster(true); setError('')
     try {
-      const d = await fetch(`/api/tmc/company-approval-templates?companyId=${companyId}`).then(r => r.json())
-      if (!d.ok) { setError(d.error || 'Could not load linked templates.'); return }
-      setLinks(d.links); setCompanyBands(d.bands)
-    } finally { setLoadingLinks(false) }
+      const d = await fetch(`/api/tmc/approval-assignments?companyId=${id}`).then(r => r.json())
+      if (!d.ok) { setError(d.error || 'Could not load the roster.'); return }
+      setRoster(d.employees); setDefaults(d.defaults)
+    } finally { setLoadingRoster(false) }
   }
 
   async function handleCreate(e: React.FormEvent) {
@@ -217,11 +173,10 @@ export default function TmcApprovalsPage() {
           category: form.category,
           mode: 'sequential',
           tiers: [emptyTier(1)],
-          bandRanks: parseRankSpec(form.rankSpec),
         }),
       }).then(r => r.json())
       if (!d.ok) { setError(d.error || 'Could not create template.'); return }
-      setForm({ name: '', code: '', category: 'flights_hotels', rankSpec: '' })
+      setForm({ name: '', code: '', category: 'flights_hotels' })
       setShowForm(false)
       await loadTemplates()
       setSelectedId(d.template.id)
@@ -230,7 +185,7 @@ export default function TmcApprovalsPage() {
   }
 
   async function handleDelete(id: string, name: string) {
-    if (!confirm(`Delete "${name}"? This only works if no companies are using it.`)) return
+    if (!confirm(`Delete "${name}"?`)) return
     setError('')
     const d = await fetch(`/api/tmc/approval-templates/${id}`, { method: 'DELETE' }).then(r => r.json())
     if (!d.ok) { setError(d.error || 'Could not delete template.'); return }
@@ -239,9 +194,9 @@ export default function TmcApprovalsPage() {
     showSuccess('Approval template deleted.')
   }
 
-  // Switching mode rewrites the tier numbers, because the two modes read them
+  // Switching mode renumbers the tiers, because the modes read them
   // differently: sequential walks distinct numbers in order, parallel raises
-  // everything at once and the engine collapses them onto one number anyway.
+  // everything together and the engine collapses them onto one number anyway.
   function switchMode(next: ChainMode) {
     if (next === draftMode) return
     setDraftMode(next)
@@ -255,10 +210,7 @@ export default function TmcApprovalsPage() {
   }
 
   function addTier() {
-    setDraftTiers(prev => [
-      ...prev,
-      emptyTier(draftMode === 'parallel' ? 1 : prev.length + 1),
-    ])
+    setDraftTiers(prev => [...prev, emptyTier(draftMode === 'parallel' ? 1 : prev.length + 1)])
     setDirty(true)
   }
 
@@ -275,12 +227,7 @@ export default function TmcApprovalsPage() {
     try {
       const d = await fetch(`/api/tmc/approval-templates/${selected.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mode: draftMode,
-          quorum: draftQuorum,
-          tiers: draftTiers,
-          bandRanks: parseRankSpec(draftRanks),
-        }),
+        body: JSON.stringify({ mode: draftMode, quorum: draftQuorum, tiers: draftTiers }),
       }).then(r => r.json())
       if (!d.ok) { setError(d.error || 'Could not save template.'); return }
       await loadTemplates()
@@ -289,471 +236,450 @@ export default function TmcApprovalsPage() {
     } finally { setSaving(false) }
   }
 
-  async function handleLink() {
-    if (!selectedCompanyId || !linkTemplateId) return
-    setLinking(true); setError('')
+  async function assign(templateId: string | null, employeeIds?: string[]) {
+    setBusy(true); setError('')
     try {
-      const d = await fetch('/api/tmc/company-approval-templates', {
+      const d = await fetch('/api/tmc/approval-assignments', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ companyId: selectedCompanyId, templateId: linkTemplateId }),
+        body: JSON.stringify({ companyId, category, templateId, employeeIds }),
       }).then(r => r.json())
-      if (!d.ok) { setError(d.error || 'Could not link template.'); return }
-      setLinkTemplateId('')
-      await loadLinks(selectedCompanyId)
+      if (!d.ok) { setError(d.error || 'Could not save assignment.'); return false }
+      await loadRoster(companyId)
       loadTemplates()
-      showSuccess('Approval template linked.')
-    } finally { setLinking(false) }
+      return true
+    } finally { setBusy(false) }
   }
 
-  async function handleUnlink(templateId: string, name: string) {
-    if (!confirm(`Unlink "${name}"? Employees at its ranks will have no approval route for that category.`)) return
-    setError('')
-    const d = await fetch(
-      `/api/tmc/company-approval-templates?companyId=${selectedCompanyId}&templateId=${templateId}`,
-      { method: 'DELETE' }
-    ).then(r => r.json())
-    if (!d.ok) { setError(d.error || 'Could not unlink template.'); return }
-    await loadLinks(selectedCompanyId)
-    loadTemplates()
-    showSuccess('Approval template unlinked.')
+  async function handleBulkAssign() {
+    if (selectedEmployees.size === 0) return
+    const ids = Array.from(selectedEmployees)
+    const ok = await assign(bulkTemplateId || null, ids)
+    if (ok) {
+      setSelectedEmployees(new Set())
+      setBulkTemplateId('')
+      showSuccess(
+        bulkTemplateId
+          ? `Assigned ${ids.length} employee${ids.length === 1 ? '' : 's'}.`
+          : `Reset ${ids.length} employee${ids.length === 1 ? '' : 's'} to the company default.`
+      )
+    }
   }
 
-  const linkedIds = new Set(links.map(l => l.templateId))
-  const linkable = templates.filter(t => !linkedIds.has(t.id))
+  function toggleEmployee(id: string) {
+    setSelectedEmployees(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
 
-  // Coverage gaps, per category — the whole point of showing bands here. An
-  // uncovered band means those employees book with no approval at all, which
-  // is worth stating plainly rather than leaving to be inferred.
-  const gaps = CATEGORIES.map(cat => {
-    const covered = new Set(
-      links
-        .filter(l => l.template?.category === cat.value)
-        .flatMap(l => l.template?.bandRanks ?? [])
-    )
-    return { category: cat, uncovered: companyBands.filter(b => !covered.has(b.rank)) }
-  }).filter(g => g.uncovered.length > 0)
+  const categoryTemplates = templates.filter(t => t.category === category)
+  const defaultTemplateId = defaults[category] ?? ''
+  const allSelected = roster.length > 0 && selectedEmployees.size === roster.length
+  const unroutedCount = defaultTemplateId
+    ? 0
+    : roster.filter(e => !e.assignments[category]).length
 
   return (
-    <TmcShell activeLabel="Settings">
-      <div style={s.root}>
-        <div style={s.pageHeader}>
-          <div>
-            <h1 style={s.heading}>Approval routing</h1>
-            <p style={s.sub}>
-              Build reusable approval templates by band rank, then link them to client companies.
-            </p>
-          </div>
+    <div style={s.root}>
+      <div style={s.pageHeader}>
+        <h1 style={s.heading}>Approval routing</h1>
+        <p style={s.sub}>
+          Build reusable approval templates, then assign them per employee.
+        </p>
+      </div>
+
+      <div style={s.tabRow}>
+        <button onClick={() => setTab('templates')} style={{ ...s.tabBtn, ...(tab === 'templates' ? s.tabActive : {}) }}>
+          Templates
+        </button>
+        <button onClick={() => setTab('assignments')} style={{ ...s.tabBtn, ...(tab === 'assignments' ? s.tabActive : {}) }}>
+          Assignments
+        </button>
+      </div>
+
+      {error && (
+        <div style={s.errorBanner}>
+          <span style={s.bannerIcon}>⚠</span> {error}
+          <button onClick={() => setError('')} style={s.bannerClose}>✕</button>
         </div>
+      )}
+      {success && <div style={s.successBanner}><span style={s.bannerIcon}>✓</span> {success}</div>}
 
-        <div style={s.tabRow}>
-          <button onClick={() => setTab('templates')} style={{ ...s.tabBtn, ...(tab === 'templates' ? s.tabActive : {}) }}>
-            Templates
-          </button>
-          <button onClick={() => setTab('companies')} style={{ ...s.tabBtn, ...(tab === 'companies' ? s.tabActive : {}) }}>
-            Company assignments
-          </button>
-        </div>
-
-        {error && (
-          <div style={s.errorBanner}>
-            <span style={s.bannerIcon}>⚠</span> {error}
-            <button onClick={() => setError('')} style={s.bannerClose}>✕</button>
-          </div>
-        )}
-        {success && <div style={s.successBanner}><span style={s.bannerIcon}>✓</span> {success}</div>}
-
-        {/* ══ TEMPLATES ══════════════════════════════════════════════ */}
-        {tab === 'templates' && (
-          <>
-            <div style={s.card}>
-              <div style={s.cardHeader}>
-                <div>
-                  <h2 style={s.cardTitle}>Approval templates</h2>
-                  <p style={s.cardSub}>
-                    One template routes one category for a set of band ranks, and can be reused
-                    across any number of clients.
-                  </p>
-                </div>
-                <button onClick={() => setShowForm(v => !v)} style={s.ghostBtn}>
-                  {showForm ? 'Cancel' : '+ New template'}
-                </button>
-              </div>
-
-              {showForm && (
-                <form onSubmit={handleCreate} style={s.form}>
-                  <input
-                    type="text" required placeholder="Template name — e.g. Standard approval"
-                    value={form.name}
-                    onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
-                    style={{ ...s.input, flex: 2, minWidth: 180 }}
-                    autoFocus
-                  />
-                  <input
-                    type="text" placeholder="Code (optional)"
-                    value={form.code}
-                    onChange={e => setForm(p => ({ ...p, code: e.target.value }))}
-                    style={{ ...s.input, width: 140 }}
-                  />
-                  <select
-                    value={form.category}
-                    onChange={e => setForm(p => ({ ...p, category: e.target.value }))}
-                    style={{ ...s.input, width: 180 }}
-                  >
-                    {CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-                  </select>
-                  <input
-                    type="text" placeholder="Ranks — e.g. 1-3 or 1, 4, 7"
-                    value={form.rankSpec}
-                    onChange={e => setForm(p => ({ ...p, rankSpec: e.target.value }))}
-                    style={{ ...s.input, flex: 1, minWidth: 170 }}
-                  />
-                  <button type="submit" disabled={creating} style={{ ...s.primaryBtn, opacity: creating ? 0.7 : 1 }}>
-                    {creating ? 'Creating…' : 'Create'}
-                  </button>
-                </form>
-              )}
-
-              {loadingTemplates ? (
-                <p style={s.muted}>Loading templates…</p>
-              ) : templates.length === 0 ? (
-                <div style={s.empty}>
-                  <p style={s.emptyTitle}>No approval templates yet</p>
-                  <p style={s.emptyDesc}>Create one to start routing approvals by band rank.</p>
-                </div>
-              ) : (
-                <div style={s.grid}>
-                  {templates.map(t => (
-                    <div
-                      key={t.id}
-                      onClick={() => {
-                        if (dirty && t.id !== selectedId && !confirm('You have unsaved changes. Switch templates and discard them?')) return
-                        setSelectedId(t.id === selectedId ? '' : t.id)
-                      }}
-                      style={{
-                        ...s.templateCard,
-                        borderColor: t.id === selectedId ? '#000835' : '#E5E7EB',
-                        background: t.id === selectedId ? '#F5F7FF' : '#fff',
-                      }}
-                    >
-                      <div style={s.cardTop}>
-                        <span style={s.templateName}>{t.name}</span>
-                        <button
-                          onClick={ev => { ev.stopPropagation(); handleDelete(t.id, t.name) }}
-                          style={s.deleteBtn}
-                          title="Delete template"
-                        >✕</button>
-                      </div>
-                      <div style={s.tagRow}>
-                        <span style={s.catBadge}>{categoryLabel(t.category)}</span>
-                        <span style={s.rankBadge}>{ranksLabel(t.bandRanks)}</span>
-                        <span style={t.mode === 'parallel' ? s.parallelBadge : s.seqBadge}>
-                          {t.mode === 'parallel'
-                            ? `${t.tiers.length} approvers · ${t.quorum === 'any' ? 'any one' : 'all'}`
-                            : `${t.tiers.length}-tier`}
-                        </span>
-                      </div>
-                      <p style={s.cardMeta}>
-                        {t.companyCount === 0
-                          ? 'Not used by any company'
-                          : `Used by ${t.companyCount} compan${t.companyCount === 1 ? 'y' : 'ies'}`}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* ── Editor ─────────────────────────────────────────── */}
-            {selected && (
-              <div style={s.card}>
-                <div style={s.editorTop}>
-                  <div>
-                    <h2 style={s.cardTitle}>
-                      {selected.name} <span style={s.inlineMeta}>· {categoryLabel(selected.category)}</span>
-                    </h2>
-                    <p style={s.cardSub}>Version {selected.version}</p>
-                  </div>
-                  <div style={s.editorActions}>
-                    {dirty && <span style={s.unsavedBadge}>Unsaved changes</span>}
-                    <button
-                      onClick={handleSave}
-                      disabled={saving || !dirty}
-                      style={{ ...s.primaryBtn, opacity: saving || !dirty ? 0.5 : 1, cursor: saving || !dirty ? 'not-allowed' : 'pointer' }}
-                    >
-                      {saving ? 'Saving…' : 'Save →'}
-                    </button>
-                  </div>
-                </div>
-
-                {selected.companyCount > 1 && (
-                  <div style={s.warnBanner}>
-                    This template is shared by <strong>{selected.companyCount} companies</strong>.
-                    Saving changes approval routing for all of them.
-                  </div>
-                )}
-
-                {/* ── Mode toggle ─────────────────────────────────── */}
-                <div style={s.modeRow}>
-                  <div style={s.modeToggle}>
-                    <button
-                      onClick={() => switchMode('sequential')}
-                      style={{ ...s.modeBtn, ...(draftMode === 'sequential' ? s.modeBtnActive : {}) }}
-                    >
-                      Multi-tier
-                    </button>
-                    <button
-                      onClick={() => switchMode('parallel')}
-                      style={{ ...s.modeBtn, ...(draftMode === 'parallel' ? s.modeBtnActive : {}) }}
-                    >
-                      Multiple approvers
-                    </button>
-                  </div>
-
-                  <p style={s.modeHint}>
-                    {draftMode === 'sequential'
-                      ? 'Approvers are asked one after another. Each tier only starts once the previous one approves.'
-                      : 'Every approver is asked at the same time.'}
-                  </p>
-
-                  {draftMode === 'parallel' && (
-                    <div style={s.quorumRow}>
-                      <label style={s.quorumLabel}>Clears when</label>
-                      <select
-                        value={draftQuorum}
-                        onChange={e => { setDraftQuorum(e.target.value as ChainQuorum); setDirty(true) }}
-                        style={{ ...s.input, width: 200 }}
-                      >
-                        <option value="all">Everyone has approved</option>
-                        <option value="any">Any one person approves</option>
-                      </select>
-                      <span style={s.quorumHint}>
-                        A rejection from anyone stops the booking, in either case.
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                {/* ── Coverage ────────────────────────────────────── */}
-                <div style={s.coverageRow}>
-                  <label style={s.coverageLabel}>Covers ranks</label>
-                  <input
-                    type="text"
-                    value={draftRanks}
-                    onChange={e => { setDraftRanks(e.target.value); setDirty(true) }}
-                    placeholder="e.g. 1-3 or 1, 4, 7"
-                    style={{ ...s.input, flex: 1, minWidth: 160 }}
-                  />
-                  <span style={s.coverageHint}>
-                    {draftRanks.trim() ? ranksLabel(parseRankSpec(draftRanks)) : 'Covers nobody until set'}
-                  </span>
-                </div>
-
-                {/* ── Approvers ───────────────────────────────────── */}
-                <div style={s.tierList}>
-                  {draftTiers.map((tier, i) => (
-                    <div key={i} style={s.tierRow}>
-                      <span style={s.tierNumber}>
-                        {draftMode === 'sequential' ? `Tier ${i + 1}` : `#${i + 1}`}
-                      </span>
-
-                      <select
-                        value={tier.approver_type}
-                        onChange={e => updateTier(i, {
-                          approver_type: e.target.value as ApproverType,
-                          approver_user_id: null,
-                          min_band_rank: null,
-                        })}
-                        style={{ ...s.input, flex: 1, minWidth: 190 }}
-                      >
-                        {APPROVER_TYPES.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
-                      </select>
-
-                      {tier.approver_type === 'specific_user' && (
-                        <select
-                          value={tier.approver_user_id ?? ''}
-                          onChange={e => updateTier(i, { approver_user_id: e.target.value || null })}
-                          style={{ ...s.input, flex: 1, minWidth: 170 }}
-                        >
-                          <option value="">
-                            {selectedCompanyId ? 'Pick a person…' : 'Select a company first →'}
-                          </option>
-                          {employees.map(emp => (
-                            <option key={emp.id} value={emp.id}>{emp.full_name}</option>
-                          ))}
-                        </select>
-                      )}
-
-                      {tier.approver_type === 'any_manager_at' && (
-                        <input
-                          type="number" min={0} placeholder="Min rank"
-                          value={tier.min_band_rank ?? ''}
-                          onChange={e => updateTier(i, { min_band_rank: e.target.value === '' ? null : Number(e.target.value) })}
-                          style={{ ...s.input, width: 110 }}
-                        />
-                      )}
-
-                      <select
-                        value={tier.min_verdict}
-                        onChange={e => updateTier(i, { min_verdict: e.target.value as ChainTier['min_verdict'] })}
-                        style={{ ...s.input, width: 160 }}
-                      >
-                        {VERDICTS.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
-                      </select>
-
-                      <button
-                        onClick={() => removeTier(i)}
-                        disabled={draftTiers.length === 1}
-                        style={{ ...s.deleteBtn, opacity: draftTiers.length === 1 ? 0.3 : 1 }}
-                        title={draftTiers.length === 1 ? 'A template needs at least one approver' : 'Remove'}
-                      >✕</button>
-                    </div>
-                  ))}
-                </div>
-
-                <button onClick={addTier} style={s.ghostBtn}>
-                  {draftMode === 'sequential' ? '+ Add tier' : '+ Add approver'}
-                </button>
-
-                {draftMode === 'parallel' && draftTiers.length < 2 && (
-                  <p style={s.inlineWarn}>
-                    Multiple approvers needs at least two — add another, or switch back to multi-tier.
-                  </p>
-                )}
-
-                {tab === 'templates' && draftTiers.some(t => t.approver_type === 'specific_user') && !selectedCompanyId && (
-                  <p style={s.inlineWarn}>
-                    A specific person is company-scoped. Pick a company on the Company assignments
-                    tab to choose one.
-                  </p>
-                )}
-              </div>
-            )}
-          </>
-        )}
-
-        {/* ══ COMPANIES ══════════════════════════════════════════════ */}
-        {tab === 'companies' && (
+      {/* ══ TEMPLATES ══════════════════════════════════════════════ */}
+      {tab === 'templates' && (
+        <>
           <div style={s.card}>
             <div style={s.cardHeader}>
               <div>
-                <h2 style={s.cardTitle}>Company assignments</h2>
+                <h2 style={s.cardTitle}>Approval templates</h2>
                 <p style={s.cardSub}>
-                  Link templates so every band has an approval route in each category.
-                  Within a category, two templates may not cover the same rank.
+                  A template is the shape of a chain — who approves, in what order, from
+                  which verdict. Who it applies to is set on the Assignments tab.
                 </p>
               </div>
+              <button onClick={() => setShowForm(v => !v)} style={s.ghostBtn}>
+                {showForm ? 'Cancel' : '+ New template'}
+              </button>
             </div>
 
-            <div style={{ ...s.field, maxWidth: 320, marginBottom: 20 }}>
+            {showForm && (
+              <form onSubmit={handleCreate} style={s.form}>
+                <input
+                  type="text" required placeholder="Template name — e.g. Manager then finance"
+                  value={form.name}
+                  onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
+                  style={{ ...s.input, flex: 2, minWidth: 200 }}
+                  autoFocus
+                />
+                <input
+                  type="text" placeholder="Code (optional)"
+                  value={form.code}
+                  onChange={e => setForm(p => ({ ...p, code: e.target.value }))}
+                  style={{ ...s.input, width: 140 }}
+                />
+                <select
+                  value={form.category}
+                  onChange={e => setForm(p => ({ ...p, category: e.target.value }))}
+                  style={{ ...s.input, width: 180 }}
+                >
+                  {CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+                </select>
+                <button type="submit" disabled={creating} style={{ ...s.primaryBtn, opacity: creating ? 0.7 : 1 }}>
+                  {creating ? 'Creating…' : 'Create'}
+                </button>
+              </form>
+            )}
+
+            {loadingTemplates ? (
+              <p style={s.muted}>Loading templates…</p>
+            ) : templates.length === 0 ? (
+              <div style={s.empty}>
+                <p style={s.emptyTitle}>No approval templates yet</p>
+                <p style={s.emptyDesc}>Create one, then assign it to employees.</p>
+              </div>
+            ) : (
+              <div style={s.grid}>
+                {templates.map(t => (
+                  <div
+                    key={t.id}
+                    onClick={() => {
+                      if (dirty && t.id !== selectedId && !confirm('You have unsaved changes. Switch templates and discard them?')) return
+                      setSelectedId(t.id === selectedId ? '' : t.id)
+                    }}
+                    style={{
+                      ...s.templateCard,
+                      borderColor: t.id === selectedId ? '#000835' : '#E5E7EB',
+                      background: t.id === selectedId ? '#F5F7FF' : '#fff',
+                    }}
+                  >
+                    <div style={s.cardTop}>
+                      <span style={s.templateName}>{t.name}</span>
+                      <button
+                        onClick={ev => { ev.stopPropagation(); handleDelete(t.id, t.name) }}
+                        style={s.deleteBtn}
+                        title="Delete template"
+                      >✕</button>
+                    </div>
+                    <div style={s.tagRow}>
+                      <span style={s.catBadge}>{categoryLabel(t.category)}</span>
+                      <span style={t.mode === 'parallel' ? s.parallelBadge : s.seqBadge}>
+                        {t.mode === 'parallel'
+                          ? `${t.tiers.length} approvers · ${t.quorum === 'any' ? 'any one' : 'all'}`
+                          : `${t.tiers.length}-tier`}
+                      </span>
+                    </div>
+                    <p style={s.cardMeta}>
+                      {t.employeeCount === 0 && t.defaultForCompanies === 0
+                        ? 'Not assigned to anyone'
+                        : [
+                            t.employeeCount > 0 ? `${t.employeeCount} employee${t.employeeCount === 1 ? '' : 's'}` : null,
+                            t.defaultForCompanies > 0 ? `default at ${t.defaultForCompanies}` : null,
+                          ].filter(Boolean).join(' · ')}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {selected && (
+            <div style={s.card}>
+              <div style={s.editorTop}>
+                <div>
+                  <h2 style={s.cardTitle}>
+                    {selected.name} <span style={s.inlineMeta}>· {categoryLabel(selected.category)}</span>
+                  </h2>
+                  <p style={s.cardSub}>Version {selected.version}</p>
+                </div>
+                <div style={s.editorActions}>
+                  {dirty && <span style={s.unsavedBadge}>Unsaved changes</span>}
+                  <button
+                    onClick={handleSave}
+                    disabled={saving || !dirty}
+                    style={{ ...s.primaryBtn, opacity: saving || !dirty ? 0.5 : 1, cursor: saving || !dirty ? 'not-allowed' : 'pointer' }}
+                  >
+                    {saving ? 'Saving…' : 'Save →'}
+                  </button>
+                </div>
+              </div>
+
+              {selected.employeeCount > 1 && (
+                <div style={s.warnBanner}>
+                  <strong>{selected.employeeCount} employees</strong> route through this template.
+                  Saving changes approval for all of them.
+                </div>
+              )}
+
+              {/* ── Mode toggle ─────────────────────────────────── */}
+              <div style={s.modeRow}>
+                <div style={s.modeToggle}>
+                  <button
+                    onClick={() => switchMode('sequential')}
+                    style={{ ...s.modeBtn, ...(draftMode === 'sequential' ? s.modeBtnActive : {}) }}
+                  >
+                    Multi-tier
+                  </button>
+                  <button
+                    onClick={() => switchMode('parallel')}
+                    style={{ ...s.modeBtn, ...(draftMode === 'parallel' ? s.modeBtnActive : {}) }}
+                  >
+                    Multiple approvers
+                  </button>
+                </div>
+
+                <p style={s.modeHint}>
+                  {draftMode === 'sequential'
+                    ? 'Approvers are asked one after another. Each tier only starts once the previous one approves.'
+                    : 'Every approver is asked at the same time.'}
+                </p>
+
+                {draftMode === 'parallel' && (
+                  <div style={s.quorumRow}>
+                    <label style={s.quorumLabel}>Clears when</label>
+                    <select
+                      value={draftQuorum}
+                      onChange={e => { setDraftQuorum(e.target.value as ChainQuorum); setDirty(true) }}
+                      style={{ ...s.input, width: 210 }}
+                    >
+                      <option value="all">Everyone has approved</option>
+                      <option value="any">Any one person approves</option>
+                    </select>
+                    <span style={s.quorumHint}>A rejection from anyone stops the booking, either way.</span>
+                  </div>
+                )}
+              </div>
+
+              <div style={s.tierList}>
+                {draftTiers.map((tier, i) => (
+                  <div key={i} style={s.tierRow}>
+                    <span style={s.tierNumber}>
+                      {draftMode === 'sequential' ? `Tier ${i + 1}` : `#${i + 1}`}
+                    </span>
+
+                    <select
+                      value={tier.approver_type}
+                      onChange={e => updateTier(i, {
+                        approver_type: e.target.value as ApproverType,
+                        approver_user_id: null,
+                        min_band_rank: null,
+                      })}
+                      style={{ ...s.input, flex: 1, minWidth: 200 }}
+                    >
+                      {APPROVER_TYPES.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
+                    </select>
+
+                    {tier.approver_type === 'any_manager_at' && (
+                      <input
+                        type="number" min={0} placeholder="Min rank"
+                        value={tier.min_band_rank ?? ''}
+                        onChange={e => updateTier(i, { min_band_rank: e.target.value === '' ? null : Number(e.target.value) })}
+                        style={{ ...s.input, width: 110 }}
+                      />
+                    )}
+
+                    <select
+                      value={tier.min_verdict}
+                      onChange={e => updateTier(i, { min_verdict: e.target.value as ChainTier['min_verdict'] })}
+                      style={{ ...s.input, width: 160 }}
+                    >
+                      {VERDICTS.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
+                    </select>
+
+                    <button
+                      onClick={() => removeTier(i)}
+                      disabled={draftTiers.length === 1}
+                      style={{ ...s.deleteBtn, opacity: draftTiers.length === 1 ? 0.3 : 1 }}
+                    >✕</button>
+                  </div>
+                ))}
+              </div>
+
+              <button onClick={addTier} style={s.ghostBtn}>
+                {draftMode === 'sequential' ? '+ Add tier' : '+ Add approver'}
+              </button>
+
+              {draftMode === 'parallel' && draftTiers.length < 2 && (
+                <p style={s.inlineWarn}>
+                  Multiple approvers needs at least two — add another, or switch back to multi-tier.
+                </p>
+              )}
+
+              {draftTiers.some(t => t.approver_type === 'specific_user') && (
+                <p style={s.inlineWarn}>
+                  &quot;A specific person&quot; names one individual, so a template using it only makes
+                  sense for one company. Prefer &quot;the traveller&apos;s own manager&quot; on shared templates.
+                </p>
+              )}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ══ ASSIGNMENTS ════════════════════════════════════════════ */}
+      {tab === 'assignments' && (
+        <div style={s.card}>
+          <div style={s.cardHeader}>
+            <div>
+              <h2 style={s.cardTitle}>Who routes where</h2>
+              <p style={s.cardSub}>
+                Assign per employee — people on the same band often report to different
+                managers. Anyone left unassigned follows the company default.
+              </p>
+            </div>
+          </div>
+
+          <div style={s.filterRow}>
+            <div style={s.field}>
               <label style={s.label}>Company</label>
-              <select
-                value={selectedCompanyId}
-                onChange={e => setSelectedCompanyId(e.target.value)}
-                style={s.input}
-              >
+              <select value={companyId} onChange={e => setCompanyId(e.target.value)} style={{ ...s.input, width: 240 }}>
                 <option value="">Select a company…</option>
                 {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
+            <div style={s.field}>
+              <label style={s.label}>Category</label>
+              <select value={category} onChange={e => setCategory(e.target.value)} style={{ ...s.input, width: 200 }}>
+                {CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+              </select>
+            </div>
+          </div>
 
-            {selectedCompanyId && (
-              <>
-                {gaps.length > 0 && (
-                  <div style={s.warnBanner}>
-                    <strong>Some bands have no approval route.</strong>
-                    <ul style={s.gapList}>
-                      {gaps.map(g => (
-                        <li key={g.category.value}>
-                          <strong>{g.category.label}</strong> — {g.uncovered.map(b => `${b.code} (${b.label})`).join(', ')}
-                        </li>
-                      ))}
-                    </ul>
-                    Bookings by these employees proceed without any approval.
-                  </div>
-                )}
+          {companyId && (
+            <>
+              <div style={s.defaultRow}>
+                <label style={s.label}>Company default</label>
+                <select
+                  value={defaultTemplateId}
+                  onChange={e => assign(e.target.value || null).then(ok => {
+                    if (ok) showSuccess(e.target.value ? 'Company default set.' : 'Company default cleared.')
+                  })}
+                  disabled={busy}
+                  style={{ ...s.input, flex: 1, minWidth: 220 }}
+                >
+                  <option value="">No default — unassigned employees skip approval</option>
+                  {categoryTemplates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </div>
 
-                <div style={s.linkRow}>
-                  <select
-                    value={linkTemplateId}
-                    onChange={e => setLinkTemplateId(e.target.value)}
-                    style={{ ...s.input, flex: 1 }}
-                  >
-                    <option value="">Select a template to link…</option>
-                    {linkable.map(t => (
-                      <option key={t.id} value={t.id}>
-                        {t.name} · {categoryLabel(t.category)} · {ranksLabel(t.bandRanks)}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={handleLink}
-                    disabled={!linkTemplateId || linking}
-                    style={{ ...s.primaryBtn, opacity: !linkTemplateId || linking ? 0.5 : 1 }}
-                  >
-                    {linking ? 'Linking…' : 'Link template'}
-                  </button>
+              {unroutedCount > 0 && (
+                <div style={s.warnBanner}>
+                  <strong>{unroutedCount} employee{unroutedCount === 1 ? '' : 's'}</strong> have no
+                  approval route for {categoryLabel(category).toLowerCase()}, and there is no company
+                  default. Their bookings proceed without any approval.
                 </div>
+              )}
 
-                {loadingLinks ? (
-                  <p style={s.muted}>Loading…</p>
-                ) : links.length === 0 ? (
-                  <div style={s.empty}>
-                    <p style={s.emptyTitle}>No approval templates linked</p>
-                    <p style={s.emptyDesc}>
-                      Every booking from this company proceeds without approval until one is linked.
-                    </p>
-                  </div>
-                ) : (
-                  <div style={s.tableWrap}>
-                    <table style={s.table}>
-                      <thead>
-                        <tr>
-                          {['Template', 'Category', 'Ranks', 'Routing', ''].map(h => (
-                            <th key={h} style={s.th}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {links.map((l, i) => (
-                          <tr key={l.templateId} style={{ background: i % 2 === 0 ? '#fff' : '#FAFAFA' }}>
-                            <td style={{ ...s.td, fontWeight: 500, color: '#111827' }}>
-                              {l.template?.name ?? '—'}
+              {selectedEmployees.size > 0 && (
+                <div style={s.bulkBar}>
+                  <span style={s.bulkCount}>{selectedEmployees.size} selected</span>
+                  <select
+                    value={bulkTemplateId}
+                    onChange={e => setBulkTemplateId(e.target.value)}
+                    style={{ ...s.input, flex: 1, minWidth: 200 }}
+                  >
+                    <option value="">Use the company default</option>
+                    {categoryTemplates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                  <button onClick={handleBulkAssign} disabled={busy} style={s.primaryBtn}>
+                    {busy ? 'Applying…' : 'Apply to selected'}
+                  </button>
+                  <button onClick={() => setSelectedEmployees(new Set())} style={s.ghostBtn}>Clear</button>
+                </div>
+              )}
+
+              {loadingRoster ? (
+                <p style={s.muted}>Loading roster…</p>
+              ) : roster.length === 0 ? (
+                <div style={s.empty}>
+                  <p style={s.emptyTitle}>No employees</p>
+                  <p style={s.emptyDesc}>Employees added to this company will appear here.</p>
+                </div>
+              ) : (
+                <div style={s.tableWrap}>
+                  <table style={s.table}>
+                    <thead>
+                      <tr>
+                        <th style={{ ...s.th, width: 34 }}>
+                          <input
+                            type="checkbox"
+                            checked={allSelected}
+                            onChange={() => setSelectedEmployees(allSelected ? new Set() : new Set(roster.map(e => e.id)))}
+                          />
+                        </th>
+                        {['Employee', 'Band', 'Approval route'].map(h => <th key={h} style={s.th}>{h}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {roster.map((emp, i) => {
+                        const assigned = emp.assignments[category]
+                        return (
+                          <tr key={emp.id} style={{ background: i % 2 === 0 ? '#fff' : '#FAFAFA' }}>
+                            <td style={s.td}>
+                              <input
+                                type="checkbox"
+                                checked={selectedEmployees.has(emp.id)}
+                                onChange={() => toggleEmployee(emp.id)}
+                              />
                             </td>
                             <td style={s.td}>
-                              {l.template && <span style={s.catBadge}>{categoryLabel(l.template.category)}</span>}
+                              <div style={s.empName}>{emp.full_name}</div>
+                              <div style={s.empEmail}>{emp.email}</div>
                             </td>
                             <td style={s.td}>
-                              {l.template && <span style={s.rankBadge}>{ranksLabel(l.template.bandRanks)}</span>}
+                              {emp.band_code
+                                ? <span style={s.bandBadge}>{emp.band_code}</span>
+                                : <span style={s.muted}>—</span>}
                             </td>
                             <td style={s.td}>
-                              {l.template && (
-                                <span style={l.template.mode === 'parallel' ? s.parallelBadge : s.seqBadge}>
-                                  {l.template.mode === 'parallel'
-                                    ? `Parallel · ${l.template.quorum === 'any' ? 'any one' : 'all'}`
-                                    : 'Multi-tier'}
-                                </span>
-                              )}
-                            </td>
-                            <td style={{ ...s.td, textAlign: 'right' as const }}>
-                              <button
-                                onClick={() => handleUnlink(l.templateId, l.template?.name ?? 'this template')}
-                                style={s.unlinkBtn}
+                              <select
+                                value={assigned ?? ''}
+                                onChange={e => assign(e.target.value || null, [emp.id]).then(ok => {
+                                  if (ok) showSuccess(`${emp.full_name} updated.`)
+                                })}
+                                disabled={busy}
+                                style={{ ...s.input, height: 32, minWidth: 210 }}
                               >
-                                Unlink
-                              </button>
+                                <option value="">
+                                  {defaultTemplateId
+                                    ? `Company default (${categoryTemplates.find(t => t.id === defaultTemplateId)?.name ?? '—'})`
+                                    : 'No approval required'}
+                                </option>
+                                {categoryTemplates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                              </select>
                             </td>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        )}
-      </div>
-    </TmcShell>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -772,10 +698,9 @@ const s: Record<string, React.CSSProperties> = {
   errorBanner: { display: 'flex', alignItems: 'center', gap: 8, background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#DC2626', marginBottom: 16 },
   successBanner: { display: 'flex', alignItems: 'center', gap: 8, background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#065F46', marginBottom: 16 },
   warnBanner: { background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 8, padding: '12px 14px', fontSize: 12, color: '#92400E', marginBottom: 16, lineHeight: 1.6 },
-  gapList: { margin: '6px 0', paddingLeft: 18 },
   bannerIcon: { fontSize: 14, flexShrink: 0 },
   bannerClose: { marginLeft: 'auto', background: 'transparent', border: 'none', color: '#DC2626', cursor: 'pointer', fontSize: 13 },
-  inlineWarn: { fontSize: 11, color: '#92400E', margin: '10px 0 0' },
+  inlineWarn: { fontSize: 11, color: '#92400E', margin: '10px 0 0', lineHeight: 1.5 },
 
   card: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: 12, padding: 20, marginBottom: 16 },
   cardHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, gap: 16 },
@@ -785,13 +710,17 @@ const s: Record<string, React.CSSProperties> = {
   inlineMeta: { fontSize: 12, fontWeight: 400, color: '#9CA3AF' },
 
   form: { display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' },
+  filterRow: { display: 'flex', gap: 16, marginBottom: 18, flexWrap: 'wrap' },
   field: { display: 'flex', flexDirection: 'column', gap: 6 },
   label: { fontSize: 11, fontWeight: 600, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.6px' },
   input: { height: 38, padding: '0 10px', fontSize: 13, color: '#111827', background: '#fff', border: '1px solid #D1D5DB', borderRadius: 7, outline: 'none' },
   ghostBtn: { height: 34, padding: '0 14px', background: '#fff', color: '#374151', fontSize: 12, fontWeight: 500, border: '1px solid #D1D5DB', borderRadius: 7, cursor: 'pointer', whiteSpace: 'nowrap' },
   primaryBtn: { height: 36, padding: '0 18px', background: '#000835', color: '#fff', fontSize: 13, fontWeight: 600, border: 'none', borderRadius: 7, cursor: 'pointer', whiteSpace: 'nowrap' },
-  unlinkBtn: { height: 28, padding: '0 12px', background: '#fff', color: '#DC2626', fontSize: 12, fontWeight: 500, border: '1px solid #FECACA', borderRadius: 6, cursor: 'pointer' },
   deleteBtn: { background: 'transparent', border: 'none', color: '#9CA3AF', cursor: 'pointer', fontSize: 12, padding: '0 2px', flexShrink: 0 },
+
+  defaultRow: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16, padding: '12px 14px', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 8 },
+  bulkBar: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16, padding: '12px 14px', background: '#F5F7FF', border: '1px solid #C7D2FE', borderRadius: 8 },
+  bulkCount: { fontSize: 12, fontWeight: 600, color: '#000835', whiteSpace: 'nowrap' },
 
   empty: { padding: '24px 0', textAlign: 'center' },
   emptyTitle: { fontSize: 13, fontWeight: 600, color: '#374151', margin: '0 0 4px' },
@@ -804,9 +733,9 @@ const s: Record<string, React.CSSProperties> = {
   templateName: { fontSize: 13, fontWeight: 600, color: '#111827', flex: 1 },
   tagRow: { display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 },
   catBadge: { display: 'inline-block', padding: '2px 7px', background: '#F0FDF4', color: '#14532D', fontSize: 10, fontWeight: 600, borderRadius: 4 },
-  rankBadge: { display: 'inline-block', padding: '2px 7px', background: '#EEF2FF', color: '#3730A3', fontSize: 10, fontWeight: 600, borderRadius: 4 },
   seqBadge: { display: 'inline-block', padding: '2px 7px', background: '#F3F4F6', color: '#4B5563', fontSize: 10, fontWeight: 600, borderRadius: 4 },
   parallelBadge: { display: 'inline-block', padding: '2px 7px', background: '#FFF7ED', color: '#7C2D12', fontSize: 10, fontWeight: 600, borderRadius: 4 },
+  bandBadge: { display: 'inline-block', padding: '2px 7px', background: '#EEF2FF', color: '#3730A3', fontSize: 10, fontWeight: 700, borderRadius: 4 },
 
   editorTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, gap: 16 },
   editorActions: { display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 },
@@ -821,17 +750,14 @@ const s: Record<string, React.CSSProperties> = {
   quorumLabel: { fontSize: 11, fontWeight: 600, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.6px' },
   quorumHint: { fontSize: 11, color: '#9CA3AF' },
 
-  coverageRow: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 },
-  coverageLabel: { fontSize: 11, fontWeight: 600, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.6px' },
-  coverageHint: { fontSize: 11, color: '#9CA3AF' },
-
   tierList: { display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 12 },
   tierRow: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' },
   tierNumber: { fontSize: 11, fontWeight: 700, color: '#3730A3', background: '#EEF2FF', borderRadius: 4, padding: '4px 8px', minWidth: 54, textAlign: 'center' },
 
-  linkRow: { display: 'flex', gap: 10, marginBottom: 20, alignItems: 'center', flexWrap: 'wrap' },
   tableWrap: { overflowX: 'auto' },
   table: { borderCollapse: 'collapse', width: '100%' },
   th: { padding: '8px 12px', textAlign: 'left', background: '#F9FAFB', borderBottom: '1px solid #E5E7EB', whiteSpace: 'nowrap', fontSize: 11, fontWeight: 600, color: '#374151' },
   td: { padding: '8px 12px', borderBottom: '1px solid #F3F4F6', fontSize: 12, verticalAlign: 'middle' },
+  empName: { fontSize: 13, fontWeight: 500, color: '#111827' },
+  empEmail: { fontSize: 11, color: '#9CA3AF' },
 }

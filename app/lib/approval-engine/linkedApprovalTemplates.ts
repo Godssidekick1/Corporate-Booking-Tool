@@ -14,98 +14,112 @@ export interface ApprovalTemplate {
   mode: ChainMode
   quorum: ChainQuorum
   tiers: ChainTier[]
-  bandRanks: number[]
 }
 
-// ── getTemplateBandRanks ─────────────────────────────────────────────────────
-// Rank sets for the given templates, as template id -> sorted ranks. Templates
-// with no ranks still get an entry, so callers can distinguish "covers nothing"
-// from "not fetched".
-// ─────────────────────────────────────────────────────────────────────────────
+// Where a resolved template came from. Surfaced so the UI can show an employee
+// is on the company default rather than something chosen for them — the two
+// look identical otherwise, and only one of them changes when the default does.
+export type TemplateSource = 'employee' | 'company_default'
 
-export async function getTemplateBandRanks(
-  service: ServiceClient,
-  templateIds: string[]
-): Promise<Map<string, number[]>> {
-  const byTemplate = new Map<string, number[]>()
-
-  if (templateIds.length === 0) return byTemplate
-
-  const { data: rankRows } = await service
-    .from('approval_template_band_ranks')
-    .select('template_id, band_rank')
-    .in('template_id', templateIds)
-
-  for (const row of rankRows ?? []) {
-    const existing = byTemplate.get(row.template_id)
-    if (existing) existing.push(row.band_rank)
-    else byTemplate.set(row.template_id, [row.band_rank])
-  }
-
-  for (const ranks of byTemplate.values()) ranks.sort((a, b) => a - b)
-  for (const id of templateIds) {
-    if (!byTemplate.has(id)) byTemplate.set(id, [])
-  }
-
-  return byTemplate
+export interface ResolvedTemplate {
+  template: ApprovalTemplate
+  source: TemplateSource
 }
 
-// ── getLinkedApprovalTemplates ───────────────────────────────────────────────
-// Every approval template linked to a company, with its rank coverage.
+const TEMPLATE_COLUMNS = 'id, name, code, category, mode, quorum, tiers'
+
+function toTemplate(row: Record<string, unknown>): ApprovalTemplate {
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    code: (row.code as string | null) ?? null,
+    category: row.category as string,
+    mode: row.mode as ChainMode,
+    quorum: row.quorum as ChainQuorum,
+    tiers: (row.tiers as ChainTier[] | null) ?? [],
+  }
+}
+
+// ── resolveTemplateForEmployee ───────────────────────────────────────────────
+// Which approval template applies to one employee for one category.
 //
-// Fetched as separate queries (links, then templates, then ranks) rather than
-// a Supabase FK-embed, consistent with the rest of this codebase — embed-alias
-// inference isn't relied on anywhere else and this path decides whether a
-// booking needs approval at all.
+// Explicit assignment wins; the company default covers everyone else. Approver
+// routing is deliberately NOT band-derived: two employees at the same rank
+// commonly report to different managers, so a rank-wide route can't express
+// the ordinary case. Bands still matter for WHO may approve — the
+// 'any_manager_at' approver type is rank-scoped — just not for WHICH chain
+// applies.
+//
+// Fetched as separate queries rather than a Supabase FK-embed, consistent with
+// the rest of this codebase: embed-alias inference isn't relied on anywhere
+// else, and this path decides whether a booking needs approval at all.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function getLinkedApprovalTemplates(
+export async function resolveTemplateForEmployee(
   service: ServiceClient,
-  companyId: string
-): Promise<ApprovalTemplate[]> {
-  const { data: links } = await service
-    .from('company_approval_templates')
+  employeeId: string,
+  companyId: string,
+  category: string
+): Promise<ResolvedTemplate | null> {
+  const { data: assignment } = await service
+    .from('employee_approval_templates')
+    .select('template_id')
+    .eq('employee_id', employeeId)
+    .eq('category', category)
+    .maybeSingle()
+
+  if (assignment) {
+    const { data: template } = await service
+      .from('approval_chain_templates')
+      .select(TEMPLATE_COLUMNS)
+      .eq('id', assignment.template_id)
+      .maybeSingle()
+
+    if (template) return { template: toTemplate(template), source: 'employee' }
+  }
+
+  const { data: fallback } = await service
+    .from('company_default_approval_templates')
     .select('template_id')
     .eq('company_id', companyId)
+    .eq('category', category)
+    .maybeSingle()
 
-  const templateIds = (links ?? []).map(l => l.template_id)
+  if (!fallback) return null
 
-  if (templateIds.length === 0) return []
-
-  const { data: templates } = await service
+  const { data: defaultTemplate } = await service
     .from('approval_chain_templates')
-    .select('id, name, code, category, mode, quorum, tiers')
-    .in('id', templateIds)
+    .select(TEMPLATE_COLUMNS)
+    .eq('id', fallback.template_id)
+    .maybeSingle()
 
-  const ranksByTemplate = await getTemplateBandRanks(service, templateIds)
+  if (!defaultTemplate) return null
 
-  return (templates ?? []).map(t => ({
-    id: t.id,
-    name: t.name,
-    code: t.code,
-    category: t.category,
-    mode: t.mode as ChainMode,
-    quorum: t.quorum as ChainQuorum,
-    tiers: (t.tiers as ChainTier[] | null) ?? [],
-    bandRanks: ranksByTemplate.get(t.id) ?? [],
-  }))
+  return { template: toTemplate(defaultTemplate), source: 'company_default' }
 }
 
-// ── templatesCovering ────────────────────────────────────────────────────────
-// Which templates apply to a given category at a given band rank. Category is
-// part of the match, not just the rank: one template for flights_hotels and
-// another for misc at the same rank is the normal arrangement, not a conflict.
-//
-// Returns every match rather than the first — exactly one should apply
-// (enforced by constraint triggers on both company_approval_templates and
-// approval_template_band_ranks), so more than one is a configuration error the
-// caller should surface rather than silently resolve.
+// ── getAssignmentsForCompany ─────────────────────────────────────────────────
+// Every explicit per-employee assignment at a company, as
+// `${employeeId}::${category}` -> templateId. Used by the admin screen to show
+// the whole roster's routing in one table rather than one employee at a time.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function templatesCovering(
-  templates: ApprovalTemplate[],
-  category: string,
-  bandRank: number
-): ApprovalTemplate[] {
-  return templates.filter(t => t.category === category && t.bandRanks.includes(bandRank))
+export async function getAssignmentsForCompany(
+  service: ServiceClient,
+  employeeIds: string[]
+): Promise<Map<string, string>> {
+  const byKey = new Map<string, string>()
+
+  if (employeeIds.length === 0) return byKey
+
+  const { data: rows } = await service
+    .from('employee_approval_templates')
+    .select('employee_id, category, template_id')
+    .in('employee_id', employeeIds)
+
+  for (const row of rows ?? []) {
+    byKey.set(`${row.employee_id}::${row.category}`, row.template_id)
+  }
+
+  return byKey
 }
