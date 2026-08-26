@@ -42,7 +42,14 @@ export default function SetPasswordPage() {
 
     setLoading(true)
     try {
-      const { error: updateError } = await supabase.auth.updateUser({ password })
+      // must_set_password is cleared in the same call that sets the password.
+      // It has to go, not just be ignored: proxy.ts redirects every protected
+      // route to this page while it is true, so leaving it set would trap the
+      // user here in a loop even after they had chosen a password.
+      const { error: updateError } = await supabase.auth.updateUser({
+        password,
+        data: { must_set_password: false },
+      })
 
       if (updateError) {
         setError(updateError.message)

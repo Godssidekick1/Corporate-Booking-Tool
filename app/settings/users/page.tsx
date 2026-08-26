@@ -14,6 +14,10 @@ interface Employee {
 }
 
 const ROLES = ['employee', 'manager', 'finance', 'admin'] as const
+
+// Mirrors MIN_INITIAL_PASSWORD in app/api/employees/route.ts, which rejects
+// anything shorter. Checked here too so the admin finds out before submitting.
+const MIN_INITIAL_PASSWORD = 10
 const STATUS_COLORS: Record<string, { bg: string; fg: string }> = {
   active:      { bg: '#ECFDF5', fg: '#065F46' },
   invited:     { bg: '#FEF3C7', fg: '#92400E' },
@@ -223,8 +227,8 @@ function InviteForm({ onClose, onDone, onError }: {
         <button type="button" onClick={onClose} style={s.closeBtn}>✕</button>
       </div>
       <p style={s.formSub}>
-        They'll receive an email invite to set their own password. (For CBT-only
-        companies, this adds a traveler profile instead — no email is sent.)
+        They&apos;ll receive an email invite and choose their own password. Nothing gets
+        shared out-of-band, so this is the safer option wherever email reaches them.
       </p>
       <div style={s.fields}>
         <div style={s.field}>
@@ -267,7 +271,7 @@ function DirectAddForm({ onClose, onDone, onError }: {
 }) {
   const [form, setForm] = useState({
     email: '', full_name: '', role: 'employee' as typeof ROLES[number], band: 'L1',
-    department: '', cost_centre: '',
+    department: '', cost_centre: '', password: '',
   })
   const [submitting, setSubmitting] = useState(false)
 
@@ -278,12 +282,18 @@ function DirectAddForm({ onClose, onDone, onError }: {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+
+    if (form.password.length < MIN_INITIAL_PASSWORD) {
+      onError(`The starting password must be at least ${MIN_INITIAL_PASSWORD} characters.`)
+      return
+    }
+
     setSubmitting(true)
     try {
       const res = await fetch('/api/employees', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, method: 'direct' }),
       })
       const data = await res.json()
       if (!res.ok) { onError(data.error || 'Could not add employee.'); return }
@@ -300,9 +310,9 @@ function DirectAddForm({ onClose, onDone, onError }: {
         <button type="button" onClick={onClose} style={s.closeBtn}>✕</button>
       </div>
       <p style={s.formSub}>
-        Adds this person directly. For SBT/hybrid companies, they'll receive a real
-        invite email. For CBT-only companies, this creates a traveler profile with
-        no login — a travel counsellor books on their behalf.
+        Creates the account straight away with a starting password you choose and
+        pass on yourself — no email is sent. They&apos;ll be required to set their own
+        password the first time they sign in, so you won&apos;t keep knowing it.
       </p>
       <div style={s.fields}>
         <div style={s.field}>
@@ -312,6 +322,23 @@ function DirectAddForm({ onClose, onDone, onError }: {
         <div style={s.field}>
           <label style={s.label}>Email</label>
           <input name="email" type="email" required value={form.email} onChange={handleChange} placeholder="jane@company.com" style={s.input} />
+        </div>
+        <div style={{ ...s.field, gridColumn: '1 / -1' }}>
+          <label style={s.label}>Starting password</label>
+          <input
+            name="password"
+            type="text"
+            required
+            minLength={MIN_INITIAL_PASSWORD}
+            value={form.password}
+            onChange={handleChange}
+            placeholder={`At least ${MIN_INITIAL_PASSWORD} characters`}
+            style={s.input}
+          />
+          <span style={s.fieldHint}>
+            Shown in plain text so you can read it out or copy it. They must change it
+            on first sign-in.
+          </span>
         </div>
         <div style={s.field}>
           <label style={s.label}>Role</label>
@@ -363,6 +390,7 @@ const s: Record<string, React.CSSProperties> = {
   formSub: { fontSize: '12px', color: '#6B7280', margin: '0 0 16px' },
   fields: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '14px', marginBottom: '14px' },
   field: { display: 'flex', flexDirection: 'column', gap: '5px' },
+  fieldHint: { fontSize: '11px', color: '#9CA3AF', lineHeight: 1.5 },
   label: { fontSize: '11px', fontWeight: 500, color: '#374151' },
   input: { height: '36px', padding: '0 10px', fontSize: '13px', color: '#111827', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '6px', outline: 'none' },
   checkboxRow: { display: 'flex', alignItems: 'center', gap: '7px', fontSize: '12px', color: '#374151', marginBottom: '16px' },

@@ -172,6 +172,24 @@ export async function proxy(request: NextRequest) {
   // /profile itself is excluded above to prevent a redirect loop.
   // ─────────────────────────────────────────────────────────────────────────
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // FORCED PASSWORD CHANGE
+  // ─────────────────────────────────────────────────────────────────────────
+  //
+  // Accounts created by an admin with a starting password carry
+  // must_set_password in user_metadata. Until they choose their own, the
+  // admin knows their password and could sign in as them, so this gate comes
+  // before everything else — including the profile step, which would
+  // otherwise let someone work through onboarding on a shared credential.
+  //
+  // /auth/* returned early at the top of this file, so /auth/set-password is
+  // reachable and this cannot loop.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  if (user?.user_metadata?.must_set_password === true && isProtected) {
+    return NextResponse.redirect(new URL('/auth/set-password', request.url))
+  }
+
   if (
     needsOnboardingCheck &&
     !isTmcSideRole &&

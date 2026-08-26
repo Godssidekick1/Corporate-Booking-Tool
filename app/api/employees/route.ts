@@ -25,7 +25,18 @@ interface CreateEmployeeBody {
   band: string
   department?: string
   cost_centre?: string
+  // 'invite'  — email them an invite; they set their own password.
+  // 'direct'  — the admin sets a starting password here and passes it on
+  //             out-of-band. No email is sent.
+  method?: 'invite' | 'direct'
+  password?: string
 }
+
+// Short enough to be readable over a phone call, long enough not to be
+// trivially guessable. The account is forced to change it on first sign-in
+// anyway (see must_set_password below), so this is a transit credential, not
+// a lasting one.
+const MIN_INITIAL_PASSWORD = 10
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
@@ -63,14 +74,20 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Company not found' }, { status: 404 })
   }
 
-  const isCbtOnly = company.booking_mode === 'cbt'
-
   const body: CreateEmployeeBody = await req.json()
-  const { email, full_name, role, band, department, cost_centre } = body
+  const { email, full_name, role, band, department, cost_centre, password } = body
+  const method = body.method === 'direct' ? 'direct' : 'invite'
 
   if (!email || !full_name || !role || !band) {
     return Response.json(
       { error: 'email, full_name, role, and band are required' },
+      { status: 400 }
+    )
+  }
+
+  if (method === 'direct' && (!password || password.length < MIN_INITIAL_PASSWORD)) {
+    return Response.json(
+      { error: `A starting password of at least ${MIN_INITIAL_PASSWORD} characters is required when adding someone directly` },
       { status: 400 }
     )
   }
@@ -110,61 +127,56 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  // ── CBT-only company: pure traveler profile, no auth at all ────────────────
-  if (isCbtOnly) {
-    const { data: employee, error: employeeError } = await service
-      .from('employees')
-      .insert({
-        company_id: companyId,
-        auth_user_id: null,
-        band_id: bandRow.id,
-        band_code: bandRow.code,
-        band_rank: bandRow.rank,
-        email: normalizedEmail,
-        full_name,
-        role: normalizedRole,
-        status: 'active', // no acceptance step exists for a profile that can't log in
-        onboarding_method: 'direct_create',
-        first_login_completed: false,
-        department: department ?? null,
-        cost_centre: cost_centre ?? null,
-      })
-      .select('id')
-      .single()
-
-    if (employeeError) {
-      return Response.json({ error: employeeError.message }, { status: 500 })
-    }
-
-    return Response.json({
-      ok: true,
-      employeeId: employee.id,
-      message: `${full_name} added as a traveler profile. This company books via CBT, so no login account was created.`,
-    }, { status: 201 })
+  // Every employee gets a real account now, whatever the company's
+  // booking_mode. CBT previously created a profile with auth_user_id null,
+  // which meant those people could never sign in at all — not even to see
+  // their own trips, approvals or travel profile. A counsellor booking on
+  // someone's behalf is a booking arrangement, not a reason to deny them a
+  // login.
+  const userMetadata = {
+    full_name,
+    company_id: companyId,
+    role: normalizedRole,
+    band_code: bandRow.code,
   }
 
-  // ── SBT / hybrid company: real account, real invite email ─────────────────
   let authUserId: string | null = null
 
   try {
-    const { data: authData, error: inviteError } = await service.auth.admin.inviteUserByEmail(
-      normalizedEmail,
-      {
-        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/auth/set-password`,
-        data: {
-          full_name,
-          company_id: companyId,
-          role: normalizedRole,
-          band_code: bandRow.code,
-        },
+    if (method === 'direct') {
+      // Created already confirmed, so there is no email step at all — the
+      // admin hands the starting password over themselves.
+      //
+      // must_set_password forces a change on first sign-in (enforced in
+      // proxy.ts). Without it the admin would permanently know the
+      // employee's password, and could sign in as them.
+      const { data: authData, error: createError } = await service.auth.admin.createUser({
+        email: normalizedEmail,
+        password,
+        email_confirm: true,
+        user_metadata: { ...userMetadata, must_set_password: true },
+      })
+
+      if (createError) {
+        return Response.json({ error: createError.message }, { status: 400 })
       }
-    )
 
-    if (inviteError) {
-      return Response.json({ error: inviteError.message }, { status: 400 })
+      authUserId = authData.user.id
+    } else {
+      const { data: authData, error: inviteError } = await service.auth.admin.inviteUserByEmail(
+        normalizedEmail,
+        {
+          redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/auth/set-password`,
+          data: userMetadata,
+        }
+      )
+
+      if (inviteError) {
+        return Response.json({ error: inviteError.message }, { status: 400 })
+      }
+
+      authUserId = authData.user.id
     }
-
-    authUserId = authData.user.id
 
     const { error: employeeError } = await service.from('employees').insert({
       id: authUserId,
@@ -176,8 +188,11 @@ export async function POST(req: NextRequest) {
       email: normalizedEmail,
       full_name,
       role: normalizedRole,
-      status: 'invited',
-      onboarding_method: 'direct_create',
+      // A directly-created account can already sign in, so there is no
+      // acceptance step left to wait on. An invited one stays 'invited' until
+      // they click through (flipped in /api/auth/verify).
+      status: method === 'direct' ? 'active' : 'invited',
+      onboarding_method: method === 'direct' ? 'direct_create' : 'invite',
       first_login_completed: false,
       department: department ?? null,
       cost_centre: cost_centre ?? null,
@@ -191,7 +206,9 @@ export async function POST(req: NextRequest) {
     return Response.json({
       ok: true,
       employeeId: authUserId,
-      message: `Invite sent to ${full_name} at ${normalizedEmail}.`,
+      message: method === 'direct'
+        ? `${full_name} can sign in now with the password you set. They'll be asked to change it on first sign-in.`
+        : `Invite sent to ${full_name} at ${normalizedEmail}.`,
     }, { status: 201 })
 
   } catch (err) {
