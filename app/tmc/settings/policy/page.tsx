@@ -203,6 +203,7 @@ export default function TmcPolicyPage() {
   const [groupForm, setGroupForm] = useState({ name: '', code: '', description: '', rankSpec: '' })
   const [editingRanks, setEditingRanks] = useState('')
   const [savingRanks, setSavingRanks] = useState(false)
+  const [copySourceRank, setCopySourceRank] = useState('')
   const [groupSubmitting, setGroupSubmitting] = useState(false)
 
   const [error, setError] = useState('')
@@ -345,6 +346,49 @@ export default function TmcPolicyPage() {
       setEditingRanks('')
       showSuccess('Coverage updated.')
     } finally { setSavingRanks(false) }
+  }
+
+  // ── Copying one rank across the rest ────────────────────────────────────────
+  // Most groups covering several ranks give them identical limits — that is
+  // usually why the ranks were grouped together in the first place. Filling
+  // rank 1 and copying it beats retyping the same grid three times.
+  //
+  // `fields` scopes the copy: one category's fields for the per-row action, or
+  // every field for the whole-policy action.
+  function copyRankAcross(sourceRank: number, fields: FieldDef[], label: string) {
+    const targets = ranks.filter(r => r !== sourceRank)
+    if (targets.length === 0) return
+
+    const source = grid[String(sourceRank)] ?? {}
+
+    // Only warn when a target actually holds something different that would be
+    // lost. Copying over blanks, or over values that already match, is not
+    // worth a confirm dialog.
+    const wouldOverwrite = targets.some(target =>
+      fields.some(f => {
+        const existing = grid[String(target)]?.[f.key]
+        if (existing === null || existing === undefined || existing === false) return false
+        return existing !== source[f.key]
+      })
+    )
+
+    if (wouldOverwrite && !confirm(
+      `Overwrite ${label} for rank${targets.length > 1 ? 's' : ''} ${targets.join(', ')} with rank ${sourceRank}'s values?`
+    )) return
+
+    setGrid(prev => {
+      const next = { ...prev }
+      for (const target of targets) {
+        const row = { ...(next[String(target)] ?? {}) }
+        for (const f of fields) row[f.key] = source[f.key] ?? (f.kind === 'boolean' ? false : null)
+        next[String(target)] = row
+      }
+      return next
+    })
+
+    setDirty(true)
+    setSuccess('')
+    showSuccess(`Copied rank ${sourceRank}'s ${label} to rank${targets.length > 1 ? 's' : ''} ${targets.join(', ')}.`)
   }
 
   function handleCellChange(rank: number, key: string, value: CellVal) {
@@ -622,6 +666,38 @@ export default function TmcPolicyPage() {
                 </span>
               </div>
 
+              {/* Copy one rank's whole policy across the rest. Ranks are usually
+                  grouped together precisely because they share limits, so this is
+                  the common path rather than an edge case. */}
+              {ranks.length > 1 && (
+                <div style={s.copyAllRow}>
+                  <label style={s.coverageLabel}>Same limits for every rank?</label>
+                  {/* Falls back to the lowest rank rather than tracking a default
+                      in state, so switching groups can't leave a stale source
+                      rank selected that the new group doesn't even cover. */}
+                  <select
+                    value={ranks.includes(Number(copySourceRank)) ? copySourceRank : String(ranks[0])}
+                    onChange={e => setCopySourceRank(e.target.value)}
+                    style={{ ...s.input, width: 130 }}
+                  >
+                    {ranks.map(r => <option key={r} value={String(r)}>Rank {r}</option>)}
+                  </select>
+                  <button
+                    onClick={() => copyRankAcross(
+                      ranks.includes(Number(copySourceRank)) ? Number(copySourceRank) : ranks[0],
+                      ALL_FIELDS,
+                      'limits'
+                    )}
+                    style={s.ghostBtn}
+                  >
+                    Copy to all other ranks
+                  </button>
+                  <span style={s.coverageHint}>
+                    Copies every category. Use ⧉ on a row to copy just that section.
+                  </span>
+                </div>
+              )}
+
               {ranks.length === 0 && (
                 <div style={s.blastBanner}>
                   This group covers no band ranks, so it applies to nobody and cannot be
@@ -689,6 +765,15 @@ export default function TmcPolicyPage() {
                                       <td style={{ ...s.td, ...s.stickyCol }}>
                                         <div style={s.bandCell}>
                                           <span style={s.bandBadge}>Rank {rank}</span>
+                                          {ranks.length > 1 && (
+                                            <button
+                                              onClick={() => copyRankAcross(rank, cat.fields, cat.label.toLowerCase())}
+                                              style={s.copyRowBtn}
+                                              title={`Copy this rank's ${cat.label.toLowerCase()} to every other rank`}
+                                            >
+                                              ⧉
+                                            </button>
+                                          )}
                                         </div>
                                       </td>
                                       {cat.fields.map(f => {
@@ -933,6 +1018,8 @@ const s: Record<string, React.CSSProperties> = {
 
   rangeBadge: { display: 'inline-block', padding: '2px 7px', background: '#EEF2FF', color: '#3730A3', fontSize: 10, fontWeight: 600, borderRadius: 4 },
   coverageRow: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16, padding: '12px 14px', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 8 },
+  copyAllRow: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16, padding: '12px 14px', background: '#F5F7FF', border: '1px solid #C7D2FE', borderRadius: 8 },
+  copyRowBtn: { background: 'transparent', border: 'none', color: '#6366F1', cursor: 'pointer', fontSize: 13, padding: '0 2px', lineHeight: 1, flexShrink: 0 },
   coverageLabel: { fontSize: 11, fontWeight: 600, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.6px' },
   coverageHint: { fontSize: 11, color: '#9CA3AF' },
   codeInline: { background: '#F3F4F6', padding: '1px 5px', borderRadius: 3, fontSize: 10 },
