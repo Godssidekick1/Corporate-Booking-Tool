@@ -51,5 +51,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(confirmUrl)
   }
 
-  return NextResponse.redirect(new URL('/login', req.url))
+  // No auth params at all. This is almost always a configuration problem
+  // rather than a malformed link: if Supabase's Redirect URLs allow-list
+  // doesn't contain this exact callback URL, it silently discards `redirectTo`
+  // and sends the recipient to the project's Site URL instead, stripping
+  // token_hash/type on the way.
+  //
+  // Previously this redirected to /login, which looks identical to "your
+  // session expired" and gave the recipient nothing to report. /auth/confirm
+  // already renders a proper "Link not recognized" explanation for exactly
+  // this case, so send them there instead.
+  return NextResponse.redirect(confirmUrl)
 }
