@@ -48,7 +48,7 @@ export async function PATCH(
 
   const { data: approval } = await service
     .from('approvals')
-    .select('id, booking_id, company_id, approver_id, tier, status, chain_id, verdict, reason')
+    .select('id, booking_id, company_id, approver_id, tier, status, chain_template_id, verdict, reason')
     .eq('id', approvalId)
     .maybeSingle()
 
@@ -121,11 +121,11 @@ export async function PATCH(
   }
 
   // Approved — see if the chain has a next tier that this booking's stored
-  // verdict actually meets. chain_id/verdict were captured on the approval
+  // verdict actually meets. chain_template_id/verdict were captured on the approval
   // row itself when it was created, so no need to re-derive them here.
-  if (!approval.chain_id) {
+  if (!approval.chain_template_id) {
     // Shouldn't happen in practice (every approval created by the engine
-    // sets chain_id), but fail toward finalizing rather than leaving the
+    // sets chain_template_id), but fail toward finalizing rather than leaving the
     // booking stuck if it somehow does.
     const { error: finalizeError } = await service
       .from('bookings')
@@ -133,7 +133,7 @@ export async function PATCH(
       .eq('id', booking.id)
 
     if (finalizeError) {
-      console.error('Approval decided but failed to flip booking to approved (no chain_id)', finalizeError, { bookingId: booking.id })
+      console.error('Approval decided but failed to flip booking to approved (no chain_template_id)', finalizeError, { bookingId: booking.id })
       return Response.json({
         ok: false,
         error: 'Your decision was recorded, but the booking status could not be updated. Please contact support.',
@@ -148,7 +148,7 @@ export async function PATCH(
       bookingId: booking.id,
       companyId: approval.company_id,
       employeeId: booking.employee_id,
-      chainId: approval.chain_id,
+      chainTemplateId: approval.chain_template_id,
       completedTier: approval.tier,
       verdict: (approval.verdict as Verdict) ?? 'green',
       reason: approval.reason ?? 'Within policy',
