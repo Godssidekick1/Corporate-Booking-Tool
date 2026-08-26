@@ -117,21 +117,42 @@ export async function resolveEffectivePolicy(
 
   const group = matchingGroups[0]
 
-  // Latest non-deleted version for this exact scope. company_id is
-  // deliberately NOT filtered here — rules belong to the group, not a
-  // company, since the whole point of a shared group is that its rules are
-  // the same regardless of which company is asking.
-  const { data: latestVersionRow } = await service
+  const storedCategory = toStoredCategory(travelType)
+  const categoriesToFetch = Array.from(new Set([storedCategory, 'approval']))
+
+  // One query, not two. This used to read the latest version number and then
+  // fetch that version's rows separately, which left a window: anything that
+  // soft-deleted those rows in between (retiring a rank's rules when a group's
+  // coverage shrinks, for one) meant the second query found nothing and the
+  // booking was reported as unevaluated rather than checked. Reading rows and
+  // version together takes a single snapshot, so there is no gap to race
+  // through.
+  //
+  // company_id is deliberately NOT filtered — rules belong to the group, not a
+  // company, since the whole point of a shared group is that its rules are the
+  // same regardless of which company is asking.
+  //
+  // travel_type is filtered in memory rather than in the query, deliberately.
+  // "Latest version" has to mean the newest version of the WHOLE rule set for
+  // this rank — if it meant the newest version that happens to contain the
+  // requested category, then clearing every flight limit in a new version
+  // would silently fall back to the previous version's flight limits instead
+  // of reporting that none are configured. Stale limits served as current are
+  // worse than an honest "unevaluated".
+  //
+  // This reads every live version for one (group, rank) slice and keeps the
+  // newest in memory — a few dozen rows per save, so it stays small. If a
+  // group ever accumulates enough history to matter, the bounded form is a
+  // DISTINCT ON in a Postgres function, not a second round trip.
+  const { data: candidateRows } = await service
     .from('policy_rules')
-    .select('version')
+    .select('version, travel_type, limit_key, limit_value, limit_bool')
     .eq('policy_group_id', group.id)
     .eq('band_rank', bandRank)
     .is('deleted_at', null)
     .order('version', { ascending: false })
-    .limit(1)
-    .maybeSingle()
 
-  if (!latestVersionRow) {
+  if (!candidateRows || candidateRows.length === 0) {
     return {
       ok: false,
       reason: 'no_policy_rules',
@@ -139,19 +160,13 @@ export async function resolveEffectivePolicy(
     }
   }
 
-  const storedCategory = toStoredCategory(travelType)
-  const categoriesToFetch = Array.from(new Set([storedCategory, 'approval']))
+  // Ordered version-desc above, so the first row carries the newest version.
+  const latestVersion = candidateRows[0].version
+  const rows = candidateRows.filter(
+    r => r.version === latestVersion && categoriesToFetch.includes(r.travel_type)
+  )
 
-  const { data: rows } = await service
-    .from('policy_rules')
-    .select('limit_key, limit_value, limit_bool')
-    .eq('policy_group_id', group.id)
-    .eq('band_rank', bandRank)
-    .in('travel_type', categoriesToFetch)
-    .eq('version', latestVersionRow.version)
-    .is('deleted_at', null)
-
-  if (!rows || rows.length === 0) {
+  if (rows.length === 0) {
     return {
       ok: false,
       reason: 'no_policy_rules',
@@ -174,7 +189,7 @@ export async function resolveEffectivePolicy(
     policyGroupName: group.name,
     bandCode: employee.band_code,
     bandRank,
-    version: latestVersionRow.version,
+    version: latestVersion,
     limits,
   }
 }
