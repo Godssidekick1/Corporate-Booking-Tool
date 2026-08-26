@@ -1,4 +1,5 @@
 import { createServiceClient } from '@/utils/supabase/service'
+import { DEFAULT_BANDS, mostSeniorBand } from '@/app/lib/onboarding/defaultBands'
 import { NextRequest } from 'next/server'
 
 export async function POST(req: NextRequest) {
@@ -43,20 +44,16 @@ export async function POST(req: NextRequest) {
     companyId = company.id
 
     // ── Step 3: Seed default bands ─────────────────────────────────────
+    // Self-registration has no TMC to define bands, so it falls back to the
+    // shared default ladder. TMC-created clients define their own instead.
     const { data: bands, error: bandsError } = await supabase
       .from('bands')
-      .insert([
-        { company_id: companyId, code: 'L1', label: 'Junior',    rank: 1 },
-        { company_id: companyId, code: 'L2', label: 'Associate', rank: 2 },
-        { company_id: companyId, code: 'L3', label: 'Senior',    rank: 3 },
-        { company_id: companyId, code: 'L4', label: 'Manager',   rank: 4 },
-        { company_id: companyId, code: 'L5', label: 'Director',  rank: 5 },
-      ])
+      .insert(DEFAULT_BANDS.map(b => ({ company_id: companyId, ...b })))
       .select('id, code, label, rank')
 
     if (bandsError) throw new Error(bandsError.message)
 
-    const adminBand = bands.find((b) => b.code === 'L5')
+    const adminBand = mostSeniorBand(bands)
     if (!adminBand) throw new Error('Default band seeding failed')
 
     // ── Step 4: Create the admin employee ─────────────────────────────

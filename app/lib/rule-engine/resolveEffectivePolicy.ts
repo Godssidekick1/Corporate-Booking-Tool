@@ -29,22 +29,26 @@ function toStoredCategory(travelType: string): string {
 }
 
 // ── resolveEffectivePolicy ────────────────────────────────────────────────────
-// Policy Master model: policy_groups are reusable, company-agnostic
-// templates scoped to a rank range (min_band_rank..max_band_rank), linked to
+// Policy Master model: policy_groups are reusable, company-agnostic templates
+// covering an explicit set of band ranks (policy_group_band_ranks), linked to
 // companies via company_policy_groups (many-to-many — a company can use
-// several groups covering different rank ranges, and the same group can be
-// shared live across multiple companies). Rules within a group are keyed by
+// several groups covering different ranks, and the same group can be shared
+// live across multiple companies). Rules within a group are keyed by
 // band_rank, not a specific company's band row, so the same group's limits
 // apply positionally regardless of what a company calls its bands ("L3",
-// "A3", "3" all just mean rank 3).
+// "A3", "C" all just mean rank 3).
+//
+// Coverage is a set rather than a range so a group can span non-contiguous
+// ranks (1, 4, 7) — and so a half-configured group covers nothing rather than
+// silently covering everything, which is what unbounded NULL range ends did.
 //
 // Resolution: employee -> band_code -> that company's own bands row -> rank
 // -> which of the company's linked groups covers that rank -> that group's
 // rules at that rank. Exactly one group should ever match a given rank
-// (enforced at assignment time by the TMC UI preventing overlapping ranges
-// from being linked to the same company) — more than one match here means
-// something upstream let an overlap through, surfaced as its own distinct
-// blocked reason rather than silently picking one.
+// (enforced by constraint triggers on company_policy_groups and
+// policy_group_band_ranks) — more than one match here means something got
+// past those guards, surfaced as its own distinct blocked reason rather than
+// silently picking one.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function resolveEffectivePolicy(

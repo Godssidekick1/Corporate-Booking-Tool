@@ -1,6 +1,13 @@
 import { createServiceClient } from '@/utils/supabase/service'
+import { mostSeniorBand } from './defaultBands'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
+
+export interface BandInput {
+  code: string
+  label: string
+  rank: number
+}
 
 export interface OnboardCompanyInput {
   corporateName: string
@@ -13,6 +20,16 @@ export interface OnboardCompanyInput {
   size?: string
   bookingMode?: 'sbt' | 'cbt' | 'both'
   client_groupId?: string | null
+  // Required. Bands used to be hardcoded L1..L5 here with no way to change
+  // them afterwards, which forced every client into one naming scheme. They
+  // are now the caller's own vocabulary — "A1", "C", "Band 3" are all valid.
+  // Only `rank` is structural: it is the company-agnostic integer that policy
+  // groups match on.
+  bands: BandInput[]
+  // Optional. Links an existing policy group at creation so a new company can
+  // be policy-covered from day one instead of silently unprotected until
+  // someone remembers to link one.
+  policyGroupId?: string | null
 }
 
 export interface OnboardCompanyResult {
@@ -24,8 +41,45 @@ export interface OnboardCompanyResult {
 const VALID_SIZES = ['1-50', '51-200', '201-1000', '1001+']
 const VALID_BOOKING_MODES = ['sbt', 'cbt', 'both']
 
+// ── validateBands ─────────────────────────────────────────────────────────────
+// Ranks must be unique because two bands at the same rank would both match any
+// policy group covering it, which resolveEffectivePolicy can't arbitrate. Codes
+// must be unique because employees reference their band by code.
+// ─────────────────────────────────────────────────────────────────────────────
+export function validateBands(bands: BandInput[] | undefined): string | null {
+  if (!Array.isArray(bands) || bands.length === 0) {
+    return 'At least one band is required — employees need a band for policy to apply'
+  }
+
+  const seenCodes = new Set<string>()
+  const seenRanks = new Set<number>()
+
+  for (const band of bands) {
+    const code = band.code?.trim()
+    const label = band.label?.trim()
+
+    if (!code) return 'Every band needs a code'
+    if (!label) return `Band "${code}" needs a label`
+    if (!Number.isInteger(Number(band.rank)) || Number(band.rank) < 0) {
+      return `Band "${code}" needs a non-negative whole-number rank`
+    }
+
+    const lowered = code.toLowerCase()
+    if (seenCodes.has(lowered)) return `Duplicate band code: "${code}"`
+    seenCodes.add(lowered)
+
+    if (seenRanks.has(Number(band.rank))) {
+      return `Two bands share rank ${band.rank} — each band needs its own rank`
+    }
+    seenRanks.add(Number(band.rank))
+  }
+
+  return null
+}
+
 // ── onboardCompany ────────────────────────────────────────────────────────────
-// Creates a company, seeds default bands, invites the corporate admin.
+// Creates a company with the bands the TMC defined, optionally links a policy
+// group, and invites the corporate admin.
 // Shared by the single-company form and CSV bulk import so both stay in sync —
 // never fork this logic between the two entry points.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -49,6 +103,26 @@ export async function onboardCompany(
   const bookingMode = input.bookingMode ?? 'sbt'
   if (!VALID_BOOKING_MODES.includes(bookingMode)) {
     return { ok: false, error: `Invalid booking_mode: ${bookingMode}` }
+  }
+
+  const bandError = validateBands(input.bands)
+  if (bandError) {
+    return { ok: false, error: bandError }
+  }
+
+  // Confirm the policy group belongs to this TMC before the company exists, so
+  // a bad id fails fast rather than after a partial create.
+  if (input.policyGroupId) {
+    const { data: group } = await service
+      .from('policy_groups')
+      .select('id')
+      .eq('id', input.policyGroupId)
+      .eq('tmc_id', tmcId)
+      .maybeSingle()
+
+    if (!group) {
+      return { ok: false, error: 'Policy group not found for this TMC' }
+    }
   }
 
   // If a client_groupId was given, confirm it actually belongs to this TMC —
@@ -96,13 +170,14 @@ export async function onboardCompany(
 
     const { data: bands, error: bandsError } = await service
       .from('bands')
-      .insert([
-        { company_id: companyId, code: 'L1', label: 'Junior',    rank: 1 },
-        { company_id: companyId, code: 'L2', label: 'Associate', rank: 2 },
-        { company_id: companyId, code: 'L3', label: 'Senior',    rank: 3 },
-        { company_id: companyId, code: 'L4', label: 'Manager',   rank: 4 },
-        { company_id: companyId, code: 'L5', label: 'Director',  rank: 5 },
-      ])
+      .insert(
+        input.bands.map(b => ({
+          company_id: companyId,
+          code: b.code.trim(),
+          label: b.label.trim(),
+          rank: Number(b.rank),
+        }))
+      )
       .select('id, code, rank')
 
     if (bandsError) {
@@ -110,8 +185,22 @@ export async function onboardCompany(
       throw new Error(bandsError.message || bandsError.details || bandsError.hint || 'bands insert failed')
     }
 
-    const adminBand = bands.find(b => b.code === 'L5')
+    // The corporate admin goes on the most senior band. That used to be looked
+    // up as the literal code 'L5'; with the client naming its own bands, the
+    // only durable definition of "most senior" is the highest rank.
+    const adminBand = mostSeniorBand(bands)
     if (!adminBand) throw new Error('Band seeding failed')
+
+    if (input.policyGroupId) {
+      const { error: linkError } = await service
+        .from('company_policy_groups')
+        .insert({ company_id: companyId, policy_group_id: input.policyGroupId })
+
+      if (linkError) {
+        console.error('onboardCompany: policy group link failed. Raw error:', JSON.stringify(linkError, null, 2))
+        throw new Error(linkError.message || 'policy group link failed')
+      }
+    }
 
     // redirectTo points at /auth/callback, not /login — /login is gated by
     // proxy.ts's "authenticated user visiting /login -> redirect to

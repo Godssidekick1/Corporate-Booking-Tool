@@ -1,19 +1,20 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
+import { getBandRanksByGroup } from '@/app/lib/rule-engine/linkedPolicyGroups'
 import { NextRequest } from 'next/server'
 
 // ── GET /api/tmc/company-policy-groups?companyId=<uuid> ──────────────────
-// Lists every policy group currently linked to a company, with its rank
-// range, so a UI can show "this company uses PLCYGRP1 (ranks 1-3) and
-// PLCYGRP2 (ranks 4-6)" and know which ranges are still uncovered.
+// Lists every policy group currently linked to a company, with the band ranks
+// it covers, so a UI can show "this company uses PLCYGRP1 (ranks 1, 2) and
+// PLCYGRP2 (ranks 4, 7)" and know which ranks are still uncovered.
 //
 // ── POST /api/tmc/company-policy-groups ───────────────────────────────────
-// Links a policy group to a company. Rejects if the group's rank range
-// would overlap any group already linked to that company — per explicit
-// product direction, overlapping ranges are a configuration error to
-// prevent at assignment time, not something resolveEffectivePolicy.ts
-// should have to arbitrate at read time.
+// Links a policy group to a company. Rejects if the group's rank set would
+// intersect any group already linked to that company — per explicit product
+// direction, overlapping coverage is a configuration error to prevent at
+// assignment time, not something resolveEffectivePolicy.ts should have to
+// arbitrate at read time.
 //
 // ── DELETE /api/tmc/company-policy-groups?companyId=<uuid>&policyGroupId=<uuid> ──
 // Unlinks a group from a company. Doesn't touch the group itself or any
@@ -25,20 +26,13 @@ interface LinkBody {
   policyGroupId: string
 }
 
-// Two ranges overlap unless one entirely ends before the other begins.
-// NULL on either side of a range means "unbounded" in that direction, so an
-// unbounded group overlaps everything that isn't itself impossible (a range
-// with min > max, which shouldn't exist but isn't this function's job to
-// validate).
-function rangesOverlap(
-  aMin: number | null, aMax: number | null,
-  bMin: number | null, bMax: number | null
-): boolean {
-  const aMinVal = aMin ?? -Infinity
-  const aMaxVal = aMax ?? Infinity
-  const bMinVal = bMin ?? -Infinity
-  const bMaxVal = bMax ?? Infinity
-  return aMinVal <= bMaxVal && bMinVal <= aMaxVal
+// Coverage is an explicit set of ranks, so a collision is just a shared
+// member. This replaced a min/max range comparison that needed sentinel
+// values for unbounded sides and still couldn't express non-contiguous
+// coverage.
+function sharedRanks(a: number[], b: number[]): number[] {
+  const bSet = new Set(b)
+  return a.filter(rank => bSet.has(rank))
 }
 
 export async function GET(req: NextRequest) {
@@ -76,18 +70,26 @@ export async function GET(req: NextRequest) {
 
   const { data: groups } = await service
     .from('policy_groups')
-    .select('id, name, code, min_band_rank, max_band_rank')
+    .select('id, name, code')
     .in('id', groupIds)
 
+  const ranksByGroup = await getBandRanksByGroup(service, groupIds)
   const groupById = new Map((groups ?? []).map(g => [g.id, g]))
 
   const enriched = (links ?? [])
-    .map(l => ({
-      policyGroupId: l.policy_group_id,
-      assignedAt: l.assigned_at,
-      group: groupById.get(l.policy_group_id) ?? null,
-    }))
-    .sort((a, b) => (a.group?.min_band_rank ?? -Infinity) - (b.group?.min_band_rank ?? -Infinity))
+    .map(l => {
+      const group = groupById.get(l.policy_group_id)
+      return {
+        policyGroupId: l.policy_group_id,
+        assignedAt: l.assigned_at,
+        group: group
+          ? { ...group, bandRanks: ranksByGroup.get(l.policy_group_id) ?? [] }
+          : null,
+      }
+    })
+    // Ordered by lowest covered rank so the list reads bottom-of-org upward,
+    // and gaps between groups are visible at a glance.
+    .sort((a, b) => (a.group?.bandRanks[0] ?? Infinity) - (b.group?.bandRanks[0] ?? Infinity))
 
   return Response.json({ ok: true, links: enriched })
 }
@@ -115,7 +117,7 @@ export async function POST(req: NextRequest) {
 
   const { data: newGroup } = await service
     .from('policy_groups')
-    .select('id, name, tmc_id, min_band_rank, max_band_rank')
+    .select('id, name, tmc_id')
     .eq('id', policyGroupId)
     .maybeSingle()
 
@@ -151,20 +153,28 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: `"${newGroup.name}" is already linked to this company` }, { status: 409 })
   }
 
+  const ranksByGroup = await getBandRanksByGroup(service, [policyGroupId, ...existingGroupIds])
+  const newRanks = ranksByGroup.get(policyGroupId) ?? []
+
+  if (newRanks.length === 0) {
+    return Response.json({
+      error: `"${newGroup.name}" covers no band ranks yet, so linking it would have no effect. Add ranks to the group first.`,
+    }, { status: 400 })
+  }
+
   if (existingGroupIds.length > 0) {
     const { data: existingGroups } = await service
       .from('policy_groups')
-      .select('id, name, min_band_rank, max_band_rank')
+      .select('id, name')
       .in('id', existingGroupIds)
 
-    const overlapping = (existingGroups ?? []).find(g =>
-      rangesOverlap(newGroup.min_band_rank, newGroup.max_band_rank, g.min_band_rank, g.max_band_rank)
-    )
-
-    if (overlapping) {
-      return Response.json({
-        error: `"${newGroup.name}" overlaps with "${overlapping.name}", which is already linked to this company. Each linked group must cover a distinct rank range.`,
-      }, { status: 409 })
+    for (const existing of existingGroups ?? []) {
+      const clash = sharedRanks(newRanks, ranksByGroup.get(existing.id) ?? [])
+      if (clash.length > 0) {
+        return Response.json({
+          error: `"${newGroup.name}" overlaps with "${existing.name}" at band rank${clash.length > 1 ? 's' : ''} ${clash.join(', ')}, which is already linked to this company. Each linked group must cover distinct ranks.`,
+        }, { status: 409 })
+      }
     }
   }
 

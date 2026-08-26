@@ -15,8 +15,7 @@ interface PolicyGroupSummary {
   id: string
   name: string
   code: string | null
-  min_band_rank: number | null
-  max_band_rank: number | null
+  bandRanks: number[]
   version: number
 }
 
@@ -51,12 +50,27 @@ function rowsToGrid(rows: EffectiveRow[]): Grid {
   return grid
 }
 
-function rangeLabel(g: PolicyGroupSummary): string {
-  if (g.min_band_rank === null && g.max_band_rank === null) return 'all ranks'
-  if (g.min_band_rank === null) return `up to rank ${g.max_band_rank}`
-  if (g.max_band_rank === null) return `rank ${g.min_band_rank} and above`
-  if (g.min_band_rank === g.max_band_rank) return `rank ${g.min_band_rank}`
-  return `ranks ${g.min_band_rank}–${g.max_band_rank}`
+// Collapses runs back into ranges so [1,2,3,7] reads "ranks 1–3, 7".
+function ranksLabel(bandRanks: number[]): string {
+  if (bandRanks.length === 0) return 'no ranks'
+
+  const parts: string[] = []
+  let runStart = bandRanks[0]
+  let previous = bandRanks[0]
+
+  for (let i = 1; i <= bandRanks.length; i++) {
+    const current = bandRanks[i]
+    if (current === previous + 1) { previous = current; continue }
+
+    if (runStart === previous) parts.push(String(runStart))
+    else if (previous === runStart + 1) parts.push(`${runStart}, ${previous}`)
+    else parts.push(`${runStart}–${previous}`)
+
+    runStart = current
+    previous = current
+  }
+
+  return `${bandRanks.length === 1 ? 'rank' : 'ranks'} ${parts.join(', ')}`
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -120,7 +134,7 @@ export default function SettingsPolicyPage() {
               <span key={g.id} style={s.groupChip}>
                 {g.name}
                 <span style={s.groupChipMeta}>
-                  {rangeLabel(g)}{g.version > 0 ? ` · v${g.version}` : ''}
+                  {ranksLabel(g.bandRanks)}{g.version > 0 ? ` · v${g.version}` : ''}
                 </span>
               </span>
             ))}

@@ -45,11 +45,13 @@ export const CABIN_CLASS_OPTIONS: TierOption[] = [
   { label: 'First',           value: 3 },
 ]
 
-// NOTE: carrier_tier and red_eye_restricted are kept per product decision,
-// but are NOT yet read by evaluateBooking.ts — toggling them today has no
-// effect on booking evaluation. Same caveat applies to refundable_fare_required,
-// connecting_flights_allowed, and personal_trips_allowed. Wire these into
-// NUMERIC_LIMIT_KEYS / BOOLEAN_ENTITLEMENT_KEYS before relying on them.
+// NOTE: an older comment here claimed carrier_tier, red_eye_restricted,
+// refundable_fare_required, connecting_flights_allowed and
+// personal_trips_allowed were not read by evaluateBooking.ts. That is no
+// longer true — all five appear in BOOLEAN_ENTITLEMENT_KEYS / TIER_LIMIT_KEYS
+// and are enforced. The one key that genuinely never fires is `seat_selection`
+// in TIER_LIMIT_KEYS, which has no matching field here; see the note beside it
+// in evaluateBooking.ts.
 export const CARRIER_OPTIONS: TierOption[] = [
   { label: 'Budget only',  value: 0 },
   { label: 'Full-service', value: 1 },

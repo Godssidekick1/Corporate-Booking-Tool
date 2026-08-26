@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
+import { getBandRanksByGroup } from '@/app/lib/rule-engine/linkedPolicyGroups'
 import { NextRequest } from 'next/server'
 
 // ── GET /api/tmc/policy-groups?search=<text> ──────────────────────────────
@@ -13,18 +14,27 @@ import { NextRequest } from 'next/server'
 // stops at the TMC boundary though; a group is never visible to another TMC.
 //
 // ── POST /api/tmc/policy-groups ────────────────────────────────────────────
-// Creates a new policy group template owned by the caller's TMC. No
-// companyId — a group isn't owned by a company at creation time, only
-// linked to one later via /api/tmc/company-policy-groups (quick-allot,
-// companies/[id], onboarding).
+// Creates a new policy group template owned by the caller's TMC, covering an
+// explicit set of band ranks. No companyId — a group isn't owned by a company
+// at creation time, only linked to one later via
+// /api/tmc/company-policy-groups (quick-allot, companies/[id], onboarding).
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface CreateGroupBody {
   name: string
   code?: string
   description?: string
-  minBandRank?: number | null
-  maxBandRank?: number | null
+  bandRanks?: number[]
+}
+
+// Ranks arrive from a UI that lets an admin toggle arbitrary ranks, so
+// normalise rather than trust: drop non-integers and negatives, dedupe, sort.
+export function normaliseBandRanks(input: unknown): number[] {
+  if (!Array.isArray(input)) return []
+  const cleaned = input
+    .map(Number)
+    .filter(n => Number.isInteger(n) && n >= 0)
+  return Array.from(new Set(cleaned)).sort((a, b) => a - b)
 }
 
 export async function GET(req: NextRequest) {
@@ -49,7 +59,7 @@ export async function GET(req: NextRequest) {
 
   let query = service
     .from('policy_groups')
-    .select('id, name, code, description, min_band_rank, max_band_rank, created_at')
+    .select('id, name, code, description, created_at')
     .eq('tmc_id', auth.tmcId)
     .order('name')
 
@@ -65,13 +75,15 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: error.message }, { status: 500 })
   }
 
+  const groupIds = (groups ?? []).map(g => g.id)
+  const ranksByGroup = await getBandRanksByGroup(service, groupIds)
+
   // Company count per group — lets the picker/list show "used by 4
   // companies" so an admin can gauge blast radius before editing a shared
   // template. No tmc_id filter is possible here (the link table has no such
   // column) and none is needed: groupIds is already scoped to this TMC
   // above, and company-policy-groups only ever links a company to a group
   // when both belong to the caller's TMC.
-  const groupIds = (groups ?? []).map(g => g.id)
   const countByGroup = new Map<string, number>()
   if (groupIds.length > 0) {
     const { data: links } = await service
@@ -85,6 +97,7 @@ export async function GET(req: NextRequest) {
 
   const enriched = (groups ?? []).map(g => ({
     ...g,
+    bandRanks: ranksByGroup.get(g.id) ?? [],
     companyCount: countByGroup.get(g.id) ?? 0,
   }))
 
@@ -106,17 +119,11 @@ export async function POST(req: NextRequest) {
   }
 
   const body: CreateGroupBody = await req.json()
-  const { name, code, description, minBandRank, maxBandRank } = body
+  const { name, code, description } = body
+  const bandRanks = normaliseBandRanks(body.bandRanks)
 
   if (!name?.trim()) {
     return Response.json({ error: 'name is required' }, { status: 400 })
-  }
-
-  if (
-    minBandRank != null && maxBandRank != null &&
-    Number(minBandRank) > Number(maxBandRank)
-  ) {
-    return Response.json({ error: 'minBandRank cannot be greater than maxBandRank' }, { status: 400 })
   }
 
   // tmc_id is what makes the group findable and editable afterwards: the
@@ -131,10 +138,8 @@ export async function POST(req: NextRequest) {
       name: name.trim(),
       code: code?.trim() || null,
       description: description?.trim() || null,
-      min_band_rank: minBandRank ?? null,
-      max_band_rank: maxBandRank ?? null,
     })
-    .select('id, name, code, description, min_band_rank, max_band_rank, created_at')
+    .select('id, name, code, description, created_at')
     .single()
 
   if (error) {
@@ -151,5 +156,23 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: error.message }, { status: 500 })
   }
 
-  return Response.json({ ok: true, group: { ...group, companyCount: 0 } }, { status: 201 })
+  // A brand-new group is linked to nothing, so the rank rows can't collide
+  // with another group yet — but insert them after the group exists so the
+  // FK holds, and clean up if they fail rather than leaving a group whose
+  // coverage silently doesn't match what was asked for.
+  if (bandRanks.length > 0) {
+    const { error: rankError } = await service
+      .from('policy_group_band_ranks')
+      .insert(bandRanks.map(band_rank => ({ policy_group_id: group.id, band_rank })))
+
+    if (rankError) {
+      await service.from('policy_groups').delete().eq('id', group.id)
+      return Response.json({ error: rankError.message }, { status: 500 })
+    }
+  }
+
+  return Response.json(
+    { ok: true, group: { ...group, bandRanks, companyCount: 0 } },
+    { status: 201 }
+  )
 }

@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useMemo } from 'react'
+import BandLadderEditor, { type BandDraft } from './BandLadderEditor'
 import Papa from 'papaparse'
 import { canAccess } from '@/app/lib/permissions/canAccess'
 import TmcShell from '@/app/components/TmcShell'
@@ -26,6 +27,13 @@ interface client_group {
   city: string | null
 }
 
+interface PolicyGroupOption {
+  id: string
+  name: string
+  code: string | null
+  bandRanks: number[]
+}
+
 interface CsvEmployeeRow {
   email: string
   full_name: string
@@ -49,8 +57,17 @@ const MAX_EMPLOYEES = 250
 const initialForm = {
   corporateName: '', adminName: '', adminEmail: '',
   registeredAddress: '', gstNumber: '', industry: '', primaryContactPhone: '',
-  size: '', bookingMode: 'sbt', client_groupId: '',
+  size: '', bookingMode: 'sbt', client_groupId: '', policyGroupId: '',
 }
+
+// A starting point only — the TMC edits these to match whatever the client
+// actually calls its bands. Not a shared default: TMC-created clients define
+// their own ladder, and only self-registration falls back to a fixed one.
+const initialBands: BandDraft[] = [
+  { code: 'L1', label: 'Junior',    rank: 1 },
+  { code: 'L2', label: 'Associate', rank: 2 },
+  { code: 'L3', label: 'Senior',    rank: 3 },
+]
 
 export default function TmcDashboardPage() {
   const [employee, setEmployee] = useState<Employee | null>(null)
@@ -64,6 +81,9 @@ export default function TmcDashboardPage() {
   const [formError, setFormError] = useState('')
   const [formSuccess, setFormSuccess] = useState('')
 
+  const [bands, setBands] = useState<BandDraft[]>(initialBands)
+  const [policyGroups, setPolicyGroups] = useState<PolicyGroupOption[]>([])
+
   // CSV state
   const [csvRows, setCsvRows] = useState<CsvEmployeeRow[]>([])
   const [csvFileName, setCsvFileName] = useState('')
@@ -75,13 +95,17 @@ export default function TmcDashboardPage() {
       fetch('/api/me').then(r => r.json()),
       fetch('/api/tmc/companies').then(r => r.json()),
       fetch('/api/tmc/client-groups').then(r => r.json()),
-    ]).then(([meData, companiesData, client_groupsData]) => {
+      // Existing policy groups, so a new client can reuse one at creation
+      // instead of being left unprotected until someone links one later.
+      fetch('/api/tmc/policy-groups').then(r => r.json()),
+    ]).then(([meData, companiesData, client_groupsData, policyGroupsData]) => {
       if (meData.ok) {
         setEmployee(meData.employee)
         setPermissions(meData.permissions ?? [])
       }
       if (companiesData.ok) setCompanies(companiesData.companies)
       if (client_groupsData.ok) setclient_groups(client_groupsData.clientGroups)
+      if (policyGroupsData.ok) setPolicyGroups(policyGroupsData.groups)
     }).finally(() => setLoading(false))
   }, [])
 
@@ -95,6 +119,7 @@ export default function TmcDashboardPage() {
 
   function resetForm() {
     setForm(initialForm)
+    setBands(initialBands)
     setCsvRows([])
     setCsvFileName('')
     setCsvError('')
@@ -123,7 +148,12 @@ export default function TmcDashboardPage() {
           const email = (row.email || '').trim().toLowerCase()
           const full_name = (row.full_name || row.name || '').trim()
           const role = (row.role || 'employee').trim().toLowerCase()
-          const band = (row.band || 'L1').trim().toUpperCase()
+          // Kept verbatim — the band is validated against the ladder the TMC
+          // defines above, which it may still be editing. Uppercasing it here
+          // used to be safe when every client had L1..L5; it now corrupts
+          // codes like "Band 3", and defaulting to a literal "L1" invents a
+          // band the client may not have.
+          const band = (row.band || '').trim()
           const department = (row.department || '').trim()
           const cost_centre = (row.cost_centre || row.cost_center || '').trim()
 
@@ -146,8 +176,43 @@ export default function TmcDashboardPage() {
     })
   }
 
-  const validCsvCount = csvRows.filter(r => r._valid).length
-  const invalidCsvCount = csvRows.length - validCsvCount
+  // Band validity depends on the ladder being edited on this same form, so it
+  // is derived at render rather than frozen at parse time — editing a band code
+  // re-validates the roster immediately instead of failing server-side.
+  const validatedCsvRows = useMemo(() => {
+    const byLowerCode = new Map(
+      bands.filter(b => b.code.trim()).map(b => [b.code.trim().toLowerCase(), b.code.trim()])
+    )
+    const mostJunior = bands.reduce<BandDraft | null>(
+      (lowest, b) => (!lowest || b.rank < lowest.rank ? b : lowest), null
+    )
+
+    return csvRows.map(row => {
+      if (row._error) return row
+
+      const raw = row.band.trim()
+      // An empty band column means "most junior", which is the only default
+      // that holds whatever the client calls its bands.
+      const resolved = raw
+        ? byLowerCode.get(raw.toLowerCase())
+        : mostJunior?.code.trim()
+
+      if (!resolved) {
+        return {
+          ...row,
+          _valid: false,
+          _error: raw
+            ? `Band "${raw}" is not one of this client's bands`
+            : 'No band given and no bands defined',
+        }
+      }
+
+      return { ...row, band: resolved, _valid: true, _error: undefined }
+    })
+  }, [csvRows, bands])
+
+  const validCsvCount = validatedCsvRows.filter(r => r._valid).length
+  const invalidCsvCount = validatedCsvRows.length - validCsvCount
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -161,7 +226,7 @@ export default function TmcDashboardPage() {
 
     setSubmitting(true)
     try {
-      const employeesPayload = csvRows.filter(r => r._valid).map(r => ({
+      const employeesPayload = validatedCsvRows.filter(r => r._valid).map(r => ({
         email: r.email, full_name: r.full_name, role: r.role,
         band: r.band, department: r.department || undefined, cost_centre: r.cost_centre || undefined,
       }))
@@ -169,7 +234,21 @@ export default function TmcDashboardPage() {
       const res = await fetch('/api/tmc/create-corporate/bulk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company: { ...form, client_groupId: form.client_groupId || null }, employees: employeesPayload }),
+        body: JSON.stringify({
+          company: {
+            ...form,
+            client_groupId: form.client_groupId || null,
+            policyGroupId: form.policyGroupId || null,
+            // Label falls back to the code so a ladder built by holding Tab is
+            // submittable without typing a description for every rung.
+            bands: bands.map(b => ({
+              code: b.code.trim(),
+              label: b.label.trim() || b.code.trim(),
+              rank: Number(b.rank),
+            })),
+          },
+          employees: employeesPayload,
+        }),
       })
       const data = await res.json()
 
@@ -261,6 +340,36 @@ export default function TmcDashboardPage() {
               </div>
             </div>
 
+            {/* ── Bands + policy ── */}
+            <SectionLabel>Bands &amp; policy</SectionLabel>
+            <BandLadderEditor bands={bands} onChange={setBands} disabled={submitting} />
+
+            <div style={s.fields}>
+              <div style={{ ...s.field, gridColumn: '1 / -1' }}>
+                <label style={s.label}>Policy group (optional)</label>
+                <select
+                  name="policyGroupId"
+                  value={form.policyGroupId}
+                  onChange={handleFormChange}
+                  style={s.input}
+                >
+                  <option value="">No policy group — assign later</option>
+                  {policyGroups.map(g => (
+                    <option key={g.id} value={g.id}>
+                      {g.name}
+                      {g.code ? ` (${g.code})` : ''}
+                      {g.bandRanks.length > 0 ? ` — ranks ${g.bandRanks.join(', ')}` : ' — no ranks yet'}
+                    </option>
+                  ))}
+                </select>
+                <p style={s.fieldHint}>
+                  Reuses one of your existing policy templates. Without one, this
+                  client&apos;s bookings are not checked against any policy until a
+                  group is linked.
+                </p>
+              </div>
+            </div>
+
             {/* ── Registration details ── */}
             <SectionLabel>Registration details</SectionLabel>
             <div style={s.fields}>
@@ -292,14 +401,14 @@ export default function TmcDashboardPage() {
               </p>
               {csvFileName && !csvError && (
                 <div style={s.csvSummary}>
-                  <span>{csvFileName} — {csvRows.length} rows</span>
+                  <span>{csvFileName} — {validatedCsvRows.length} rows</span>
                   {validCsvCount > 0 && <span style={s.csvOk}>{validCsvCount} valid</span>}
                   {invalidCsvCount > 0 && <span style={s.csvBad}>{invalidCsvCount} invalid</span>}
                 </div>
               )}
               {csvError && <p style={s.error}>{csvError}</p>}
 
-              {csvRows.length > 0 && (
+              {validatedCsvRows.length > 0 && (
                 <div style={s.csvPreviewWrap}>
                   <table style={s.csvTable}>
                     <thead>
@@ -310,7 +419,7 @@ export default function TmcDashboardPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {csvRows.slice(0, 20).map((row, i) => (
+                      {validatedCsvRows.slice(0, 20).map((row, i) => (
                         <tr key={i} style={{ background: row._valid ? 'transparent' : '#FEF2F2' }}>
                           <td style={s.csvTd}>{row.email || '—'}</td>
                           <td style={s.csvTd}>{row.full_name || '—'}</td>
@@ -325,8 +434,8 @@ export default function TmcDashboardPage() {
                       ))}
                     </tbody>
                   </table>
-                  {csvRows.length > 20 && (
-                    <p style={s.csvMoreNote}>+ {csvRows.length - 20} more rows not shown</p>
+                  {validatedCsvRows.length > 20 && (
+                    <p style={s.csvMoreNote}>+ {validatedCsvRows.length - 20} more rows not shown</p>
                   )}
                 </div>
               )}
@@ -450,6 +559,7 @@ const s: Record<string, React.CSSProperties> = {
   sectionLabel: { fontSize: '11px', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.5px', margin: '18px 0 10px' },
   fields: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '14px' },
   field: { display: 'flex', flexDirection: 'column', gap: '6px' },
+  fieldHint: { fontSize: '11px', color: '#9CA3AF', margin: 0, lineHeight: 1.5 },
   label: { fontSize: '12px', fontWeight: 500, color: '#374151' },
   input: { height: '38px', padding: '0 10px', fontSize: '13px', color: '#111827', backgroundColor: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '7px', outline: 'none' },
   error: { fontSize: '13px', color: '#DC2626', backgroundColor: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '6px', padding: '10px 12px', margin: '14px 0 0' },

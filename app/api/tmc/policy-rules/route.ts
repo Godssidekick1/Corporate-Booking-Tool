@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
+import { getBandRanksByGroup } from '@/app/lib/rule-engine/linkedPolicyGroups'
 import { NextRequest } from 'next/server'
 
 // ── GET /api/tmc/policy-rules?groupId=<uuid> ──────────────────────────────
@@ -113,7 +114,7 @@ export async function POST(req: NextRequest) {
 
   const { data: group } = await service
     .from('policy_groups')
-    .select('id, tmc_id, min_band_rank, max_band_rank')
+    .select('id, tmc_id')
     .eq('id', policyGroupId)
     .maybeSingle()
 
@@ -128,6 +129,15 @@ export async function POST(req: NextRequest) {
 
   if (auth.tmcId !== group.tmc_id) {
     return Response.json({ error: 'This policy group belongs to a different TMC' }, { status: 403 })
+  }
+
+  const coveredRanks = (await getBandRanksByGroup(service, [policyGroupId])).get(policyGroupId) ?? []
+
+  if (coveredRanks.length === 0) {
+    return Response.json(
+      { error: 'This policy group covers no band ranks yet. Add at least one rank before saving rules.' },
+      { status: 400 }
+    )
   }
 
   const { version: currentVersion } = await getLatestVersionRows(service, policyGroupId)
@@ -146,17 +156,15 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: 'Each rule needs band_rank, travel_type, and limit_key' }, { status: 400 })
     }
 
-    // A rule outside the group's own declared rank range is almost
-    // certainly a mistake (e.g. copy-pasted from another group's editor
-    // state) — reject rather than silently accept a rule that
-    // resolveEffectivePolicy.ts would never actually be able to reach for
-    // this group, since it only matches groups whose range covers the
+    // A rule at a rank the group doesn't cover is almost certainly a mistake
+    // (e.g. copy-pasted from another group's editor state) — reject rather
+    // than silently accept a rule that resolveEffectivePolicy.ts could never
+    // reach, since it only matches groups whose rank set contains the
     // employee's rank in the first place.
-    if (group.min_band_rank !== null && input.band_rank < group.min_band_rank) {
-      return Response.json({ error: `Rank ${input.band_rank} is below this group's minimum rank (${group.min_band_rank})` }, { status: 400 })
-    }
-    if (group.max_band_rank !== null && input.band_rank > group.max_band_rank) {
-      return Response.json({ error: `Rank ${input.band_rank} is above this group's maximum rank (${group.max_band_rank})` }, { status: 400 })
+    if (!coveredRanks.includes(input.band_rank)) {
+      return Response.json({
+        error: `This policy group does not cover band rank ${input.band_rank}. It covers ${coveredRanks.join(', ')}.`,
+      }, { status: 400 })
     }
 
     const isNumeric = input.limit_value !== undefined && input.limit_value !== null

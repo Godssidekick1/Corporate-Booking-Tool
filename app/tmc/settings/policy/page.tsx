@@ -17,8 +17,7 @@ interface PolicyGroup {
   name: string
   code: string | null
   description: string | null
-  min_band_rank: number | null
-  max_band_rank: number | null
+  bandRanks: number[]
   companyCount: number
 }
 
@@ -37,41 +36,69 @@ interface CompanyLink {
     id: string
     name: string
     code: string | null
-    min_band_rank: number | null
-    max_band_rank: number | null
+    bandRanks: number[]
   } | null
 }
 
 // ── Rank helpers ──────────────────────────────────────────────────────────────
 // Rules are keyed by integer band_rank, not a company's band codes — a shared
 // template has no single company's labels to key against, and mapping a rank
-// back to whatever a company calls it ("L1", "A1", "1") is resolveEffectivePolicy's
-// job at read time.
+// back to whatever a company calls it ("L1", "A1", "C") is
+// resolveEffectivePolicy's job at read time.
+//
+// Coverage is an explicit set, so a group can span non-contiguous ranks
+// (1, 4, 7). Contiguous spans are still the common case, hence the "1-3"
+// shorthand below — but a range is only an input convenience here, never a
+// stored concept.
 
-const UNBOUNDED_RANKS = [1, 2, 3, 4, 5]
-const MAX_RANK_SPAN = 20
+// Parses "1-3, 7" / "1 4 7" / "2" into a sorted, deduped rank set. Anything
+// unparseable is dropped rather than rejected, so a half-typed value doesn't
+// throw while the admin is still editing.
+export function parseRankSpec(spec: string): number[] {
+  const ranks = new Set<number>()
 
-function ranksForGroup(group: Pick<PolicyGroup, 'min_band_rank' | 'max_band_rank'>): number[] {
-  const { min_band_rank: min, max_band_rank: max } = group
+  for (const chunk of spec.split(/[,\s]+/)) {
+    if (!chunk) continue
 
-  // An unbounded group covers every rank, but a table needs a finite set of
-  // rows — fall back to the common 1..5 shape and let the admin narrow the
-  // group's range if they need something else.
-  if (min === null && max === null) return UNBOUNDED_RANKS
+    const range = chunk.match(/^(\d+)\s*[-–]\s*(\d+)$/)
+    if (range) {
+      const from = Number(range[1])
+      const to = Number(range[2])
+      if (from <= to && to - from <= 50) {
+        for (let r = from; r <= to; r++) ranks.add(r)
+      }
+      continue
+    }
 
-  const from = min ?? 1
-  const to = max ?? Math.max(from, UNBOUNDED_RANKS[UNBOUNDED_RANKS.length - 1])
-  const span = Math.min(to - from + 1, MAX_RANK_SPAN)
+    const single = Number(chunk)
+    if (Number.isInteger(single) && single >= 0) ranks.add(single)
+  }
 
-  return Array.from({ length: Math.max(span, 1) }, (_, i) => from + i)
+  return Array.from(ranks).sort((a, b) => a - b)
 }
 
-function rangeLabel(g: Pick<PolicyGroup, 'min_band_rank' | 'max_band_rank'>): string {
-  if (g.min_band_rank === null && g.max_band_rank === null) return 'All ranks'
-  if (g.min_band_rank === null) return `Up to rank ${g.max_band_rank}`
-  if (g.max_band_rank === null) return `Rank ${g.min_band_rank}+`
-  if (g.min_band_rank === g.max_band_rank) return `Rank ${g.min_band_rank}`
-  return `Ranks ${g.min_band_rank}–${g.max_band_rank}`
+// Renders a set compactly, collapsing runs back into ranges: [1,2,3,7] reads
+// "Ranks 1–3, 7" rather than "Ranks 1, 2, 3, 7".
+function ranksLabel(bandRanks: number[]): string {
+  if (bandRanks.length === 0) return 'No ranks yet'
+
+  const parts: string[] = []
+  let runStart = bandRanks[0]
+  let previous = bandRanks[0]
+
+  for (let i = 1; i <= bandRanks.length; i++) {
+    const current = bandRanks[i]
+    if (current === previous + 1) { previous = current; continue }
+
+    if (runStart === previous) parts.push(String(runStart))
+    else if (previous === runStart + 1) parts.push(`${runStart}, ${previous}`)
+    else parts.push(`${runStart}–${previous}`)
+
+    runStart = current
+    previous = current
+  }
+
+  return `${bandRanks.length === 1 ? 'Rank' : 'Ranks'} ${parts.join(', ')}`
 }
 
 // ── Grid helpers ──────────────────────────────────────────────────────────────
@@ -173,7 +200,9 @@ export default function TmcPolicyPage() {
   const [linking, setLinking] = useState(false)
 
   const [showGroupForm, setShowGroupForm] = useState(false)
-  const [groupForm, setGroupForm] = useState({ name: '', code: '', description: '', minBandRank: '', maxBandRank: '' })
+  const [groupForm, setGroupForm] = useState({ name: '', code: '', description: '', rankSpec: '' })
+  const [editingRanks, setEditingRanks] = useState('')
+  const [savingRanks, setSavingRanks] = useState(false)
   const [groupSubmitting, setGroupSubmitting] = useState(false)
 
   const [error, setError] = useState('')
@@ -189,7 +218,7 @@ export default function TmcPolicyPage() {
   }
 
   const selectedGroup = groups.find(g => g.id === selectedGroupId)
-  const ranks = selectedGroup ? ranksForGroup(selectedGroup) : []
+  const ranks = selectedGroup?.bandRanks ?? []
 
   // ── Loaders ─────────────────────────────────────────────────────────────────
 
@@ -239,7 +268,7 @@ export default function TmcPolicyPage() {
       const d = await fetch(`/api/tmc/policy-rules?groupId=${groupId}`).then(r => r.json())
       if (!d.ok) { setError(d.error || 'Could not load rules.'); return }
       const group = groups.find(g => g.id === groupId)
-      setGrid(rowsToGrid(d.rows, group ? ranksForGroup(group) : UNBOUNDED_RANKS))
+      setGrid(rowsToGrid(d.rows, group?.bandRanks ?? []))
       setVersion(d.version)
       setDirty(false)
     } finally { setLoadingRules(false) }
@@ -265,12 +294,11 @@ export default function TmcPolicyPage() {
           name: groupForm.name,
           code: groupForm.code || undefined,
           description: groupForm.description || undefined,
-          minBandRank: groupForm.minBandRank === '' ? null : Number(groupForm.minBandRank),
-          maxBandRank: groupForm.maxBandRank === '' ? null : Number(groupForm.maxBandRank),
+          bandRanks: parseRankSpec(groupForm.rankSpec),
         }),
       }).then(r => r.json())
       if (!d.ok) { setError(d.error || 'Could not create group.'); return }
-      setGroupForm({ name: '', code: '', description: '', minBandRank: '', maxBandRank: '' })
+      setGroupForm({ name: '', code: '', description: '', rankSpec: '' })
       setShowGroupForm(false)
       await loadGroups(search)
       setSelectedGroupId(d.group.id)
@@ -286,6 +314,37 @@ export default function TmcPolicyPage() {
     showSuccess('Policy group deleted.')
     if (selectedGroupId === id) setSelectedGroupId('')
     loadGroups(search)
+  }
+
+  // Coverage is editable after creation — a TMC finding out a client uses
+  // rank 7 shouldn't have to rebuild the group and re-author every rule.
+  async function handleSaveRanks() {
+    if (!selectedGroup) return
+    const desired = parseRankSpec(editingRanks)
+
+    if (desired.length === 0) {
+      setError('A group needs at least one rank. Delete the group instead if it is no longer used.')
+      return
+    }
+
+    const dropped = selectedGroup.bandRanks.filter(r => !desired.includes(r))
+    if (dropped.length > 0 && !confirm(
+      `Removing rank${dropped.length > 1 ? 's' : ''} ${dropped.join(', ')} will retire any rules saved at ` +
+      `${dropped.length > 1 ? 'those ranks' : 'that rank'}. Continue?`
+    )) return
+
+    setSavingRanks(true); setError('')
+    try {
+      const d = await fetch(`/api/tmc/policy-groups/${selectedGroupId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bandRanks: desired }),
+      }).then(r => r.json())
+      if (!d.ok) { setError(d.error || 'Could not update coverage.'); return }
+      await loadGroups(search)
+      await loadRules(selectedGroupId)
+      setEditingRanks('')
+      showSuccess('Coverage updated.')
+    } finally { setSavingRanks(false) }
   }
 
   function handleCellChange(rank: number, key: string, value: CellVal) {
@@ -427,16 +486,10 @@ export default function TmcPolicyPage() {
                   style={{ ...s.input, flex: 1, minWidth: 120 }}
                 />
                 <input
-                  type="number" placeholder="Min rank" min={0}
-                  value={groupForm.minBandRank}
-                  onChange={e => setGroupForm(p => ({ ...p, minBandRank: e.target.value }))}
-                  style={{ ...s.input, width: 100 }}
-                />
-                <input
-                  type="number" placeholder="Max rank" min={0}
-                  value={groupForm.maxBandRank}
-                  onChange={e => setGroupForm(p => ({ ...p, maxBandRank: e.target.value }))}
-                  style={{ ...s.input, width: 100 }}
+                  type="text" placeholder="Ranks — e.g. 1-3 or 1, 4, 7"
+                  value={groupForm.rankSpec}
+                  onChange={e => setGroupForm(p => ({ ...p, rankSpec: e.target.value }))}
+                  style={{ ...s.input, flex: 1, minWidth: 180 }}
                 />
                 <input
                   type="text" placeholder="Description (optional)"
@@ -448,7 +501,13 @@ export default function TmcPolicyPage() {
                   {groupSubmitting ? 'Creating…' : 'Create group'}
                 </button>
                 <p style={s.formHint}>
-                  Leave the rank fields empty for a group that covers every rank.
+                  Ranks may be non-contiguous — <code style={s.codeInline}>1, 4, 7</code> is
+                  as valid as <code style={s.codeInline}>1-3</code>. A group covers exactly
+                  the ranks you list, so leaving this empty means it covers nothing until
+                  you add some.
+                  {groupForm.rankSpec.trim() && (
+                    <> Will cover: <strong>{ranksLabel(parseRankSpec(groupForm.rankSpec))}</strong>.</>
+                  )}
                 </p>
               </form>
             )}
@@ -496,7 +555,7 @@ export default function TmcPolicyPage() {
                       >✕</button>
                     </div>
                     <div style={s.groupCardTags}>
-                      <span style={s.rangeBadge}>{rangeLabel(g)}</span>
+                      <span style={s.rangeBadge}>{ranksLabel(g.bandRanks)}</span>
                       {g.code && <span style={s.codeBadge}>{g.code}</span>}
                     </div>
                     {g.description && <p style={s.groupCardDesc}>{g.description}</p>}
@@ -517,7 +576,7 @@ export default function TmcPolicyPage() {
               <div style={s.rulesTopBar}>
                 <div>
                   <h2 style={s.cardTitle}>
-                    {selectedGroup.name} <span style={s.rangeInline}>· {rangeLabel(selectedGroup)}</span>
+                    {selectedGroup.name} <span style={s.rangeInline}>· {ranksLabel(selectedGroup.bandRanks)}</span>
                   </h2>
                   <p style={s.cardSub}>
                     {version === 0
@@ -540,6 +599,35 @@ export default function TmcPolicyPage() {
                   </button>
                 </div>
               </div>
+
+              {/* Coverage editor */}
+              <div style={s.coverageRow}>
+                <label style={s.coverageLabel}>Covers</label>
+                <input
+                  type="text"
+                  value={editingRanks}
+                  onChange={e => setEditingRanks(e.target.value)}
+                  placeholder={selectedGroup.bandRanks.join(', ') || 'e.g. 1-3 or 1, 4, 7'}
+                  style={{ ...s.input, flex: 1, minWidth: 160 }}
+                />
+                <button
+                  onClick={handleSaveRanks}
+                  disabled={savingRanks || !editingRanks.trim()}
+                  style={{ ...s.ghostBtn, opacity: savingRanks || !editingRanks.trim() ? 0.5 : 1 }}
+                >
+                  {savingRanks ? 'Updating…' : 'Update coverage'}
+                </button>
+                <span style={s.coverageHint}>
+                  Currently {ranksLabel(selectedGroup.bandRanks).toLowerCase()}.
+                </span>
+              </div>
+
+              {ranks.length === 0 && (
+                <div style={s.blastBanner}>
+                  This group covers no band ranks, so it applies to nobody and cannot be
+                  linked to a company. Add ranks above to start configuring limits.
+                </div>
+              )}
 
               {/* Blast radius: a shared template's limits apply everywhere it's linked. */}
               {selectedGroup.companyCount > 1 && (
@@ -720,7 +808,7 @@ export default function TmcPolicyPage() {
                   <option value="">Select a policy group to link…</option>
                   {linkableGroups.map(g => (
                     <option key={g.id} value={g.id}>
-                      {g.name} · {rangeLabel(g)}
+                      {g.name} · {ranksLabel(g.bandRanks)}
                     </option>
                   ))}
                 </select>
@@ -763,7 +851,7 @@ export default function TmcPolicyPage() {
                             {l.group?.code ? <span style={s.codeBadge}>{l.group.code}</span> : <span style={s.muted}>—</span>}
                           </td>
                           <td style={s.td}>
-                            {l.group ? <span style={s.rangeBadge}>{rangeLabel(l.group)}</span> : <span style={s.muted}>—</span>}
+                            {l.group ? <span style={s.rangeBadge}>{ranksLabel(l.group.bandRanks)}</span> : <span style={s.muted}>—</span>}
                           </td>
                           <td style={{ ...s.td, fontSize: 12, color: '#6B7280' }}>
                             {new Date(l.assignedAt).toLocaleDateString()}
@@ -844,6 +932,10 @@ const s: Record<string, React.CSSProperties> = {
   groupCardDelete: { background: 'transparent', border: 'none', color: '#D1D5DB', cursor: 'pointer', fontSize: 12, padding: '0 2px', flexShrink: 0 },
 
   rangeBadge: { display: 'inline-block', padding: '2px 7px', background: '#EEF2FF', color: '#3730A3', fontSize: 10, fontWeight: 600, borderRadius: 4 },
+  coverageRow: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16, padding: '12px 14px', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 8 },
+  coverageLabel: { fontSize: 11, fontWeight: 600, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.6px' },
+  coverageHint: { fontSize: 11, color: '#9CA3AF' },
+  codeInline: { background: '#F3F4F6', padding: '1px 5px', borderRadius: 3, fontSize: 10 },
   codeBadge: { display: 'inline-block', padding: '2px 7px', background: '#F3F4F6', color: '#4B5563', fontSize: 10, fontWeight: 600, borderRadius: 4, fontFamily: 'ui-monospace, monospace' },
   rangeInline: { fontSize: 12, fontWeight: 400, color: '#9CA3AF' },
 
