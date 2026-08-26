@@ -1060,7 +1060,7 @@ const s: Record<string, React.CSSProperties> = {
   toggleKnob: { position: 'absolute', top: 2, left: 2, width: 14, height: 14, background: '#fff', borderRadius: '50%', transition: 'transform 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.25)' },
 
   loadingRules: { display: 'flex', alignItems: 'center', gap: 10, padding: '24px 0' },
-  spinner: { width: 16, height: 16, border: '2px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%' },
+  spinner: { width: 16, height: 16, border: '2px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%', animation: 'spin 0.7s linear infinite' },
   muted: { fontSize: 12, color: '#9CA3AF', margin: 0 },
 
   stickyBar: { position: 'sticky', bottom: 0, left: 0, right: 0, background: '#000835', borderRadius: '0 0 12px 12px', padding: '12px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 16 },

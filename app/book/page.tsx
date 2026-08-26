@@ -259,7 +259,7 @@ const s: Record<string, React.CSSProperties> = {
   errorTitle: { fontSize: '13px', color: '#DC2626', margin: 0 },
 
   loadingCard: { display: 'flex', justifyContent: 'center', padding: '60px 0' },
-  spinner: { width: '22px', height: '22px', border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%' },
+  spinner: { width: '22px', height: '22px', border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%', animation: 'spin 0.7s linear infinite' },
 
   emptyCard: { textAlign: 'center' as const, padding: '48px 24px', background: '#fff', border: '1px dashed #D1D5DB', borderRadius: '14px' },
   emptyTitle: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: '0 0 6px' },

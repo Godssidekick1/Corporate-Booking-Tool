@@ -450,7 +450,7 @@ const s: Record<string, React.CSSProperties> = {
   root: { fontFamily: "'Inter', -apple-system, sans-serif", maxWidth: '560px', margin: '0 auto', padding: '32px 24px 64px' },
 
   loadingCard: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px', padding: '80px 0' },
-  spinner: { width: '22px', height: '22px', border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%' },
+  spinner: { width: '22px', height: '22px', border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%', animation: 'spin 0.7s linear infinite' },
   loadingText: { fontSize: '13px', color: '#6B7280', margin: 0 },
 
   errorCard: { padding: '20px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '14px' },

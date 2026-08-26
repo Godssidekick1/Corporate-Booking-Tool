@@ -219,8 +219,8 @@ const s: Record<string, React.CSSProperties> = {
   page: { fontFamily: "'Inter', -apple-system, sans-serif", padding: '32px', maxWidth: '1000px', margin: '0 auto' },
 
   loadingRow: { display: 'flex', justifyContent: 'center', padding: '80px 0' },
-  spinner: { width: '24px', height: '24px', border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%' },
-  spinnerTiny: { width: '14px', height: '14px', border: '2px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%', flexShrink: 0 },
+  spinner: { width: '24px', height: '24px', border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%', animation: 'spin 0.7s linear infinite' },
+  spinnerTiny: { width: '14px', height: '14px', border: '2px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%', flexShrink: 0, animation: 'spin 0.7s linear infinite' },
 
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px', marginBottom: '20px', flexWrap: 'wrap' as const },
   heading: { fontSize: '22px', fontWeight: 700, color: '#0A0A14', margin: '0 0 6px', letterSpacing: '-0.4px' },

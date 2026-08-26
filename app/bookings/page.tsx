@@ -296,7 +296,7 @@ const s: Record<string, React.CSSProperties> = {
   errorText: { fontSize: '13px', color: '#DC2626', margin: 0 },
 
   loadingCard: { display: 'flex', justifyContent: 'center', padding: '60px 0' },
-  spinner: { width: '22px', height: '22px', border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%' },
+  spinner: { width: '22px', height: '22px', border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%', animation: 'spin 0.7s linear infinite' },
 
   emptyState: { display: 'flex', flexDirection: 'column' as const, alignItems: 'center', textAlign: 'center' as const, padding: '64px 20px', background: '#fff', border: '1px solid #E5E7EB', borderRadius: '16px' },
   emptyIcon: { fontSize: '26px', marginBottom: '10px' },

@@ -365,7 +365,7 @@ const s: Record<string, React.CSSProperties> = {
   bannerIcon: { fontSize: '14px' },
 
   loadingRow: { display: 'flex', justifyContent: 'center', padding: '80px 0' },
-  spinner: { width: '24px', height: '24px', border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%' },
+  spinner: { width: '24px', height: '24px', border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%', animation: 'spin 0.7s linear infinite' },
 
   emptyState: { padding: '60px 20px', textAlign: 'center' as const, fontSize: '13px', color: '#9CA3AF' },
 

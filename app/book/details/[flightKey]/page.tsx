@@ -1042,7 +1042,7 @@ const s: Record<string, React.CSSProperties> = {
   sub: { fontSize: '13px', color: '#6B7280', margin: 0, lineHeight: 1.5 },
 
   loadingCard: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px', padding: '56px 20px' },
-  spinner: { width: '22px', height: '22px', border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%' },
+  spinner: { width: '22px', height: '22px', border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%', animation: 'spin 0.7s linear infinite' },
   loadingText: { fontSize: '13px', color: '#6B7280', margin: 0 },
 
   errorCard: { padding: '20px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '14px' },

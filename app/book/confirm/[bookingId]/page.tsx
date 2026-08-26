@@ -522,7 +522,7 @@ const s: Record<string, React.CSSProperties> = {
   sub: { fontSize: '13px', color: '#6B7280', margin: 0, lineHeight: 1.5 },
 
   loadingCard: { display: 'flex', justifyContent: 'center', padding: '80px 0' },
-  spinner: { width: '22px', height: '22px', border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%' },
+  spinner: { width: '22px', height: '22px', border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%', animation: 'spin 0.7s linear infinite' },
 
   errorCard: { padding: '20px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '14px' },
   errorTitle: { fontSize: '13px', color: '#DC2626', margin: '0 0 10px', lineHeight: 1.5 },
@@ -584,7 +584,7 @@ const s: Record<string, React.CSSProperties> = {
   waitingCard: { display: 'flex', alignItems: 'flex-start', gap: '12px', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '18px 16px', marginBottom: '16px' },
   waitingTitle: { fontSize: '14px', fontWeight: 700, color: '#111827', margin: '0 0 4px' },
   waitingSub: { fontSize: '12px', color: '#6B7280', margin: 0, lineHeight: 1.5 },
-  spinnerSmall: { width: '18px', height: '18px', border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%', flexShrink: 0, marginTop: '2px' },
+  spinnerSmall: { width: '18px', height: '18px', border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%', flexShrink: 0, marginTop: '2px', animation: 'spin 0.7s linear infinite' },
 
   rejectedCard: { background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '14px', padding: '16px', marginBottom: '16px' },
   rejectedTitle: { fontSize: '14px', fontWeight: 700, color: '#991B1B', margin: '0 0 6px' },

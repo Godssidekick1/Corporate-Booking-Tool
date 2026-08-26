@@ -666,7 +666,7 @@ const s: Record<string, React.CSSProperties> = {
     border: 'none', borderRadius: '10px', cursor: 'pointer', display: 'flex', alignItems: 'center',
     justifyContent: 'center', gap: '8px', letterSpacing: '0.2px',
   },
-  spinner: { width: '13px', height: '13px', border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block' },
+  spinner: { width: '13px', height: '13px', border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.7s linear infinite' },
 
   errorBanner: { display: 'flex', alignItems: 'center', gap: '8px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', color: '#DC2626', marginBottom: '16px' },
   bannerIcon: { fontSize: '14px' },
