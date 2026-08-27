@@ -108,7 +108,7 @@ export default function TmcCompaniesPage() {
   const hasSuggestions = suggestions.companies.length > 0 || suggestions.client_groups.length > 0
 
   return (
-    <TmcShell activeLabel="Companies">
+    <TmcShell activeLabel="Clients">
     <div style={s.root}>
       <div style={s.header}>
         <div>

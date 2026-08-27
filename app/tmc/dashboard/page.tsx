@@ -454,62 +454,231 @@ export default function TmcDashboardPage() {
           </form>
         )}
 
-        <div style={s.section}>
-          <div style={s.sectionHeader}>
-            <h2 style={s.sectionTitle}>Your companies</h2>
-            <span style={s.sectionCount}>{companies.length} total</span>
-          </div>
+        {/* The client list itself lives in the nav and on /tmc/companies. What
+            belongs here is how the portfolio is performing, which a list of
+            names never answered. */}
+        <DashboardStats />
+      </div>
+    </TmcShell>
+  )
+}
 
-          {loading ? (
-            <div style={s.emptyState}><p style={s.emptyTitle}>Loading…</p></div>
-          ) : companies.length === 0 ? (
-            <div style={s.emptyState}>
-              <p style={s.emptyTitle}>No companies yet</p>
-              <p style={s.emptyDesc}>Add your first corporate client using the button above.</p>
+// ── DashboardStats ───────────────────────────────────────────────────────────
+// Booking activity across the portfolio. Loads independently of the rest of the
+// dashboard so a slow aggregate never holds up the create-client form.
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface ClientStat {
+  companyId: string
+  name: string
+  employees: number
+  bookings: number
+  recentBookings: number
+  spend: number
+  lastBookingAt: string | null
+}
+
+interface Totals {
+  clients: number
+  activeClients: number
+  employees: number
+  bookings: number
+  recentBookings: number
+  spend: number
+  maxBookings: number
+  minBookings: number
+  avgBookings: number
+}
+
+function DashboardStats() {
+  const [totals, setTotals] = useState<Totals | null>(null)
+  const [clients, setClients] = useState<ClientStat[]>([])
+  const [trend, setTrend] = useState<{ weekStart: string; bookings: number }[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+
+    fetch('/api/tmc/stats')
+      .then(r => r.json())
+      .then(d => {
+        if (cancelled) return
+        if (!d.ok) { setError(d.error || 'Could not load statistics.'); return }
+        setTotals(d.totals); setClients(d.clients); setTrend(d.trend)
+      })
+      .catch(() => { if (!cancelled) setError('Could not load statistics.') })
+      .finally(() => { if (!cancelled) setLoading(false) })
+
+    return () => { cancelled = true }
+  }, [])
+
+  if (loading) {
+    return (
+      <div style={st.loadingWrap}>
+        <div style={st.spinner} />
+        <p style={st.muted}>Crunching booking activity…</p>
+      </div>
+    )
+  }
+
+  if (error) return <div style={st.errorBanner}>⚠ {error}</div>
+  if (!totals) return null
+
+  const peak = Math.max(1, ...trend.map(t => t.bookings))
+  const busiest = clients[0]
+  const dormant = clients.filter(c => c.bookings === 0)
+
+  return (
+    <>
+      <div style={st.tiles}>
+        <Tile label="Clients" value={totals.clients} sub={`${totals.activeClients} have booked`} />
+        <Tile label="Travellers" value={totals.employees} sub="across all clients" />
+        <Tile label="Bookings" value={totals.bookings} sub={`${totals.recentBookings} in the last 30 days`} />
+        <Tile
+          label="Booking spend"
+          value={`₹${Math.round(totals.spend).toLocaleString('en-IN')}`}
+          sub="all time"
+        />
+      </div>
+
+      <div style={st.tiles}>
+        <Tile label="Busiest client" value={totals.maxBookings} sub={busiest?.name ?? '—'} />
+        <Tile
+          label="Average per active client"
+          value={totals.avgBookings}
+          sub="clients with no bookings excluded"
+        />
+        <Tile
+          label="Quietest active client"
+          value={clients.filter(c => c.bookings > 0).slice(-1)[0]?.bookings ?? 0}
+          sub={clients.filter(c => c.bookings > 0).slice(-1)[0]?.name ?? '—'}
+        />
+        <Tile
+          label="Yet to book"
+          value={dormant.length}
+          sub={dormant.length > 0 ? 'worth a nudge' : 'everyone is active'}
+          warn={dormant.length > 0}
+        />
+      </div>
+
+      <div style={st.section}>
+        <h2 style={st.sectionTitle}>Bookings over the last 8 weeks</h2>
+        {/* Deliberately a plain bar row rather than a chart library — it is one
+            series of eight numbers, and a dependency would outweigh it. */}
+        <div style={st.chart}>
+          {trend.map(week => (
+            <div key={week.weekStart} style={st.barCol} title={`${week.bookings} bookings`}>
+              <div style={st.barTrack}>
+                <div style={{ ...st.bar, height: `${(week.bookings / peak) * 100}%` }} />
+              </div>
+              <span style={st.barValue}>{week.bookings}</span>
+              <span style={st.barLabel}>
+                {new Date(week.weekStart).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+              </span>
             </div>
-          ) : (
-            <table style={s.table}>
+          ))}
+        </div>
+      </div>
+
+      <div style={st.section}>
+        <h2 style={st.sectionTitle}>By client</h2>
+        {clients.length === 0 ? (
+          <p style={st.muted}>No clients yet.</p>
+        ) : (
+          <div style={st.tableWrap}>
+            <table style={st.table}>
               <thead>
                 <tr>
-                  {['Company', 'Status', 'Setup', 'Onboarded'].map(h => (
-                    <th key={h} style={s.th}>{h}</th>
+                  {['Client', 'Travellers', 'Bookings', 'Last 30d', 'Spend', 'Last booking'].map(h => (
+                    <th key={h} style={st.th}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {companies.map((company, i) => (
+                {clients.map(c => (
                   <tr
-                    key={company.id}
-                    onClick={() => { window.location.href = `/tmc/companies/${company.id}` }}
-                    style={{ backgroundColor: i % 2 === 0 ? '#fff' : '#FAFAFA', cursor: 'pointer' }}
+                    key={c.companyId}
+                    onClick={() => { window.location.href = `/tmc/companies/${c.companyId}` }}
+                    style={st.tr}
                   >
-                    <td style={s.td}><span style={s.companyName}>{company.name}</span></td>
-                    <td style={s.td}>
-                      <span style={{
-                        ...s.badge,
-                        backgroundColor: company.status === 'active' ? '#ECFDF5' : '#FEF3C7',
-                        color: company.status === 'active' ? '#065F46' : '#92400E',
-                      }}>{company.status}</span>
+                    <td style={{ ...st.td, fontWeight: 500, color: '#111827' }}>{c.name}</td>
+                    <td style={st.td}>{c.employees}</td>
+                    <td style={st.td}>
+                      <div style={st.barCell}>
+                        <span style={st.barCellValue}>{c.bookings}</span>
+                        <div style={st.miniTrack}>
+                          <div style={{
+                            ...st.miniBar,
+                            width: `${totals.maxBookings ? (c.bookings / totals.maxBookings) * 100 : 0}%`,
+                          }} />
+                        </div>
+                      </div>
                     </td>
-                    <td style={s.td}>
-                      <span style={{
-                        ...s.badge,
-                        backgroundColor: company.setup_completed ? '#ECFDF5' : '#F3F4F6',
-                        color: company.setup_completed ? '#065F46' : '#6B7280',
-                      }}>{company.setup_completed ? 'Complete' : 'Pending'}</span>
-                    </td>
-                    <td style={{ ...s.td, color: '#9CA3AF', fontSize: '12px' }}>
-                      {new Date(company.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    <td style={st.td}>{c.recentBookings}</td>
+                    <td style={st.td}>₹{Math.round(c.spend).toLocaleString('en-IN')}</td>
+                    <td style={{ ...st.td, color: '#9CA3AF', fontSize: 12 }}>
+                      {c.lastBookingAt
+                        ? new Date(c.lastBookingAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+                        : 'Never'}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          )}
-        </div>
+          </div>
+        )}
       </div>
-    </TmcShell>
+    </>
   )
+}
+
+function Tile({ label, value, sub, warn }: {
+  label: string
+  value: string | number
+  sub?: string
+  warn?: boolean
+}) {
+  return (
+    <div style={{ ...st.tile, borderColor: warn ? '#FDE68A' : '#E5E7EB' }}>
+      <span style={st.tileLabel}>{label}</span>
+      <span style={{ ...st.tileValue, color: warn ? '#92400E' : '#0A0A14' }}>{value}</span>
+      {sub && <span style={st.tileSub}>{sub}</span>}
+    </div>
+  )
+}
+
+const st: Record<string, React.CSSProperties> = {
+  tiles: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 12, marginBottom: 14 },
+  tile: { background: '#fff', border: '1px solid', borderRadius: 10, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 3 },
+  tileLabel: { fontSize: 11, fontWeight: 600, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.5px' },
+  tileValue: { fontSize: 24, fontWeight: 700, letterSpacing: '-0.5px' },
+  tileSub: { fontSize: 11, color: '#9CA3AF' },
+
+  section: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: 12, padding: 20, marginTop: 16 },
+  sectionTitle: { fontSize: 14, fontWeight: 600, color: '#111827', margin: '0 0 16px' },
+
+  chart: { display: 'flex', gap: 10, alignItems: 'flex-end', height: 150 },
+  barCol: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, height: '100%' },
+  barTrack: { flex: 1, width: '100%', display: 'flex', alignItems: 'flex-end', background: '#F9FAFB', borderRadius: 5, overflow: 'hidden' },
+  bar: { width: '100%', background: '#000835', borderRadius: '5px 5px 0 0', minHeight: 2, transition: 'height 0.25s' },
+  barValue: { fontSize: 11, fontWeight: 700, color: '#374151' },
+  barLabel: { fontSize: 10, color: '#9CA3AF', whiteSpace: 'nowrap' },
+
+  tableWrap: { overflowX: 'auto' },
+  table: { borderCollapse: 'collapse', width: '100%' },
+  th: { padding: '9px 12px', textAlign: 'left', background: '#F9FAFB', borderBottom: '1px solid #E5E7EB', fontSize: 11, fontWeight: 600, color: '#374151', whiteSpace: 'nowrap' },
+  tr: { borderBottom: '1px solid #F3F4F6', cursor: 'pointer' },
+  td: { padding: '9px 12px', fontSize: 13, color: '#374151' },
+  barCell: { display: 'flex', alignItems: 'center', gap: 8, minWidth: 110 },
+  barCellValue: { fontSize: 13, fontWeight: 600, color: '#111827', minWidth: 26 },
+  miniTrack: { flex: 1, height: 6, background: '#F3F4F6', borderRadius: 3, overflow: 'hidden' },
+  miniBar: { height: '100%', background: '#000835', borderRadius: 3 },
+
+  loadingWrap: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: 60 },
+  spinner: { width: 24, height: 24, border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%', animation: 'spin 0.7s linear infinite' },
+  muted: { fontSize: 12, color: '#9CA3AF', margin: 0 },
+  errorBanner: { background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#DC2626' },
 }
 
 // ── Small field helpers ─────────────────────────────────────────────────────

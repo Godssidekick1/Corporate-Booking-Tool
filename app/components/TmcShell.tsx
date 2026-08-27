@@ -10,14 +10,23 @@ interface Employee {
   tmc_id: string
 }
 
-interface TmcShellProps {
-  children: React.ReactNode
-  activeLabel: 'Dashboard' | 'Companies' | 'Settings' | 'Reports'
+interface Client {
+  id: string
+  name: string
+  employeeCount: number
 }
 
-export default function TmcShell({ children, activeLabel }: TmcShellProps) {
+interface TmcShellProps {
+  children: React.ReactNode
+  activeLabel: 'Dashboard' | 'Clients' | 'Client groups' | 'Settings' | 'Reports'
+  // Set when a specific client is open, so its row highlights in the list.
+  activeClientId?: string
+}
+
+export default function TmcShell({ children, activeLabel, activeClientId }: TmcShellProps) {
   const [employee, setEmployee] = useState<Employee | null>(null)
   const [permissions, setPermissions] = useState<string[]>([])
+  const [clients, setClients] = useState<Client[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -32,11 +41,22 @@ export default function TmcShell({ children, activeLabel }: TmcShellProps) {
       .finally(() => setLoading(false))
   }, [])
 
+  // Clients live in the main nav rather than under Settings: they are what a
+  // travel desk works in all day, not something configured once. Settings keeps
+  // the things you set up and leave alone — policy, approvals, integrations.
+  useEffect(() => {
+    fetch('/api/tmc/companies')
+      .then(r => r.json())
+      .then(d => { if (d.ok) setClients(d.companies) })
+      .catch(() => {})
+  }, [])
+
   const navItems = [
-    { label: 'Dashboard', href: '/tmc/dashboard', show: true },
-    { label: 'Companies', href: '/tmc/companies', show: true },
-    { label: 'Settings',  href: '/tmc/settings',  show: employee?.role === 'tmc_admin' || permissions.length > 0 },
-    { label: 'Reports',   href: '/tmc/reports',   show: canAccess(employee?.role, permissions, 'view_reports') },
+    { label: 'Dashboard',     href: '/tmc/dashboard',              show: true },
+    { label: 'Clients',       href: '/tmc/companies',              show: true },
+    { label: 'Client groups', href: '/tmc/settings/client-groups', show: canAccess(employee?.role, permissions, 'manage_client_groups') },
+    { label: 'Settings',      href: '/tmc/settings',               show: employee?.role === 'tmc_admin' || permissions.length > 0 },
+    { label: 'Reports',       href: '/tmc/reports',                show: canAccess(employee?.role, permissions, 'view_reports') },
   ].filter(item => item.show)
 
   return (
@@ -58,6 +78,33 @@ export default function TmcShell({ children, activeLabel }: TmcShellProps) {
               {item.label}
             </a>
           ))}
+
+          {/* The client list itself, so a desk can jump straight to whoever
+              called without going via a listing page first. Scrolls rather than
+              growing the nav, and headcount is the one number worth seeing at a
+              glance when choosing. */}
+          {clients.length > 0 && (
+            <div style={s.clientBlock}>
+              <p style={s.navLabel}>Clients</p>
+              <div style={s.clientList}>
+                {clients.map(c => (
+                  <a
+                    key={c.id}
+                    href={`/tmc/companies/${c.id}`}
+                    style={{
+                      ...s.clientItem,
+                      backgroundColor: c.id === activeClientId ? 'rgba(255,255,255,0.1)' : 'transparent',
+                      color: c.id === activeClientId ? '#fff' : 'rgba(255,255,255,0.45)',
+                    }}
+                    title={c.name}
+                  >
+                    <span style={s.clientName}>{c.name}</span>
+                    <span style={s.clientCount}>{c.employeeCount ?? 0}</span>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
         <div style={s.navFooter}>
           <p style={s.userName}>{loading ? '…' : employee?.full_name ?? '—'}</p>
@@ -87,6 +134,12 @@ const s: Record<string, React.CSSProperties> = {
   wmBy: { fontSize: '10px', color: 'rgba(255,255,255,0.35)', letterSpacing: '0.5px', textTransform: 'uppercase' as const },
   navLabel: { fontSize: '9px', fontWeight: 600, color: 'rgba(255,255,255,0.28)', letterSpacing: '1.1px', textTransform: 'uppercase' as const, margin: '0 0 12px' },
   navItem: { display: 'block', padding: '9px 12px', borderRadius: '7px', fontSize: '13px', textDecoration: 'none', marginBottom: '2px' },
+  clientBlock: { marginTop: '22px', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '14px' },
+  // Capped so a TMC with fifty clients scrolls this list instead of the page.
+  clientList: { display: 'flex', flexDirection: 'column', gap: '1px', maxHeight: '260px', overflowY: 'auto' },
+  clientItem: { display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', borderRadius: '6px', fontSize: '12px', textDecoration: 'none' },
+  clientName: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  clientCount: { fontSize: '10px', fontWeight: 600, color: 'rgba(255,255,255,0.35)', background: 'rgba(255,255,255,0.07)', borderRadius: '4px', padding: '1px 6px', flexShrink: 0 },
   navFooter: { borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '16px' },
   userName: { fontSize: '12px', fontWeight: 600, color: '#fff', margin: '0 0 2px' },
   userRole: { fontSize: '11px', color: 'rgba(255,255,255,0.4)', margin: 0 },

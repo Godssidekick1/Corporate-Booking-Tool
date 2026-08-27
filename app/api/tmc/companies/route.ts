@@ -45,5 +45,30 @@ export async function GET() {
     return Response.json({ error: error.message }, { status: 500 })
   }
 
-  return Response.json({ ok: true, companies: companies ?? [] })
+  // Headcount per client, for the nav and the client list. Counted in one query
+  // over the whole set rather than per company, since this runs on every page
+  // load that renders the shell. Deactivated people are excluded — the number
+  // is meant to read as "how big is this client", not how many rows exist.
+  const companyIds = (companies ?? []).map(c => c.id)
+  const employeeCounts = new Map<string, number>()
+
+  if (companyIds.length > 0) {
+    const { data: employees } = await service
+      .from('employees')
+      .select('company_id, status')
+      .in('company_id', companyIds)
+
+    for (const e of employees ?? []) {
+      if (e.status === 'deactivated') continue
+      employeeCounts.set(e.company_id, (employeeCounts.get(e.company_id) ?? 0) + 1)
+    }
+  }
+
+  return Response.json({
+    ok: true,
+    companies: (companies ?? []).map(c => ({
+      ...c,
+      employeeCount: employeeCounts.get(c.id) ?? 0,
+    })),
+  })
 }

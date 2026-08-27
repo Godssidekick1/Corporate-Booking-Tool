@@ -4,17 +4,25 @@ import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { canAccess } from '@/app/lib/permissions/canAccess'
 
+// Client groups moved out to the main TMC nav alongside Clients — both are
+// things a desk works in daily, not things configured once and left. What
+// remains here is genuinely configuration.
+//
+// Traveller profiles replaces the old Hierarchy page. Reporting line and band
+// were only ever two fields on a person, and keeping them on their own screen
+// meant editing someone took two places. They now sit with the rest of that
+// person's record.
 const SECTIONS = [
-  { label: 'Client groups',     href: '/tmc/settings/client-groups',     permission: 'manage_client_groups' },
-  { label: 'Users',        href: '/tmc/settings/users',        permission: 'manage_users' },
-  { label: 'Policy',       href: '/tmc/settings/policy',       permission: 'manage_policy' },
-  { label: 'Rule Engine test', href: '/tmc/settings/rule-engine-test', permission: 'manage_policy' },
-  { label: 'Approvals',    href: '/tmc/settings/approvals',    permission: 'manage_approvals' },
-  // Gated on manage_users rather than manage_approvals: it edits employee
-  // records. It sits next to Approvals because that is what it feeds — a
-  // 'manager' approval step resolves through manager_id.
-  { label: 'Hierarchy',    href: '/tmc/settings/hierarchy',    permission: 'manage_users' },
-  { label: 'Integrations', href: '/tmc/settings/integrations', permission: null }, // placeholder page, no gate yet
+  // Gated on manage_users rather than manage_approvals: these edit employee
+  // records. Traveller profiles still feeds approvals — a 'manager' step
+  // resolves through the reporting line set there.
+  { label: 'Traveller profiles', href: '/tmc/settings/traveller-profiles', permission: 'manage_users' },
+  { label: 'Cost centres',       href: '/tmc/settings/cost-centres',       permission: 'manage_users' },
+  { label: 'Users',              href: '/tmc/settings/users',              permission: 'manage_users' },
+  { label: 'Policy',             href: '/tmc/settings/policy',             permission: 'manage_policy' },
+  { label: 'Approvals',          href: '/tmc/settings/approvals',          permission: 'manage_approvals' },
+  { label: 'Rule Engine test',   href: '/tmc/settings/rule-engine-test',   permission: 'manage_policy' },
+  { label: 'Integrations',       href: '/tmc/settings/integrations',       permission: null }, // placeholder page, no gate yet
 ]
 
 export default function TmcSettingsLayout({ children }: { children: React.ReactNode }) {

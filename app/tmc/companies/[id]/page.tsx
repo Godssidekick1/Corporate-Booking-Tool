@@ -102,15 +102,15 @@ export default function TmcCompanyDetailPage() {
   }
 
   if (loading) {
-    return <TmcShell activeLabel="Companies"><div style={s.root}><p style={s.loadingText}>Loading…</p></div></TmcShell>
+    return <TmcShell activeLabel="Clients"><div style={s.root}><p style={s.loadingText}>Loading…</p></div></TmcShell>
   }
 
   if (!company) {
-    return <TmcShell activeLabel="Companies"><div style={s.root}><p style={s.error}>{error || 'Company not found.'}</p></div></TmcShell>
+    return <TmcShell activeLabel="Clients"><div style={s.root}><p style={s.error}>{error || 'Company not found.'}</p></div></TmcShell>
   }
 
   return (
-    <TmcShell activeLabel="Companies">
+    <TmcShell activeLabel="Clients" activeClientId={companyId}>
     <div style={s.root}>
       <div style={s.header}>
         <a href="/tmc/companies" style={s.backLink}>← All companies</a>
