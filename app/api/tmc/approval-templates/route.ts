@@ -15,20 +15,20 @@ import { NextRequest } from 'next/server'
 // on for the same template.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const APPROVER_TYPES = [
-  'manager', 'finance_role', 'specific_user', 'admin', 'self', 'any_manager_at',
-] as const
+// Approver types deliberately do not live here any more — they belong to a
+// binding, not a template. See app/api/tmc/approval-tier-approvers/route.ts.
 export const VERDICTS = ['green', 'amber', 'red'] as const
 export const CATEGORIES = ['flights_hotels', 'misc'] as const
 export const MODES = ['sequential', 'parallel'] as const
 export const QUORUMS = ['any', 'all'] as const
 
-interface ChainTierInput {
+// A step, as a template stores it. Structure only — who fills it is bound per
+// company in approval_tier_approvers, because a template is shared across
+// clients and a person exists in only one of them.
+interface TemplateTierInput {
   tier: number
-  approver_type: string
   min_verdict: string
-  approver_user_id?: string | null
-  min_band_rank?: number | null
+  label?: string | null
 }
 
 interface CreateTemplateBody {
@@ -38,47 +38,44 @@ interface CreateTemplateBody {
   category: string
   mode?: string
   quorum?: string
-  tiers?: ChainTierInput[]
+  tiers?: TemplateTierInput[]
+  // Set to scope this chain to one company (what the direct-mapping flow
+  // produces). Omit for a chain shared across the TMC's clients.
+  companyId?: string | null
 }
 
 // ── validateTiers ────────────────────────────────────────────────────────────
-// Sequential chains need distinct tier numbers, since the engine walks them in
-// order. Parallel chains don't: every entry is raised at once and the engine
-// normalises them onto a single tier number, so duplicates are meaningless
-// rather than wrong. Validating both modes the same way would reject perfectly
-// valid parallel setups.
+// Structure only. Approver checks used to live here and no longer can: the
+// approver isn't part of the template.
+//
+// Sequential chains need distinct step numbers, since the engine walks them in
+// order. Parallel chains don't: every step is raised at once and the engine
+// normalises them onto a single number, so duplicates are meaningless rather
+// than wrong. Validating both modes the same way would reject perfectly valid
+// parallel setups.
 // ─────────────────────────────────────────────────────────────────────────────
-export function validateTiers(tiers: ChainTierInput[], mode: string): string | null {
+export function validateTiers(tiers: TemplateTierInput[], mode: string): string | null {
   if (!Array.isArray(tiers)) return 'tiers must be an array'
-  if (tiers.length === 0) return 'A template needs at least one approver'
+  if (tiers.length === 0) return 'A chain needs at least one step'
 
   const seenTierNumbers = new Set<number>()
 
   for (const t of tiers) {
-    if (!Number.isInteger(t.tier) || t.tier < 1) return `Invalid tier number: ${t.tier}`
+    if (!Number.isInteger(t.tier) || t.tier < 1) return `Invalid step number: ${t.tier}`
 
     if (mode === 'sequential') {
-      if (seenTierNumbers.has(t.tier)) return `Duplicate tier number: ${t.tier}`
+      if (seenTierNumbers.has(t.tier)) return `Duplicate step number: ${t.tier}`
       seenTierNumbers.add(t.tier)
     }
 
-    if (!APPROVER_TYPES.includes(t.approver_type as typeof APPROVER_TYPES[number])) {
-      return `Invalid approver_type: ${t.approver_type}`
-    }
     if (!VERDICTS.includes(t.min_verdict as typeof VERDICTS[number])) {
       return `Invalid min_verdict: ${t.min_verdict}`
-    }
-    if (t.approver_type === 'specific_user' && !t.approver_user_id) {
-      return `Tier ${t.tier}: specific_user requires a chosen person`
-    }
-    if (t.approver_type === 'any_manager_at' && (t.min_band_rank === undefined || t.min_band_rank === null)) {
-      return `Tier ${t.tier}: any_manager_at requires min_band_rank`
     }
   }
 
   // A parallel group of one is a sequential chain of one, written confusingly.
   if (mode === 'parallel' && tiers.length < 2) {
-    return 'Parallel mode needs at least two approvers — use multi-tier for a single approver'
+    return 'Parallel mode needs at least two steps — use multi-tier for a single approver'
   }
 
   return null
@@ -102,7 +99,7 @@ export async function GET(req: NextRequest) {
 
   let query = service
     .from('approval_chain_templates')
-    .select('id, name, code, description, category, mode, quorum, tiers, version, created_at')
+    .select('id, name, code, description, category, mode, quorum, tiers, version, created_at, company_id')
     .eq('tmc_id', auth.tmcId)
     .order('name')
 
@@ -193,6 +190,20 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: tierError }, { status: 400 })
   }
 
+  // A company-scoped chain must point at a company this TMC actually manages,
+  // or it would be created and then be invisible and unusable.
+  if (body.companyId) {
+    const { data: company } = await service
+      .from('companies')
+      .select('id, tmc_id')
+      .eq('id', body.companyId)
+      .maybeSingle()
+
+    if (!company || company.tmc_id !== auth.tmcId) {
+      return Response.json({ error: 'Company not found for this TMC' }, { status: 404 })
+    }
+  }
+
   const { data: caller } = await service
     .from('employees')
     .select('id')
@@ -203,6 +214,7 @@ export async function POST(req: NextRequest) {
     .from('approval_chain_templates')
     .insert({
       tmc_id: auth.tmcId,
+      company_id: body.companyId ?? null,
       name: name.trim(),
       code: code?.trim() || null,
       description: description?.trim() || null,
@@ -212,7 +224,7 @@ export async function POST(req: NextRequest) {
       tiers,
       updated_by: caller?.id ?? null,
     })
-    .select('id, name, code, description, category, mode, quorum, tiers, version, created_at')
+    .select('id, name, code, description, category, mode, quorum, tiers, version, created_at, company_id')
     .single()
 
   if (error) {

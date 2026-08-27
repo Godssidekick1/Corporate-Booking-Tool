@@ -10,6 +10,10 @@ const SECTIONS = [
   { label: 'Policy',       href: '/tmc/settings/policy',       permission: 'manage_policy' },
   { label: 'Rule Engine test', href: '/tmc/settings/rule-engine-test', permission: 'manage_policy' },
   { label: 'Approvals',    href: '/tmc/settings/approvals',    permission: 'manage_approvals' },
+  // Gated on manage_users rather than manage_approvals: it edits employee
+  // records. It sits next to Approvals because that is what it feeds — a
+  // 'manager' approval step resolves through manager_id.
+  { label: 'Hierarchy',    href: '/tmc/settings/hierarchy',    permission: 'manage_users' },
   { label: 'Integrations', href: '/tmc/settings/integrations', permission: null }, // placeholder page, no gate yet
 ]
 

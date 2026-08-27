@@ -112,50 +112,15 @@ export async function PATCH(
     update.status = status
   }
 
+  // manager_id is deliberately NOT editable here any more. The TMC configures
+  // approval routing, and 'manager' steps resolve through manager_id — so the
+  // TMC has to be able to set it, or it could build a chain whose first step
+  // resolves to nobody and have no way to fix it. It now lives at
+  // PATCH /api/tmc/employees/[id], and corporate sees the hierarchy read-only.
   if (managerId !== undefined) {
-    if (managerId === null) {
-      update.manager_id = null
-    } else {
-      if (managerId === target.id) {
-        return Response.json({ error: 'An employee cannot be their own manager.' }, { status: 400 })
-      }
-
-      const { data: proposedManager, error: managerLookupError } = await service
-        .from('employees')
-        .select('id, company_id, manager_id')
-        .eq('id', managerId)
-        .eq('company_id', caller.company_id)
-        .maybeSingle()
-
-      if (managerLookupError || !proposedManager) {
-        return Response.json({ error: 'Proposed manager not found in your company' }, { status: 422 })
-      }
-
-      // Walk the proposed manager's own chain upward — if it ever reaches
-      // `target.id`, assigning this manager would create a cycle (e.g. A
-      // manages B, and this update tries to make B manage A, or a longer
-      // A -> B -> C -> A loop). Bounded to a sane depth rather than an
-      // unbounded while loop, so a data-integrity bug elsewhere (a cycle
-      // that already snuck in some other way) can't hang this request.
-      let cursor: string | null = proposedManager.manager_id
-      let depth = 0
-      while (cursor && depth < 50) {
-        if (cursor === target.id) {
-          return Response.json({
-            error: 'This would create a circular reporting chain (the proposed manager already reports up to this employee).',
-          }, { status: 400 })
-        }
-        const { data: next } = await service
-          .from('employees')
-          .select('manager_id')
-          .eq('id', cursor)
-          .maybeSingle()
-        cursor = next?.manager_id ?? null
-        depth++
-      }
-
-      update.manager_id = managerId
-    }
+    return Response.json({
+      error: 'Reporting lines are maintained by your TMC. Contact them to change a manager.',
+    }, { status: 403 })
   }
 
   if (Object.keys(update).length === 0) {

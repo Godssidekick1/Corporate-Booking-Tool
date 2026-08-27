@@ -5,13 +5,15 @@ import { MODES, QUORUMS, validateTiers } from '../route'
 import { NextRequest } from 'next/server'
 
 // ── PATCH /api/tmc/approval-templates/[id] ───────────────────────────────────
-// Edits a template's identity, its approvers, or its mode.
+// Edits a chain's name, its steps, or its mode. Not its approvers — those are
+// bound per company in approval_tier_approvers, since a shared template cannot
+// name a person who only exists at one client.
 //
-// Switching mode re-validates the tiers, because the modes have different
-// rules: sequential needs distinct tier numbers, parallel needs at least two
-// approvers. Flipping the toggle on a chain the other mode can't express
-// should fail with that reason rather than saving something the engine will
-// read differently than intended.
+// Switching mode re-validates the steps, because the modes have different
+// rules: sequential needs distinct step numbers, parallel needs at least two.
+// Flipping the toggle on a chain the other mode can't express should fail with
+// that reason rather than saving something the engine reads differently than
+// intended.
 //
 // ── DELETE /api/tmc/approval-templates/[id] ──────────────────────────────────
 // Blocked while any employee is routed through it, or while it is a company's
@@ -24,12 +26,12 @@ interface UpdateTemplateBody {
   description?: string | null
   mode?: string
   quorum?: string
+  // Structure only. Who fills each step is bound per company, in
+  // approval_tier_approvers.
   tiers?: {
     tier: number
-    approver_type: string
     min_verdict: string
-    approver_user_id?: string | null
-    min_band_rank?: number | null
+    label?: string | null
   }[]
 }
 
@@ -120,7 +122,7 @@ export async function PATCH(
     .from('approval_chain_templates')
     .update(fields)
     .eq('id', id)
-    .select('id, name, code, description, category, mode, quorum, tiers, version, created_at')
+    .select('id, name, code, description, category, mode, quorum, tiers, version, created_at, company_id')
     .single()
 
   if (updateError) {

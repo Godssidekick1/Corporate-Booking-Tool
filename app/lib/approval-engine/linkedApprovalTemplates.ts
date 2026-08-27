@@ -1,10 +1,33 @@
 import { createServiceClient } from '@/utils/supabase/service'
-import type { ChainTier } from './resolveApprovalTier'
+import type { ApproverType, ChainTier } from './resolveApprovalTier'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
 
 export type ChainMode = 'sequential' | 'parallel'
 export type ChainQuorum = 'any' | 'all'
+
+// ── TemplateTier ─────────────────────────────────────────────────────────────
+// A step as the template stores it: structure only. Who fills it is decided per
+// company, in approval_tier_approvers — a template is shared across clients and
+// a person only exists inside one of them.
+//
+// `label` is what the TMC calls the step ("Line manager", "Finance sign-off").
+// It carries no behaviour; it exists so the person binding approvers at each
+// company knows what the step is meant to be.
+// ─────────────────────────────────────────────────────────────────────────────
+export interface TemplateTier {
+  tier: number
+  min_verdict: string
+  label?: string | null
+}
+
+// The identity half, one row per (company, template, step).
+export interface TierApprover {
+  tier: number
+  approver_type: ApproverType
+  approver_user_id?: string | null
+  min_band_rank?: number | null
+}
 
 export interface ApprovalTemplate {
   id: string
@@ -13,7 +36,7 @@ export interface ApprovalTemplate {
   category: string
   mode: ChainMode
   quorum: ChainQuorum
-  tiers: ChainTier[]
+  tiers: TemplateTier[]
 }
 
 // Where a resolved template came from. Surfaced so the UI can show an employee
@@ -36,8 +59,57 @@ function toTemplate(row: Record<string, unknown>): ApprovalTemplate {
     category: row.category as string,
     mode: row.mode as ChainMode,
     quorum: row.quorum as ChainQuorum,
-    tiers: (row.tiers as ChainTier[] | null) ?? [],
+    tiers: (row.tiers as TemplateTier[] | null) ?? [],
   }
+}
+
+// ── getTierApprovers ─────────────────────────────────────────────────────────
+// Who fills each step of one template at one company, keyed by step number.
+//
+// A step with no row here is unbound. Callers merge that into a tier carrying
+// approver_type 'unbound', which resolveApproverForTier returns null for — and
+// null already means "unresolvable approver" to raiseApprovals, which logs it
+// and flags the outcome. No separate handling needed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function getTierApprovers(
+  service: ServiceClient,
+  companyId: string,
+  templateId: string
+): Promise<Map<number, TierApprover>> {
+  const { data: rows } = await service
+    .from('approval_tier_approvers')
+    .select('tier, approver_type, approver_user_id, min_band_rank')
+    .eq('company_id', companyId)
+    .eq('template_id', templateId)
+
+  return new Map((rows ?? []).map(r => [r.tier as number, r as TierApprover]))
+}
+
+// ── mergeTiers ───────────────────────────────────────────────────────────────
+// Joins the two halves into the ChainTier shape the engine already works in.
+//
+// This is the whole point of keeping the binding row shaped like the old inline
+// tier: resolveApproverForTier, raiseApprovals, eligibleTiers and both entry
+// points read the result unchanged.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function mergeTiers(
+  structure: TemplateTier[],
+  approvers: Map<number, TierApprover>
+): ChainTier[] {
+  return structure.map(step => {
+    const bound = approvers.get(step.tier)
+
+    return {
+      tier: step.tier,
+      min_verdict: step.min_verdict,
+      label: step.label ?? null,
+      approver_type: bound?.approver_type ?? 'unbound',
+      approver_user_id: bound?.approver_user_id ?? null,
+      min_band_rank: bound?.min_band_rank ?? null,
+    }
+  })
 }
 
 // ── resolveTemplateForEmployee ───────────────────────────────────────────────

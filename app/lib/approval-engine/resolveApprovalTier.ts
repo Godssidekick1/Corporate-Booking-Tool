@@ -2,6 +2,8 @@ import { createServiceClient } from '@/utils/supabase/service'
 import type { Verdict, VerdictBreach } from '@/app/lib/rule-engine/evaluateBooking'
 import {
   resolveTemplateForEmployee,
+  getTierApprovers,
+  mergeTiers,
   type ChainMode,
   type ChainQuorum,
 } from './linkedApprovalTemplates'
@@ -44,12 +46,21 @@ export function categoryForTravelType(travelType: string): ApprovalCategory {
   return 'misc'
 }
 
-export type ApproverType = 'manager' | 'finance_role' | 'specific_user' | 'admin' | 'self' | 'any_manager_at'
+// 'unbound' is not a choice anyone makes — it is what a step resolves to when
+// this company has not said who fills it. Modelled as a type rather than a
+// separate flag so it falls through resolveApproverForTier to null, which
+// raiseApprovals already treats as an unresolvable approver.
+export type ApproverType =
+  | 'manager' | 'finance_role' | 'specific_user' | 'admin' | 'self' | 'any_manager_at'
+  | 'unbound'
 
 export interface ChainTier {
   tier: number
   approver_type: ApproverType
   min_verdict: string
+  // What the template calls this step. Display only — carried through so error
+  // logs can name the step an admin sees rather than a bare number.
+  label?: string | null
   approver_user_id?: string | null
   min_band_rank?: number | null
 }
@@ -168,12 +179,16 @@ async function resolveChainForEmployee(
 
   if (!resolved) return null
 
+  // Structure comes from the template, identity from this company's bindings.
+  // Merged here so everything downstream keeps working in one tier shape.
+  const approvers = await getTierApprovers(service, companyId, resolved.template.id)
+
   return {
     templateId: resolved.template.id,
     name: resolved.template.name,
     mode: resolved.template.mode,
     quorum: resolved.template.quorum,
-    tiers: resolved.template.tiers,
+    tiers: mergeTiers(resolved.template.tiers, approvers),
   }
 }
 
@@ -326,13 +341,18 @@ async function raiseApprovals(
     const approverId = await resolveApproverForTier(service, entry, ctx.employeeId, ctx.companyId)
 
     if (!approverId) {
-      // e.g. the tier wants a finance user and the company has none active.
-      // Recorded rather than silently dropped: previously this produced a
-      // booking held for approval with no approvals row, invisible to every
-      // queue and unresolvable without touching the database.
+      // Two ways to land here: the company never said who fills this step
+      // ('unbound'), or it did but nobody matches — e.g. the step wants a
+      // finance user and the company has none active. Both are recorded rather
+      // than silently dropped: previously this produced a booking held for
+      // approval with no approvals row, invisible to every queue and
+      // unresolvable without touching the database.
+      const stepName = entry.label ? `"${entry.label}"` : `tier ${entry.tier}`
       console.error(
-        `Approval template "${chain.name}" tier ${entry.tier} (${entry.approver_type}) resolved to nobody ` +
-        `for employee ${ctx.employeeId} at company ${ctx.companyId}.`
+        entry.approver_type === 'unbound'
+          ? `Approval chain "${chain.name}" step ${stepName} has no approver set for company ${ctx.companyId}.`
+          : `Approval chain "${chain.name}" step ${stepName} (${entry.approver_type}) resolved to nobody ` +
+            `for employee ${ctx.employeeId} at company ${ctx.companyId}.`
       )
       unresolved = true
       continue
