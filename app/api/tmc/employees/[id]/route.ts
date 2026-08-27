@@ -5,22 +5,25 @@ import { validateManagerAssignment } from '@/app/lib/hierarchy/validateManagerAs
 import { NextRequest } from 'next/server'
 
 // ── PATCH /api/tmc/employees/[id] ────────────────────────────────────────────
-// Sets a client employee's manager.
+// Sets a client employee's reporting line and band.
 //
-// This lives on the TMC side because the TMC configures approval routing, and a
-// step of type 'manager' resolves through employees.manager_id. If only the
-// corporate admin could set it, a TMC could build a chain whose first step
-// resolves to nobody and have no way to fix it. Corporate keeps a read-only
-// view of the same hierarchy.
+// Both live on the TMC side because both feed things the TMC owns:
+//   manager_id       — an approval step of type 'manager' resolves through it
+//   band             — policy groups match on band rank
 //
-// Validation is shared with nothing else now, but deliberately lives in
-// app/lib/hierarchy/validateManagerAssignment.ts rather than inline: the cycle
-// walk is the part that matters, and resolveApproverForTier would chase
-// manager_id forever if a loop ever got in.
+// If only the corporate admin could set them, a TMC could configure policy and
+// approvals that resolve to nothing and have no way to fix it. Corporate keeps
+// a read-only view of both.
+//
+// topOfHierarchy marks someone with nobody above them, which is different from
+// nobody having got round to setting their manager yet. Without it the owner of
+// a company is permanently reported as a misconfiguration.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface UpdateBody {
   managerId?: string | null
+  topOfHierarchy?: boolean
+  band?: string
 }
 
 export async function PATCH(
@@ -39,7 +42,7 @@ export async function PATCH(
 
   const { data: target } = await service
     .from('employees')
-    .select('id, company_id, full_name')
+    .select('id, company_id, full_name, top_of_hierarchy')
     .eq('id', id)
     .maybeSingle()
 
@@ -67,27 +70,75 @@ export async function PATCH(
   }
 
   const body: UpdateBody = await req.json()
+  const update: Record<string, string | number | boolean | null> = {}
 
-  if (body.managerId === undefined) {
-    return Response.json({ error: 'managerId is required' }, { status: 400 })
+  // ── Top of hierarchy ──────────────────────────────────────────────────────
+  // Marking someone top clears their manager in the same write. The DB rejects
+  // holding both, and doing it here means the caller never has to send two
+  // requests in the right order.
+  if (body.topOfHierarchy !== undefined) {
+    update.top_of_hierarchy = body.topOfHierarchy
+    if (body.topOfHierarchy) update.manager_id = null
   }
 
-  const validation = await validateManagerAssignment(
-    service,
-    target.id,
-    target.company_id,
-    body.managerId
-  )
+  // ── Manager ───────────────────────────────────────────────────────────────
+  if (body.managerId !== undefined) {
+    if (body.managerId && body.topOfHierarchy) {
+      return Response.json(
+        { error: 'Someone at the top of the hierarchy cannot also report to a manager.' },
+        { status: 400 }
+      )
+    }
 
-  if (!validation.ok) {
-    return Response.json({ error: validation.error }, { status: validation.status })
+    const validation = await validateManagerAssignment(
+      service,
+      target.id,
+      target.company_id,
+      body.managerId
+    )
+
+    if (!validation.ok) {
+      return Response.json({ error: validation.error }, { status: validation.status })
+    }
+
+    update.manager_id = validation.managerId
+    // Giving someone a manager necessarily means they are not the top.
+    if (validation.managerId) update.top_of_hierarchy = false
+  }
+
+  // ── Band ──────────────────────────────────────────────────────────────────
+  // band_code and band_rank are denormalised alongside band_id, the same way
+  // every other writer sets them, so policy resolution and the dashboard stay
+  // consistent without a join.
+  if (body.band !== undefined) {
+    const { data: bandRow } = await service
+      .from('bands')
+      .select('id, code, rank')
+      .eq('company_id', target.company_id)
+      .eq('code', body.band)
+      .maybeSingle()
+
+    if (!bandRow) {
+      return Response.json(
+        { error: `Band "${body.band}" is not configured for this company` },
+        { status: 422 }
+      )
+    }
+
+    update.band_id = bandRow.id
+    update.band_code = bandRow.code
+    update.band_rank = bandRow.rank
+  }
+
+  if (Object.keys(update).length === 0) {
+    return Response.json({ error: 'Nothing to update' }, { status: 400 })
   }
 
   const { data: updated, error } = await service
     .from('employees')
-    .update({ manager_id: validation.managerId })
+    .update(update)
     .eq('id', id)
-    .select('id, full_name, manager_id')
+    .select('id, full_name, manager_id, top_of_hierarchy, band_code, band_rank')
     .single()
 
   if (error) {

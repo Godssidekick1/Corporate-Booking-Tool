@@ -77,21 +77,14 @@ export async function PATCH(
     update.role = normalized
   }
 
+  // band is deliberately NOT editable here any more, for the same reason as
+  // manager_id below: it drives policy, which the TMC owns. A client moving
+  // someone between bands would silently change the limits the TMC configured
+  // for them. It now lives at PATCH /api/tmc/employees/[id].
   if (band !== undefined) {
-    const { data: bandRow, error: bandError } = await service
-      .from('bands')
-      .select('id, code, rank')
-      .eq('company_id', caller.company_id)
-      .eq('code', band.toUpperCase())
-      .single()
-
-    if (bandError || !bandRow) {
-      return Response.json({ error: `Band ${band} not found for this company` }, { status: 422 })
-    }
-
-    update.band_id = bandRow.id
-    update.band_code = bandRow.code
-    update.band_rank = bandRow.rank
+    return Response.json({
+      error: 'Bands are maintained by your TMC. Contact them to move someone between bands.',
+    }, { status: 403 })
   }
 
   if (status !== undefined) {

@@ -204,23 +204,50 @@ function eligibleTiers(tiers: ChainTier[], verdict: Verdict): ChainTier[] {
 }
 
 // ── resolveApproverForTier ───────────────────────────────────────────────────
+// Three outcomes, not two. "Nobody" splits into a configuration gap and a
+// legitimate absence — the person at the top of the hierarchy has no manager
+// by definition, and reporting that as a misconfiguration would mean the owner
+// of a company could never have a clean approval setup.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type ApproverResolution =
+  | { kind: 'approver'; approverId: string }
+  | { kind: 'unresolved' }
+  | { kind: 'no_approval_needed'; reason: string }
+
 async function resolveApproverForTier(
   service: ServiceClient,
   tier: ChainTier,
   employeeId: string,
   companyId: string
-): Promise<string | null> {
+): Promise<ApproverResolution> {
   if (tier.approver_type === 'specific_user') {
-    return tier.approver_user_id ?? null
+    return tier.approver_user_id
+      ? { kind: 'approver', approverId: tier.approver_user_id }
+      : { kind: 'unresolved' }
   }
 
   if (tier.approver_type === 'manager') {
     const { data: employee } = await service
       .from('employees')
-      .select('manager_id')
+      .select('manager_id, top_of_hierarchy')
       .eq('id', employeeId)
       .maybeSingle()
-    return employee?.manager_id ?? null
+
+    if (employee?.manager_id) {
+      return { kind: 'approver', approverId: employee.manager_id }
+    }
+
+    // Nobody above them, deliberately. Blocking the booking forever would be
+    // worse than recording that this step had nobody to ask.
+    if (employee?.top_of_hierarchy) {
+      return {
+        kind: 'no_approval_needed',
+        reason: 'no manager to approve — this employee is at the top of the hierarchy',
+      }
+    }
+
+    return { kind: 'unresolved' }
   }
 
   // Band-scoped authority: approve via ANY active manager/admin whose own
@@ -243,7 +270,7 @@ async function resolveApproverForTier(
     // codebase and its behavior here is unverified — resolve rank via a
     // manual second query instead, consistent with how the rest of this
     // file avoids relying on embed inference.
-    if (!candidates || candidates.length === 0) return null
+    if (!candidates || candidates.length === 0) return { kind: 'unresolved' }
 
     const { data: bandRanks } = await service
       .from('bands')
@@ -270,10 +297,14 @@ async function resolveApproverForTier(
       .order('created_at', { ascending: true })
       .limit(1)
       .maybeSingle()
-    return candidate?.id ?? null
+    return candidate?.id
+      ? { kind: 'approver', approverId: candidate.id }
+      : { kind: 'unresolved' }
   }
 
-  return null
+  // Includes 'unbound' — a step this company has not said who fills — and any
+  // approver type added to the union without a branch here.
+  return { kind: 'unresolved' }
 }
 
 
@@ -338,20 +369,49 @@ async function raiseApprovals(
       continue
     }
 
-    const approverId = await resolveApproverForTier(service, entry, ctx.employeeId, ctx.companyId)
+    const resolution = await resolveApproverForTier(service, entry, ctx.employeeId, ctx.companyId)
+    const stepName = entry.label ? `"${entry.label}"` : `step ${entry.tier}`
 
-    if (!approverId) {
+    // Nobody to ask, and that is correct — the traveller is at the top of the
+    // hierarchy. Recorded like a self-approval so the booking has an audit
+    // trail, but never blocking. Distinct from 'unresolved' below: this is not
+    // a configuration gap and must not be reported as one.
+    if (resolution.kind === 'no_approval_needed') {
+      const { data: logged, error } = await service
+        .from('approvals')
+        .insert({
+          company_id: ctx.companyId,
+          booking_id: ctx.bookingId,
+          approver_id: ctx.employeeId,
+          tier: groupTier,
+          status: 'approved',
+          reason: `Auto-approved at ${stepName} — ${resolution.reason}: ${ctx.reason}`,
+          chain_template_id: chain.templateId,
+          verdict: ctx.verdict,
+          actioned_at: new Date().toISOString(),
+        })
+        .select('id')
+        .single()
+
+      if (error || !logged) {
+        throw new Error(`Failed to log auto-approval record: ${error?.message ?? 'unknown error'}`)
+      }
+
+      selfApprovalIds.push(logged.id)
+      continue
+    }
+
+    if (resolution.kind === 'unresolved') {
       // Two ways to land here: the company never said who fills this step
       // ('unbound'), or it did but nobody matches — e.g. the step wants a
       // finance user and the company has none active. Both are recorded rather
       // than silently dropped: previously this produced a booking held for
       // approval with no approvals row, invisible to every queue and
       // unresolvable without touching the database.
-      const stepName = entry.label ? `"${entry.label}"` : `tier ${entry.tier}`
       console.error(
         entry.approver_type === 'unbound'
-          ? `Approval chain "${chain.name}" step ${stepName} has no approver set for company ${ctx.companyId}.`
-          : `Approval chain "${chain.name}" step ${stepName} (${entry.approver_type}) resolved to nobody ` +
+          ? `Approval chain "${chain.name}" ${stepName} has no approver set for company ${ctx.companyId}.`
+          : `Approval chain "${chain.name}" ${stepName} (${entry.approver_type}) resolved to nobody ` +
             `for employee ${ctx.employeeId} at company ${ctx.companyId}.`
       )
       unresolved = true
@@ -360,9 +420,9 @@ async function raiseApprovals(
 
     // One person appearing twice in a parallel group would have to approve
     // the same booking twice before 'all' quorum could clear.
-    if (pending.some(p => p.approverId === approverId)) continue
+    if (pending.some(p => p.approverId === resolution.approverId)) continue
 
-    pending.push({ approverId })
+    pending.push({ approverId: resolution.approverId })
   }
 
   if (pending.length === 0) {

@@ -25,6 +25,7 @@ interface Employee {
   band_code: string | null
   department: string | null
   manager_id: string | null
+  top_of_hierarchy: boolean
 }
 
 const ROLE_LABEL: Record<string, string> = {
@@ -70,7 +71,11 @@ export default function SettingsHierarchyPage() {
     )
   }, [employees, query])
 
-  const unassignedCount = employees.filter(e => e.status === 'active' && !e.manager_id).length
+  // Someone at the top of the org has no manager by design. Counting them made
+  // the company owner a permanent, unclearable warning.
+  const unassignedCount = employees.filter(
+    e => e.status === 'active' && !e.manager_id && !e.top_of_hierarchy
+  ).length
 
   return (
     <div style={s.root}>
@@ -116,7 +121,7 @@ export default function SettingsHierarchyPage() {
             </thead>
             <tbody>
               {filtered.map(emp => {
-                const missingManager = emp.status === 'active' && !emp.manager_id
+                const missingManager = emp.status === 'active' && !emp.manager_id && !emp.top_of_hierarchy
                 return (
                   <tr key={emp.id} style={s.tr}>
                     <td style={s.td}>
@@ -131,9 +136,11 @@ export default function SettingsHierarchyPage() {
                     <td style={s.td}>
                       {emp.manager_id
                         ? (nameById.get(emp.manager_id) ?? <span style={s.muted}>Unknown</span>)
-                        : missingManager
-                          ? <span style={s.missing}>Not set</span>
-                          : <span style={s.muted}>—</span>}
+                        : emp.top_of_hierarchy
+                          ? <span style={s.topBadge}>Top of hierarchy</span>
+                          : missingManager
+                            ? <span style={s.missing}>Not set</span>
+                            : <span style={s.muted}>—</span>}
                     </td>
                   </tr>
                 )
@@ -171,4 +178,5 @@ const s: Record<string, React.CSSProperties> = {
   bandBadge: { display: 'inline-block', padding: '2px 7px', background: '#EEF2FF', color: '#3730A3', fontSize: '10px', fontWeight: 700, borderRadius: '4px' },
   muted: { color: '#9CA3AF' },
   missing: { fontSize: '11px', fontWeight: 600, color: '#92400E', background: '#FEF3C7', borderRadius: '4px', padding: '2px 8px' },
+  topBadge: { fontSize: '11px', fontWeight: 600, color: '#065F46', background: '#ECFDF5', borderRadius: '4px', padding: '2px 8px' },
 }

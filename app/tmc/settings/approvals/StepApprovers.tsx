@@ -35,6 +35,7 @@ interface Employee {
   full_name: string
   band_code: string | null
   manager_id: string | null
+  top_of_hierarchy: boolean
 }
 
 const APPROVER_TYPES: { value: ApproverType; label: string }[] = [
@@ -147,7 +148,10 @@ export default function StepApprovers({ companyId, templateId, steps, onChanged 
   }
 
   const unboundCount = steps.filter(s => !byTier.get(s.tier)).length
-  const managerlessCount = employees.filter(e => !e.manager_id).length
+  // Someone at the top of the hierarchy has no manager by design, and the
+  // engine auto-approves their manager steps rather than stalling — so they are
+  // not part of this gap.
+  const managerlessCount = employees.filter(e => !e.manager_id && !e.top_of_hierarchy).length
   const usesManagerStep = steps.some(s => byTier.get(s.tier)?.approver_type === 'manager')
 
   if (loading) return <p style={s.muted}>Loading approvers…</p>

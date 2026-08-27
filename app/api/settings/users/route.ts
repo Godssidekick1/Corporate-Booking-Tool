@@ -30,7 +30,7 @@ export async function GET() {
 
   const { data: employees, error } = await service
     .from('employees')
-    .select('id, full_name, email, role, status, band_code, department, cost_centre, onboarding_method, manager_id')
+    .select('id, full_name, email, role, status, band_code, department, cost_centre, onboarding_method, manager_id, top_of_hierarchy')
     .eq('company_id', caller.company_id)
     .order('full_name')
 

@@ -19,14 +19,29 @@ interface Employee {
   full_name: string
   email: string
   band_code: string | null
+  band_rank: number | null
   status: string
   manager_id: string | null
+  top_of_hierarchy: boolean
 }
+
+interface Band {
+  id: string
+  code: string
+  label: string
+  rank: number
+}
+
+// Sentinel for the manager dropdown. A blank value means `not set up yet`,
+// which is a real gap worth warning about; this means `nobody is above them`,
+// which is a finished state.
+const TOP_OF_HIERARCHY = '__top__'
 
 export default function TmcHierarchyPage() {
   const [companies, setCompanies] = useState<Company[]>([])
   const [companyId, setCompanyId] = useState('')
   const [employees, setEmployees] = useState<Employee[]>([])
+  const [bands, setBands] = useState<Band[]>([])
   const [loading, setLoading] = useState(false)
   const [savingId, setSavingId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
@@ -46,36 +61,56 @@ export default function TmcHierarchyPage() {
   async function loadEmployees(id: string) {
     setLoading(true); setError('')
     try {
-      const d = await fetch(`/api/tmc/employees?companyId=${id}`).then(r => r.json())
-      if (!d.ok) { setError(d.error || 'Could not load employees.'); return }
-      setEmployees(d.employees)
+      const [employeeData, bandData] = await Promise.all([
+        fetch(`/api/tmc/employees?companyId=${id}`).then(r => r.json()),
+        fetch(`/api/tmc/bands?companyId=${id}`).then(r => r.json()),
+      ])
+      if (!employeeData.ok) { setError(employeeData.error || 'Could not load employees.'); return }
+      setEmployees(employeeData.employees)
+      if (bandData.ok) setBands(bandData.bands)
     } finally { setLoading(false) }
   }
 
-  async function setManager(employeeId: string, managerId: string) {
-    // Optimistic, then reverted on failure. The server rejects self-reference
-    // and reporting loops, and only it can see the whole chain — so a rejection
-    // here is expected behaviour, not an edge case.
+  // Optimistic, then reverted on failure. The server rejects self-reference and
+  // reporting loops, and only it can see the whole chain — so a rejection here
+  // is expected behaviour, not an edge case.
+  async function patch(employeeId: string, body: Record<string, unknown>, optimistic: Partial<Employee>) {
     const previous = employees
-    setEmployees(prev => prev.map(e => e.id === employeeId ? { ...e, manager_id: managerId || null } : e))
+    setEmployees(prev => prev.map(e => e.id === employeeId ? { ...e, ...optimistic } : e))
     setSavingId(employeeId); setError(''); setSuccess('')
 
     try {
       const d = await fetch(`/api/tmc/employees/${employeeId}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ managerId: managerId || null }),
+        body: JSON.stringify(body),
       }).then(r => r.json())
 
       if (!d.ok) {
         setEmployees(previous)
-        setError(d.error || 'Could not set the manager.')
+        setError(d.error || 'Could not save that change.')
         return
       }
-      setSuccess('Reporting line updated.')
+      setSuccess('Saved.')
     } catch {
       setEmployees(previous)
       setError('Could not reach the server. Please try again.')
     } finally { setSavingId(null) }
+  }
+
+  function setManager(employeeId: string, value: string) {
+    if (value === TOP_OF_HIERARCHY) {
+      return patch(employeeId, { topOfHierarchy: true }, { manager_id: null, top_of_hierarchy: true })
+    }
+    return patch(
+      employeeId,
+      { managerId: value || null, topOfHierarchy: false },
+      { manager_id: value || null, top_of_hierarchy: false }
+    )
+  }
+
+  function setBand(employeeId: string, code: string) {
+    const band = bands.find(b => b.code === code)
+    return patch(employeeId, { band: code }, { band_code: code, band_rank: band?.rank ?? null })
   }
 
   const filtered = useMemo(() => {
@@ -86,16 +121,21 @@ export default function TmcHierarchyPage() {
     )
   }, [employees, query])
 
-  const unassignedCount = employees.filter(e => e.status === 'active' && !e.manager_id).length
+  // Someone marked top of hierarchy is finished, not unconfigured — counting
+  // them here is what made the owner of a company a permanent warning.
+  const unassignedCount = employees.filter(
+    e => e.status === 'active' && !e.manager_id && !e.top_of_hierarchy
+  ).length
 
   return (
     <div style={s.root}>
       <div style={s.header}>
-        <h1 style={s.title}>Reporting hierarchy</h1>
+        <h1 style={s.title}>Hierarchy &amp; bands</h1>
         <p style={s.sub}>
-          Who each employee reports to. Approval steps set to &quot;the traveller&apos;s own
-          manager&quot; resolve through this — an employee with none has no approver, and their
-          bookings go through unapproved.
+          Who each employee reports to, and which band they sit in. Approval steps set to
+          &quot;the traveller&apos;s own manager&quot; resolve through the reporting line; policy
+          limits match on band rank. Mark the person at the top as{' '}
+          <strong>Nobody — top of hierarchy</strong> so they stop counting as unconfigured.
         </p>
       </div>
 
@@ -142,7 +182,7 @@ export default function TmcHierarchyPage() {
               </thead>
               <tbody>
                 {filtered.map(emp => {
-                  const missing = emp.status === 'active' && !emp.manager_id
+                  const missing = emp.status === 'active' && !emp.manager_id && !emp.top_of_hierarchy
                   return (
                     <tr key={emp.id} style={s.tr}>
                       <td style={s.td}>
@@ -150,18 +190,33 @@ export default function TmcHierarchyPage() {
                         <div style={s.email}>{emp.email}</div>
                       </td>
                       <td style={s.td}>
-                        {emp.band_code ? <span style={s.bandBadge}>{emp.band_code}</span> : <span style={s.muted}>—</span>}
+                        <select
+                          value={emp.band_code ?? ''}
+                          onChange={e => setBand(emp.id, e.target.value)}
+                          disabled={savingId === emp.id || bands.length === 0}
+                          style={{ ...s.input, minWidth: 150 }}
+                        >
+                          <option value="" disabled>
+                            {bands.length === 0 ? 'No bands configured' : 'Pick a band…'}
+                          </option>
+                          {bands.map(b => (
+                            <option key={b.id} value={b.code}>
+                              {b.code} · {b.label} (rank {b.rank})
+                            </option>
+                          ))}
+                        </select>
                       </td>
                       <td style={s.td}>{emp.status}</td>
                       <td style={s.td}>
                         <div style={s.managerCell}>
                           <select
-                            value={emp.manager_id ?? ''}
+                            value={emp.top_of_hierarchy ? TOP_OF_HIERARCHY : (emp.manager_id ?? '')}
                             onChange={e => setManager(emp.id, e.target.value)}
                             disabled={savingId === emp.id}
-                            style={{ ...s.input, minWidth: 200, ...(missing ? s.inputMissing : {}) }}
+                            style={{ ...s.input, minWidth: 210, ...(missing ? s.inputMissing : {}) }}
                           >
-                            <option value="">No manager</option>
+                            <option value="">Not set yet</option>
+                            <option value={TOP_OF_HIERARCHY}>Nobody — top of hierarchy</option>
                             {/* Everyone except this person — the server also
                                 blocks self-reference and longer loops. */}
                             {employees.filter(o => o.id !== emp.id).map(o => (
