@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import StepApprovers, { type TemplateStep } from './StepApprovers'
+import DirectChain from './DirectChain'
 
 // NOTE: no TmcShell here. app/tmc/settings/layout.tsx already supplies the
 // Settings sidebar and page chrome for everything under /tmc/settings —
@@ -136,13 +137,7 @@ export default function TmcApprovalsPage() {
       {loading ? (
         <p style={s.muted}>Loading…</p>
       ) : mode === 'direct' ? (
-        <DirectMapping
-          companies={companies}
-          chains={chains}
-          onChanged={loadAll}
-          onError={setError}
-          onSuccess={showSuccess}
-        />
+        <DirectChain companies={companies} />
       ) : mode === 'template' ? (
         <TemplateBuilder
           chains={sharedChains}
@@ -163,96 +158,6 @@ export default function TmcApprovalsPage() {
   )
 }
 
-// ── Direct mapping ────────────────────────────────────────────────────────────
-// A chain owned by one company. Same machinery as a template underneath — it
-// just isn't offered anywhere else, so the word "template" never appears here.
-
-function DirectMapping({ companies, chains, onChanged, onError, onSuccess }: {
-  companies: Company[]
-  chains: Chain[]
-  onChanged: () => void
-  onError: (m: string) => void
-  onSuccess: (m: string) => void
-}) {
-  const [companyId, setCompanyId] = useState('')
-  const [category, setCategory] = useState('flights_hotels')
-  const [creating, setCreating] = useState(false)
-
-  const existing = chains.find(
-    c => c.company_id === companyId && c.category === category
-  )
-
-  async function createChain() {
-    setCreating(true)
-    try {
-      const d = await fetch('/api/tmc/approval-templates', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          companyId,
-          category,
-          name: `${companies.find(c => c.id === companyId)?.name ?? 'Company'} — ${categoryLabel(category)}`,
-          mode: 'sequential',
-          tiers: [emptyStep(1)],
-        }),
-      }).then(r => r.json())
-      if (!d.ok) { onError(d.error || 'Could not create the chain.'); return }
-      onChanged()
-      onSuccess('Approval chain created. Now choose who does each step.')
-    } finally { setCreating(false) }
-  }
-
-  return (
-    <div style={s.card}>
-      <div style={s.filterRow}>
-        <div style={s.field}>
-          <label style={s.label}>Client</label>
-          <select value={companyId} onChange={e => setCompanyId(e.target.value)} style={{ ...s.input, width: 240 }}>
-            <option value="">Select a client…</option>
-            {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-        </div>
-        <div style={s.field}>
-          <label style={s.label}>Applies to</label>
-          <select value={category} onChange={e => setCategory(e.target.value)} style={{ ...s.input, width: 200 }}>
-            {CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-          </select>
-        </div>
-      </div>
-
-      {!companyId ? (
-        <p style={s.muted}>Pick a client to set up their approval steps.</p>
-      ) : !existing ? (
-        <div style={s.empty}>
-          <p style={s.emptyTitle}>No approval chain for {categoryLabel(category).toLowerCase()} yet</p>
-          <p style={s.emptyDesc}>
-            Bookings in this category go through with no approval until one exists.
-          </p>
-          <button onClick={createChain} disabled={creating} style={{ ...s.primaryBtn, marginTop: 12 }}>
-            {creating ? 'Creating…' : 'Create approval chain'}
-          </button>
-        </div>
-      ) : (
-        <>
-          <StepEditor chain={existing} onChanged={onChanged} onError={onError} onSuccess={onSuccess} />
-          <h3 style={s.sectionTitle}>Who does each step</h3>
-          <StepApprovers
-            companyId={companyId}
-            templateId={existing.id}
-            steps={existing.tiers}
-            onChanged={onChanged}
-          />
-          <AppliesTo
-            companyId={companyId}
-            category={category}
-            templateId={existing.id}
-            onError={onError}
-            onSuccess={onSuccess}
-          />
-        </>
-      )}
-    </div>
-  )
-}
 
 // ── Template builder ──────────────────────────────────────────────────────────
 
@@ -555,7 +460,6 @@ function AssignTemplate({ companies, chains, onChanged, onError, onSuccess }: {
             companyId={companyId}
             templateId={template.id}
             steps={template.tiers}
-            onChanged={onChanged}
           />
           <AppliesTo
             companyId={companyId}

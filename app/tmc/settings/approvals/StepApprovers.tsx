@@ -57,10 +57,9 @@ interface Props {
   companyId: string
   templateId: string
   steps: TemplateStep[]
-  onChanged?: () => void
 }
 
-export default function StepApprovers({ companyId, templateId, steps, onChanged }: Props) {
+export default function StepApprovers({ companyId, templateId, steps }: Props) {
   const [bindings, setBindings] = useState<Binding[]>([])
   const [employees, setEmployees] = useState<Employee[]>([])
   const [loading, setLoading] = useState(true)
@@ -130,7 +129,9 @@ export default function StepApprovers({ companyId, templateId, steps, onChanged 
         }),
       }).then(r => r.json())
       if (!d.ok) { setError(d.error || 'Could not save this step.'); return }
-      onChanged?.()
+      // Deliberately NOT re-fetching. Local state already holds what was just
+      // saved, and telling the parent to reload remounted this component
+      // mid-edit — the dropdown you had open closed under you every time.
     } finally { setSavingTier(null) }
   }
 
@@ -143,7 +144,6 @@ export default function StepApprovers({ companyId, templateId, steps, onChanged 
       ).then(r => r.json())
       if (!d.ok) { setError(d.error || 'Could not clear this step.'); return }
       setBindings(prev => prev.filter(b => b.tier !== tier))
-      onChanged?.()
     } finally { setSavingTier(null) }
   }
 
