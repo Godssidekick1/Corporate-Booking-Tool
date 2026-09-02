@@ -49,8 +49,10 @@
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 
-  /* Shell geometry. Referenced by both columns so they can never disagree. */
+  /* Shell geometry. Referenced by the rail and its spacer so the two can never
+     disagree, and by the collapse transition. */
   --spacing-rail: 240px;
+  --spacing-rail-collapsed: 64px;
   --spacing-subnav: 224px;
 }
 

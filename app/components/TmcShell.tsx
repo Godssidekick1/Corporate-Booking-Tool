@@ -9,13 +9,15 @@ import { PRIMARY_NAV, isActive } from '@/app/lib/navigation/tmcNav'
 // ── TmcShell ─────────────────────────────────────────────────────────────────
 // The persistent frame for every /tmc route. Rendered once from
 // app/tmc/layout.tsx rather than opted into per page, which is what stops the
-// rail disappearing when you navigate into Configurations — previously those
-// pages skipped the shell entirely because the settings layout supplied its own
-// sidebar, so entering settings dropped you out of the product.
+// rail disappearing when you navigate into Configurations.
 //
 // Active state comes from usePathname() rather than an `activeLabel` prop. The
 // prop was a typed union that had to be widened for every new section and
 // passed correctly by every page; deriving it removes both obligations.
+//
+// The rail collapses to icons. It no longer carries a client quick-list — that
+// duplicated the Clients nav item, and a scrolling list of names is the one
+// thing that cannot collapse to 64px sensibly.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface Employee {
@@ -25,18 +27,14 @@ interface Employee {
   tmc_id: string
 }
 
-interface Client {
-  id: string
-  name: string
-  employeeCount: number
-}
+const COLLAPSE_KEY = 'tmc.rail.collapsed'
 
 export default function TmcShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() ?? ''
 
   const [employee, setEmployee] = useState<Employee | null>(null)
   const [permissions, setPermissions] = useState<string[]>([])
-  const [clients, setClients] = useState<Client[]>([])
+  const [collapsed, setCollapsed] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -52,46 +50,61 @@ export default function TmcShell({ children }: { children: React.ReactNode }) {
     return () => { cancelled = true }
   }, [])
 
+  // Read after mount, not in a useState initializer: localStorage doesn't exist
+  // during server render, so initializing from it would either crash on the
+  // server or hydrate to a different value than the HTML.
   useEffect(() => {
-    let cancelled = false
-
-    fetch('/api/tmc/companies')
-      .then(r => r.json())
-      .then(d => { if (!cancelled && d.ok) setClients(d.companies) })
-      .catch(() => {})
-
-    return () => { cancelled = true }
+    try {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setCollapsed(localStorage.getItem(COLLAPSE_KEY) === '1')
+    } catch {
+      // Throws outright in some privacy modes rather than returning null.
+    }
   }, [])
+
+  function toggleCollapsed() {
+    setCollapsed(prev => {
+      const next = !prev
+      try { localStorage.setItem(COLLAPSE_KEY, next ? '1' : '0') } catch { /* non-fatal */ }
+      return next
+    })
+  }
 
   const visibleNav = PRIMARY_NAV.filter(
     item => !item.permission || canAccess(employee?.role, permissions, item.permission)
   )
 
+  const railWidth = collapsed ? 'w-rail-collapsed' : 'w-rail'
+
   return (
     <div className="flex min-h-screen bg-canvas">
-      {/* ── Primary rail ─────────────────────────────────────────────── */}
-      <aside className="fixed inset-y-0 left-0 z-30 flex w-rail flex-col bg-rail">
-        <div className="px-5 pt-6 pb-5">
+      <aside
+        className={`fixed inset-y-0 left-0 z-30 flex flex-col bg-rail transition-[width] duration-200 ${railWidth}`}
+      >
+        {/* Brand */}
+        <div className={`pt-6 pb-5 ${collapsed ? 'px-3' : 'px-5'}`}>
           <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-md bg-white/95 text-[13px] font-bold text-rail">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white/95 text-[13px] font-bold text-rail">
               TD
             </div>
-            <div className="leading-tight">
-              <div className="text-[15px] font-semibold text-white">TravelDesk</div>
-              <div className="text-[10px] uppercase tracking-[0.08em] text-white/40">
-                by Amadeus
+            {!collapsed && (
+              <div className="min-w-0 leading-tight">
+                <div className="truncate text-[15px] font-semibold text-white">TravelDesk</div>
+                <div className="text-[10px] uppercase tracking-[0.08em] text-white/40">
+                  by Amadeus
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
-          {employee && (
+          {!collapsed && employee && (
             <span className="mt-4 inline-block rounded bg-white/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-white/85">
               {employee.role === 'tmc_admin' ? 'TMC Admin' : 'Travel Counsellor'}
             </span>
           )}
         </div>
 
-        <nav className="px-3">
+        <nav className={collapsed ? 'px-2' : 'px-3'}>
           {visibleNav.map(item => {
             const active = isActive(pathname, item.href)
             return (
@@ -99,100 +112,103 @@ export default function TmcShell({ children }: { children: React.ReactNode }) {
                 key={item.href}
                 href={item.href}
                 aria-current={active ? 'page' : undefined}
+                // Collapsed items are icon-only, so the native tooltip is the
+                // only thing naming them.
+                title={collapsed ? item.label : undefined}
                 className={[
-                  'mb-0.5 flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] transition-colors',
+                  'mb-0.5 flex items-center gap-3 rounded-lg py-2.5 text-[13px] transition-colors',
+                  collapsed ? 'justify-center px-0' : 'px-3',
                   active
                     ? 'bg-white/10 font-semibold text-white'
                     : 'text-white/55 hover:bg-white/5 hover:text-white',
                 ].join(' ')}
               >
                 <NavIcon name={item.icon} active={active} />
-                {item.label}
+                {!collapsed && item.label}
               </Link>
             )
           })}
         </nav>
 
-        {/* Client quick-list — jump straight to whoever just called, without
-            going via a listing page. Scrolls rather than growing the rail. */}
-        {clients.length > 0 && (
-          <div className="mt-5 flex min-h-0 flex-1 flex-col border-t border-white/[0.08] px-3 pt-4">
-            <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-wider text-white/35">
-              Clients
-            </p>
-            <div className="min-h-0 flex-1 overflow-y-auto pb-2">
-              {clients.map(c => {
-                const active = pathname === `/tmc/companies/${c.id}`
-                return (
-                  <Link
-                    key={c.id}
-                    href={`/tmc/companies/${c.id}`}
-                    title={c.name}
-                    className={[
-                      'flex items-center gap-2 rounded-md px-3 py-1.5 text-[12px] transition-colors',
-                      active
-                        ? 'bg-white/10 text-white'
-                        : 'text-white/45 hover:bg-white/5 hover:text-white/80',
-                    ].join(' ')}
-                  >
-                    <span className="flex-1 truncate">{c.name}</span>
-                    <span className="shrink-0 rounded bg-white/[0.07] px-1.5 py-px text-[10px] font-semibold text-white/40">
-                      {c.employeeCount ?? 0}
-                    </span>
-                  </Link>
-                )
-              })}
-            </div>
-          </div>
-        )}
-
-        <div className={`${clients.length > 0 ? '' : 'mt-auto'} border-t border-white/[0.08] px-3 py-3`}>
-          <Link
-            href="/profile"
-            className="flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] text-white/55 transition-colors hover:bg-white/5 hover:text-white"
+        <div className={`mt-auto border-t border-white/[0.08] py-3 ${collapsed ? 'px-2' : 'px-3'}`}>
+          <button
+            type="button"
+            onClick={toggleCollapsed}
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className={[
+              'mb-0.5 flex w-full items-center gap-3 rounded-lg py-2 text-[13px] text-white/45 transition-colors hover:bg-white/5 hover:text-white',
+              collapsed ? 'justify-center px-0' : 'px-3',
+            ].join(' ')}
           >
-            <NavIcon name="person" />
-            <span className="truncate">{employee?.full_name ?? 'Profile'}</span>
+            <svg
+              className="h-[18px] w-[18px] shrink-0 transition-transform duration-200"
+              style={{ transform: collapsed ? 'rotate(180deg)' : 'none' }}
+              viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"
+            >
+              <path d="M15 18l-6-6 6-6" />
+            </svg>
+            {!collapsed && 'Collapse'}
+          </button>
+
+          {/* /tmc/profile, not /profile. The latter is the traveller profile —
+              passport, meal preference — which no TMC or TC user should ever be
+              asked for. */}
+          <Link
+            href="/tmc/profile"
+            title={collapsed ? (employee?.full_name ?? 'Profile') : undefined}
+            className={[
+              'flex items-center gap-3 rounded-lg py-2 text-[13px] transition-colors',
+              collapsed ? 'justify-center px-0' : 'px-3',
+              isActive(pathname, '/tmc/profile')
+                ? 'bg-white/10 font-semibold text-white'
+                : 'text-white/55 hover:bg-white/5 hover:text-white',
+            ].join(' ')}
+          >
+            <NavIcon name="person" active={isActive(pathname, '/tmc/profile')} />
+            {!collapsed && <span className="truncate">{employee?.full_name ?? 'Profile'}</span>}
           </Link>
-          {/* POST then hard redirect, not a form action: the route clears the
-              Supabase session cookie server-side and returns JSON, and a full
-              location change guarantees every client-side cache of the old
-              session is dropped. */}
+
+          {/* POST then hard redirect: the route clears the Supabase session
+              cookie server-side and returns JSON, and a full location change
+              guarantees no client-side cache of the old session survives. */}
           <button
             type="button"
             onClick={async () => {
               await fetch('/api/auth/signout', { method: 'POST' })
               window.location.href = '/login'
             }}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-[13px] text-white/55 transition-colors hover:bg-white/5 hover:text-white"
+            title={collapsed ? 'Sign out' : undefined}
+            className={[
+              'flex w-full items-center gap-3 rounded-lg py-2 text-left text-[13px] text-white/55 transition-colors hover:bg-white/5 hover:text-white',
+              collapsed ? 'justify-center px-0' : 'px-3',
+            ].join(' ')}
           >
             <NavIcon name="logout" />
-            Sign out
+            {!collapsed && 'Sign out'}
           </button>
         </div>
       </aside>
 
       {/* Spacer holds the layout open; the rail itself is fixed so it doesn't
-          scroll with content. */}
-      <div className="w-rail shrink-0" aria-hidden />
+          scroll with content. Transitions in step with the rail. */}
+      <div className={`shrink-0 transition-[width] duration-200 ${railWidth}`} aria-hidden />
 
-      {/* Content renders immediately and independently of /api/me — the shell
-          never gates the page on its own chrome loading. */}
       <div className="min-w-0 flex-1">{children}</div>
     </div>
   )
 }
 
 // ── NavIcon ──────────────────────────────────────────────────────────────────
-// Inline SVG rather than an icon font or package: five icons don't justify a
-// dependency, and a webfont would add a network round trip before the nav can
-// paint — the exact thing this pass is trying to remove.
+// Inline SVG rather than an icon font or package: a handful of icons doesn't
+// justify a dependency, and a webfont would add a network round trip before the
+// nav can paint — the exact thing this work is trying to remove.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function NavIcon({ name, active }: { name?: string; active?: boolean }) {
-  const cls = `h-[18px] w-[18px] shrink-0 ${active ? 'opacity-100' : 'opacity-70'}`
   const common = {
-    className: cls,
+    className: `h-[18px] w-[18px] shrink-0 ${active ? 'opacity-100' : 'opacity-70'}`,
     viewBox: '0 0 24 24',
     fill: 'none',
     stroke: 'currentColor',

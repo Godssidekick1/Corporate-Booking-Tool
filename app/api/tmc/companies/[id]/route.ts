@@ -15,6 +15,15 @@ import { NextRequest } from 'next/server'
 const ALLOWED_CURRENCIES = ['INR'] as const
 const ALLOWED_BOOKING_MODES = ['sbt', 'cbt', 'both'] as const
 
+// Must match the CHECK constraint on companies.size. Validated here rather than
+// trusted from the select, since a PATCH is just an HTTP call — sending an
+// unlisted value would surface as a raw constraint violation and a 500.
+const ALLOWED_SIZES = ['1-50', '51-200', '201-1000', '1001+'] as const
+
+// setup_completed is deliberately absent: it is derived onboarding progress,
+// not a setting someone toggles.
+const ALLOWED_STATUSES = ['active', 'inactive'] as const
+
 interface UpdateCompanyBody {
   name?: string
   timezone?: string
@@ -29,6 +38,12 @@ interface UpdateCompanyBody {
   gst_number?: string | null
   industry?: string | null
   primary_contact_phone?: string | null
+  size?: string | null
+  status?: string
+  // Which of the TMC's own staff owns this client. The column has existed as a
+  // foreign key to employees since the schema was created and has never been
+  // set or displayed anywhere.
+  managed_by?: string | null
 }
 
 export async function GET(
@@ -172,6 +187,52 @@ export async function PATCH(
     update.primary_contact_phone = body.primary_contact_phone?.trim() || null
   }
 
+  if (body.size !== undefined) {
+    const size = body.size?.trim() || null
+    if (size && !ALLOWED_SIZES.includes(size as typeof ALLOWED_SIZES[number])) {
+      return Response.json(
+        { error: `Invalid size: ${size}. Must be one of ${ALLOWED_SIZES.join(', ')}` },
+        { status: 400 }
+      )
+    }
+    update.size = size
+  }
+
+  if (body.status !== undefined) {
+    if (!ALLOWED_STATUSES.includes(body.status as typeof ALLOWED_STATUSES[number])) {
+      return Response.json(
+        { error: `Invalid status: ${body.status}. Must be one of ${ALLOWED_STATUSES.join(', ')}` },
+        { status: 400 }
+      )
+    }
+    update.status = body.status
+  }
+
+  if (body.managed_by !== undefined) {
+    if (!body.managed_by) {
+      update.managed_by = null
+    } else {
+      // Restricted to TMC-side staff at THIS TMC. managed_by is a plain FK to
+      // employees, so a corporate employee's id would satisfy the constraint
+      // and produce an account manager who doesn't work for the TMC.
+      const { data: manager } = await service
+        .from('employees')
+        .select('id, role, tmc_id')
+        .eq('id', body.managed_by)
+        .eq('tmc_id', caller.tmc_id)
+        .in('role', ['tmc_admin', 'tc'])
+        .maybeSingle()
+
+      if (!manager) {
+        return Response.json(
+          { error: 'Account manager must be a member of your TMC' },
+          { status: 422 }
+        )
+      }
+      update.managed_by = body.managed_by
+    }
+  }
+
   if (client_group_id !== undefined) {
     if (client_group_id === null || client_group_id === '') {
       update.client_group_id = null
@@ -208,7 +269,7 @@ export async function PATCH(
     .from('companies')
     .update(update)
     .eq('id', id)
-    .select('id, name, timezone, currency, country, booking_mode, client_group_id, registered_address, gst_number, industry, primary_contact_phone')
+    .select('id, name, timezone, currency, country, booking_mode, client_group_id, registered_address, gst_number, industry, primary_contact_phone, size, status, managed_by')
     .single()
 
   if (updateError) {

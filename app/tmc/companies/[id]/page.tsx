@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
+import Link from 'next/link'
 import CountryDropdown from '@/app/components/CountryDropdown'
+import SearchableSelect from '@/app/components/SearchableSelect'
 
 interface Company {
   id: string
@@ -19,7 +21,22 @@ interface Company {
   gst_number: string | null
   industry: string | null
   primary_contact_phone: string | null
+  size: string | null
+  managed_by: string | null
 }
+
+interface TmcStaff {
+  id: string
+  full_name: string
+  email: string
+  role: string
+}
+
+const SIZES = ['1-50', '51-200', '201-1000', '1001+']
+const STATUSES: { value: string; label: string }[] = [
+  { value: 'active', label: 'Active' },
+  { value: 'inactive', label: 'Inactive — no new bookings' },
+]
 
 interface client_group {
   id: string
@@ -49,13 +66,21 @@ export default function TmcCompanyDetailPage() {
   const [form, setForm] = useState({
     name: '', timezone: '', currency: '', country: '', booking_mode: 'sbt' as Company['booking_mode'], client_group_id: '',
     registered_address: '', gst_number: '', industry: '', primary_contact_phone: '',
+    size: '', status: 'active', managed_by: '',
   })
+
+  // TMC-side staff only — managed_by is a plain FK to employees, so a corporate
+  // employee would be a valid row and a nonsense account manager. The server
+  // enforces the same restriction; this keeps it out of the picker.
+  const [tmcStaff, setTmcStaff] = useState<TmcStaff[]>([])
 
   useEffect(() => {
     Promise.all([
       fetch(`/api/tmc/companies/${companyId}`).then(r => r.json()),
       fetch('/api/tmc/client-groups').then(r => r.json()),
-    ]).then(([companyData, client_groupsData]) => {
+      fetch('/api/tmc/tcs').then(r => r.json()),
+    ]).then(([companyData, client_groupsData, tcsData]) => {
+        if (tcsData?.ok) setTmcStaff(tcsData.tcs ?? [])
         if (!companyData.ok) {
           setError(companyData.error || 'Could not load company.')
           return
@@ -73,6 +98,9 @@ export default function TmcCompanyDetailPage() {
           gst_number: c.gst_number ?? '',
           industry: c.industry ?? '',
           primary_contact_phone: c.primary_contact_phone ?? '',
+          size: c.size ?? '',
+          status: c.status ?? 'active',
+          managed_by: c.managed_by ?? '',
         })
         if (client_groupsData.ok) setclient_groups(client_groupsData.clientGroups ?? [])
       })
@@ -121,9 +149,14 @@ export default function TmcCompanyDetailPage() {
     <>
     <div style={s.root}>
       <div style={s.header}>
-        <a href="/tmc/companies" style={s.backLink}>← All companies</a>
+        {/* Link, not <a>: a plain anchor triggers a full document load, which
+            throws away the shell and re-fetches everything it holds. */}
+        <Link href="/tmc/companies" style={s.backLink}>← All clients</Link>
         <h1 style={s.heading}>{company.name}</h1>
-        <p style={s.sub}>Manage this client's account details, currency, and booking mode.</p>
+        <p style={s.sub}>
+          Everything recorded about this client — identity, registration, booking arrangement and
+          ownership.
+        </p>
       </div>
 
       <form onSubmit={handleSubmit} style={s.card}>
@@ -188,7 +221,7 @@ export default function TmcCompanyDetailPage() {
             {BOOKING_MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
           </select>
           <p style={s.hint}>
-            This determines whether the corporate's employees book for themselves (SBT),
+            This determines whether the client&apos;s employees book for themselves (SBT),
             travel counsellors book on their behalf (CBT), or both. Only you can change this.
           </p>
         </div>
@@ -233,6 +266,48 @@ export default function TmcCompanyDetailPage() {
             value={form.primary_contact_phone} onChange={handleChange}
             placeholder="+91 98765 43210" style={s.input}
           />
+        </div>
+
+        <div style={s.field}>
+          <label style={s.label} htmlFor="size">Company size</label>
+          <select id="size" name="size" value={form.size} onChange={handleChange} style={s.input}>
+            <option value="">Not recorded</option>
+            {SIZES.map(sz => <option key={sz} value={sz}>{sz} employees</option>)}
+          </select>
+        </div>
+
+        <div style={s.divider} />
+
+        {/* Ownership and lifecycle — who runs this client, and whether it is
+            still trading. */}
+        <div style={s.field}>
+          <label style={s.label}>Account manager</label>
+          <SearchableSelect
+            value={form.managed_by}
+            onChange={id => setForm(prev => ({ ...prev, managed_by: id }))}
+            options={[
+              { id: '', label: 'Unassigned' },
+              ...tmcStaff.map(t => ({
+                id: t.id,
+                label: t.full_name,
+                sublabel: `${t.email} · ${t.role === 'tmc_admin' ? 'TMC Admin' : 'Travel Counsellor'}`,
+              })),
+            ]}
+            placeholder="Unassigned"
+            emptyMessage="No TMC staff match"
+          />
+          <p style={s.hint}>Only your own TMC staff can be assigned — not the client&apos;s employees.</p>
+        </div>
+
+        <div style={s.field}>
+          <label style={s.label} htmlFor="status">Status</label>
+          <select id="status" name="status" value={form.status} onChange={handleChange} style={s.input}>
+            {STATUSES.map(st => <option key={st.value} value={st.value}>{st.label}</option>)}
+          </select>
+          <p style={s.hint}>
+            Marking a client inactive keeps their booking history intact. Onboarding progress is
+            tracked separately and is not editable here.
+          </p>
         </div>
 
         {error && <p style={s.errorMsg}>{error}</p>}

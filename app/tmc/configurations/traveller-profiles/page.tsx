@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Papa from 'papaparse'
+import SearchableSelect from '@/app/components/SearchableSelect'
 
 // ── /tmc/configurations/traveller-profiles ─────────────────────────────────────────
 // One screen for everything a travel desk maintains about a client's people:
@@ -119,12 +120,9 @@ export default function TravellerProfilesPage() {
       .then(d => { if (d.ok) setCompanies(d.companies) })
   }, [])
 
-  useEffect(() => {
-    if (!companyId) return
-    load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyId])
-
+  // Declared before the effect that calls it: a function declaration is hoisted
+  // at runtime, but referencing it earlier means the effect closes over the
+  // binding before it is initialised as far as the linter is concerned.
   async function load() {
     setLoading(true); setError(''); setImportReport(null)
     try {
@@ -139,6 +137,19 @@ export default function TravellerProfilesPage() {
     } finally { setLoading(false) }
   }
 
+  useEffect(() => {
+    if (!companyId) return
+    // load() sets state before its first await. Fetch-on-mount is the pattern
+    // this whole app uses; the alternative here would be a server component,
+    // which this page cannot be — it is heavily interactive.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    load()
+
+    // `load` is intentionally not a dependency: it is redeclared every render,
+    // so depending on it would refetch the roster on every keystroke.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyId])
+
   function select(emp: Employee) {
     if (dirty && !confirm('You have unsaved changes. Discard them?')) return
     setSelectedId(emp.id)
@@ -146,6 +157,31 @@ export default function TravellerProfilesPage() {
     setDirty(false)
     setError('')
   }
+
+  // Shared by the backdrop, the close button and Escape, so all three honour
+  // the unsaved-changes guard rather than only the one that remembered to.
+  function closePanel() {
+    if (dirty && !confirm('You have unsaved changes. Discard them?')) return
+    setSelectedId('')
+    setDraft(null)
+    setDirty(false)
+  }
+
+  // Escape closes the panel. Bound only while it is open so the listener isn't
+  // sitting on the document for the whole page lifetime.
+  useEffect(() => {
+    if (!draft) return
+
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') closePanel()
+    }
+
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+    // closePanel closes over `dirty`, which is exactly what the guard needs to
+    // read at press time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, dirty])
 
   function edit(patch: Partial<Employee>) {
     setDraft(prev => (prev ? { ...prev, ...patch } : prev))
@@ -267,12 +303,17 @@ export default function TravellerProfilesPage() {
       </div>
 
       <div style={s.toolbar}>
-        <div style={s.field}>
+        <div style={{ ...s.field, width: 280 }}>
           <label style={s.label}>Client</label>
-          <select value={companyId} onChange={e => setCompanyId(e.target.value)} style={{ ...s.input, width: 240 }}>
-            <option value="">Select a client…</option>
-            {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          {/* Type-to-filter rather than a native select: a TMC with dozens of
+              clients cannot scan an unfiltered dropdown. */}
+          <SearchableSelect
+            value={companyId}
+            onChange={setCompanyId}
+            options={companies.map(c => ({ id: c.id, label: c.name }))}
+            placeholder="Select a client…"
+            emptyMessage="No clients match"
+          />
         </div>
 
         {companyId && (
@@ -342,73 +383,79 @@ export default function TravellerProfilesPage() {
             style={s.search}
           />
 
-          <div style={s.split}>
-            {/* ── Roster ──────────────────────────────────────────── */}
-            <div style={s.listPane}>
-              <table style={s.table}>
-                <thead>
-                  <tr>
-                    {['Employee', 'Band', 'Cost centre', 'Trips'].map(h => (
-                      <th key={h} style={s.th}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map(emp => (
-                    <tr
-                      key={emp.id}
-                      onClick={() => select(emp)}
-                      style={{
-                        ...s.tr,
-                        background: emp.id === selectedId ? '#F5F7FF' : 'transparent',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      <td style={s.td}>
-                        <div style={s.nameRow}>
-                          <span style={s.name}>{emp.full_name}</span>
-                          {!emp.profileComplete && <span style={s.incompleteDot} title="Profile incomplete" />}
-                        </div>
-                        <div style={s.email}>{emp.email}</div>
-                        {(emp.designation || emp.department) && (
-                          <div style={s.meta}>
-                            {[emp.designation, emp.department].filter(Boolean).join(' · ')}
-                          </div>
-                        )}
-                      </td>
-                      <td style={s.td}>
-                        {emp.band_code
-                          ? <span style={s.badge}>{emp.band_code}</span>
-                          : <span style={s.muted}>—</span>}
-                      </td>
-                      <td style={s.td}>
-                        {emp.cost_centre || <span style={s.muted}>—</span>}
-                      </td>
-                      <td style={s.td}>
-                        <span style={s.trips}>{emp.trips}</span>
-                      </td>
-                    </tr>
+          {/* Roster takes the full content width. It previously shared a row
+              with the detail panel, which left each about 448px once the rail
+              and sub-nav were accounted for — too narrow for either. */}
+          <div style={s.listPane}>
+            <table style={s.table}>
+              <thead>
+                <tr>
+                  {['Employee', 'Designation', 'Department', 'Band', 'Cost centre', 'Trips'].map(h => (
+                    <th key={h} style={s.th}>{h}</th>
                   ))}
-                </tbody>
-              </table>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(emp => (
+                  <tr
+                    key={emp.id}
+                    onClick={() => select(emp)}
+                    style={{
+                      ...s.tr,
+                      background: emp.id === selectedId ? '#F5F7FF' : 'transparent',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <td style={s.td}>
+                      <div style={s.nameRow}>
+                        <span style={s.name}>{emp.full_name}</span>
+                        {!emp.profileComplete && <span style={s.incompleteDot} title="Profile incomplete" />}
+                      </div>
+                      <div style={s.email}>{emp.email}</div>
+                    </td>
+                    {/* Designation and department get real columns now — they
+                        used to be crammed onto a sub-line under the name. */}
+                    <td style={s.td}>{emp.designation || <span style={s.muted}>—</span>}</td>
+                    <td style={s.td}>{emp.department || <span style={s.muted}>—</span>}</td>
+                    <td style={s.td}>
+                      {emp.band_code
+                        ? <span style={s.badge}>{emp.band_code}</span>
+                        : <span style={s.muted}>—</span>}
+                    </td>
+                    <td style={s.td}>
+                      {emp.cost_centre || <span style={s.muted}>—</span>}
+                    </td>
+                    <td style={s.td}>
+                      <span style={s.trips}>{emp.trips}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
 
-              {filtered.length === 0 && (
-                <div style={s.empty}>
-                  <p style={s.emptyDesc}>
-                    {query ? 'Nobody matches that search.' : 'This client has no employees yet.'}
-                  </p>
-                </div>
-              )}
-            </div>
+            {filtered.length === 0 && (
+              <div style={s.empty}>
+                <p style={s.emptyDesc}>
+                  {query ? 'Nobody matches that search.' : 'This client has no employees yet.'}
+                </p>
+              </div>
+            )}
+          </div>
 
-            {/* ── Detail ──────────────────────────────────────────── */}
-            <div style={s.detailPane}>
-              {!draft ? (
-                <div style={s.empty}>
-                  <p style={s.emptyTitle}>No one selected</p>
-                  <p style={s.emptyDesc}>Pick someone to see and edit their full profile.</p>
-                </div>
-              ) : (
+          {/* ── Detail slide-over ───────────────────────────────────── */}
+          {draft && (
+            <>
+              <div
+                onClick={closePanel}
+                style={s.backdrop}
+                aria-hidden
+              />
+              <aside
+                role="dialog"
+                aria-modal="true"
+                aria-label={`Profile for ${draft.full_name}`}
+                style={s.panel}
+              >
                 <>
                   <div style={s.detailHead}>
                     <div>
@@ -426,6 +473,7 @@ export default function TravellerProfilesPage() {
                       >
                         {saving ? 'Saving…' : 'Save'}
                       </button>
+                      <button onClick={closePanel} style={s.closeBtn} aria-label="Close">✕</button>
                     </div>
                   </div>
 
@@ -440,34 +488,36 @@ export default function TravellerProfilesPage() {
                     </Field>
 
                     <Field label="Band">
-                      <select
+                      <SearchableSelect
                         value={draft.band_code ?? ''}
-                        onChange={e => edit({ band_code: e.target.value })}
-                        style={s.input}
-                      >
-                        <option value="" disabled>Pick a band…</option>
-                        {bands.map(b => (
-                          <option key={b.id} value={b.code}>{b.code} · {b.label} (rank {b.rank})</option>
-                        ))}
-                      </select>
+                        onChange={code => edit({ band_code: code })}
+                        options={bands.map(b => ({
+                          id: b.code,
+                          label: `${b.code} · ${b.label}`,
+                          sublabel: `Rank ${b.rank}`,
+                        }))}
+                        placeholder="Pick a band…"
+                        emptyMessage="No bands configured for this client"
+                      />
                     </Field>
 
                     <Field label="Cost centre">
-                      <select
+                      <SearchableSelect
                         value={draft.cost_centre ?? ''}
-                        onChange={e => edit({ cost_centre: e.target.value || null })}
-                        style={s.input}
-                      >
-                        <option value="">None</option>
-                        {costCentres.map(c => (
-                          <option key={c.id} value={c.code}>{c.code} · {c.name}</option>
-                        ))}
-                        {/* A value set before this list existed would otherwise
-                            vanish from the dropdown and look like "None". */}
-                        {draft.cost_centre && !costCentres.some(c => c.code === draft.cost_centre) && (
-                          <option value={draft.cost_centre}>{draft.cost_centre} (not in list)</option>
-                        )}
-                      </select>
+                        onChange={code => edit({ cost_centre: code || null })}
+                        options={[
+                          { id: '', label: 'None' },
+                          ...costCentres.map(c => ({ id: c.code, label: c.code, sublabel: c.name })),
+                          // A value set before this list existed — from a CSV
+                          // import, say — would otherwise vanish from the
+                          // options and read as "None" while still being stored.
+                          ...(draft.cost_centre && !costCentres.some(c => c.code === draft.cost_centre)
+                            ? [{ id: draft.cost_centre, label: draft.cost_centre, sublabel: 'Not in this client’s list' }]
+                            : []),
+                        ]}
+                        placeholder="None"
+                        emptyMessage="No cost centres match"
+                      />
                     </Field>
 
                     <Field label="Department">
@@ -550,9 +600,9 @@ export default function TravellerProfilesPage() {
                     </div>
                   ))}
                 </>
-              )}
-            </div>
-          </div>
+              </aside>
+            </>
+          )}
         </>
       )}
     </div>
@@ -587,9 +637,24 @@ const s: Record<string, React.CSSProperties> = {
   warnBanner: { background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 8, padding: '11px 14px', fontSize: 12, color: '#92400E', marginBottom: 14, lineHeight: 1.6 },
   errorList: { margin: '6px 0 0', paddingLeft: 18 },
 
-  split: { display: 'grid', gridTemplateColumns: 'minmax(320px, 1fr) minmax(340px, 1fr)', gap: 16, alignItems: 'start' },
-  listPane: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: 10, overflow: 'hidden', maxHeight: '70vh', overflowY: 'auto' },
-  detailPane: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: 10, padding: 18, maxHeight: '70vh', overflowY: 'auto' },
+  listPane: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: 10, overflow: 'hidden', overflowY: 'auto', maxHeight: '72vh' },
+
+  // Slide-over. Fixed rather than absolute so it escapes the sub-nav's
+  // stacking context and covers the full viewport height regardless of how far
+  // the roster has scrolled.
+  backdrop: {
+    position: 'fixed', inset: 0, background: 'rgba(10,10,20,0.28)', zIndex: 40,
+  },
+  panel: {
+    position: 'fixed', top: 0, right: 0, bottom: 0, width: 'min(560px, 92vw)',
+    background: '#fff', borderLeft: '1px solid #E5E7EB',
+    boxShadow: '-8px 0 32px rgba(0,0,0,0.10)',
+    zIndex: 41, overflowY: 'auto', padding: 22,
+  },
+  closeBtn: {
+    height: 30, width: 30, background: 'transparent', border: '1px solid #E5E7EB',
+    borderRadius: 7, color: '#6B7280', cursor: 'pointer', fontSize: 13, flexShrink: 0,
+  },
 
   table: { borderCollapse: 'collapse', width: '100%' },
   th: { padding: '9px 12px', textAlign: 'left', background: '#F9FAFB', borderBottom: '1px solid #E5E7EB', fontSize: 11, fontWeight: 600, color: '#374151', position: 'sticky', top: 0, zIndex: 1 },
