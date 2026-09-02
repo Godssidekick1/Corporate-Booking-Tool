@@ -172,7 +172,7 @@ export default function StepApprovers({ companyId, templateId, steps }: Props) {
           A step routes to the traveller&apos;s own manager, but{' '}
           <strong>{managerlessCount} employee{managerlessCount === 1 ? ' has' : 's have'}</strong> no
           manager set. Those bookings will not route.{' '}
-          <a href="/tmc/settings/hierarchy" style={s.link}>Set reporting lines →</a>
+          <a href="/tmc/configurations/traveller-profiles" style={s.link}>Set reporting lines →</a>
         </div>
       )}
 

@@ -1,7 +1,22 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { usePathname } from 'next/navigation'
+import Link from 'next/link'
 import { canAccess } from '@/app/lib/permissions/canAccess'
+import { PRIMARY_NAV, isActive } from '@/app/lib/navigation/tmcNav'
+
+// ── TmcShell ─────────────────────────────────────────────────────────────────
+// The persistent frame for every /tmc route. Rendered once from
+// app/tmc/layout.tsx rather than opted into per page, which is what stops the
+// rail disappearing when you navigate into Configurations — previously those
+// pages skipped the shell entirely because the settings layout supplied its own
+// sidebar, so entering settings dropped you out of the product.
+//
+// Active state comes from usePathname() rather than an `activeLabel` prop. The
+// prop was a typed union that had to be widened for every new section and
+// passed correctly by every page; deriving it removes both obligations.
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface Employee {
   full_name: string
@@ -16,133 +31,223 @@ interface Client {
   employeeCount: number
 }
 
-interface TmcShellProps {
-  children: React.ReactNode
-  activeLabel: 'Dashboard' | 'Clients' | 'Client groups' | 'Settings' | 'Reports'
-  // Set when a specific client is open, so its row highlights in the list.
-  activeClientId?: string
-}
+export default function TmcShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname() ?? ''
 
-export default function TmcShell({ children, activeLabel, activeClientId }: TmcShellProps) {
   const [employee, setEmployee] = useState<Employee | null>(null)
   const [permissions, setPermissions] = useState<string[]>([])
   const [clients, setClients] = useState<Client[]>([])
-  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    let cancelled = false
+
     fetch('/api/me')
       .then(r => r.json())
-      .then(data => {
-        if (data.ok) {
-          setEmployee(data.employee)
-          setPermissions(data.permissions ?? [])
-        }
+      .then(d => {
+        if (cancelled || !d.ok) return
+        setEmployee(d.employee)
+        setPermissions(d.permissions ?? [])
       })
-      .finally(() => setLoading(false))
+
+    return () => { cancelled = true }
   }, [])
 
-  // Clients live in the main nav rather than under Settings: they are what a
-  // travel desk works in all day, not something configured once. Settings keeps
-  // the things you set up and leave alone — policy, approvals, integrations.
   useEffect(() => {
+    let cancelled = false
+
     fetch('/api/tmc/companies')
       .then(r => r.json())
-      .then(d => { if (d.ok) setClients(d.companies) })
+      .then(d => { if (!cancelled && d.ok) setClients(d.companies) })
       .catch(() => {})
+
+    return () => { cancelled = true }
   }, [])
 
-  const navItems = [
-    { label: 'Dashboard',     href: '/tmc/dashboard',              show: true },
-    { label: 'Clients',       href: '/tmc/companies',              show: true },
-    { label: 'Client groups', href: '/tmc/settings/client-groups', show: canAccess(employee?.role, permissions, 'manage_client_groups') },
-    { label: 'Settings',      href: '/tmc/settings',               show: employee?.role === 'tmc_admin' || permissions.length > 0 },
-    { label: 'Reports',       href: '/tmc/reports',                show: canAccess(employee?.role, permissions, 'view_reports') },
-  ].filter(item => item.show)
+  const visibleNav = PRIMARY_NAV.filter(
+    item => !item.permission || canAccess(employee?.role, permissions, item.permission)
+  )
 
   return (
-    <div style={s.root}>
-      <nav style={s.nav}>
-        <div>
-          <div style={s.wordmark}>
-            <span style={s.wmMain}>TravelDesk</span>
-            <span style={s.wmBy}>by Amadeus</span>
-          </div>
-          <p style={s.navLabel}>{employee?.role === 'tmc_admin' ? 'TMC Admin' : 'Travel Counsellor'}</p>
-          {navItems.map(item => (
-            <a key={item.label} href={item.href} style={{
-              ...s.navItem,
-              backgroundColor: item.label === activeLabel ? 'rgba(255,255,255,0.1)' : 'transparent',
-              color: item.label === activeLabel ? '#fff' : 'rgba(255,255,255,0.5)',
-              fontWeight: item.label === activeLabel ? 600 : 400,
-            }}>
-              {item.label}
-            </a>
-          ))}
-
-          {/* The client list itself, so a desk can jump straight to whoever
-              called without going via a listing page first. Scrolls rather than
-              growing the nav, and headcount is the one number worth seeing at a
-              glance when choosing. */}
-          {clients.length > 0 && (
-            <div style={s.clientBlock}>
-              <p style={s.navLabel}>Clients</p>
-              <div style={s.clientList}>
-                {clients.map(c => (
-                  <a
-                    key={c.id}
-                    href={`/tmc/companies/${c.id}`}
-                    style={{
-                      ...s.clientItem,
-                      backgroundColor: c.id === activeClientId ? 'rgba(255,255,255,0.1)' : 'transparent',
-                      color: c.id === activeClientId ? '#fff' : 'rgba(255,255,255,0.45)',
-                    }}
-                    title={c.name}
-                  >
-                    <span style={s.clientName}>{c.name}</span>
-                    <span style={s.clientCount}>{c.employeeCount ?? 0}</span>
-                  </a>
-                ))}
+    <div className="flex min-h-screen bg-canvas">
+      {/* ── Primary rail ─────────────────────────────────────────────── */}
+      <aside className="fixed inset-y-0 left-0 z-30 flex w-rail flex-col bg-rail">
+        <div className="px-5 pt-6 pb-5">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-md bg-white/95 text-[13px] font-bold text-rail">
+              TD
+            </div>
+            <div className="leading-tight">
+              <div className="text-[15px] font-semibold text-white">TravelDesk</div>
+              <div className="text-[10px] uppercase tracking-[0.08em] text-white/40">
+                by Amadeus
               </div>
             </div>
+          </div>
+
+          {employee && (
+            <span className="mt-4 inline-block rounded bg-white/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-white/85">
+              {employee.role === 'tmc_admin' ? 'TMC Admin' : 'Travel Counsellor'}
+            </span>
           )}
         </div>
-        <div style={s.navFooter}>
-          <p style={s.userName}>{loading ? '…' : employee?.full_name ?? '—'}</p>
-          <p style={s.userRole}>{employee?.role === 'tmc_admin' ? 'TMC Admin' : 'Travel Counsellor'}</p>
+
+        <nav className="px-3">
+          {visibleNav.map(item => {
+            const active = isActive(pathname, item.href)
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                aria-current={active ? 'page' : undefined}
+                className={[
+                  'mb-0.5 flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] transition-colors',
+                  active
+                    ? 'bg-white/10 font-semibold text-white'
+                    : 'text-white/55 hover:bg-white/5 hover:text-white',
+                ].join(' ')}
+              >
+                <NavIcon name={item.icon} active={active} />
+                {item.label}
+              </Link>
+            )
+          })}
+        </nav>
+
+        {/* Client quick-list — jump straight to whoever just called, without
+            going via a listing page. Scrolls rather than growing the rail. */}
+        {clients.length > 0 && (
+          <div className="mt-5 flex min-h-0 flex-1 flex-col border-t border-white/[0.08] px-3 pt-4">
+            <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-wider text-white/35">
+              Clients
+            </p>
+            <div className="min-h-0 flex-1 overflow-y-auto pb-2">
+              {clients.map(c => {
+                const active = pathname === `/tmc/companies/${c.id}`
+                return (
+                  <Link
+                    key={c.id}
+                    href={`/tmc/companies/${c.id}`}
+                    title={c.name}
+                    className={[
+                      'flex items-center gap-2 rounded-md px-3 py-1.5 text-[12px] transition-colors',
+                      active
+                        ? 'bg-white/10 text-white'
+                        : 'text-white/45 hover:bg-white/5 hover:text-white/80',
+                    ].join(' ')}
+                  >
+                    <span className="flex-1 truncate">{c.name}</span>
+                    <span className="shrink-0 rounded bg-white/[0.07] px-1.5 py-px text-[10px] font-semibold text-white/40">
+                      {c.employeeCount ?? 0}
+                    </span>
+                  </Link>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        <div className={`${clients.length > 0 ? '' : 'mt-auto'} border-t border-white/[0.08] px-3 py-3`}>
+          <Link
+            href="/profile"
+            className="flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] text-white/55 transition-colors hover:bg-white/5 hover:text-white"
+          >
+            <NavIcon name="person" />
+            <span className="truncate">{employee?.full_name ?? 'Profile'}</span>
+          </Link>
+          {/* POST then hard redirect, not a form action: the route clears the
+              Supabase session cookie server-side and returns JSON, and a full
+              location change guarantees every client-side cache of the old
+              session is dropped. */}
           <button
+            type="button"
             onClick={async () => {
               await fetch('/api/auth/signout', { method: 'POST' })
               window.location.href = '/login'
             }}
-            style={{ ...s.signOutBtn, marginTop: '10px' }}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-[13px] text-white/55 transition-colors hover:bg-white/5 hover:text-white"
           >
+            <NavIcon name="logout" />
             Sign out
           </button>
         </div>
-      </nav>
+      </aside>
 
-      <main style={s.main}>{children}</main>
+      {/* Spacer holds the layout open; the rail itself is fixed so it doesn't
+          scroll with content. */}
+      <div className="w-rail shrink-0" aria-hidden />
+
+      {/* Content renders immediately and independently of /api/me — the shell
+          never gates the page on its own chrome loading. */}
+      <div className="min-w-0 flex-1">{children}</div>
     </div>
   )
 }
 
-const s: Record<string, React.CSSProperties> = {
-  root: { display: 'flex', minHeight: '100vh', fontFamily: "'Inter', -apple-system, sans-serif", backgroundColor: '#F7F8FC' },
-  nav: { width: '220px', flexShrink: 0, backgroundColor: '#000835', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '32px 20px' },
-  wordmark: { display: 'flex', flexDirection: 'column', gap: '3px', marginBottom: '28px' },
-  wmMain: { fontSize: '18px', fontWeight: 700, color: '#fff', letterSpacing: '-0.4px' },
-  wmBy: { fontSize: '10px', color: 'rgba(255,255,255,0.35)', letterSpacing: '0.5px', textTransform: 'uppercase' as const },
-  navLabel: { fontSize: '9px', fontWeight: 600, color: 'rgba(255,255,255,0.28)', letterSpacing: '1.1px', textTransform: 'uppercase' as const, margin: '0 0 12px' },
-  navItem: { display: 'block', padding: '9px 12px', borderRadius: '7px', fontSize: '13px', textDecoration: 'none', marginBottom: '2px' },
-  clientBlock: { marginTop: '22px', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '14px' },
-  // Capped so a TMC with fifty clients scrolls this list instead of the page.
-  clientList: { display: 'flex', flexDirection: 'column', gap: '1px', maxHeight: '260px', overflowY: 'auto' },
-  clientItem: { display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', borderRadius: '6px', fontSize: '12px', textDecoration: 'none' },
-  clientName: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  clientCount: { fontSize: '10px', fontWeight: 600, color: 'rgba(255,255,255,0.35)', background: 'rgba(255,255,255,0.07)', borderRadius: '4px', padding: '1px 6px', flexShrink: 0 },
-  navFooter: { borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '16px' },
-  userName: { fontSize: '12px', fontWeight: 600, color: '#fff', margin: '0 0 2px' },
-  userRole: { fontSize: '11px', color: 'rgba(255,255,255,0.4)', margin: 0 },
-  signOutBtn: { width: '100%', height: '32px', backgroundColor: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.45)', fontSize: '12px', border: 'none', borderRadius: '6px', cursor: 'pointer' },
-  main: { flex: 1, overflowY: 'auto' as const },
+// ── NavIcon ──────────────────────────────────────────────────────────────────
+// Inline SVG rather than an icon font or package: five icons don't justify a
+// dependency, and a webfont would add a network round trip before the nav can
+// paint — the exact thing this pass is trying to remove.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function NavIcon({ name, active }: { name?: string; active?: boolean }) {
+  const cls = `h-[18px] w-[18px] shrink-0 ${active ? 'opacity-100' : 'opacity-70'}`
+  const common = {
+    className: cls,
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 1.7,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+  }
+
+  switch (name) {
+    case 'dashboard':
+      return (
+        <svg {...common}>
+          <rect x="3" y="3" width="7" height="9" rx="1" />
+          <rect x="14" y="3" width="7" height="5" rx="1" />
+          <rect x="14" y="12" width="7" height="9" rx="1" />
+          <rect x="3" y="16" width="7" height="5" rx="1" />
+        </svg>
+      )
+    case 'groups':
+      return (
+        <svg {...common}>
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+          <circle cx="9" cy="7" r="4" />
+          <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+        </svg>
+      )
+    case 'assessment':
+      return (
+        <svg {...common}>
+          <path d="M3 3v18h18" />
+          <path d="M7 15l4-5 3 3 5-7" />
+        </svg>
+      )
+    case 'settings':
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+        </svg>
+      )
+    case 'person':
+      return (
+        <svg {...common}>
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+          <circle cx="12" cy="7" r="4" />
+        </svg>
+      )
+    case 'logout':
+      return (
+        <svg {...common}>
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+          <path d="M16 17l5-5-5-5M21 12H9" />
+        </svg>
+      )
+    default:
+      return <span className="h-[18px] w-[18px] shrink-0" />
+  }
 }

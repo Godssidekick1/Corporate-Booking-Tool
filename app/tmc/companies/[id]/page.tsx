@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
-import TmcShell from '@/app/components/TmcShell'
 import CountryDropdown from '@/app/components/CountryDropdown'
 
 interface Company {
@@ -16,6 +15,10 @@ interface Company {
   booking_mode: 'sbt' | 'cbt' | 'both'
   client_group_id: string | null
   created_at: string
+  registered_address: string | null
+  gst_number: string | null
+  industry: string | null
+  primary_contact_phone: string | null
 }
 
 interface client_group {
@@ -45,6 +48,7 @@ export default function TmcCompanyDetailPage() {
 
   const [form, setForm] = useState({
     name: '', timezone: '', currency: '', country: '', booking_mode: 'sbt' as Company['booking_mode'], client_group_id: '',
+    registered_address: '', gst_number: '', industry: '', primary_contact_phone: '',
   })
 
   useEffect(() => {
@@ -65,6 +69,10 @@ export default function TmcCompanyDetailPage() {
           country: c.country ?? '',
           booking_mode: c.booking_mode ?? 'sbt',
           client_group_id: c.client_group_id ?? '',
+          registered_address: c.registered_address ?? '',
+          gst_number: c.gst_number ?? '',
+          industry: c.industry ?? '',
+          primary_contact_phone: c.primary_contact_phone ?? '',
         })
         if (client_groupsData.ok) setclient_groups(client_groupsData.clientGroups ?? [])
       })
@@ -102,15 +110,15 @@ export default function TmcCompanyDetailPage() {
   }
 
   if (loading) {
-    return <TmcShell activeLabel="Clients"><div style={s.root}><p style={s.loadingText}>Loading…</p></div></TmcShell>
+    return <><div style={s.root}><p style={s.loadingText}>Loading…</p></div></>
   }
 
   if (!company) {
-    return <TmcShell activeLabel="Clients"><div style={s.root}><p style={s.error}>{error || 'Company not found.'}</p></div></TmcShell>
+    return <><div style={s.root}><p style={s.error}>{error || 'Company not found.'}</p></div></>
   }
 
   return (
-    <TmcShell activeLabel="Clients" activeClientId={companyId}>
+    <>
     <div style={s.root}>
       <div style={s.header}>
         <a href="/tmc/companies" style={s.backLink}>← All companies</a>
@@ -160,7 +168,7 @@ export default function TmcCompanyDetailPage() {
           <label style={s.label} htmlFor="client_group_id">Client group</label>
           {client_groups.length === 0 ? (
             <p style={s.hint}>
-              No client groups yet — <a href="/tmc/settings/client-groups" style={s.inlineLink}>create one</a> to assign this company.
+              No client groups yet — <a href="/tmc/configurations/client-groups" style={s.inlineLink}>create one</a> to assign this company.
             </p>
           ) : (
             <select id="client_group_id" name="client_group_id" value={form.client_group_id} onChange={handleChange} style={s.input}>
@@ -185,6 +193,48 @@ export default function TmcCompanyDetailPage() {
           </p>
         </div>
 
+        <div style={s.divider} />
+
+        {/* These four columns already existed on `companies` — onboardCompany
+            writes them at creation — but nothing could edit them afterwards, so
+            a wrong GST number entered at onboarding was permanent. */}
+        <div style={s.field}>
+          <label style={s.label} htmlFor="registered_address">Registered address</label>
+          <input
+            id="registered_address" name="registered_address" type="text"
+            value={form.registered_address} onChange={handleChange}
+            placeholder="Street, city, state" style={s.input}
+          />
+        </div>
+
+        <div style={s.field}>
+          <label style={s.label} htmlFor="gst_number">GST / Tax ID</label>
+          <input
+            id="gst_number" name="gst_number" type="text"
+            value={form.gst_number} onChange={handleChange}
+            placeholder="22AAAAA0000A1Z5" style={s.input}
+          />
+          <p style={s.hint}>Stored uppercase. Not format-checked — record what the client provided.</p>
+        </div>
+
+        <div style={s.field}>
+          <label style={s.label} htmlFor="industry">Industry</label>
+          <input
+            id="industry" name="industry" type="text"
+            value={form.industry} onChange={handleChange}
+            placeholder="Manufacturing" style={s.input}
+          />
+        </div>
+
+        <div style={s.field}>
+          <label style={s.label} htmlFor="primary_contact_phone">Primary contact phone</label>
+          <input
+            id="primary_contact_phone" name="primary_contact_phone" type="tel"
+            value={form.primary_contact_phone} onChange={handleChange}
+            placeholder="+91 98765 43210" style={s.input}
+          />
+        </div>
+
         {error && <p style={s.errorMsg}>{error}</p>}
         {success && <p style={s.success}>{success}</p>}
 
@@ -193,7 +243,7 @@ export default function TmcCompanyDetailPage() {
         </button>
       </form>
     </div>
-    </TmcShell>
+    </>
   )
 }
 

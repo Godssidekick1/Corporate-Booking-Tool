@@ -1,6 +1,6 @@
 // ── Policy field definitions ─────────────────────────────────────────────────
 // The single vocabulary of policy limits, shared by the TMC editor
-// (app/tmc/settings/policy) and the corporate read-only view
+// (app/tmc/configurations/policy) and the corporate read-only view
 // (app/settings/policy).
 //
 // These two screens previously each carried their own copy of this list and had

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 
-// ── /tmc/settings/cost-centres ───────────────────────────────────────────────
+// ── /tmc/configurations/cost-centres ───────────────────────────────────────────────
 // A client's cost centres, with headcount.
 //
 // These were free text typed per employee, so "Sales", "sales" and "Sales "

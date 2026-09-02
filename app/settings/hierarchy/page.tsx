@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react'
 // ── /settings/hierarchy ─────────────────────────────────────────────────
 // Read-only view of who reports to whom (employees.manager_id).
 //
-// Editing moved to the TMC (/tmc/settings/hierarchy). The TMC configures
+// Editing moved to the TMC (/tmc/configurations/traveller-profiles). The TMC configures
 // approval routing, and a step of type 'manager' resolves through manager_id —
 // so if only the corporate admin could set it, a TMC could build a chain whose
 // first step resolves to nobody and have no way to fix it. Same split as

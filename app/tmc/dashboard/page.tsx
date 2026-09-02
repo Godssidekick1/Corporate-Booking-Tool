@@ -4,7 +4,6 @@ import { useEffect, useState, useRef, useMemo } from 'react'
 import BandLadderEditor, { type BandDraft } from './BandLadderEditor'
 import Papa from 'papaparse'
 import { canAccess } from '@/app/lib/permissions/canAccess'
-import TmcShell from '@/app/components/TmcShell'
 
 interface Employee {
   full_name: string
@@ -272,7 +271,7 @@ export default function TmcDashboardPage() {
   }
 
   return (
-    <TmcShell activeLabel="Dashboard">
+    <>
       {/* Main */}
       <div style={s.mainInner}>
         <div style={s.topBar}>
@@ -307,7 +306,7 @@ export default function TmcDashboardPage() {
                 <label style={s.label}>Assign to client group</label>
                 {client_groups.length === 0 ? (
                   <p style={s.noclient_groupHint}>
-                    No client groups yet — <a href="/tmc/settings/client-groups" style={s.inlineLink}>create one</a> to group your clients, or leave unassigned.
+                    No client groups yet — <a href="/tmc/configurations/client-groups" style={s.inlineLink}>create one</a> to group your clients, or leave unassigned.
                   </p>
                 ) : (
                   <select name="client_groupId" value={form.client_groupId} onChange={handleFormChange} style={s.input}>
@@ -459,7 +458,7 @@ export default function TmcDashboardPage() {
             names never answered. */}
         <DashboardStats />
       </div>
-    </TmcShell>
+    </>
   )
 }
 

@@ -1,5 +1,6 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
+import { isPermissionKey } from '@/app/lib/permissions/permissionKeys'
 import { NextRequest } from 'next/server'
 
 // ── POST /api/tmc/tcs ────────────────────────────────────────────────────────
@@ -9,10 +10,6 @@ import { NextRequest } from 'next/server'
 // TC is never created with default/unrestricted access even momentarily.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const VALID_PERMISSIONS = [
-  'manage_policy', 'manage_users', 'manage_approvals',
-  'manage_client_groups', 'view_reports', 'book_on_behalf',
-] as const
 
 interface CreateTcBody {
   email: string
@@ -113,7 +110,7 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Invalid email address' }, { status: 400 })
   }
 
-  const invalidPerms = permissions.filter(p => !VALID_PERMISSIONS.includes(p as typeof VALID_PERMISSIONS[number]))
+  const invalidPerms = permissions.filter(p => !isPermissionKey(p))
   if (invalidPerms.length > 0) {
     return Response.json({ error: `Invalid permission(s): ${invalidPerms.join(', ')}` }, { status: 400 })
   }

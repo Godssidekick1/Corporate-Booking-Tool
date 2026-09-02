@@ -2,7 +2,7 @@ import { classifyTrip } from './classifyTrip'
 import type { FlatFlightResult } from '@/app/lib/book/types'
 
 // ── CABIN_RANK ────────────────────────────────────────────────────────────
-// Mirrors CABIN_CLASS_OPTIONS in app/tmc/settings/policy/page.tsx exactly —
+// Mirrors CABIN_CLASS_OPTIONS in app/tmc/configurations/policy/page.tsx exactly —
 // 0=Economy, 1=Premium Economy, 2=Business, 3=First. Amadeus's own `cabin`
 // field on FlatFlightResult is free text and its exact vocabulary varies by
 // provider, so this is a best-effort match, defaulting to Economy (0) for

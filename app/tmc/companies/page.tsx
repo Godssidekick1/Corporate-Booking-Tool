@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useMemo, useState, useRef } from 'react'
-import TmcShell from '@/app/components/TmcShell'
 
 interface client_group {
   id: string
@@ -108,7 +107,7 @@ export default function TmcCompaniesPage() {
   const hasSuggestions = suggestions.companies.length > 0 || suggestions.client_groups.length > 0
 
   return (
-    <TmcShell activeLabel="Clients">
+    <>
     <div style={s.root}>
       <div style={s.header}>
         <div>
@@ -213,7 +212,7 @@ export default function TmcCompaniesPage() {
         </div>
       )}
     </div>
-    </TmcShell>
+    </>
   )
 }
 

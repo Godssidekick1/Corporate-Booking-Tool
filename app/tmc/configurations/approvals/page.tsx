@@ -4,8 +4,8 @@ import { useEffect, useRef, useState } from 'react'
 import StepApprovers, { type TemplateStep } from './StepApprovers'
 import DirectChain from './DirectChain'
 
-// NOTE: no TmcShell here. app/tmc/settings/layout.tsx already supplies the
-// Settings sidebar and page chrome for everything under /tmc/settings —
+// NOTE: no TmcShell here. app/tmc/configurations/layout.tsx supplies the
+// Settings sidebar and page chrome for everything under /tmc/configurations —
 // wrapping again nests a second sidebar inside the first.
 
 // ── Types ─────────────────────────────────────────────────────────────────────

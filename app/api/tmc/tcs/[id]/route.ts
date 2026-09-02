@@ -1,5 +1,6 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
+import { isPermissionKey } from '@/app/lib/permissions/permissionKeys'
 import { NextRequest } from 'next/server'
 
 // ── PATCH /api/tmc/tcs/[id] ──────────────────────────────────────────────────
@@ -7,10 +8,6 @@ import { NextRequest } from 'next/server'
 // (simpler and safer than incremental add/remove — the admin always submits
 // the complete intended state). Status (active/deactivated) can also be set.
 
-const VALID_PERMISSIONS = [
-  'manage_policy', 'manage_users', 'manage_approvals',
-  'manage_client_groups', 'view_reports', 'book_on_behalf',
-] as const
 
 interface UpdateTcBody {
   permissions?: string[]
@@ -62,7 +59,7 @@ export async function PATCH(
   const { permissions, companyIds, status } = body
 
   if (permissions !== undefined) {
-    const invalid = permissions.filter(p => !VALID_PERMISSIONS.includes(p as typeof VALID_PERMISSIONS[number]))
+    const invalid = permissions.filter(p => !isPermissionKey(p))
     if (invalid.length > 0) {
       return Response.json({ error: `Invalid permission(s): ${invalid.join(', ')}` }, { status: 400 })
     }

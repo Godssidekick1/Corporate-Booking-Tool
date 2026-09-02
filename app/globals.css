@@ -1,29 +1,126 @@
 @import "tailwindcss";
 
+/* ── Design tokens ───────────────────────────────────────────────────────────
+   Declared once, consumed two ways:
+
+   - Tailwind utilities (`bg-rail`, `text-muted`) for the shell and dashboard,
+     which are being rebuilt.
+   - Raw `var(--color-…)` for the older screens that still use inline
+     `React.CSSProperties` records, so both worlds read the same values and a
+     second palette can't drift into existence while the migration is partial.
+
+   @theme is Tailwind v4's token block — every entry here becomes a utility.
+   ────────────────────────────────────────────────────────────────────────── */
+
+@theme {
+  /* Brand — one navy, used for the nav rail and primary actions. Deliberately
+     a single value: the design comp came back with three competing primaries
+     (#000000, #131b2e, #2563EB) and that is how palettes rot. */
+  --color-rail: #000835;
+  --color-rail-hover: #0a1348;
+
+  --color-canvas: #f7f8fc;
+  --color-surface: #ffffff;
+  --color-line: #e5e7eb;
+  --color-line-strong: #d1d5db;
+
+  --color-ink: #0a0a14;
+  --color-body: #374151;
+  --color-secondary: #6b7280;
+  --color-muted: #9ca3af;
+
+  /* Status pairs. Named by meaning, not colour, so a future rebrand doesn't
+     leave us with a token called `amber` that renders blue. */
+  --color-info-bg: #eef2ff;
+  --color-info-fg: #3730a3;
+  --color-success-bg: #ecfdf5;
+  --color-success-fg: #065f46;
+  --color-warn-bg: #fef3c7;
+  --color-warn-line: #fde68a;
+  --color-warn-fg: #92400e;
+  --color-danger-bg: #fef2f2;
+  --color-danger-line: #fecaca;
+  --color-danger-fg: #dc2626;
+
+  /* Geist is already loaded by next/font in app/layout.tsx as
+     --font-geist-sans. It was being thrown away by a `body { font-family:
+     Arial }` rule below, while every inline style asked for Inter, which is
+     never loaded at all — so the whole app has been rendering in system sans. */
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  /* Shell geometry. Referenced by both columns so they can never disagree. */
+  --spacing-rail: 240px;
+  --spacing-subnav: 224px;
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  color-scheme: light;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-canvas);
+  color: var(--color-body);
+  font-family: var(--font-sans);
 }
+
+/* ── Motion ──────────────────────────────────────────────────────────────────
+   Every animation below is opt-out via prefers-reduced-motion at the bottom of
+   this file.
+   ────────────────────────────────────────────────────────────────────────── */
+
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+/* Skeleton shimmer. A moving highlight reads as "loading" where a flat grey
+   block reads as "broken layout". */
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-line) 25%,
+    #eef0f4 50%,
+    var(--color-line) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+  border-radius: 6px;
+}
+
+/* Collapsible nav groups.
+
+   Animating grid-template-rows 0fr -> 1fr instead of height is what makes this
+   work without JavaScript: height needs a measured pixel value, breaks when
+   content reflows, and forces layout on every frame. The grid version handles
+   variable content and stays on the compositor.
+
+   The child needs min-height:0 or it refuses to shrink below its content. */
+.collapsible {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 220ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.collapsible[data-open="true"] {
+  grid-template-rows: 1fr;
+}
+
+.collapsible > * {
+  min-height: 0;
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

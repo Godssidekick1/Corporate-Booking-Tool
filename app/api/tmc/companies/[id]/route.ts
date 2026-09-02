@@ -22,6 +22,13 @@ interface UpdateCompanyBody {
   country?: string
   booking_mode?: string
   client_group_id?: string | null
+  // These four columns have existed on `companies` since onboarding was built —
+  // onboardCompany writes them — but nothing could edit them afterwards, so a
+  // typo in a GST number at creation was permanent.
+  registered_address?: string | null
+  gst_number?: string | null
+  industry?: string | null
+  primary_contact_phone?: string | null
 }
 
 export async function GET(
@@ -63,7 +70,7 @@ export async function GET(
 
   const { data: company, error } = await service
     .from('companies')
-    .select('id, name, status, setup_completed, timezone, currency, country, booking_mode, created_at, client_group_id, managed_by')
+    .select('id, name, status, setup_completed, timezone, currency, country, booking_mode, created_at, client_group_id, managed_by, registered_address, gst_number, industry, primary_contact_phone')
     .eq('id', id)
     .eq('tmc_id', caller.tmc_id)
     .single()
@@ -143,6 +150,28 @@ export async function PATCH(
     update.country = country.trim()
   }
 
+  // Free-text company details. Empty string clears rather than storing '' — a
+  // blank GST field should read as "not recorded", and every consumer already
+  // handles null.
+  //
+  // GST is uppercased because Indian GSTINs are canonically uppercase and a
+  // lowercase copy would not match anything searched for later. It is
+  // deliberately NOT format-validated: this is a TMC recording what a client
+  // told them, and rejecting an unusual-but-real identifier is worse than
+  // storing one that needs correcting.
+  if (body.registered_address !== undefined) {
+    update.registered_address = body.registered_address?.trim() || null
+  }
+  if (body.gst_number !== undefined) {
+    update.gst_number = body.gst_number?.trim().toUpperCase() || null
+  }
+  if (body.industry !== undefined) {
+    update.industry = body.industry?.trim() || null
+  }
+  if (body.primary_contact_phone !== undefined) {
+    update.primary_contact_phone = body.primary_contact_phone?.trim() || null
+  }
+
   if (client_group_id !== undefined) {
     if (client_group_id === null || client_group_id === '') {
       update.client_group_id = null
@@ -179,7 +208,7 @@ export async function PATCH(
     .from('companies')
     .update(update)
     .eq('id', id)
-    .select('id, name, timezone, currency, country, booking_mode, client_group_id')
+    .select('id, name, timezone, currency, country, booking_mode, client_group_id, registered_address, gst_number, industry, primary_contact_phone')
     .single()
 
   if (updateError) {

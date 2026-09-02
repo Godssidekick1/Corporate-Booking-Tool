@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Papa from 'papaparse'
 
-// ── /tmc/settings/traveller-profiles ─────────────────────────────────────────
+// ── /tmc/configurations/traveller-profiles ─────────────────────────────────────────
 // One screen for everything a travel desk maintains about a client's people:
 // band, cost centre, department, designation, reporting line, and the passport
 // and contact details a booking actually needs.
