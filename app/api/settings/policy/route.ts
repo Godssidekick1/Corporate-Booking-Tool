@@ -3,15 +3,15 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { getLinkedPolicyGroups, groupsCoveringRank } from '@/app/lib/rule-engine/linkedPolicyGroups'
 
 // ── GET /api/settings/policy ─────────────────────────────────────────────────
-// Read-only view of the policy in force for the corporate admin's company.
+// Read-only view of the policy in force for the corporate admin's client.
 //
 // Under the Policy Master model the TMC owns all policy: groups are TMC-level
 // templates shared across clients, so a corporate admin editing one would
-// silently change limits for every other company using the same template.
+// silently change limits for every other client using the same template.
 // Corporate admins therefore read here and edit nothing — there is no POST.
 //
-// Rules are stored against an integer band_rank, which is company-agnostic by
-// design. This route maps each rank back through the company's own `bands` rows
+// Rules are stored against an integer band_rank, which is client-agnostic by
+// design. This route maps each rank back through the client's own `bands` rows
 // so the admin sees their own labels ("L3 · Senior") rather than bare ranks.
 //
 // Version history and deletion remain TMC-admin actions, exposed under
@@ -51,7 +51,7 @@ export async function GET() {
 
   const { data: employee } = await service
     .from('employees')
-    .select('company_id, role')
+    .select('client_id, role')
     .eq('id', user.id)
     .single()
 
@@ -63,15 +63,15 @@ export async function GET() {
     return Response.json({ error: 'Only admins can view policy settings' }, { status: 403 })
   }
 
-  const companyId = employee.company_id
+  const clientId = employee.client_id
 
   const { data: bands } = await service
     .from('bands')
     .select('code, label, rank')
-    .eq('company_id', companyId)
+    .eq('client_id', clientId)
     .order('rank')
 
-  const groups = await getLinkedPolicyGroups(service, companyId)
+  const groups = await getLinkedPolicyGroups(service, clientId)
 
   if (groups.length === 0) {
     return Response.json({
@@ -85,7 +85,7 @@ export async function GET() {
         band_label: b.label,
         band_rank: b.rank,
         reason: 'no_policy_group' as const,
-        detail: 'No policy group has been linked to this company yet.',
+        detail: 'No policy group has been linked to this client yet.',
       })),
     })
   }

@@ -1,15 +1,15 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
-import { authoriseCompany } from '../traveler-profiles/route'
+import { authoriseClient } from '../traveler-profiles/route'
 import { NextRequest } from 'next/server'
 
 // ── /api/tmc/cost-centres ────────────────────────────────────────────────────
 // A client's cost centres, with how many people sit in each.
 //
-//   GET    ?companyId=              list, with headcount
+//   GET    ?clientId=              list, with headcount
 //   POST                            add one
 //   PATCH                           rename, or change the code
-//   DELETE ?companyId=&code=        remove, if nobody is on it
+//   DELETE ?clientId=&code=        remove, if nobody is on it
 //
 // employees.cost_centre stores the code as text rather than a foreign key, so
 // renaming a code has to carry the employees with it — done here in the same
@@ -18,7 +18,7 @@ import { NextRequest } from 'next/server'
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface CentreBody {
-  companyId: string
+  clientId: string
   code: string
   name?: string
   // PATCH only: the code being renamed, when the code itself changes.
@@ -33,13 +33,13 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const companyId = req.nextUrl.searchParams.get('companyId')
-  if (!companyId) {
-    return Response.json({ error: 'companyId is required' }, { status: 400 })
+  const clientId = req.nextUrl.searchParams.get('clientId')
+  if (!clientId) {
+    return Response.json({ error: 'clientId is required' }, { status: 400 })
   }
 
   const service = createServiceClient()
-  const access = await authoriseCompany(service, user.id, companyId)
+  const access = await authoriseClient(service, user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
@@ -48,12 +48,12 @@ export async function GET(req: NextRequest) {
     service
       .from('cost_centres')
       .select('id, code, name, created_at')
-      .eq('company_id', companyId)
+      .eq('client_id', clientId)
       .order('code'),
     service
       .from('employees')
       .select('cost_centre, department')
-      .eq('company_id', companyId),
+      .eq('client_id', clientId),
   ])
 
   if (error) {
@@ -94,23 +94,23 @@ export async function POST(req: NextRequest) {
   }
 
   const body: CentreBody = await req.json()
-  const { companyId } = body
+  const { clientId } = body
   const code = body.code?.trim()
   const name = body.name?.trim()
 
-  if (!companyId || !code) {
-    return Response.json({ error: 'companyId and code are required' }, { status: 400 })
+  if (!clientId || !code) {
+    return Response.json({ error: 'clientId and code are required' }, { status: 400 })
   }
 
   const service = createServiceClient()
-  const access = await authoriseCompany(service, user.id, companyId)
+  const access = await authoriseClient(service, user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
 
   const { data: centre, error } = await service
     .from('cost_centres')
-    .insert({ company_id: companyId, code, name: name || code })
+    .insert({ client_id: clientId, code, name: name || code })
     .select('id, code, name, created_at')
     .single()
 
@@ -133,19 +133,19 @@ export async function PATCH(req: NextRequest) {
   }
 
   const body: CentreBody = await req.json()
-  const { companyId, previousCode } = body
+  const { clientId, previousCode } = body
   const code = body.code?.trim()
   const name = body.name?.trim()
 
-  if (!companyId || !code || !previousCode) {
+  if (!clientId || !code || !previousCode) {
     return Response.json(
-      { error: 'companyId, code and previousCode are required' },
+      { error: 'clientId, code and previousCode are required' },
       { status: 400 }
     )
   }
 
   const service = createServiceClient()
-  const access = await authoriseCompany(service, user.id, companyId)
+  const access = await authoriseClient(service, user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
@@ -153,7 +153,7 @@ export async function PATCH(req: NextRequest) {
   const { error } = await service
     .from('cost_centres')
     .update({ code, name: name || code })
-    .eq('company_id', companyId)
+    .eq('client_id', clientId)
     .eq('code', previousCode)
 
   if (error) {
@@ -170,7 +170,7 @@ export async function PATCH(req: NextRequest) {
     const { data: movedRows } = await service
       .from('employees')
       .update({ cost_centre: code })
-      .eq('company_id', companyId)
+      .eq('client_id', clientId)
       .eq('cost_centre', previousCode)
       .select('id')
 
@@ -188,15 +188,15 @@ export async function DELETE(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const companyId = req.nextUrl.searchParams.get('companyId')
+  const clientId = req.nextUrl.searchParams.get('clientId')
   const code = req.nextUrl.searchParams.get('code')
 
-  if (!companyId || !code) {
-    return Response.json({ error: 'companyId and code are required' }, { status: 400 })
+  if (!clientId || !code) {
+    return Response.json({ error: 'clientId and code are required' }, { status: 400 })
   }
 
   const service = createServiceClient()
-  const access = await authoriseCompany(service, user.id, companyId)
+  const access = await authoriseClient(service, user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
@@ -206,7 +206,7 @@ export async function DELETE(req: NextRequest) {
   const { count } = await service
     .from('employees')
     .select('id', { count: 'exact', head: true })
-    .eq('company_id', companyId)
+    .eq('client_id', clientId)
     .eq('cost_centre', code)
 
   if (count && count > 0) {
@@ -218,7 +218,7 @@ export async function DELETE(req: NextRequest) {
   const { error } = await service
     .from('cost_centres')
     .delete()
-    .eq('company_id', companyId)
+    .eq('client_id', clientId)
     .eq('code', code)
 
   if (error) {

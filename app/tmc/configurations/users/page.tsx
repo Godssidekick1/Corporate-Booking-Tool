@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { PERMISSIONS } from '@/app/lib/permissions/permissionKeys'
 
-interface Company {
+interface Client {
   id: string
   name: string
 }
@@ -15,7 +15,7 @@ interface Tc {
   status: string
   created_at: string
   permissions: string[]
-  companyIds: string[]
+  clientIds: string[]
 }
 
 // PERMISSIONS now comes from the shared list. It used to be a third copy of the
@@ -33,7 +33,7 @@ type Mode = 'list' | 'create'
 
 export default function TmcUsersPage() {
   const [tcs, setTcs] = useState<Tc[]>([])
-  const [companies, setCompanies] = useState<Company[]>([])
+  const [clients, setClients] = useState<Client[]>([])
   const [loading, setLoading] = useState(true)
   const [mode, setMode] = useState<Mode>('list')
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -47,12 +47,12 @@ export default function TmcUsersPage() {
   async function loadAll() {
     setLoading(true)
     try {
-      const [tcsRes, companiesRes] = await Promise.all([
+      const [tcsRes, clientsRes] = await Promise.all([
         fetch('/api/tmc/tcs').then(r => r.json()),
-        fetch('/api/tmc/companies').then(r => r.json()),
+        fetch('/api/tmc/clients').then(r => r.json()),
       ])
       if (tcsRes.ok) setTcs(tcsRes.tcs)
-      if (companiesRes.ok) setCompanies(companiesRes.companies)
+      if (clientsRes.ok) setClients(clientsRes.clients)
     } finally {
       setLoading(false)
     }
@@ -91,7 +91,7 @@ export default function TmcUsersPage() {
 
       {mode === 'create' && (
         <TcForm
-          companies={companies}
+          clients={clients}
           onClose={() => setMode('list')}
           onDone={() => { setMode('list'); loadAll(); setSuccess('TC added.') }}
           onError={setError}
@@ -101,7 +101,7 @@ export default function TmcUsersPage() {
       {editingTc && (
         <TcPermissionsEditor
           tc={editingTc}
-          companies={companies}
+          clients={clients}
           onClose={() => setEditingId(null)}
           onDone={() => { setEditingId(null); loadAll(); setSuccess('Permissions updated.') }}
           onError={setError}
@@ -120,7 +120,7 @@ export default function TmcUsersPage() {
           <table style={s.table}>
             <thead>
               <tr>
-                {['Name', 'Email', 'Status', 'Permissions', 'Companies', ''].map(h => (
+                {['Name', 'Email', 'Status', 'Permissions', 'Clients', ''].map(h => (
                   <th key={h} style={s.th}>{h}</th>
                 ))}
               </tr>
@@ -136,7 +136,7 @@ export default function TmcUsersPage() {
                       <span style={{ ...s.badge, background: colors.bg, color: colors.fg }}>{tc.status}</span>
                     </td>
                     <td style={s.td}>{tc.permissions.length} function{tc.permissions.length === 1 ? '' : 's'}</td>
-                    <td style={s.td}>{tc.companyIds.length} compan{tc.companyIds.length === 1 ? 'y' : 'ies'}</td>
+                    <td style={s.td}>{tc.clientIds.length} client{tc.clientIds.length === 1 ? '' : 's'}</td>
                     <td style={{ ...s.td, textAlign: 'right' as const, display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
                       {tc.status !== 'invited' && (
                         <button onClick={() => setEditingId(tc.id)} style={s.editBtn}>Edit access</button>
@@ -161,8 +161,8 @@ export default function TmcUsersPage() {
 
 // ── Create form ───────────────────────────────────────────────────────────────
 
-function TcForm({ companies, onClose, onDone, onError }: {
-  companies: Company[]
+function TcForm({ clients, onClose, onDone, onError }: {
+  clients: Client[]
   onClose: () => void
   onDone: () => void
   onError: (msg: string) => void
@@ -171,15 +171,15 @@ function TcForm({ companies, onClose, onDone, onError }: {
   const [fullName, setFullName] = useState('')
   const [sendInvite, setSendInvite] = useState(true)
   const [permissions, setPermissions] = useState<string[]>([])
-  const [companyIds, setCompanyIds] = useState<string[]>([])
+  const [clientIds, setClientIds] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
 
   function togglePermission(key: string) {
     setPermissions(prev => prev.includes(key) ? prev.filter(p => p !== key) : [...prev, key])
   }
 
-  function toggleCompany(id: string) {
-    setCompanyIds(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id])
+  function toggleClient(id: string) {
+    setClientIds(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id])
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -189,7 +189,7 @@ function TcForm({ companies, onClose, onDone, onError }: {
       const res = await fetch('/api/tmc/tcs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, full_name: fullName, send_invite: sendInvite, permissions, companyIds }),
+        body: JSON.stringify({ email, full_name: fullName, send_invite: sendInvite, permissions, clientIds }),
       })
       const data = await res.json()
       if (!res.ok) { onError(data.error || 'Could not add TC.'); return }
@@ -235,14 +235,14 @@ function TcForm({ companies, onClose, onDone, onError }: {
         ))}
       </div>
 
-      <p style={s.sectionLabel}>Companies this TC can access</p>
-      {companies.length === 0 ? (
-        <p style={s.emptyDesc}>No companies yet.</p>
+      <p style={s.sectionLabel}>Clients this TC can access</p>
+      {clients.length === 0 ? (
+        <p style={s.emptyDesc}>No clients yet.</p>
       ) : (
-        <div style={s.companyGrid}>
-          {companies.map(c => (
-            <label key={c.id} style={s.companyRow}>
-              <input type="checkbox" checked={companyIds.includes(c.id)} onChange={() => toggleCompany(c.id)} />
+        <div style={s.clientGrid}>
+          {clients.map(c => (
+            <label key={c.id} style={s.clientRow}>
+              <input type="checkbox" checked={clientIds.includes(c.id)} onChange={() => toggleClient(c.id)} />
               {c.name}
             </label>
           ))}
@@ -261,23 +261,23 @@ function TcForm({ companies, onClose, onDone, onError }: {
 
 // ── Edit permissions (existing TC) ──────────────────────────────────────────
 
-function TcPermissionsEditor({ tc, companies, onClose, onDone, onError }: {
+function TcPermissionsEditor({ tc, clients, onClose, onDone, onError }: {
   tc: Tc
-  companies: Company[]
+  clients: Client[]
   onClose: () => void
   onDone: () => void
   onError: (msg: string) => void
 }) {
   const [permissions, setPermissions] = useState<string[]>(tc.permissions)
-  const [companyIds, setCompanyIds] = useState<string[]>(tc.companyIds)
+  const [clientIds, setClientIds] = useState<string[]>(tc.clientIds)
   const [submitting, setSubmitting] = useState(false)
 
   function togglePermission(key: string) {
     setPermissions(prev => prev.includes(key) ? prev.filter(p => p !== key) : [...prev, key])
   }
 
-  function toggleCompany(id: string) {
-    setCompanyIds(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id])
+  function toggleClient(id: string) {
+    setClientIds(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id])
   }
 
   async function handleSave() {
@@ -286,7 +286,7 @@ function TcPermissionsEditor({ tc, companies, onClose, onDone, onError }: {
       const res = await fetch(`/api/tmc/tcs/${tc.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ permissions, companyIds }),
+        body: JSON.stringify({ permissions, clientIds }),
       })
       const data = await res.json()
       if (!res.ok) { onError(data.error || 'Could not update.'); return }
@@ -316,11 +316,11 @@ function TcPermissionsEditor({ tc, companies, onClose, onDone, onError }: {
         ))}
       </div>
 
-      <p style={s.sectionLabel}>Companies</p>
-      <div style={s.companyGrid}>
-        {companies.map(c => (
-          <label key={c.id} style={s.companyRow}>
-            <input type="checkbox" checked={companyIds.includes(c.id)} onChange={() => toggleCompany(c.id)} />
+      <p style={s.sectionLabel}>Clients</p>
+      <div style={s.clientGrid}>
+        {clients.map(c => (
+          <label key={c.id} style={s.clientRow}>
+            <input type="checkbox" checked={clientIds.includes(c.id)} onChange={() => toggleClient(c.id)} />
             {c.name}
           </label>
         ))}
@@ -361,8 +361,8 @@ const s: Record<string, React.CSSProperties> = {
   permRow: { display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '12px', color: '#374151', padding: '6px 0' },
   permLabel: { display: 'block', fontWeight: 500, color: '#111827' },
   permDesc: { display: 'block', fontSize: '11px', color: '#9CA3AF' },
-  companyGrid: { display: 'flex', flexWrap: 'wrap' as const, gap: '10px' },
-  companyRow: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#374151', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '6px', padding: '6px 10px' },
+  clientGrid: { display: 'flex', flexWrap: 'wrap' as const, gap: '10px' },
+  clientRow: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#374151', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '6px', padding: '6px 10px' },
   formActions: { display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '18px' },
   card: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '10px', overflow: 'hidden' },
   table: { width: '100%', borderCollapse: 'collapse' as const },

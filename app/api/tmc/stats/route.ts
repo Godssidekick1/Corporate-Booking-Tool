@@ -1,12 +1,12 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
-import { requireTmcPermission, getAccessibleCompanyIds } from '@/app/lib/permissions/requireTmcPermission'
+import { requireTmcPermission, getAccessibleClientIds } from '@/app/lib/permissions/requireTmcPermission'
 
 // ── GET /api/tmc/stats ───────────────────────────────────────────────────────
 // Booking activity across the TMC's clients, for the dashboard.
 //
 // Aggregated here rather than in the browser because the client list is scoped
-// per caller (a 'tc' only sees companies they have access to) and shipping every
+// per caller (a 'tc' only sees clients they have access to) and shipping every
 // booking row to the browser to count them would leak the ones they cannot see.
 //
 // Everything is derived from bookings.created_at, so "last 30 days" is booking
@@ -17,7 +17,7 @@ const RECENT_DAYS = 30
 const TREND_WEEKS = 8
 
 interface ClientStat {
-  companyId: string
+  clientId: string
   name: string
   employees: number
   bookings: number
@@ -36,8 +36,8 @@ export async function GET() {
 
   const service = createServiceClient()
 
-  // No specific companyId — this is a whole-portfolio view, and which slice of
-  // it the caller may see is decided by getAccessibleCompanyIds below.
+  // No specific clientId — this is a whole-portfolio view, and which slice of
+  // it the caller may see is decided by getAccessibleClientIds below.
   const auth = await requireTmcPermission(service, user.id, 'view_reports')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
@@ -49,66 +49,66 @@ export async function GET() {
     .eq('id', user.id)
     .single()
 
-  const accessibleIds = await getAccessibleCompanyIds(service, user.id, caller?.role ?? 'tc')
+  const accessibleIds = await getAccessibleClientIds(service, user.id, caller?.role ?? 'tc')
 
-  let companyQuery = service
-    .from('companies')
+  let clientQuery = service
+    .from('clients')
     .select('id, name, status, created_at')
     .eq('tmc_id', auth.tmcId)
 
-  // null means "every company at this TMC" (tmc_admin); an array is the explicit
+  // null means "every client at this TMC" (tmc_admin); an array is the explicit
   // allow-list for a travel counsellor.
   if (accessibleIds !== null) {
     if (accessibleIds.length === 0) {
       return Response.json({ ok: true, totals: emptyTotals(), clients: [], trend: [] })
     }
-    companyQuery = companyQuery.in('id', accessibleIds)
+    clientQuery = clientQuery.in('id', accessibleIds)
   }
 
-  const { data: companies, error: companyError } = await companyQuery
+  const { data: clientRows, error: clientError } = await clientQuery
 
-  if (companyError) {
-    return Response.json({ error: companyError.message }, { status: 500 })
+  if (clientError) {
+    return Response.json({ error: clientError.message }, { status: 500 })
   }
 
-  const companyIds = (companies ?? []).map(c => c.id)
+  const clientIds = (clientRows ?? []).map(c => c.id)
 
-  if (companyIds.length === 0) {
+  if (clientIds.length === 0) {
     return Response.json({ ok: true, totals: emptyTotals(), clients: [], trend: [] })
   }
 
   const [{ data: employees }, { data: bookings }] = await Promise.all([
-    service.from('employees').select('id, company_id, status').in('company_id', companyIds),
+    service.from('employees').select('id, client_id, status').in('client_id', clientIds),
     service
       .from('bookings')
-      .select('id, company_id, total_cost, status, created_at')
-      .in('company_id', companyIds),
+      .select('id, client_id, total_cost, status, created_at')
+      .in('client_id', clientIds),
   ])
 
-  const employeesByCompany = new Map<string, number>()
+  const employeesByClient = new Map<string, number>()
   for (const e of employees ?? []) {
     if (e.status === 'deactivated') continue
-    employeesByCompany.set(e.company_id, (employeesByCompany.get(e.company_id) ?? 0) + 1)
+    employeesByClient.set(e.client_id, (employeesByClient.get(e.client_id) ?? 0) + 1)
   }
 
   const recentCutoff = Date.now() - RECENT_DAYS * 24 * 60 * 60 * 1000
 
-  const bookingsByCompany = new Map<string, { total: number; recent: number; spend: number; last: string | null }>()
+  const bookingsByClient = new Map<string, { total: number; recent: number; spend: number; last: string | null }>()
   for (const b of bookings ?? []) {
-    const entry = bookingsByCompany.get(b.company_id) ?? { total: 0, recent: 0, spend: 0, last: null }
+    const entry = bookingsByClient.get(b.client_id) ?? { total: 0, recent: 0, spend: 0, last: null }
     entry.total += 1
     entry.spend += Number(b.total_cost ?? 0)
     if (new Date(b.created_at).getTime() >= recentCutoff) entry.recent += 1
     if (!entry.last || b.created_at > entry.last) entry.last = b.created_at
-    bookingsByCompany.set(b.company_id, entry)
+    bookingsByClient.set(b.client_id, entry)
   }
 
-  const clients: ClientStat[] = (companies ?? []).map(c => {
-    const b = bookingsByCompany.get(c.id)
+  const clients: ClientStat[] = (clientRows ?? []).map(c => {
+    const b = bookingsByClient.get(c.id)
     return {
-      companyId: c.id,
+      clientId: c.id,
       name: c.name,
-      employees: employeesByCompany.get(c.id) ?? 0,
+      employees: employeesByClient.get(c.id) ?? 0,
       bookings: b?.total ?? 0,
       recentBookings: b?.recent ?? 0,
       spend: b?.spend ?? 0,
@@ -145,7 +145,7 @@ export async function GET() {
       // Clients with no bookings at all are the ones worth chasing, so they get
       // counted separately rather than being averaged away.
       activeClients: active.length,
-      employees: [...employeesByCompany.values()].reduce((a, b) => a + b, 0),
+      employees: [...employeesByClient.values()].reduce((a, b) => a + b, 0),
       bookings: bookingCounts.reduce((a, b) => a + b, 0),
       recentBookings: clients.reduce((a, c) => a + c.recentBookings, 0),
       spend: clients.reduce((a, c) => a + c.spend, 0),

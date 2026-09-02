@@ -4,11 +4,11 @@ import { NextRequest } from 'next/server'
 
 export async function POST(req: NextRequest) {
   const body = await req.json()
-  const { companyName, fullName, email, password } = body
+  const { clientName, fullName, email, password } = body
 
-  if (!companyName || !fullName || !email || !password) {
+  if (!clientName || !fullName || !email || !password) {
     return Response.json(
-      { error: 'companyName, fullName, email, and password are required' },
+      { error: 'clientName, fullName, email, and password are required' },
       { status: 400 }
     )
   }
@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
   const supabase = createServiceClient()
 
   let authUserId: string | null = null
-  let companyId: string | null = null
+  let clientId: string | null = null
 
   try {
     // ── Step 1: Create the Supabase Auth user ──────────────────────────
@@ -33,22 +33,22 @@ export async function POST(req: NextRequest) {
 
     authUserId = authData.user.id
 
-    // ── Step 2: Create the company ────────────────────────────────────
-    const { data: company, error: companyError } = await supabase
-      .from('companies')
-      .insert({ name: companyName, status: 'active' })
+    // ── Step 2: Create the client ────────────────────────────────────
+    const { data: client, error: clientError } = await supabase
+      .from('clients')
+      .insert({ name: clientName, status: 'active' })
       .select('id')
       .single()
 
-    if (companyError) throw new Error(companyError.message)
-    companyId = company.id
+    if (clientError) throw new Error(clientError.message)
+    clientId = client.id
 
     // ── Step 3: Seed default bands ─────────────────────────────────────
     // Self-registration has no TMC to define bands, so it falls back to the
     // shared default ladder. TMC-created clients define their own instead.
     const { data: bands, error: bandsError } = await supabase
       .from('bands')
-      .insert(DEFAULT_BANDS.map(b => ({ company_id: companyId, ...b })))
+      .insert(DEFAULT_BANDS.map(b => ({ client_id: clientId, ...b })))
       .select('id, code, label, rank')
 
     if (bandsError) throw new Error(bandsError.message)
@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
     // so dashboard/profile reads don't need a join.
     const { error: employeeError } = await supabase.from('employees').insert({
       id: authUserId,
-      company_id: companyId,
+      client_id: clientId,
       band_id: adminBand.id,
       band_code: adminBand.code,
       band_rank: adminBand.rank,
@@ -74,14 +74,14 @@ export async function POST(req: NextRequest) {
     if (employeeError) throw new Error(employeeError.message)
 
     return Response.json(
-      { ok: true, companyId, message: 'Company registered successfully' },
+      { ok: true, clientId, message: 'Client registered successfully' },
       { status: 201 }
     )
   } catch (err) {
     console.error('REGISTRATION ERROR:', err)
 
-    if (companyId) {
-      await supabase.from('companies').delete().eq('id', companyId)
+    if (clientId) {
+      await supabase.from('clients').delete().eq('id', clientId)
     }
     if (authUserId) {
       await supabase.auth.admin.deleteUser(authUserId)

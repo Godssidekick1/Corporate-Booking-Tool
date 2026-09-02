@@ -6,7 +6,7 @@ import { NextRequest } from 'next/server'
 
 // ── PATCH /api/tmc/approval-templates/[id] ───────────────────────────────────
 // Edits a chain's name, its steps, or its mode. Not its approvers — those are
-// bound per company in approval_tier_approvers, since a shared template cannot
+// bound per client in approval_tier_approvers, since a shared template cannot
 // name a person who only exists at one client.
 //
 // Switching mode re-validates the steps, because the modes have different
@@ -16,7 +16,7 @@ import { NextRequest } from 'next/server'
 // intended.
 //
 // ── DELETE /api/tmc/approval-templates/[id] ──────────────────────────────────
-// Blocked while any employee is routed through it, or while it is a company's
+// Blocked while any employee is routed through it, or while it is a client's
 // default.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -26,7 +26,7 @@ interface UpdateTemplateBody {
   description?: string | null
   mode?: string
   quorum?: string
-  // Structure only. Who fills each step is bound per company, in
+  // Structure only. Who fills each step is bound per client, in
   // approval_tier_approvers.
   tiers?: {
     tier: number
@@ -122,7 +122,7 @@ export async function PATCH(
     .from('approval_chain_templates')
     .update(fields)
     .eq('id', id)
-    .select('id, name, code, description, category, mode, quorum, tiers, version, created_at, company_id')
+    .select('id, name, code, description, category, mode, quorum, tiers, version, created_at, client_id')
     .single()
 
   if (updateError) {
@@ -182,13 +182,13 @@ export async function DELETE(
   }
 
   const { count: defaultCount } = await service
-    .from('company_default_approval_templates')
-    .select('company_id', { count: 'exact', head: true })
+    .from('client_default_approval_templates')
+    .select('client_id', { count: 'exact', head: true })
     .eq('template_id', id)
 
   if (defaultCount && defaultCount > 0) {
     return Response.json({
-      error: `"${template.name}" is the default for ${defaultCount} compan${defaultCount > 1 ? 'ies' : 'y'}. Change their default before deleting.`,
+      error: `"${template.name}" is the default for ${defaultCount} client${defaultCount > 1 ? 's' : ''}. Change their default before deleting.`,
     }, { status: 409 })
   }
 

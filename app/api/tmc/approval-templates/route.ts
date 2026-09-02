@@ -23,7 +23,7 @@ export const MODES = ['sequential', 'parallel'] as const
 export const QUORUMS = ['any', 'all'] as const
 
 // A step, as a template stores it. Structure only — who fills it is bound per
-// company in approval_tier_approvers, because a template is shared across
+// client in approval_tier_approvers, because a template is shared across
 // clients and a person exists in only one of them.
 interface TemplateTierInput {
   tier: number
@@ -39,9 +39,9 @@ interface CreateTemplateBody {
   mode?: string
   quorum?: string
   tiers?: TemplateTierInput[]
-  // Set to scope this chain to one company (what the direct-mapping flow
+  // Set to scope this chain to one client (what the direct-mapping flow
   // produces). Omit for a chain shared across the TMC's clients.
-  companyId?: string | null
+  clientId?: string | null
 }
 
 // ── validateTiers ────────────────────────────────────────────────────────────
@@ -99,7 +99,7 @@ export async function GET(req: NextRequest) {
 
   let query = service
     .from('approval_chain_templates')
-    .select('id, name, code, description, category, mode, quorum, tiers, version, created_at, company_id')
+    .select('id, name, code, description, category, mode, quorum, tiers, version, created_at, client_id')
     .eq('tmc_id', auth.tmcId)
     .order('name')
 
@@ -118,7 +118,7 @@ export async function GET(req: NextRequest) {
   // How many employees are routed through each template, so an admin can see
   // the blast radius before editing something shared. Counted across the whole
   // TMC: templateIds is already TMC-scoped, and an assignment is only ever
-  // created for an employee at a company in that TMC.
+  // created for an employee at a client in that TMC.
   const usageByTemplate = new Map<string, number>()
   const defaultForByTemplate = new Map<string, number>()
 
@@ -133,7 +133,7 @@ export async function GET(req: NextRequest) {
     }
 
     const { data: defaults } = await service
-      .from('company_default_approval_templates')
+      .from('client_default_approval_templates')
       .select('template_id')
       .in('template_id', templateIds)
 
@@ -147,7 +147,7 @@ export async function GET(req: NextRequest) {
     templates: (templates ?? []).map(t => ({
       ...t,
       employeeCount: usageByTemplate.get(t.id) ?? 0,
-      defaultForCompanies: defaultForByTemplate.get(t.id) ?? 0,
+      defaultForClients: defaultForByTemplate.get(t.id) ?? 0,
     })),
   })
 }
@@ -190,17 +190,17 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: tierError }, { status: 400 })
   }
 
-  // A company-scoped chain must point at a company this TMC actually manages,
+  // A client-scoped chain must point at a client this TMC actually manages,
   // or it would be created and then be invisible and unusable.
-  if (body.companyId) {
-    const { data: company } = await service
-      .from('companies')
+  if (body.clientId) {
+    const { data: client } = await service
+      .from('clients')
       .select('id, tmc_id')
-      .eq('id', body.companyId)
+      .eq('id', body.clientId)
       .maybeSingle()
 
-    if (!company || company.tmc_id !== auth.tmcId) {
-      return Response.json({ error: 'Company not found for this TMC' }, { status: 404 })
+    if (!client || client.tmc_id !== auth.tmcId) {
+      return Response.json({ error: 'Client not found for this TMC' }, { status: 404 })
     }
   }
 
@@ -214,7 +214,7 @@ export async function POST(req: NextRequest) {
     .from('approval_chain_templates')
     .insert({
       tmc_id: auth.tmcId,
-      company_id: body.companyId ?? null,
+      client_id: body.clientId ?? null,
       name: name.trim(),
       code: code?.trim() || null,
       description: description?.trim() || null,
@@ -224,7 +224,7 @@ export async function POST(req: NextRequest) {
       tiers,
       updated_by: caller?.id ?? null,
     })
-    .select('id, name, code, description, category, mode, quorum, tiers, version, created_at, company_id')
+    .select('id, name, code, description, category, mode, quorum, tiers, version, created_at, client_id')
     .single()
 
   if (error) {
@@ -240,7 +240,7 @@ export async function POST(req: NextRequest) {
   }
 
   return Response.json(
-    { ok: true, template: { ...template, employeeCount: 0, defaultForCompanies: 0 } },
+    { ok: true, template: { ...template, employeeCount: 0, defaultForClients: 0 } },
     { status: 201 }
   )
 }

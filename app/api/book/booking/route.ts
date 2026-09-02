@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
   const service = createServiceClient()
   const { data: employee } = await service
     .from('employees')
-    .select('id, company_id')
+    .select('id, client_id')
     .eq('id', user.id)
     .maybeSingle()
 
@@ -94,7 +94,7 @@ export async function POST(req: NextRequest) {
 
   const { data: booking } = await service
     .from('bookings')
-    .select('id, employee_id, company_id, status, provider, provider_order_id, amadeus_key, pricing_key, search_key, result_index, total_cost, traveler_snapshot')
+    .select('id, employee_id, client_id, status, provider, provider_order_id, amadeus_key, pricing_key, search_key, result_index, total_cost, traveler_snapshot')
     .eq('id', bookingId)
     .maybeSingle()
 

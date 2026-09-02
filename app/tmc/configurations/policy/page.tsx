@@ -11,7 +11,7 @@ import {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface Company { id: string; name: string }
+interface Client { id: string; name: string }
 
 interface PolicyGroup {
   id: string
@@ -19,7 +19,7 @@ interface PolicyGroup {
   code: string | null
   description: string | null
   bandRanks: number[]
-  companyCount: number
+  clientCount: number
 }
 
 interface RuleRow {
@@ -30,7 +30,7 @@ interface RuleRow {
   limit_bool: boolean | null
 }
 
-interface CompanyLink {
+interface ClientLink {
   policyGroupId: string
   assignedAt: string
   group: {
@@ -42,9 +42,9 @@ interface CompanyLink {
 }
 
 // ── Rank helpers ──────────────────────────────────────────────────────────────
-// Rules are keyed by integer band_rank, not a company's band codes — a shared
-// template has no single company's labels to key against, and mapping a rank
-// back to whatever a company calls it ("L1", "A1", "C") is
+// Rules are keyed by integer band_rank, not a client's band codes — a shared
+// template has no single client's labels to key against, and mapping a rank
+// back to whatever a client calls it ("L1", "A1", "C") is
 // resolveEffectivePolicy's job at read time.
 //
 // Coverage is an explicit set, so a group can span non-contiguous ranks
@@ -178,7 +178,7 @@ function groupIndicatorStyle(active: boolean): React.CSSProperties {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function TmcPolicyPage() {
-  const [tab, setTab] = useState<'groups' | 'companies'>('groups')
+  const [tab, setTab] = useState<'groups' | 'clients'>('groups')
 
   const [groups, setGroups] = useState<PolicyGroup[]>([])
   const [search, setSearch] = useState('')
@@ -188,14 +188,14 @@ export default function TmcPolicyPage() {
   const [version, setVersion] = useState(0)
   const [openCategories, setOpenCategories] = useState<Record<string, boolean>>({ flight: true })
 
-  const [companies, setCompanies] = useState<Company[]>([])
-  const [selectedCompanyId, setSelectedCompanyId] = useState('')
-  const [links, setLinks] = useState<CompanyLink[]>([])
+  const [clients, setClients] = useState<Client[]>([])
+  const [selectedClientId, setSelectedClientId] = useState('')
+  const [links, setLinks] = useState<ClientLink[]>([])
   const [linkGroupId, setLinkGroupId] = useState('')
 
   const [loadingGroups, setLoadingGroups] = useState(true)
   const [loadingRules, setLoadingRules] = useState(false)
-  const [loadingCompanies, setLoadingCompanies] = useState(false)
+  const [loadingClients, setLoadingClients] = useState(false)
   const [loadingLinks, setLoadingLinks] = useState(false)
   const [saving, setSaving] = useState(false)
   const [linking, setLinking] = useState(false)
@@ -226,33 +226,40 @@ export default function TmcPolicyPage() {
 
   // Debounced so typing in the search box doesn't fire a request per keystroke.
   // Also covers the initial load — it runs once on mount with an empty term.
+  // The disables below are deliberately on the offending statement rather than
+  // on the dependency array. `set-state-in-effect` reports the setState call
+  // itself, so a directive parked next to `}, [dep])` suppressed nothing while
+  // still looking like it did.
   useEffect(() => {
     const t = setTimeout(() => loadGroups(search), 250)
     return () => clearTimeout(t)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search])
 
   useEffect(() => {
+    // Clearing the selection has to clear the grid with it, or the editor keeps
+    // rendering the previous group's limits under a heading for no group.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!selectedGroupId || !selectedGroup) { setGrid({}); setVersion(0); setDirty(false); return }
     loadRules(selectedGroupId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedGroupId])
 
   useEffect(() => {
-    if (tab !== 'companies' || companies.length > 0) return
-    setLoadingCompanies(true)
-    fetch('/api/tmc/companies')
+    if (tab !== 'clients' || clients.length > 0) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoadingClients(true)
+    fetch('/api/tmc/clients')
       .then(r => r.json())
-      .then(d => { if (d.ok) setCompanies(d.companies) })
-      .finally(() => setLoadingCompanies(false))
+      .then(d => { if (d.ok) setClients(d.clients) })
+      .finally(() => setLoadingClients(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab])
 
   useEffect(() => {
-    if (!selectedCompanyId) { setLinks([]); return }
-    loadLinks(selectedCompanyId)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCompanyId])
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (!selectedClientId) { setLinks([]); return }
+    loadLinks(selectedClientId)
+  }, [selectedClientId])
 
   async function loadGroups(searchTerm: string) {
     setLoadingGroups(true); setError('')
@@ -276,10 +283,10 @@ export default function TmcPolicyPage() {
     } finally { setLoadingRules(false) }
   }
 
-  async function loadLinks(companyId: string) {
+  async function loadLinks(clientId: string) {
     setLoadingLinks(true); setError('')
     try {
-      const d = await fetch(`/api/tmc/company-policy-groups?companyId=${companyId}`).then(r => r.json())
+      const d = await fetch(`/api/tmc/client-policy-groups?clientId=${clientId}`).then(r => r.json())
       if (!d.ok) { setError(d.error || 'Could not load linked groups.'); return }
       setLinks(d.links)
     } finally { setLoadingLinks(false) }
@@ -426,16 +433,16 @@ export default function TmcPolicyPage() {
   // ── Link actions ────────────────────────────────────────────────────────────
 
   async function handleLinkGroup() {
-    if (!selectedCompanyId || !linkGroupId) return
+    if (!selectedClientId || !linkGroupId) return
     setLinking(true); setError('')
     try {
-      const d = await fetch('/api/tmc/company-policy-groups', {
+      const d = await fetch('/api/tmc/client-policy-groups', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ companyId: selectedCompanyId, policyGroupId: linkGroupId }),
+        body: JSON.stringify({ clientId: selectedClientId, policyGroupId: linkGroupId }),
       }).then(r => r.json())
       if (!d.ok) { setError(d.error || 'Could not link group.'); return }
       setLinkGroupId('')
-      await loadLinks(selectedCompanyId)
+      await loadLinks(selectedClientId)
       loadGroups(search)
       showSuccess('Policy group linked.')
     } finally { setLinking(false) }
@@ -445,11 +452,11 @@ export default function TmcPolicyPage() {
     if (!confirm(`Unlink "${name}" from this client? Employees in its rank range will have no policy until another group covers them.`)) return
     setError('')
     const d = await fetch(
-      `/api/tmc/company-policy-groups?companyId=${selectedCompanyId}&policyGroupId=${policyGroupId}`,
+      `/api/tmc/client-policy-groups?clientId=${selectedClientId}&policyGroupId=${policyGroupId}`,
       { method: 'DELETE' }
     ).then(r => r.json())
     if (!d.ok) { setError(d.error || 'Could not unlink group.'); return }
-    await loadLinks(selectedCompanyId)
+    await loadLinks(selectedClientId)
     loadGroups(search)
     showSuccess('Policy group unlinked.')
   }
@@ -478,7 +485,7 @@ export default function TmcPolicyPage() {
         <button onClick={() => setTab('groups')} style={{ ...s.tabBtn, ...(tab === 'groups' ? s.tabActive : {}) }}>
           Policy groups
         </button>
-        <button onClick={() => setTab('companies')} style={{ ...s.tabBtn, ...(tab === 'companies' ? s.tabActive : {}) }}>
+        <button onClick={() => setTab('clients')} style={{ ...s.tabBtn, ...(tab === 'clients' ? s.tabActive : {}) }}>
           Client assignments
         </button>
       </div>
@@ -605,9 +612,9 @@ export default function TmcPolicyPage() {
                     </div>
                     {g.description && <p style={s.groupCardDesc}>{g.description}</p>}
                     <p style={s.groupCardMeta}>
-                      {g.companyCount === 0
+                      {g.clientCount === 0
                         ? 'Not used by any client'
-                        : `Used by ${g.companyCount} client${g.companyCount === 1 ? '' : 's'}`}
+                        : `Used by ${g.clientCount} client${g.clientCount === 1 ? '' : 's'}`}
                     </p>
                   </div>
                 ))}
@@ -707,9 +714,9 @@ export default function TmcPolicyPage() {
               )}
 
               {/* Blast radius: a shared template's limits apply everywhere it's linked. */}
-              {selectedGroup.companyCount > 1 && (
+              {selectedGroup.clientCount > 1 && (
                 <div style={s.blastBanner}>
-                  This group is shared by <strong>{selectedGroup.companyCount} clients</strong>.
+                  This group is shared by <strong>{selectedGroup.clientCount} clients</strong>.
                   Saving changes the policy in force for all of them.
                 </div>
               )}
@@ -858,7 +865,7 @@ export default function TmcPolicyPage() {
       {/* ══════════════════════════════════════════════════════════ */}
       {/* CLIENT ASSIGNMENTS TAB                                     */}
       {/* ══════════════════════════════════════════════════════════ */}
-      {tab === 'companies' && (
+      {tab === 'clients' && (
         <div style={s.card}>
           <div style={s.cardHeader}>
             <div>
@@ -873,16 +880,16 @@ export default function TmcPolicyPage() {
           <div style={{ ...s.field, maxWidth: 320, marginBottom: 20 }}>
             <label style={s.label}>Client</label>
             <SearchableSelect
-              value={selectedCompanyId}
-              onChange={setSelectedCompanyId}
-              options={companies.map(c => ({ id: c.id, label: c.name }))}
-              placeholder={loadingCompanies ? 'Loading…' : 'Select a client…'}
-              disabled={loadingCompanies}
+              value={selectedClientId}
+              onChange={setSelectedClientId}
+              options={clients.map(c => ({ id: c.id, label: c.name }))}
+              placeholder={loadingClients ? 'Loading…' : 'Select a client…'}
+              disabled={loadingClients}
               emptyMessage="No clients match"
             />
           </div>
 
-          {selectedCompanyId && (
+          {selectedClientId && (
             <>
               <div style={s.linkRow}>
                 <select

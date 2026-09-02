@@ -29,7 +29,7 @@ interface Account {
 interface Access {
   fullAccess: boolean
   permissions: string[]
-  companies: { id: string; name: string }[]
+  clients: { id: string; name: string }[]
 }
 
 interface Activity {
@@ -201,14 +201,14 @@ export default function TmcProfilePage() {
         )}
 
         <h3 style={s.subHeading}>
-          Clients {access?.fullAccess ? '' : `(${access?.companies.length ?? 0})`}
+          Clients {access?.fullAccess ? '' : `(${access?.clients.length ?? 0})`}
         </h3>
-        {(access?.companies.length ?? 0) === 0 ? (
+        {(access?.clients.length ?? 0) === 0 ? (
           <p style={s.muted}>No clients assigned to you yet.</p>
         ) : (
           <div style={s.chipRow}>
-            {access?.companies.map(c => (
-              <a key={c.id} href={`/tmc/companies/${c.id}`} style={s.chip}>{c.name}</a>
+            {access?.clients.map(c => (
+              <a key={c.id} href={`/tmc/clients/${c.id}`} style={s.chip}>{c.name}</a>
             ))}
           </div>
         )}

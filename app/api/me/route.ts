@@ -19,7 +19,7 @@ export async function GET() {
       email,
       role,
       status,
-      company_id,
+      client_id,
       tmc_id,
       band_id,
       band_code,
@@ -37,12 +37,12 @@ export async function GET() {
 
   const isTmcSide = employee.role === 'tmc_admin' || employee.role === 'tc'
 
-  const { data: company } = isTmcSide
+  const { data: client } = isTmcSide
     ? { data: null }
     : await service
-        .from('companies')
+        .from('clients')
         .select('id, name, settings, setup_completed, status, timezone, currency, country, booking_mode')
-        .eq('id', employee.company_id)
+        .eq('id', employee.client_id)
         .single()
 
   const { count: employeeCount } = isTmcSide
@@ -50,41 +50,41 @@ export async function GET() {
     : await service
         .from('employees')
         .select('id', { count: 'exact', head: true })
-        .eq('company_id', employee.company_id)
+        .eq('client_id', employee.client_id)
 
-  // Company-wide, not just this employee's own bookings — the setup
-  // checklist item is "has anyone at this company made a booking yet",
-  // same scope as employeeCount above (company-level onboarding progress,
+  // Client-wide, not just this employee's own bookings — the setup
+  // checklist item is "has anyone at this client made a booking yet",
+  // same scope as employeeCount above (client-level onboarding progress,
   // not a personal stat).
   const { count: bookingCount } = isTmcSide
     ? { count: 0 }
     : await service
         .from('bookings')
         .select('id', { count: 'exact', head: true })
-        .eq('company_id', employee.company_id)
+        .eq('client_id', employee.client_id)
 
-  // For TCs, load their granted permissions and company access so the
+  // For TCs, load their granted permissions and client access so the
   // frontend can render a restricted view of the TMC dashboard/settings.
   // tmc_admin has full access implicitly and never needs these checked.
   let permissions: string[] = []
-  let companyAccess: string[] = []
+  let clientAccess: string[] = []
 
   if (employee.role === 'tc') {
     const [{ data: perms }, { data: access }] = await Promise.all([
       service.from('employee_permissions').select('permission_key').eq('employee_id', employee.id),
-      service.from('employee_company_access').select('company_id').eq('employee_id', employee.id),
+      service.from('employee_client_access').select('client_id').eq('employee_id', employee.id),
     ])
     permissions = (perms ?? []).map(p => p.permission_key)
-    companyAccess = (access ?? []).map(a => a.company_id)
+    clientAccess = (access ?? []).map(a => a.client_id)
   }
 
   return Response.json({
     ok: true,
     employee,
-    company: company ?? null,
+    client: client ?? null,
     employeeCount: employeeCount ?? 0,
     hasBookings: (bookingCount ?? 0) > 0,
     permissions,
-    companyAccess,
+    clientAccess,
   })
 }

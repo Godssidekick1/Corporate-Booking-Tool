@@ -6,18 +6,18 @@ import { NextRequest } from 'next/server'
 
 // ── GET /api/tmc/policy-groups?search=<text> ──────────────────────────────
 // Lists policy groups — reusable templates, no longer scoped to one
-// company. Optional `search` filters by name/code (used by the searchable
-// dropdown in quick-allot, companies/[id], and onboarding). Not scoped to a
-// companyId: any TMC user with manage_policy can see every group belonging
+// client. Optional `search` filters by name/code (used by the searchable
+// dropdown in quick-allot, clients/[id], and onboarding). Not scoped to a
+// clientId: any TMC user with manage_policy can see every group belonging
 // to THEIR TMC, since groups are meant to be found and reused across their
 // own clients — that's the whole point of the Policy Master model. Scoping
 // stops at the TMC boundary though; a group is never visible to another TMC.
 //
 // ── POST /api/tmc/policy-groups ────────────────────────────────────────────
 // Creates a new policy group template owned by the caller's TMC, covering an
-// explicit set of band ranks. No companyId — a group isn't owned by a company
+// explicit set of band ranks. No clientId — a group isn't owned by a client
 // at creation time, only linked to one later via
-// /api/tmc/company-policy-groups (quick-allot, companies/[id], onboarding).
+// /api/tmc/client-policy-groups (quick-allot, clients/[id], onboarding).
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface CreateGroupBody {
@@ -47,9 +47,9 @@ export async function GET(req: NextRequest) {
 
   const service = createServiceClient()
 
-  // manage_policy is checked without a specific companyId — groups are
+  // manage_policy is checked without a specific clientId — groups are
   // global templates now, so this just confirms the caller has
-  // manage_policy on SOME scope (their TMC), not on one particular company.
+  // manage_policy on SOME scope (their TMC), not on one particular client.
   const auth = await requireTmcPermission(service, user.id, 'manage_policy')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
@@ -78,16 +78,16 @@ export async function GET(req: NextRequest) {
   const groupIds = (groups ?? []).map(g => g.id)
   const ranksByGroup = await getBandRanksByGroup(service, groupIds)
 
-  // Company count per group — lets the picker/list show "used by 4
-  // companies" so an admin can gauge blast radius before editing a shared
+  // Client count per group — lets the picker/list show "used by 4
+  // clients" so an admin can gauge blast radius before editing a shared
   // template. No tmc_id filter is possible here (the link table has no such
   // column) and none is needed: groupIds is already scoped to this TMC
-  // above, and company-policy-groups only ever links a company to a group
+  // above, and client-policy-groups only ever links a client to a group
   // when both belong to the caller's TMC.
   const countByGroup = new Map<string, number>()
   if (groupIds.length > 0) {
     const { data: links } = await service
-      .from('company_policy_groups')
+      .from('client_policy_groups')
       .select('policy_group_id')
       .in('policy_group_id', groupIds)
     for (const l of links ?? []) {
@@ -98,7 +98,7 @@ export async function GET(req: NextRequest) {
   const enriched = (groups ?? []).map(g => ({
     ...g,
     bandRanks: ranksByGroup.get(g.id) ?? [],
-    companyCount: countByGroup.get(g.id) ?? 0,
+    clientCount: countByGroup.get(g.id) ?? 0,
   }))
 
   return Response.json({ ok: true, groups: enriched })
@@ -129,7 +129,7 @@ export async function POST(req: NextRequest) {
   // tmc_id is what makes the group findable and editable afterwards: the
   // DELETE handler and both policy-rules handlers gate on
   // auth.tmcId === group.tmc_id, and policy_rules carries a CHECK requiring
-  // exactly one of company_id/tmc_id to be set. A group created without it
+  // exactly one of client_id/tmc_id to be set. A group created without it
   // is unreachable by every other route.
   const { data: group, error } = await service
     .from('policy_groups')
@@ -172,7 +172,7 @@ export async function POST(req: NextRequest) {
   }
 
   return Response.json(
-    { ok: true, group: { ...group, bandRanks, companyCount: 0 } },
+    { ok: true, group: { ...group, bandRanks, clientCount: 0 } },
     { status: 201 }
   )
 }

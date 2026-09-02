@@ -86,10 +86,10 @@ export const CATEGORIES: CategoryDef[] = [
   },
   {
     id: 'car', label: 'Ground transport', color: '#FFF7ED', textColor: '#7C2D12',
-    description: 'Set a cap for self-booked rentals, and whether company-arranged transport is a separate option.',
+    description: 'Set a cap for self-booked rentals, and whether client-arranged transport is a separate option.',
     fields: [
       { key: 'max_car_rate_per_day',        label: 'Max self-arranged car rental rate', unit: '₹/day', kind: 'numeric', travelType: 'car' },
-      { key: 'sponsored_transport_allowed', label: 'Company-arranged transport allowed',                kind: 'boolean', travelType: 'car' },
+      { key: 'sponsored_transport_allowed', label: 'Client-arranged transport allowed',                kind: 'boolean', travelType: 'car' },
     ],
   },
   {

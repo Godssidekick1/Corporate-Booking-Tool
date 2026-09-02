@@ -1,11 +1,11 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
-import { onboardCompany, OnboardCompanyInput } from '@/app/lib/onboarding/onboardCompany'
+import { onboardClient, OnboardClientInput } from '@/app/lib/onboarding/onboardClient'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
 
 // ── POST /api/tmc/create-corporate/bulk ──────────────────────────────────────
-// Creates ONE company (with admin invite), then bulk-creates its employee
+// Creates ONE client (with admin invite), then bulk-creates its employee
 // roster from CSV rows in the same request. Employee rows are created via
 // direct-create (status: 'active', password-reset email), matching the
 // existing "add directly" pattern — a CSV import implies the TMC/admin
@@ -48,11 +48,11 @@ export async function POST(req: NextRequest) {
   const tmcId = auth.tmcId!
 
   const body = await req.json()
-  const company: OnboardCompanyInput = body.company
+  const client: OnboardClientInput = body.client
   const employeeRows: EmployeeCsvRow[] = body.employees ?? []
 
-  if (!company) {
-    return Response.json({ error: 'Company details are required' }, { status: 400 })
+  if (!client) {
+    return Response.json({ error: 'Client details are required' }, { status: 400 })
   }
 
   if (employeeRows.length > MAX_EMPLOYEES) {
@@ -62,36 +62,36 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  // ── Step 1: create the company + admin ─────────────────────────────────────
-  const companyResult = await onboardCompany(
+  // ── Step 1: create the client + admin ─────────────────────────────────────
+  const clientResult = await onboardClient(
     service,
     tmcId,
     process.env.NEXT_PUBLIC_APP_URL!,
-    company
+    client
   )
 
-  if (!companyResult.ok || !companyResult.companyId) {
-    return Response.json({ error: companyResult.error }, { status: 400 })
+  if (!clientResult.ok || !clientResult.clientId) {
+    return Response.json({ error: clientResult.error }, { status: 400 })
   }
 
-  const companyId = companyResult.companyId
-  const isCbtOnly = company.bookingMode === 'cbt'
+  const clientId = clientResult.clientId
+  const isCbtOnly = client.bookingMode === 'cbt'
 
   if (employeeRows.length === 0) {
     return Response.json({
       ok: true,
-      companyId,
+      clientId,
       employeesCreated: 0,
       employeesFailed: 0,
       employeeResults: [],
     }, { status: 201 })
   }
 
-  // ── Step 2: load the bands just seeded for this company ────────────────────
+  // ── Step 2: load the bands just seeded for this client ────────────────────
   const { data: bands } = await service
     .from('bands')
     .select('id, code, rank')
-    .eq('company_id', companyId)
+    .eq('client_id', clientId)
 
   const bandMap = Object.fromEntries((bands ?? []).map(b => [b.code, b]))
 
@@ -124,10 +124,10 @@ export async function POST(req: NextRequest) {
       continue
     }
 
-    // ── CBT-only company: pure traveler profile, no auth at all ──────────────
+    // ── CBT-only client: pure traveler profile, no auth at all ──────────────
     if (isCbtOnly) {
       const { error: employeeError } = await service.from('employees').insert({
-        company_id: companyId,
+        client_id: clientId,
         auth_user_id: null,
         band_id: band.id,
         band_code: band.code,
@@ -151,14 +151,14 @@ export async function POST(req: NextRequest) {
       continue
     }
 
-    // ── SBT / hybrid company: real account, real invite email ────────────────
+    // ── SBT / hybrid client: real account, real invite email ────────────────
     let authUserId: string | null = null
     try {
       const { data: authData, error: inviteError } = await service.auth.admin.inviteUserByEmail(
         email,
         {
           redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/auth/set-password`,
-          data: { full_name: fullName, company_id: companyId, role, band_code: band.code },
+          data: { full_name: fullName, client_id: clientId, role, band_code: band.code },
         }
       )
 
@@ -172,7 +172,7 @@ export async function POST(req: NextRequest) {
       const { error: employeeError } = await service.from('employees').insert({
         id: authUserId,
         auth_user_id: authUserId,
-        company_id: companyId,
+        client_id: clientId,
         band_id: band.id,
         band_code: band.code,
         band_rank: band.rank,
@@ -206,7 +206,7 @@ export async function POST(req: NextRequest) {
 
   return Response.json({
     ok: true,
-    companyId,
+    clientId,
     employeesCreated,
     employeesFailed,
     employeeResults,

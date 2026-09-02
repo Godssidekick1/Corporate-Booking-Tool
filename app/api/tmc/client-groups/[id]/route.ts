@@ -99,7 +99,7 @@ export async function DELETE(
     return Response.json({ error: 'Client group not found' }, { status: 404 })
   }
 
-  // Companies with this client_group_id get set to null on delete (schema
+  // Clients with this client_group_id get set to null on delete (schema
   // default: ON DELETE SET NULL) — they're not deleted, just unassigned.
   const { error } = await service.from('client_groups').delete().eq('id', id)
 

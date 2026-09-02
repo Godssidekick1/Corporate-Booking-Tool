@@ -6,17 +6,17 @@ import { NextRequest } from 'next/server'
 
 // ── GET /api/tmc/policy-rules?groupId=<uuid> ──────────────────────────────
 // Latest version's rules for one policy group, across every band_rank the
-// group has rules for. No companyId anymore — rules belong to the group
-// itself, not to any one company (that's the whole point of a shared,
+// group has rules for. No clientId anymore — rules belong to the group
+// itself, not to any one client (that's the whole point of a shared,
 // reusable template).
 //
 // ── POST /api/tmc/policy-rules ────────────────────────────────────────────
 // Inserts a new version (append-only — same versioning pattern as before,
 // genuinely unchanged). Keyed by band_rank (a plain integer — "rank 1",
-// "rank 2"...) instead of a company-specific band_code, since a shared
-// group has no single company's band labels to key against. The TMC admin
+// "rank 2"...) instead of a client-specific band_code, since a shared
+// group has no single client's band labels to key against. The TMC admin
 // building the group works in ranks directly; mapping a rank back to
-// whatever a given company happens to call it ("L1", "A1", "1") is
+// whatever a given client happens to call it ("L1", "A1", "1") is
 // resolveEffectivePolicy.ts's job at read time, not this route's.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -68,7 +68,7 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'groupId is required' }, { status: 400 })
   }
 
-  // No companyId to check per-company access against anymore — just confirm
+  // No clientId to check per-client access against anymore — just confirm
   // the caller manages policy for the TMC that owns this group.
   const { data: group } = await service
     .from('policy_groups')
@@ -190,7 +190,7 @@ export async function POST(req: NextRequest) {
     seen.add(dedupeKey)
 
     newRows.push({
-      company_id: null,
+      client_id: null,
       tmc_id: group.tmc_id,
       policy_group_id: policyGroupId,
       band_id: null,   // legacy column, no longer used for matching

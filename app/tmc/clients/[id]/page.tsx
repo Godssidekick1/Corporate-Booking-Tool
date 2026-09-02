@@ -6,7 +6,7 @@ import Link from 'next/link'
 import CountryDropdown from '@/app/components/CountryDropdown'
 import SearchableSelect from '@/app/components/SearchableSelect'
 
-interface Company {
+interface Client {
   id: string
   name: string
   status: string
@@ -46,17 +46,17 @@ interface client_group {
 
 const TIMEZONES = ['Asia/Kolkata', 'Asia/Dubai', 'Asia/Singapore', 'Europe/London', 'America/New_York']
 const CURRENCIES = ['INR']
-const BOOKING_MODES: { value: Company['booking_mode']; label: string }[] = [
+const BOOKING_MODES: { value: Client['booking_mode']; label: string }[] = [
   { value: 'sbt', label: 'SBT — Self-Booking Tool' },
   { value: 'cbt', label: 'CBT — Consultant-Booking Tool' },
   { value: 'both', label: 'Hybrid — Both SBT and CBT' },
 ]
 
-export default function TmcCompanyDetailPage() {
+export default function TmcClientDetailPage() {
   const params = useParams()
-  const companyId = params.id as string
+  const clientId = params.id as string
 
-  const [company, setCompany] = useState<Company | null>(null)
+  const [client, setClient] = useState<Client | null>(null)
   const [client_groups, setclient_groups] = useState<client_group[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -64,7 +64,7 @@ export default function TmcCompanyDetailPage() {
   const [success, setSuccess] = useState('')
 
   const [form, setForm] = useState({
-    name: '', timezone: '', currency: '', country: '', booking_mode: 'sbt' as Company['booking_mode'], client_group_id: '',
+    name: '', timezone: '', currency: '', country: '', booking_mode: 'sbt' as Client['booking_mode'], client_group_id: '',
     registered_address: '', gst_number: '', industry: '', primary_contact_phone: '',
     size: '', status: 'active', managed_by: '',
   })
@@ -76,17 +76,17 @@ export default function TmcCompanyDetailPage() {
 
   useEffect(() => {
     Promise.all([
-      fetch(`/api/tmc/companies/${companyId}`).then(r => r.json()),
+      fetch(`/api/tmc/clients/${clientId}`).then(r => r.json()),
       fetch('/api/tmc/client-groups').then(r => r.json()),
       fetch('/api/tmc/tcs').then(r => r.json()),
-    ]).then(([companyData, client_groupsData, tcsData]) => {
+    ]).then(([clientData, client_groupsData, tcsData]) => {
         if (tcsData?.ok) setTmcStaff(tcsData.tcs ?? [])
-        if (!companyData.ok) {
-          setError(companyData.error || 'Could not load company.')
+        if (!clientData.ok) {
+          setError(clientData.error || 'Could not load client.')
           return
         }
-        const c: Company = companyData.company
-        setCompany(c)
+        const c: Client = clientData.client
+        setClient(c)
         setForm({
           name: c.name ?? '',
           timezone: c.timezone ?? 'Asia/Kolkata',
@@ -104,9 +104,9 @@ export default function TmcCompanyDetailPage() {
         })
         if (client_groupsData.ok) setclient_groups(client_groupsData.clientGroups ?? [])
       })
-      .catch(() => setError('Could not load company.'))
+      .catch(() => setError('Could not load client.'))
       .finally(() => setLoading(false))
-  }, [companyId])
+  }, [clientId])
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) {
     setForm(prev => ({ ...prev, [e.target.name]: e.target.value }))
@@ -118,7 +118,7 @@ export default function TmcCompanyDetailPage() {
     setSuccess('')
     setSaving(true)
     try {
-      const res = await fetch(`/api/tmc/companies/${companyId}`, {
+      const res = await fetch(`/api/tmc/clients/${clientId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
@@ -128,8 +128,8 @@ export default function TmcCompanyDetailPage() {
         setError(data.error || 'Could not save changes.')
         return
       }
-      setCompany(prev => prev ? { ...prev, ...data.company } : data.company)
-      setSuccess('Company updated.')
+      setClient(prev => prev ? { ...prev, ...data.client } : data.client)
+      setSuccess('Client updated.')
     } catch {
       setError('Could not save changes. Please try again.')
     } finally {
@@ -141,8 +141,8 @@ export default function TmcCompanyDetailPage() {
     return <><div style={s.root}><p style={s.loadingText}>Loading…</p></div></>
   }
 
-  if (!company) {
-    return <><div style={s.root}><p style={s.error}>{error || 'Company not found.'}</p></div></>
+  if (!client) {
+    return <><div style={s.root}><p style={s.error}>{error || 'Client not found.'}</p></div></>
   }
 
   return (
@@ -151,8 +151,8 @@ export default function TmcCompanyDetailPage() {
       <div style={s.header}>
         {/* Link, not <a>: a plain anchor triggers a full document load, which
             throws away the shell and re-fetches everything it holds. */}
-        <Link href="/tmc/companies" style={s.backLink}>← All clients</Link>
-        <h1 style={s.heading}>{company.name}</h1>
+        <Link href="/tmc/clients" style={s.backLink}>← All clients</Link>
+        <h1 style={s.heading}>{client.name}</h1>
         <p style={s.sub}>
           Everything recorded about this client — identity, registration, booking arrangement and
           ownership.
@@ -161,7 +161,7 @@ export default function TmcCompanyDetailPage() {
 
       <form onSubmit={handleSubmit} style={s.card}>
         <div style={s.field}>
-          <label style={s.label} htmlFor="name">Company name</label>
+          <label style={s.label} htmlFor="name">Client name</label>
           <input
             id="name" name="name" type="text" required
             value={form.name} onChange={handleChange}
@@ -201,7 +201,7 @@ export default function TmcCompanyDetailPage() {
           <label style={s.label} htmlFor="client_group_id">Client group</label>
           {client_groups.length === 0 ? (
             <p style={s.hint}>
-              No client groups yet — <a href="/tmc/configurations/client-groups" style={s.inlineLink}>create one</a> to assign this company.
+              No client groups yet — <a href="/tmc/configurations/client-groups" style={s.inlineLink}>create one</a> to assign this client.
             </p>
           ) : (
             <select id="client_group_id" name="client_group_id" value={form.client_group_id} onChange={handleChange} style={s.input}>
@@ -228,7 +228,7 @@ export default function TmcCompanyDetailPage() {
 
         <div style={s.divider} />
 
-        {/* These four columns already existed on `companies` — onboardCompany
+        {/* These four columns already existed on `clients` — onboardClient
             writes them at creation — but nothing could edit them afterwards, so
             a wrong GST number entered at onboarding was permanent. */}
         <div style={s.field}>
@@ -269,7 +269,7 @@ export default function TmcCompanyDetailPage() {
         </div>
 
         <div style={s.field}>
-          <label style={s.label} htmlFor="size">Company size</label>
+          <label style={s.label} htmlFor="size">Client size</label>
           <select id="size" name="size" value={form.size} onChange={handleChange} style={s.input}>
             <option value="">Not recorded</option>
             {SIZES.map(sz => <option key={sz} value={sz}>{sz} employees</option>)}

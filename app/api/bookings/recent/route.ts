@@ -10,7 +10,7 @@ import { NextRequest } from 'next/server'
 //   employee — own bookings only
 //   manager / finance — own bookings, plus bookings made by their direct
 //                        reports (employees.manager_id === this employee)
-//   admin — every booking in the company
+//   admin — every booking in the client
 //
 // Returns a slim projection (route/dates/status/fare/traveler name) rather
 // than full traveler_snapshot/itinerary — enough for a preview card list,
@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
   const service = createServiceClient()
   const { data: employee } = await service
     .from('employees')
-    .select('id, role, company_id')
+    .select('id, role, client_id')
     .eq('id', user.id)
     .maybeSingle()
 
@@ -43,11 +43,11 @@ export async function GET(req: NextRequest) {
   let employeeIds: string[]
 
   if (employee.role === 'admin') {
-    const { data: companyEmployees } = await service
+    const { data: clientEmployees } = await service
       .from('employees')
       .select('id')
-      .eq('company_id', employee.company_id)
-    employeeIds = (companyEmployees ?? []).map(e => e.id)
+      .eq('client_id', employee.client_id)
+    employeeIds = (clientEmployees ?? []).map(e => e.id)
   } else if (employee.role === 'manager' || employee.role === 'finance') {
     const { data: directReports } = await service
       .from('employees')
@@ -76,7 +76,7 @@ export async function GET(req: NextRequest) {
 
   // Traveler names for display — only fetch the employees actually present
   // in this page of results, not the whole employeeIds scope (which for
-  // admin could be the entire company).
+  // admin could be the entire client).
   const travelerIds = Array.from(new Set((bookings ?? []).map(b => b.employee_id)))
   const { data: travelers } = await service
     .from('employees')

@@ -15,13 +15,13 @@ interface Employee {
   email: string
   role: 'admin' | 'manager' | 'finance' | 'employee'
   status: string
-  company_id: string | null
+  client_id: string | null
   band_code: string | null
   band_rank: number | null
   department: string | null
 }
 
-interface Company {
+interface Client {
   id: string
   name: string
   status: string
@@ -34,7 +34,7 @@ interface Company {
 interface MeResponse {
   ok: boolean
   employee: Employee
-  company: Company | null
+  client: Client | null
   employeeCount: number
   hasBookings: boolean
 }
@@ -96,11 +96,11 @@ const ACTIONABLE_META: Record<string, { label: string; cta: string }> = {
   approval_misconfigured: { label: 'Needs admin attention', cta: 'View →' },
 }
 
-function getChecklist(company: Company | null, employeeCount: number, hasBookings: boolean) {
-  const hasPolicy = !!(company?.settings?.approvalModel)
+function getChecklist(client: Client | null, employeeCount: number, hasBookings: boolean) {
+  const hasPolicy = !!(client?.settings?.approvalModel)
   return [
     {
-      id: 'company',
+      id: 'client',
       label: 'Company created',
       desc: 'Your account is active.',
       done: true,
@@ -236,13 +236,13 @@ export default function DashboardPage() {
 
   if (loading || !me || !me.employee) return <LoadingScreen />
 
-  const { employee, company } = me
+  const { employee, client } = me
   const { role, full_name, band_code } = employee
   const navItems = getNavItems(role)
   const firstName = full_name?.split(' ')[0] ?? 'there'
-  const checklist = getChecklist(company, me.employeeCount ?? 0, me.hasBookings ?? false)
+  const checklist = getChecklist(client, me.employeeCount ?? 0, me.hasBookings ?? false)
   const completedCount = checklist.filter(i => i.done).length
-  const showChecklist = role === 'admin' && !(company?.setup_completed ?? false)
+  const showChecklist = role === 'admin' && !(client?.setup_completed ?? false)
   const isApproverRole = role === 'admin' || role === 'manager' || role === 'finance'
 
   const stats = isApproverRole
@@ -267,10 +267,10 @@ export default function DashboardPage() {
             <span style={s.navWmBy}>by Amadeus</span>
           </div>
 
-          {company && (
-            <div style={s.companyBadge}>
-              <span style={s.companyDot} />
-              <span style={s.companyName}>{company.name}</span>
+          {client && (
+            <div style={s.clientBadge}>
+              <span style={s.clientDot} />
+              <span style={s.clientName}>{client.name}</span>
             </div>
           )}
 
@@ -394,7 +394,7 @@ export default function DashboardPage() {
         {role === 'employee' && (
           <div style={s.infoBanner}>
             <span style={s.infoBannerText}>
-              Your travel entitlements are set by your company policy for band{' '}
+              Your travel entitlements are set by your client policy for band{' '}
               <strong>{band_code ?? '—'}</strong>.
               Out-of-policy bookings will be routed to your manager for approval.
             </span>
@@ -564,13 +564,13 @@ const s: Record<string, React.CSSProperties> = {
   navWordmark: { display: 'flex', flexDirection: 'column', gap: '2px', marginBottom: '20px', padding: '0 6px' },
   navWmMain: { fontSize: '17px', fontWeight: 600, color: '#fff', letterSpacing: '-0.3px' },
   navWmBy: { fontSize: '9px', color: 'rgba(255,255,255,0.32)', letterSpacing: '0.5px', textTransform: 'uppercase' as const },
-  companyBadge: {
+  clientBadge: {
     display: 'flex', alignItems: 'center', gap: '7px',
     padding: '7px 10px', marginBottom: '20px',
     background: 'rgba(255,255,255,0.06)', borderRadius: '6px',
   },
-  companyDot: { width: '6px', height: '6px', borderRadius: '50%', background: '#22C55E', flexShrink: 0 },
-  companyName: { fontSize: '12px', color: 'rgba(255,255,255,0.7)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  clientDot: { width: '6px', height: '6px', borderRadius: '50%', background: '#22C55E', flexShrink: 0 },
+  clientName: { fontSize: '12px', color: 'rgba(255,255,255,0.7)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
   navItems: { display: 'flex', flexDirection: 'column', gap: '1px' },
   navItem: { display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 10px', borderRadius: '6px', fontSize: '13px', textDecoration: 'none', transition: 'all 0.15s' },
   navBadge: {

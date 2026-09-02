@@ -15,7 +15,7 @@ export type ManagerValidation =
 // Checks that making `managerId` the manager of `employeeId` is legal:
 //
 //   - nobody manages themselves
-//   - the proposed manager works at the same company
+//   - the proposed manager works at the same client
 //   - the assignment doesn't close a reporting loop
 //
 // Extracted from the corporate users route so the TMC-side route can enforce
@@ -31,7 +31,7 @@ export type ManagerValidation =
 export async function validateManagerAssignment(
   service: ServiceClient,
   employeeId: string,
-  companyId: string,
+  clientId: string,
   managerId: string | null
 ): Promise<ManagerValidation> {
   if (managerId === null) {
@@ -44,13 +44,13 @@ export async function validateManagerAssignment(
 
   const { data: proposedManager } = await service
     .from('employees')
-    .select('id, company_id, manager_id')
+    .select('id, client_id, manager_id')
     .eq('id', managerId)
-    .eq('company_id', companyId)
+    .eq('client_id', clientId)
     .maybeSingle()
 
   if (!proposedManager) {
-    return { ok: false, error: 'Proposed manager not found in this company', status: 422 }
+    return { ok: false, error: 'Proposed manager not found in this client', status: 422 }
   }
 
   // Walk the proposed manager's own chain upward. If it reaches this employee,

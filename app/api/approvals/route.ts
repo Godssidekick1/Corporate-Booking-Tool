@@ -56,7 +56,7 @@ export async function GET(req: Request) {
   const service = createServiceClient()
   const { data: caller } = await service
     .from('employees')
-    .select('id, company_id, full_name')
+    .select('id, client_id, full_name')
     .eq('id', user.id)
     .maybeSingle()
 

@@ -7,7 +7,7 @@ import { NextRequest } from 'next/server'
 // "My trips" (/bookings), which the dashboard already links to for every
 // role. Scoped to the caller's own employee_id only, same ownership model
 // as /api/book/[bookingId] — this is a personal trip list, not a team or
-// company-wide view (that's a separate reporting concern, not this page).
+// client-wide view (that's a separate reporting concern, not this page).
 //
 // Returns a slimmer projection than the full booking row — enough for a
 // list card (route, dates, status, traveler count, fare) without pulling

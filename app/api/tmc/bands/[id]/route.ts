@@ -9,7 +9,7 @@ import { NextRequest } from 'next/server'
 // Employees carry denormalised copies of band_code/band_rank, and the
 // bands_sync_employees trigger updates them in the same statement. That has to
 // happen in the database rather than here: resolveEffectivePolicy looks bands
-// up by (company_id, employee.band_code), so an employee left on a stale code
+// up by (client_id, employee.band_code), so an employee left on a stale code
 // resolves to `no_band` and stops being policy-checked entirely.
 //
 // ── DELETE /api/tmc/bands/[id] ───────────────────────────────────────────────
@@ -26,7 +26,7 @@ interface UpdateBandBody {
 async function loadBand(service: ReturnType<typeof createServiceClient>, id: string) {
   const { data } = await service
     .from('bands')
-    .select('id, company_id, code, label, rank')
+    .select('id, client_id, code, label, rank')
     .eq('id', id)
     .maybeSingle()
   return data
@@ -51,7 +51,7 @@ export async function PATCH(
     return Response.json({ error: 'Band not found' }, { status: 404 })
   }
 
-  const access = await authoriseBandAccess(service, user.id, band.company_id)
+  const access = await authoriseBandAccess(service, user.id, band.client_id)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
@@ -82,7 +82,7 @@ export async function PATCH(
       const { data: rankClash } = await service
         .from('bands')
         .select('code')
-        .eq('company_id', band.company_id)
+        .eq('client_id', band.client_id)
         .eq('rank', Number(body.rank))
         .neq('id', id)
         .maybeSingle()
@@ -112,7 +112,7 @@ export async function PATCH(
   if (error) {
     if (error.code === '23505') {
       return Response.json(
-        { error: `This company already has a band with code "${fields.code}"` },
+        { error: `This client already has a band with code "${fields.code}"` },
         { status: 409 }
       )
     }
@@ -145,7 +145,7 @@ export async function DELETE(
     return Response.json({ error: 'Band not found' }, { status: 404 })
   }
 
-  const access = await authoriseBandAccess(service, user.id, band.company_id)
+  const access = await authoriseBandAccess(service, user.id, band.client_id)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
@@ -155,7 +155,7 @@ export async function DELETE(
   const { count } = await service
     .from('employees')
     .select('id', { count: 'exact', head: true })
-    .eq('company_id', band.company_id)
+    .eq('client_id', band.client_id)
     .eq('band_code', band.code)
 
   if (count && count > 0) {

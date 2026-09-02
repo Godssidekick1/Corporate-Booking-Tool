@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import CityDropdown from '@/app/components/CityDropdown'
 import CountryDropdown from '@/app/components/CountryDropdown'  
 
-interface Company {
+interface Client {
   id: string
   name: string
   timezone: string
@@ -13,14 +13,14 @@ interface Company {
   booking_mode: 'sbt' | 'cbt' | 'both'
 }
 
-const BOOKING_MODE_LABEL: Record<Company['booking_mode'], string> = {
+const BOOKING_MODE_LABEL: Record<Client['booking_mode'], string> = {
   sbt: 'Self-Booking Tool (SBT) — employees book their own travel',
   cbt: 'Consultant-Booking Tool (CBT) — a travel counsellor books on your behalf',
   both: 'Hybrid — both SBT and CBT are enabled',
 }
 
-export default function SettingsCompanyPage() {
-  const [company, setCompany] = useState<Company | null>(null)
+export default function SettingsClientPage() {
+  const [client, setClient] = useState<Client | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -28,11 +28,11 @@ export default function SettingsCompanyPage() {
     fetch('/api/me')
       .then(r => r.json())
       .then(data => {
-        if (!data.ok || !data.company) {
+        if (!data.ok || !data.client) {
           setError('Could not load company details.')
           return
         }
-        setCompany(data.company)
+        setClient(data.client)
       })
       .catch(() => setError('Could not load company details.'))
       .finally(() => setLoading(false))
@@ -42,7 +42,7 @@ export default function SettingsCompanyPage() {
     return <div style={s.root}><p style={s.loadingText}>Loading…</p></div>
   }
 
-  if (error || !company) {
+  if (error || !client) {
     return <div style={s.root}><p style={s.errorMsg}>{error || 'Could not load company details.'}</p></div>
   }
 
@@ -58,13 +58,13 @@ export default function SettingsCompanyPage() {
       </div>
 
       <div style={s.card}>
-        <DetailRow label="Company name" value={company.name} />
-        <DetailRow label="Timezone" value={company.timezone} />
-        <DetailRow label="Currency" value={company.currency} />
-        <DetailRow label="Country" value={company.country || '—'} />
+        <DetailRow label="Company name" value={client.name} />
+        <DetailRow label="Timezone" value={client.timezone} />
+        <DetailRow label="Currency" value={client.currency} />
+        <DetailRow label="Country" value={client.country || '—'} />
         <DetailRow
           label="Booking mode"
-          value={BOOKING_MODE_LABEL[company.booking_mode]}
+          value={BOOKING_MODE_LABEL[client.booking_mode]}
           last
         />
       </div>

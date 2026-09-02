@@ -4,14 +4,14 @@ import { isPermissionKey } from '@/app/lib/permissions/permissionKeys'
 import { NextRequest } from 'next/server'
 
 // ── PATCH /api/tmc/tcs/[id] ──────────────────────────────────────────────────
-// Replaces a TC's permission set and/or company access list wholesale
+// Replaces a TC's permission set and/or client access list wholesale
 // (simpler and safer than incremental add/remove — the admin always submits
 // the complete intended state). Status (active/deactivated) can also be set.
 
 
 interface UpdateTcBody {
   permissions?: string[]
-  companyIds?: string[]
+  clientIds?: string[]
   status?: 'active' | 'deactivated'
 }
 
@@ -56,7 +56,7 @@ export async function PATCH(
   }
 
   const body: UpdateTcBody = await req.json()
-  const { permissions, companyIds, status } = body
+  const { permissions, clientIds, status } = body
 
   if (permissions !== undefined) {
     const invalid = permissions.filter(p => !isPermissionKey(p))
@@ -73,23 +73,23 @@ export async function PATCH(
     }
   }
 
-  if (companyIds !== undefined) {
-    if (companyIds.length > 0) {
-      const { data: validCompanies } = await service
-        .from('companies')
+  if (clientIds !== undefined) {
+    if (clientIds.length > 0) {
+      const { data: validClients } = await service
+        .from('clients')
         .select('id')
         .eq('tmc_id', caller.tmc_id)
-        .in('id', companyIds)
+        .in('id', clientIds)
 
-      if ((validCompanies?.length ?? 0) !== companyIds.length) {
-        return Response.json({ error: 'One or more companies not found for your TMC' }, { status: 400 })
+      if ((validClients?.length ?? 0) !== clientIds.length) {
+        return Response.json({ error: 'One or more clients not found for your TMC' }, { status: 400 })
       }
     }
 
-    await service.from('employee_company_access').delete().eq('employee_id', id)
-    if (companyIds.length > 0) {
-      const { error } = await service.from('employee_company_access').insert(
-        companyIds.map(cid => ({ employee_id: id, company_id: cid, granted_by: user.id }))
+    await service.from('employee_client_access').delete().eq('employee_id', id)
+    if (clientIds.length > 0) {
+      const { error } = await service.from('employee_client_access').insert(
+        clientIds.map(cid => ({ employee_id: id, client_id: cid, granted_by: user.id }))
       )
       if (error) return Response.json({ error: error.message }, { status: 500 })
     }

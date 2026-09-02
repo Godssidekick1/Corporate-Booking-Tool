@@ -1,17 +1,17 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
-import { authoriseCompany } from '../route'
+import { authoriseClient } from '../route'
 import { NextRequest } from 'next/server'
 
 // ── /api/tmc/traveler-profiles/csv ───────────────────────────────────────────
-// GET  ?companyId=   downloads the current roster as CSV
+// GET  ?clientId=   downloads the current roster as CSV
 // POST               applies an edited CSV back
 //
 // The download IS the upload template — the columns match exactly, so the
 // workflow is export, edit in a spreadsheet, re-upload. Handing someone a blank
 // template to fill from scratch is how column-name mismatches happen.
 //
-// Matched on email, which is unique per company, so a re-upload updates people
+// Matched on email, which is unique per client, so a re-upload updates people
 // rather than duplicating them. Rows for unknown emails are reported back
 // rather than creating employees: creating an account has side effects
 // (auth user, invite email) that belong to the add-employee flow, not to a
@@ -60,24 +60,24 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const companyId = req.nextUrl.searchParams.get('companyId')
-  if (!companyId) {
-    return Response.json({ error: 'companyId is required' }, { status: 400 })
+  const clientId = req.nextUrl.searchParams.get('clientId')
+  if (!clientId) {
+    return Response.json({ error: 'clientId is required' }, { status: 400 })
   }
 
   const service = createServiceClient()
-  const access = await authoriseCompany(service, user.id, companyId)
+  const access = await authoriseClient(service, user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
 
-  const [{ data: employees }, { data: company }] = await Promise.all([
+  const [{ data: employees }, { data: client }] = await Promise.all([
     service
       .from('employees')
       .select('email, full_name, band_code, cost_centre, department, designation, traveler_profile')
-      .eq('company_id', companyId)
+      .eq('client_id', clientId)
       .order('full_name'),
-    service.from('companies').select('name').eq('id', companyId).single(),
+    service.from('clients').select('name').eq('id', clientId).single(),
   ])
 
   const rows = (employees ?? []).map(e => {
@@ -94,7 +94,7 @@ export async function GET(req: NextRequest) {
   })
 
   const csv = [COLUMNS.join(','), ...rows].join('\r\n')
-  const filename = `${(company?.name ?? 'client').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-traveller-profiles.csv`
+  const filename = `${(client?.name ?? 'client').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-traveller-profiles.csv`
 
   return new Response(csv, {
     headers: {
@@ -110,7 +110,7 @@ interface ImportRow {
 }
 
 interface ImportBody {
-  companyId: string
+  clientId: string
   rows: ImportRow[]
 }
 
@@ -123,10 +123,10 @@ export async function POST(req: NextRequest) {
   }
 
   const body: ImportBody = await req.json()
-  const { companyId, rows } = body
+  const { clientId, rows } = body
 
-  if (!companyId || !Array.isArray(rows)) {
-    return Response.json({ error: 'companyId and rows are required' }, { status: 400 })
+  if (!clientId || !Array.isArray(rows)) {
+    return Response.json({ error: 'clientId and rows are required' }, { status: 400 })
   }
   if (rows.length === 0) {
     return Response.json({ error: 'The file has no rows' }, { status: 400 })
@@ -136,7 +136,7 @@ export async function POST(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const access = await authoriseCompany(service, user.id, companyId)
+  const access = await authoriseClient(service, user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
@@ -145,9 +145,9 @@ export async function POST(req: NextRequest) {
     service
       .from('employees')
       .select('id, email, traveler_profile')
-      .eq('company_id', companyId),
-    service.from('bands').select('code, id, rank').eq('company_id', companyId),
-    service.from('cost_centres').select('code').eq('company_id', companyId),
+      .eq('client_id', clientId),
+    service.from('bands').select('code, id, rank').eq('client_id', clientId),
+    service.from('cost_centres').select('code').eq('client_id', clientId),
   ])
 
   const byEmail = new Map((employees ?? []).map(e => [e.email.toLowerCase(), e]))

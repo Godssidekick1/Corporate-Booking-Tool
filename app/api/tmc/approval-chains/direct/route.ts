@@ -4,16 +4,16 @@ import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission
 import { NextRequest } from 'next/server'
 
 // ── /api/tmc/approval-chains/direct ──────────────────────────────────────────
-// One request, one whole chain: pick a company, pick who it covers, list the
+// One request, one whole chain: pick a client, pick who it covers, list the
 // approvers in order, choose sequential or parallel, save.
 //
-// The structure/identity split still exists underneath — a company-owned
+// The structure/identity split still exists underneath — a client-owned
 // template holds the steps, approval_tier_approvers holds the people — but
 // nothing here asks the caller to think about it. Building a chain step by step
 // through separate endpoints meant a half-saved chain was a reachable state and
 // every keystroke was a round trip.
 //
-//   GET  ?companyId=&category=&employeeId=   the existing chain, if any
+//   GET  ?clientId=&category=&employeeId=   the existing chain, if any
 //   POST                                     replace it wholesale
 //
 // POST is idempotent per target: saving again replaces the same chain rather
@@ -34,8 +34,8 @@ interface ApproverInput {
 }
 
 interface SaveBody {
-  companyId: string
-  // null covers everyone at the company (the company default for this
+  clientId: string
+  // null covers everyone at the client (the client default for this
   // category); a uuid covers just that person.
   employeeId: string | null
   category: string
@@ -47,32 +47,32 @@ interface SaveBody {
 async function authorise(
   service: ReturnType<typeof createServiceClient>,
   userId: string,
-  companyId: string
+  clientId: string
 ): Promise<{ ok: true; tmcId: string } | { ok: false; error: string; status: number }> {
-  const auth = await requireTmcPermission(service, userId, 'manage_approvals', companyId)
+  const auth = await requireTmcPermission(service, userId, 'manage_approvals', clientId)
   if (!auth.authorized || !auth.tmcId) {
     return { ok: false, error: auth.error ?? 'Forbidden', status: auth.status ?? 403 }
   }
 
-  const { data: company } = await service
-    .from('companies')
+  const { data: client } = await service
+    .from('clients')
     .select('id, tmc_id')
-    .eq('id', companyId)
+    .eq('id', clientId)
     .maybeSingle()
 
-  if (!company || company.tmc_id !== auth.tmcId) {
-    return { ok: false, error: 'Company not found for this TMC', status: 404 }
+  if (!client || client.tmc_id !== auth.tmcId) {
+    return { ok: false, error: 'Client not found for this TMC', status: 404 }
   }
 
   return { ok: true, tmcId: auth.tmcId }
 }
 
 // Which chain currently covers this target, if one does. Only ever returns a
-// company-owned chain: a shared template reached through the assign flow is not
+// client-owned chain: a shared template reached through the assign flow is not
 // this flow's to overwrite.
 async function findExistingChain(
   service: ReturnType<typeof createServiceClient>,
-  companyId: string,
+  clientId: string,
   employeeId: string | null,
   category: string
 ): Promise<string | null> {
@@ -84,9 +84,9 @@ async function findExistingChain(
         .eq('category', category)
         .maybeSingle()).data?.template_id
     : (await service
-        .from('company_default_approval_templates')
+        .from('client_default_approval_templates')
         .select('template_id')
-        .eq('company_id', companyId)
+        .eq('client_id', clientId)
         .eq('category', category)
         .maybeSingle()).data?.template_id
 
@@ -94,11 +94,11 @@ async function findExistingChain(
 
   const { data: template } = await service
     .from('approval_chain_templates')
-    .select('id, company_id')
+    .select('id, client_id')
     .eq('id', templateId)
     .maybeSingle()
 
-  return template?.company_id === companyId ? template.id : null
+  return template?.client_id === clientId ? template.id : null
 }
 
 export async function GET(req: NextRequest) {
@@ -109,21 +109,21 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const companyId = req.nextUrl.searchParams.get('companyId')
+  const clientId = req.nextUrl.searchParams.get('clientId')
   const category = req.nextUrl.searchParams.get('category') ?? 'flights_hotels'
   const employeeId = req.nextUrl.searchParams.get('employeeId') || null
 
-  if (!companyId) {
-    return Response.json({ error: 'companyId is required' }, { status: 400 })
+  if (!clientId) {
+    return Response.json({ error: 'clientId is required' }, { status: 400 })
   }
 
   const service = createServiceClient()
-  const access = await authorise(service, user.id, companyId)
+  const access = await authorise(service, user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
 
-  const templateId = await findExistingChain(service, companyId, employeeId, category)
+  const templateId = await findExistingChain(service, clientId, employeeId, category)
 
   if (!templateId) {
     return Response.json({ ok: true, chain: null })
@@ -138,7 +138,7 @@ export async function GET(req: NextRequest) {
   const { data: bindings } = await service
     .from('approval_tier_approvers')
     .select('tier, approver_type, approver_user_id, min_band_rank')
-    .eq('company_id', companyId)
+    .eq('client_id', clientId)
     .eq('template_id', templateId)
 
   const byTier = new Map((bindings ?? []).map(b => [b.tier, b]))
@@ -173,10 +173,10 @@ export async function POST(req: NextRequest) {
   }
 
   const body: SaveBody = await req.json()
-  const { companyId, employeeId, category, mode, quorum, approvers } = body
+  const { clientId, employeeId, category, mode, quorum, approvers } = body
 
-  if (!companyId || !CATEGORIES.includes(category)) {
-    return Response.json({ error: 'companyId and a valid category are required' }, { status: 400 })
+  if (!clientId || !CATEGORIES.includes(category)) {
+    return Response.json({ error: 'clientId and a valid category are required' }, { status: 400 })
   }
   if (mode !== 'sequential' && mode !== 'parallel') {
     return Response.json({ error: `Invalid mode: ${mode}` }, { status: 400 })
@@ -207,7 +207,7 @@ export async function POST(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const access = await authorise(service, user.id, companyId)
+  const access = await authorise(service, user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
@@ -217,11 +217,11 @@ export async function POST(req: NextRequest) {
       .from('employees')
       .select('id')
       .eq('id', employeeId)
-      .eq('company_id', companyId)
+      .eq('client_id', clientId)
       .maybeSingle()
 
     if (!employee) {
-      return Response.json({ error: 'Employee not found at this company' }, { status: 404 })
+      return Response.json({ error: 'Employee not found at this client' }, { status: 404 })
     }
   }
 
@@ -246,7 +246,7 @@ export async function POST(req: NextRequest) {
     label: null,
   }))
 
-  let templateId = await findExistingChain(service, companyId, employeeId, category)
+  let templateId = await findExistingChain(service, clientId, employeeId, category)
 
   if (templateId) {
     const { error } = await service
@@ -256,25 +256,25 @@ export async function POST(req: NextRequest) {
 
     if (error) return Response.json({ error: error.message }, { status: 500 })
   } else {
-    const [{ data: company }, { data: employee }] = await Promise.all([
-      service.from('companies').select('name').eq('id', companyId).single(),
+    const [{ data: client }, { data: employee }] = await Promise.all([
+      service.from('clients').select('name').eq('id', clientId).single(),
       employeeId
         ? service.from('employees').select('full_name').eq('id', employeeId).single()
         : Promise.resolve({ data: null }),
     ])
 
-    // Never shown — company-owned chains are excluded from the template list —
+    // Never shown — client-owned chains are excluded from the template list —
     // but names are unique per TMC, so the id fragment keeps two people with
-    // the same name at the same company from colliding.
+    // the same name at the same client from colliding.
     const who = employee?.full_name ?? 'All employees'
     const suffix = employeeId ? ` [${employeeId.slice(0, 8)}]` : ''
-    const name = `${company?.name ?? 'Company'} — ${who} — ${category}${suffix}`
+    const name = `${client?.name ?? 'Client'} — ${who} — ${category}${suffix}`
 
     const { data: created, error } = await service
       .from('approval_chain_templates')
       .insert({
         tmc_id: access.tmcId,
-        company_id: companyId,
+        client_id: clientId,
         name,
         category,
         mode,
@@ -297,13 +297,13 @@ export async function POST(req: NextRequest) {
   await service
     .from('approval_tier_approvers')
     .delete()
-    .eq('company_id', companyId)
+    .eq('client_id', clientId)
     .eq('template_id', templateId)
 
   const { error: bindError } = await service
     .from('approval_tier_approvers')
     .insert(approvers.map((a, i) => ({
-      company_id: companyId,
+      client_id: clientId,
       template_id: templateId,
       tier: i + 1,
       approver_type: a.approver_type,
@@ -315,7 +315,7 @@ export async function POST(req: NextRequest) {
   if (bindError) {
     if (bindError.code === '23514') {
       return Response.json(
-        { error: 'One of those people does not work at this company' },
+        { error: 'One of those people does not work at this client' },
         { status: 400 }
       )
     }
@@ -337,14 +337,14 @@ export async function POST(req: NextRequest) {
     if (error) return Response.json({ error: error.message }, { status: 500 })
   } else {
     const { error } = await service
-      .from('company_default_approval_templates')
+      .from('client_default_approval_templates')
       .upsert({
-        company_id: companyId,
+        client_id: clientId,
         category,
         template_id: templateId,
         assigned_by: caller?.id ?? null,
         assigned_at: new Date().toISOString(),
-      }, { onConflict: 'company_id,category' })
+      }, { onConflict: 'client_id,category' })
 
     if (error) return Response.json({ error: error.message }, { status: 500 })
   }

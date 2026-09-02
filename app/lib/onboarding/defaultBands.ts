@@ -1,9 +1,9 @@
-import type { BandInput } from './onboardCompany'
+import type { BandInput } from './onboardClient'
 
 // ── DEFAULT_BANDS ────────────────────────────────────────────────────────────
 // The fallback band ladder, used only by self-registration
-// (/api/auth/register-company), where a company signs itself up with no TMC
-// attached. There is nobody to define bands in that flow, and a company with
+// (/api/auth/register-company), where a client signs itself up with no TMC
+// attached. There is nobody to define bands in that flow, and a client with
 // no bands can't have employees, so it needs a starting point.
 //
 // TMC-created clients do NOT use this — the TMC defines its client's bands
@@ -25,7 +25,7 @@ export const DEFAULT_BANDS: BandInput[] = [
 ]
 
 // ── mostSeniorBand ───────────────────────────────────────────────────────────
-// The band a company's own admin goes on. Defined as the highest rank rather
+// The band a client's own admin goes on. Defined as the highest rank rather
 // than a literal code: once a client names its own bands there is no 'L5' to
 // look for, and a lookup by code silently returns undefined.
 // ─────────────────────────────────────────────────────────────────────────────

@@ -29,23 +29,23 @@ function toStoredCategory(travelType: string): string {
 }
 
 // ── resolveEffectivePolicy ────────────────────────────────────────────────────
-// Policy Master model: policy_groups are reusable, company-agnostic templates
+// Policy Master model: policy_groups are reusable, client-agnostic templates
 // covering an explicit set of band ranks (policy_group_band_ranks), linked to
-// companies via company_policy_groups (many-to-many — a company can use
+// clients via client_policy_groups (many-to-many — a client can use
 // several groups covering different ranks, and the same group can be shared
-// live across multiple companies). Rules within a group are keyed by
-// band_rank, not a specific company's band row, so the same group's limits
-// apply positionally regardless of what a company calls its bands ("L3",
+// live across multiple clients). Rules within a group are keyed by
+// band_rank, not a specific client's band row, so the same group's limits
+// apply positionally regardless of what a client calls its bands ("L3",
 // "A3", "C" all just mean rank 3).
 //
 // Coverage is a set rather than a range so a group can span non-contiguous
 // ranks (1, 4, 7) — and so a half-configured group covers nothing rather than
 // silently covering everything, which is what unbounded NULL range ends did.
 //
-// Resolution: employee -> band_code -> that company's own bands row -> rank
-// -> which of the company's linked groups covers that rank -> that group's
+// Resolution: employee -> band_code -> that client's own bands row -> rank
+// -> which of the client's linked groups covers that rank -> that group's
 // rules at that rank. Exactly one group should ever match a given rank
-// (enforced by constraint triggers on company_policy_groups and
+// (enforced by constraint triggers on client_policy_groups and
 // policy_group_band_ranks) — more than one match here means something got
 // past those guards, surfaced as its own distinct blocked reason rather than
 // silently picking one.
@@ -58,7 +58,7 @@ export async function resolveEffectivePolicy(
 ): Promise<PolicyResolution> {
   const { data: employee } = await service
     .from('employees')
-    .select('company_id, band_code')
+    .select('client_id, band_code')
     .eq('id', employeeId)
     .single()
 
@@ -73,7 +73,7 @@ export async function resolveEffectivePolicy(
   const { data: bandRow } = await service
     .from('bands')
     .select('rank')
-    .eq('company_id', employee.company_id)
+    .eq('client_id', employee.client_id)
     .eq('code', employee.band_code)
     .maybeSingle()
 
@@ -81,19 +81,19 @@ export async function resolveEffectivePolicy(
     return {
       ok: false,
       reason: 'no_band',
-      message: `Band "${employee.band_code}" is not configured for this company. Contact your TMC or corporate admin.`,
+      message: `Band "${employee.band_code}" is not configured for this client. Contact your TMC or corporate admin.`,
     }
   }
 
   const bandRank = bandRow.rank
 
-  const groups = await getLinkedPolicyGroups(service, employee.company_id)
+  const groups = await getLinkedPolicyGroups(service, employee.client_id)
 
   if (groups.length === 0) {
     return {
       ok: false,
       reason: 'no_policy_group',
-      message: 'No policy group has been linked to this company yet. Contact your TMC.',
+      message: 'No policy group has been linked to this client yet. Contact your TMC.',
     }
   }
 
@@ -103,7 +103,7 @@ export async function resolveEffectivePolicy(
     return {
       ok: false,
       reason: 'no_policy_group',
-      message: `No policy group covers band rank ${bandRank} (${employee.band_code}) for this company yet. Contact your TMC.`,
+      message: `No policy group covers band rank ${bandRank} (${employee.band_code}) for this client yet. Contact your TMC.`,
     }
   }
 
@@ -111,7 +111,7 @@ export async function resolveEffectivePolicy(
     return {
       ok: false,
       reason: 'overlapping_policy_groups',
-      message: `Multiple policy groups (${matchingGroups.map(g => g.name).join(', ')}) cover band rank ${bandRank} for this company — this is a configuration error. Contact your TMC to resolve the overlap.`,
+      message: `Multiple policy groups (${matchingGroups.map(g => g.name).join(', ')}) cover band rank ${bandRank} for this client — this is a configuration error. Contact your TMC to resolve the overlap.`,
     }
   }
 
@@ -128,9 +128,9 @@ export async function resolveEffectivePolicy(
   // version together takes a single snapshot, so there is no gap to race
   // through.
   //
-  // company_id is deliberately NOT filtered — rules belong to the group, not a
-  // company, since the whole point of a shared group is that its rules are the
-  // same regardless of which company is asking.
+  // client_id is deliberately NOT filtered — rules belong to the group, not a
+  // client, since the whole point of a shared group is that its rules are the
+  // same regardless of which client is asking.
   //
   // travel_type is filtered in memory rather than in the query, deliberately.
   // "Latest version" has to mean the newest version of the WHOLE rule set for

@@ -1,6 +1,6 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
-import { authoriseCompany } from '../route'
+import { authoriseClient } from '../route'
 import { NextRequest } from 'next/server'
 
 // ── PATCH /api/tmc/traveler-profiles/[id] ────────────────────────────────────
@@ -51,15 +51,15 @@ export async function PATCH(
 
   const { data: target } = await service
     .from('employees')
-    .select('id, company_id, traveler_profile')
+    .select('id, client_id, traveler_profile')
     .eq('id', id)
     .maybeSingle()
 
-  if (!target?.company_id) {
+  if (!target?.client_id) {
     return Response.json({ error: 'Employee not found' }, { status: 404 })
   }
 
-  const access = await authoriseCompany(service, user.id, target.company_id)
+  const access = await authoriseClient(service, user.id, target.client_id)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
@@ -86,7 +86,7 @@ export async function PATCH(
       const { data: centre } = await service
         .from('cost_centres')
         .select('code')
-        .eq('company_id', target.company_id)
+        .eq('client_id', target.client_id)
         .eq('code', code)
         .maybeSingle()
 
@@ -104,7 +104,7 @@ export async function PATCH(
     const { data: bandRow } = await service
       .from('bands')
       .select('id, code, rank')
-      .eq('company_id', target.company_id)
+      .eq('client_id', target.client_id)
       .eq('code', body.band)
       .maybeSingle()
 

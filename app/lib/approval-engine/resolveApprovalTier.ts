@@ -47,7 +47,7 @@ export function categoryForTravelType(travelType: string): ApprovalCategory {
 }
 
 // 'unbound' is not a choice anyone makes — it is what a step resolves to when
-// this company has not said who fills it. Modelled as a type rather than a
+// this client has not said who fills it. Modelled as a type rather than a
 // separate flag so it falls through resolveApproverForTier to null, which
 // raiseApprovals already treats as an unresolvable approver.
 export type ApproverType =
@@ -95,7 +95,7 @@ export interface TierOutcome {
   approverIds?: string[]
   // Set when a template applied but not one of its approvers could be
   // resolved to a real person — e.g. the tier wants a finance user and the
-  // company has none active. The booking is NOT held on an approval nobody
+  // client has none active. The booking is NOT held on an approval nobody
   // can see; the caller decides what to do, but this says why.
   unresolvedApprovers?: boolean
 }
@@ -155,7 +155,7 @@ export function buildReason(breaches: VerdictBreach[], costTier: string, totalCo
 // the ordinary case. Bands still decide WHO may approve — 'any_manager_at' is
 // rank-scoped — just not WHICH chain applies.
 //
-// An explicit assignment wins; the company default catches everyone else, so a
+// An explicit assignment wins; the client default catches everyone else, so a
 // new hire is routed from day one rather than silently bypassing approval
 // until somebody remembers to configure them.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -171,17 +171,17 @@ export interface ResolvedChain {
 async function resolveChainForEmployee(
   service: ServiceClient,
   employeeId: string,
-  companyId: string,
+  clientId: string,
   travelType: string
 ): Promise<ResolvedChain | null> {
   const category = categoryForTravelType(travelType)
-  const resolved = await resolveTemplateForEmployee(service, employeeId, companyId, category)
+  const resolved = await resolveTemplateForEmployee(service, employeeId, clientId, category)
 
   if (!resolved) return null
 
-  // Structure comes from the template, identity from this company's bindings.
+  // Structure comes from the template, identity from this client's bindings.
   // Merged here so everything downstream keeps working in one tier shape.
-  const approvers = await getTierApprovers(service, companyId, resolved.template.id)
+  const approvers = await getTierApprovers(service, clientId, resolved.template.id)
 
   return {
     templateId: resolved.template.id,
@@ -207,7 +207,7 @@ function eligibleTiers(tiers: ChainTier[], verdict: Verdict): ChainTier[] {
 // Three outcomes, not two. "Nobody" splits into a configuration gap and a
 // legitimate absence — the person at the top of the hierarchy has no manager
 // by definition, and reporting that as a misconfiguration would mean the owner
-// of a company could never have a clean approval setup.
+// of a client could never have a clean approval setup.
 // ─────────────────────────────────────────────────────────────────────────────
 
 type ApproverResolution =
@@ -219,7 +219,7 @@ async function resolveApproverForTier(
   service: ServiceClient,
   tier: ChainTier,
   employeeId: string,
-  companyId: string
+  clientId: string
 ): Promise<ApproverResolution> {
   if (tier.approver_type === 'specific_user') {
     return tier.approver_user_id
@@ -262,7 +262,7 @@ async function resolveApproverForTier(
     const { data: candidates } = await service
       .from('employees')
       .select('id, band_code, bands:band_code(rank)')
-      .eq('company_id', companyId)
+      .eq('client_id', clientId)
       .in('role', ['manager', 'admin'])
       .eq('status', 'active')
 
@@ -275,7 +275,7 @@ async function resolveApproverForTier(
     const { data: bandRanks } = await service
       .from('bands')
       .select('code, rank')
-      .eq('company_id', companyId)
+      .eq('client_id', clientId)
 
     const rankByCode = new Map((bandRanks ?? []).map(b => [b.code, b.rank]))
     const qualifying = candidates
@@ -291,7 +291,7 @@ async function resolveApproverForTier(
     const { data: candidate } = await service
       .from('employees')
       .select('id')
-      .eq('company_id', companyId)
+      .eq('client_id', clientId)
       .eq('role', role)
       .eq('status', 'active')
       .order('created_at', { ascending: true })
@@ -302,7 +302,7 @@ async function resolveApproverForTier(
       : { kind: 'unresolved' }
   }
 
-  // Includes 'unbound' — a step this company has not said who fills — and any
+  // Includes 'unbound' — a step this client has not said who fills — and any
   // approver type added to the union without a branch here.
   return { kind: 'unresolved' }
 }
@@ -320,7 +320,7 @@ async function resolveApproverForTier(
 
 interface RaiseContext {
   bookingId: string
-  companyId: string
+  clientId: string
   employeeId: string
   verdict: Verdict
   reason: string
@@ -348,7 +348,7 @@ async function raiseApprovals(
       const { data: logged, error } = await service
         .from('approvals')
         .insert({
-          company_id: ctx.companyId,
+          client_id: ctx.clientId,
           booking_id: ctx.bookingId,
           approver_id: ctx.employeeId,
           tier: groupTier,
@@ -369,7 +369,7 @@ async function raiseApprovals(
       continue
     }
 
-    const resolution = await resolveApproverForTier(service, entry, ctx.employeeId, ctx.companyId)
+    const resolution = await resolveApproverForTier(service, entry, ctx.employeeId, ctx.clientId)
     const stepName = entry.label ? `"${entry.label}"` : `step ${entry.tier}`
 
     // Nobody to ask, and that is correct — the traveller is at the top of the
@@ -380,7 +380,7 @@ async function raiseApprovals(
       const { data: logged, error } = await service
         .from('approvals')
         .insert({
-          company_id: ctx.companyId,
+          client_id: ctx.clientId,
           booking_id: ctx.bookingId,
           approver_id: ctx.employeeId,
           tier: groupTier,
@@ -402,17 +402,17 @@ async function raiseApprovals(
     }
 
     if (resolution.kind === 'unresolved') {
-      // Two ways to land here: the company never said who fills this step
+      // Two ways to land here: the client never said who fills this step
       // ('unbound'), or it did but nobody matches — e.g. the step wants a
-      // finance user and the company has none active. Both are recorded rather
+      // finance user and the client has none active. Both are recorded rather
       // than silently dropped: previously this produced a booking held for
       // approval with no approvals row, invisible to every queue and
       // unresolvable without touching the database.
       console.error(
         entry.approver_type === 'unbound'
-          ? `Approval chain "${chain.name}" ${stepName} has no approver set for company ${ctx.companyId}.`
+          ? `Approval chain "${chain.name}" ${stepName} has no approver set for client ${ctx.clientId}.`
           : `Approval chain "${chain.name}" ${stepName} (${entry.approver_type}) resolved to nobody ` +
-            `for employee ${ctx.employeeId} at company ${ctx.companyId}.`
+            `for employee ${ctx.employeeId} at client ${ctx.clientId}.`
       )
       unresolved = true
       continue
@@ -439,7 +439,7 @@ async function raiseApprovals(
   const { data: inserted, error } = await service
     .from('approvals')
     .insert(pending.map(p => ({
-      company_id: ctx.companyId,
+      client_id: ctx.clientId,
       booking_id: ctx.bookingId,
       approver_id: p.approverId,
       tier: groupTier,
@@ -470,16 +470,16 @@ export async function startApprovalForBooking(
   service: ServiceClient,
   params: {
     bookingId: string
-    companyId: string
+    clientId: string
     employeeId: string
     travelType: string
     verdict: Verdict
     reason: string
   }
 ): Promise<TierOutcome> {
-  const { bookingId, companyId, employeeId, travelType, verdict, reason } = params
+  const { bookingId, clientId, employeeId, travelType, verdict, reason } = params
 
-  const chain = await resolveChainForEmployee(service, employeeId, companyId, travelType)
+  const chain = await resolveChainForEmployee(service, employeeId, clientId, travelType)
 
   if (!chain || chain.tiers.length === 0) {
     // No template covers this employee's band for this category, so there is
@@ -487,7 +487,7 @@ export async function startApprovalForBooking(
     //
     // This is a fail-open, unchanged from the previous behaviour. It matters
     // far less than it did: coverage is inherited from the employee's band
-    // now, so a company with templates linked routes new hires automatically
+    // now, so a client with templates linked routes new hires automatically
     // instead of leaving everyone unconfigured until someone got to them.
     return { requiresApproval: false }
   }
@@ -503,7 +503,7 @@ export async function startApprovalForBooking(
   const entries = chain.mode === 'parallel' ? eligible : [eligible[0]]
 
   return raiseApprovals(service, chain, entries, {
-    bookingId, companyId, employeeId, verdict, reason,
+    bookingId, clientId, employeeId, verdict, reason,
   })
 }
 
@@ -517,7 +517,7 @@ export async function advanceApprovalChain(
   service: ServiceClient,
   params: {
     bookingId: string
-    companyId: string
+    clientId: string
     employeeId: string
     chainTemplateId: string
     completedTier: number
@@ -525,7 +525,7 @@ export async function advanceApprovalChain(
     reason: string
   }
 ): Promise<TierOutcome> {
-  const { bookingId, companyId, employeeId, chainTemplateId, completedTier, verdict, reason } = params
+  const { bookingId, clientId, employeeId, chainTemplateId, completedTier, verdict, reason } = params
 
   const { data: template } = await service
     .from('approval_chain_templates')
@@ -583,6 +583,6 @@ export async function advanceApprovalChain(
   }
 
   return raiseApprovals(service, chain, [nextTier], {
-    bookingId, companyId, employeeId, verdict, reason,
+    bookingId, clientId, employeeId, verdict, reason,
   })
 }

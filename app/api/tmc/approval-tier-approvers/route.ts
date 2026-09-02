@@ -4,15 +4,15 @@ import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission
 import { NextRequest } from 'next/server'
 
 // ── /api/tmc/approval-tier-approvers ─────────────────────────────────────────
-// Who fills each step of one approval chain at one company.
+// Who fills each step of one approval chain at one client.
 //
 // A template carries structure only — steps, verdict thresholds, labels — since
 // it is shared across clients and a person exists in just one of them. This is
-// the other half: identity, bound per company.
+// the other half: identity, bound per client.
 //
-//   GET    ?companyId=&templateId=   the bindings, plus the template's steps
+//   GET    ?clientId=&templateId=   the bindings, plus the template's steps
 //   POST                             upsert one step's approver
-//   DELETE ?companyId=&templateId=&tier=   clear one step
+//   DELETE ?clientId=&templateId=&tier=   clear one step
 //
 // A step with no binding is unbound, and bookings that reach it raise no
 // approval — the engine reports that rather than approving silently, and the
@@ -27,7 +27,7 @@ const APPROVER_TYPES = [
 type ApproverType = typeof APPROVER_TYPES[number]
 
 interface BindBody {
-  companyId: string
+  clientId: string
   templateId: string
   tier: number
   approverType: ApproverType
@@ -38,27 +38,27 @@ interface BindBody {
 async function authorise(
   service: ReturnType<typeof createServiceClient>,
   userId: string,
-  companyId: string,
+  clientId: string,
   templateId: string
 ): Promise<{ ok: true } | { ok: false; error: string; status: number }> {
-  const auth = await requireTmcPermission(service, userId, 'manage_approvals', companyId)
+  const auth = await requireTmcPermission(service, userId, 'manage_approvals', clientId)
   if (!auth.authorized || !auth.tmcId) {
     return { ok: false, error: auth.error ?? 'Forbidden', status: auth.status ?? 403 }
   }
 
-  const { data: company } = await service
-    .from('companies')
+  const { data: client } = await service
+    .from('clients')
     .select('id, tmc_id')
-    .eq('id', companyId)
+    .eq('id', clientId)
     .maybeSingle()
 
-  if (!company || company.tmc_id !== auth.tmcId) {
-    return { ok: false, error: 'Company not found for this TMC', status: 404 }
+  if (!client || client.tmc_id !== auth.tmcId) {
+    return { ok: false, error: 'Client not found for this TMC', status: 404 }
   }
 
   const { data: template } = await service
     .from('approval_chain_templates')
-    .select('id, tmc_id, company_id')
+    .select('id, tmc_id, client_id')
     .eq('id', templateId)
     .maybeSingle()
 
@@ -66,10 +66,10 @@ async function authorise(
     return { ok: false, error: 'Approval chain not found for this TMC', status: 404 }
   }
 
-  // A company-owned chain belongs to exactly one client. Binding approvers to
-  // it from another company would quietly build routing nobody can reach.
-  if (template.company_id && template.company_id !== companyId) {
-    return { ok: false, error: 'This approval chain belongs to a different company', status: 403 }
+  // A client-owned chain belongs to exactly one client. Binding approvers to
+  // it from another client would quietly build routing nobody can reach.
+  if (template.client_id && template.client_id !== clientId) {
+    return { ok: false, error: 'This approval chain belongs to a different client', status: 403 }
   }
 
   return { ok: true }
@@ -83,15 +83,15 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const companyId = req.nextUrl.searchParams.get('companyId')
+  const clientId = req.nextUrl.searchParams.get('clientId')
   const templateId = req.nextUrl.searchParams.get('templateId')
 
-  if (!companyId || !templateId) {
-    return Response.json({ error: 'companyId and templateId are required' }, { status: 400 })
+  if (!clientId || !templateId) {
+    return Response.json({ error: 'clientId and templateId are required' }, { status: 400 })
   }
 
   const service = createServiceClient()
-  const access = await authorise(service, user.id, companyId, templateId)
+  const access = await authorise(service, user.id, clientId, templateId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
@@ -107,7 +107,7 @@ export async function GET(req: NextRequest) {
   const { data: bindings, error } = await service
     .from('approval_tier_approvers')
     .select('tier, approver_type, approver_user_id, min_band_rank')
-    .eq('company_id', companyId)
+    .eq('client_id', clientId)
     .eq('template_id', templateId)
 
   if (error) {
@@ -126,10 +126,10 @@ export async function POST(req: NextRequest) {
   }
 
   const body: BindBody = await req.json()
-  const { companyId, templateId, tier, approverType, approverUserId, minBandRank } = body
+  const { clientId, templateId, tier, approverType, approverUserId, minBandRank } = body
 
-  if (!companyId || !templateId || !Number.isInteger(tier)) {
-    return Response.json({ error: 'companyId, templateId and tier are required' }, { status: 400 })
+  if (!clientId || !templateId || !Number.isInteger(tier)) {
+    return Response.json({ error: 'clientId, templateId and tier are required' }, { status: 400 })
   }
 
   if (!APPROVER_TYPES.includes(approverType)) {
@@ -145,7 +145,7 @@ export async function POST(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const access = await authorise(service, user.id, companyId, templateId)
+  const access = await authorise(service, user.id, clientId, templateId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
@@ -159,7 +159,7 @@ export async function POST(req: NextRequest) {
   const { error } = await service
     .from('approval_tier_approvers')
     .upsert({
-      company_id: companyId,
+      client_id: clientId,
       template_id: templateId,
       tier,
       approver_type: approverType,
@@ -167,15 +167,15 @@ export async function POST(req: NextRequest) {
       min_band_rank: approverType === 'any_manager_at' ? minBandRank : null,
       assigned_by: caller?.id ?? null,
       assigned_at: new Date().toISOString(),
-    }, { onConflict: 'company_id,template_id,tier' })
+    }, { onConflict: 'client_id,template_id,tier' })
 
   if (error) {
-    // 23514 is the approval_tier_approvers_company_check trigger: the chosen
-    // person works at a different company. Reachable through a crafted request
-    // even though the UI only ever offers this company's staff.
+    // 23514 is the approval_tier_approvers_client_check trigger: the chosen
+    // person works at a different client. Reachable through a crafted request
+    // even though the UI only ever offers this client's staff.
     if (error.code === '23514') {
       return Response.json(
-        { error: 'That person does not work at this company' },
+        { error: 'That person does not work at this client' },
         { status: 400 }
       )
     }
@@ -193,16 +193,16 @@ export async function DELETE(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const companyId = req.nextUrl.searchParams.get('companyId')
+  const clientId = req.nextUrl.searchParams.get('clientId')
   const templateId = req.nextUrl.searchParams.get('templateId')
   const tier = Number(req.nextUrl.searchParams.get('tier'))
 
-  if (!companyId || !templateId || !Number.isInteger(tier)) {
-    return Response.json({ error: 'companyId, templateId and tier are required' }, { status: 400 })
+  if (!clientId || !templateId || !Number.isInteger(tier)) {
+    return Response.json({ error: 'clientId, templateId and tier are required' }, { status: 400 })
   }
 
   const service = createServiceClient()
-  const access = await authorise(service, user.id, companyId, templateId)
+  const access = await authorise(service, user.id, clientId, templateId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
@@ -210,7 +210,7 @@ export async function DELETE(req: NextRequest) {
   const { error } = await service
     .from('approval_tier_approvers')
     .delete()
-    .eq('company_id', companyId)
+    .eq('client_id', clientId)
     .eq('template_id', templateId)
     .eq('tier', tier)
 

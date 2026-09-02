@@ -14,7 +14,7 @@ import SearchableSelect from '@/app/components/SearchableSelect'
 // places and neither showed the whole record.
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface Company { id: string; name: string }
+interface Client { id: string; name: string }
 interface Band { id: string; code: string; label: string; rank: number }
 interface CostCentre { id: string; code: string; name: string }
 
@@ -87,8 +87,8 @@ const PROFILE_SECTIONS: { heading: string; fields: { key: keyof TravelerProfile;
 ]
 
 export default function TravellerProfilesPage() {
-  const [companies, setCompanies] = useState<Company[]>([])
-  const [companyId, setCompanyId] = useState('')
+  const [clients, setClients] = useState<Client[]>([])
+  const [clientId, setClientId] = useState('')
 
   const [employees, setEmployees] = useState<Employee[]>([])
   const [bands, setBands] = useState<Band[]>([])
@@ -116,8 +116,8 @@ export default function TravellerProfilesPage() {
   }
 
   useEffect(() => {
-    fetch('/api/tmc/companies').then(r => r.json())
-      .then(d => { if (d.ok) setCompanies(d.companies) })
+    fetch('/api/tmc/clients').then(r => r.json())
+      .then(d => { if (d.ok) setClients(d.clients) })
   }, [])
 
   // Declared before the effect that calls it: a function declaration is hoisted
@@ -126,7 +126,7 @@ export default function TravellerProfilesPage() {
   async function load() {
     setLoading(true); setError(''); setImportReport(null)
     try {
-      const d = await fetch(`/api/tmc/traveler-profiles?companyId=${companyId}`).then(r => r.json())
+      const d = await fetch(`/api/tmc/traveler-profiles?clientId=${clientId}`).then(r => r.json())
       if (!d.ok) { setError(d.error || 'Could not load traveller profiles.'); return }
       setEmployees(d.employees)
       setBands(d.bands)
@@ -138,7 +138,7 @@ export default function TravellerProfilesPage() {
   }
 
   useEffect(() => {
-    if (!companyId) return
+    if (!clientId) return
     // load() sets state before its first await. Fetch-on-mount is the pattern
     // this whole app uses; the alternative here would be a server component,
     // which this page cannot be — it is heavily interactive.
@@ -148,7 +148,7 @@ export default function TravellerProfilesPage() {
     // `load` is intentionally not a dependency: it is redeclared every render,
     // so depending on it would refetch the roster on every keystroke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyId])
+  }, [clientId])
 
   function select(emp: Employee) {
     if (dirty && !confirm('You have unsaved changes. Discard them?')) return
@@ -243,7 +243,7 @@ export default function TravellerProfilesPage() {
   function downloadCsv() {
     // A plain navigation rather than fetch + blob: the route already sets
     // Content-Disposition, so the browser handles the filename and save dialog.
-    window.location.href = `/api/tmc/traveler-profiles/csv?companyId=${companyId}`
+    window.location.href = `/api/tmc/traveler-profiles/csv?clientId=${clientId}`
   }
 
   function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -259,7 +259,7 @@ export default function TravellerProfilesPage() {
           const rows = results.data as Record<string, string>[]
           const d = await fetch('/api/tmc/traveler-profiles/csv', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ companyId, rows }),
+            body: JSON.stringify({ clientId, rows }),
           }).then(r => r.json())
 
           if (!d.ok) { setError(d.error || 'Could not import the file.'); return }
@@ -308,15 +308,15 @@ export default function TravellerProfilesPage() {
           {/* Type-to-filter rather than a native select: a TMC with dozens of
               clients cannot scan an unfiltered dropdown. */}
           <SearchableSelect
-            value={companyId}
-            onChange={setCompanyId}
-            options={companies.map(c => ({ id: c.id, label: c.name }))}
+            value={clientId}
+            onChange={setClientId}
+            options={clients.map(c => ({ id: c.id, label: c.name }))}
             placeholder="Select a client…"
             emptyMessage="No clients match"
           />
         </div>
 
-        {companyId && (
+        {clientId && (
           <div style={s.toolbarActions}>
             <button onClick={downloadCsv} style={s.ghostBtn}>↓ Export CSV</button>
             <button
@@ -355,7 +355,7 @@ export default function TravellerProfilesPage() {
         </div>
       )}
 
-      {!companyId ? (
+      {!clientId ? (
         <div style={s.empty}>
           <p style={s.emptyTitle}>Pick a client</p>
           <p style={s.emptyDesc}>Their people and travel profiles will appear here.</p>

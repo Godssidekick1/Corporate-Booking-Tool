@@ -8,12 +8,12 @@ export type ChainQuorum = 'any' | 'all'
 
 // ── TemplateTier ─────────────────────────────────────────────────────────────
 // A step as the template stores it: structure only. Who fills it is decided per
-// company, in approval_tier_approvers — a template is shared across clients and
+// client, in approval_tier_approvers — a template is shared across clients and
 // a person only exists inside one of them.
 //
 // `label` is what the TMC calls the step ("Line manager", "Finance sign-off").
 // It carries no behaviour; it exists so the person binding approvers at each
-// company knows what the step is meant to be.
+// client knows what the step is meant to be.
 // ─────────────────────────────────────────────────────────────────────────────
 export interface TemplateTier {
   tier: number
@@ -21,7 +21,7 @@ export interface TemplateTier {
   label?: string | null
 }
 
-// The identity half, one row per (company, template, step).
+// The identity half, one row per (client, template, step).
 export interface TierApprover {
   tier: number
   approver_type: ApproverType
@@ -40,9 +40,9 @@ export interface ApprovalTemplate {
 }
 
 // Where a resolved template came from. Surfaced so the UI can show an employee
-// is on the company default rather than something chosen for them — the two
+// is on the client default rather than something chosen for them — the two
 // look identical otherwise, and only one of them changes when the default does.
-export type TemplateSource = 'employee' | 'company_default'
+export type TemplateSource = 'employee' | 'client_default'
 
 export interface ResolvedTemplate {
   template: ApprovalTemplate
@@ -64,7 +64,7 @@ function toTemplate(row: Record<string, unknown>): ApprovalTemplate {
 }
 
 // ── getTierApprovers ─────────────────────────────────────────────────────────
-// Who fills each step of one template at one company, keyed by step number.
+// Who fills each step of one template at one client, keyed by step number.
 //
 // A step with no row here is unbound. Callers merge that into a tier carrying
 // approver_type 'unbound', which resolveApproverForTier returns null for — and
@@ -74,13 +74,13 @@ function toTemplate(row: Record<string, unknown>): ApprovalTemplate {
 
 export async function getTierApprovers(
   service: ServiceClient,
-  companyId: string,
+  clientId: string,
   templateId: string
 ): Promise<Map<number, TierApprover>> {
   const { data: rows } = await service
     .from('approval_tier_approvers')
     .select('tier, approver_type, approver_user_id, min_band_rank')
-    .eq('company_id', companyId)
+    .eq('client_id', clientId)
     .eq('template_id', templateId)
 
   return new Map((rows ?? []).map(r => [r.tier as number, r as TierApprover]))
@@ -115,7 +115,7 @@ export function mergeTiers(
 // ── resolveTemplateForEmployee ───────────────────────────────────────────────
 // Which approval template applies to one employee for one category.
 //
-// Explicit assignment wins; the company default covers everyone else. Approver
+// Explicit assignment wins; the client default covers everyone else. Approver
 // routing is deliberately NOT band-derived: two employees at the same rank
 // commonly report to different managers, so a rank-wide route can't express
 // the ordinary case. Bands still matter for WHO may approve — the
@@ -130,7 +130,7 @@ export function mergeTiers(
 export async function resolveTemplateForEmployee(
   service: ServiceClient,
   employeeId: string,
-  companyId: string,
+  clientId: string,
   category: string
 ): Promise<ResolvedTemplate | null> {
   const { data: assignment } = await service
@@ -151,9 +151,9 @@ export async function resolveTemplateForEmployee(
   }
 
   const { data: fallback } = await service
-    .from('company_default_approval_templates')
+    .from('client_default_approval_templates')
     .select('template_id')
-    .eq('company_id', companyId)
+    .eq('client_id', clientId)
     .eq('category', category)
     .maybeSingle()
 
@@ -167,16 +167,16 @@ export async function resolveTemplateForEmployee(
 
   if (!defaultTemplate) return null
 
-  return { template: toTemplate(defaultTemplate), source: 'company_default' }
+  return { template: toTemplate(defaultTemplate), source: 'client_default' }
 }
 
-// ── getAssignmentsForCompany ─────────────────────────────────────────────────
-// Every explicit per-employee assignment at a company, as
+// ── getAssignmentsForClient ─────────────────────────────────────────────────
+// Every explicit per-employee assignment at a client, as
 // `${employeeId}::${category}` -> templateId. Used by the admin screen to show
 // the whole roster's routing in one table rather than one employee at a time.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function getAssignmentsForCompany(
+export async function getAssignmentsForClient(
   service: ServiceClient,
   employeeIds: string[]
 ): Promise<Map<string, string>> {

@@ -10,7 +10,7 @@ import DirectChain from './DirectChain'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface Company { id: string; name: string }
+interface Client { id: string; name: string }
 
 type ChainMode = 'sequential' | 'parallel'
 type ChainQuorum = 'any' | 'all'
@@ -23,9 +23,9 @@ interface Chain {
   mode: ChainMode
   quorum: ChainQuorum
   tiers: TemplateStep[]
-  company_id: string | null
+  client_id: string | null
   employeeCount: number
-  defaultForCompanies: number
+  defaultForClients: number
   version: number
 }
 
@@ -66,7 +66,7 @@ export default function TmcApprovalsPage() {
   const [mode, setMode] = useState<Mode>('direct')
 
   const [chains, setChains] = useState<Chain[]>([])
-  const [companies, setCompanies] = useState<Company[]>([])
+  const [clients, setClients] = useState<Client[]>([])
   const [loading, setLoading] = useState(true)
 
   const [error, setError] = useState('')
@@ -84,17 +84,17 @@ export default function TmcApprovalsPage() {
   async function loadAll() {
     setLoading(true); setError('')
     try {
-      const [chainData, companyData] = await Promise.all([
+      const [chainData, clientData] = await Promise.all([
         fetch('/api/tmc/approval-templates').then(r => r.json()),
-        fetch('/api/tmc/companies').then(r => r.json()),
+        fetch('/api/tmc/clients').then(r => r.json()),
       ])
       if (!chainData.ok) { setError(chainData.error || 'Could not load approval chains.'); return }
       setChains(chainData.templates)
-      if (companyData.ok) setCompanies(companyData.companies)
+      if (clientData.ok) setClients(clientData.clients)
     } finally { setLoading(false) }
   }
 
-  const sharedChains = chains.filter(c => !c.company_id)
+  const sharedChains = chains.filter(c => !c.client_id)
 
   return (
     <div style={s.root}>
@@ -137,7 +137,7 @@ export default function TmcApprovalsPage() {
       {loading ? (
         <p style={s.muted}>Loading…</p>
       ) : mode === 'direct' ? (
-        <DirectChain companies={companies} />
+        <DirectChain clients={clients} />
       ) : mode === 'template' ? (
         <TemplateBuilder
           chains={sharedChains}
@@ -147,7 +147,7 @@ export default function TmcApprovalsPage() {
         />
       ) : (
         <AssignTemplate
-          companies={companies}
+          clients={clients}
           chains={sharedChains}
           onChanged={loadAll}
           onError={setError}
@@ -260,11 +260,11 @@ function TemplateBuilder({ chains, onChanged, onError, onSuccess }: {
                   <span style={s.stepBadge}>{c.tiers.length} step{c.tiers.length === 1 ? '' : 's'}</span>
                 </div>
                 <p style={s.cardMeta}>
-                  {c.employeeCount === 0 && c.defaultForCompanies === 0
+                  {c.employeeCount === 0 && c.defaultForClients === 0
                     ? 'Not in use yet'
                     : [
                         c.employeeCount > 0 ? `${c.employeeCount} employee${c.employeeCount === 1 ? '' : 's'}` : null,
-                        c.defaultForCompanies > 0 ? `default at ${c.defaultForCompanies}` : null,
+                        c.defaultForClients > 0 ? `default at ${c.defaultForClients}` : null,
                       ].filter(Boolean).join(' · ')}
                 </p>
               </div>
@@ -277,7 +277,7 @@ function TemplateBuilder({ chains, onChanged, onError, onSuccess }: {
         <div style={s.card}>
           <div style={s.noteBanner}>
             A template holds the <strong>shape</strong> of a chain only. Who fills each step is
-            chosen per client — a person exists at one company, so naming one here could never
+            chosen per client — a person exists at one client, so naming one here could never
             travel.
           </div>
           <StepEditor chain={selected} onChanged={onChanged} onError={onError} onSuccess={onSuccess} />
@@ -418,15 +418,15 @@ function StepEditor({ chain, onChanged, onError, onSuccess }: {
 
 // ── Assign a template ─────────────────────────────────────────────────────────
 
-function AssignTemplate({ companies, chains, onChanged, onError, onSuccess }: {
-  companies: Company[]
+function AssignTemplate({ clients, chains, onChanged, onError, onSuccess }: {
+  clients: Client[]
   chains: Chain[]
   onChanged: () => void
   onError: (m: string) => void
   onSuccess: (m: string) => void
 }) {
   const [templateId, setTemplateId] = useState('')
-  const [companyId, setCompanyId] = useState('')
+  const [clientId, setClientId] = useState('')
 
   const template = chains.find(c => c.id === templateId)
 
@@ -444,25 +444,25 @@ function AssignTemplate({ companies, chains, onChanged, onError, onSuccess }: {
         </div>
         <div style={s.field}>
           <label style={s.label}>Client</label>
-          <select value={companyId} onChange={e => setCompanyId(e.target.value)} style={{ ...s.input, width: 240 }}>
+          <select value={clientId} onChange={e => setClientId(e.target.value)} style={{ ...s.input, width: 240 }}>
             <option value="">Select a client…</option>
-            {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </div>
       </div>
 
-      {!template || !companyId ? (
+      {!template || !clientId ? (
         <p style={s.muted}>Pick a template and a client to continue.</p>
       ) : (
         <>
-          <h3 style={s.sectionTitle}>Who does each step at {companies.find(c => c.id === companyId)?.name}</h3>
+          <h3 style={s.sectionTitle}>Who does each step at {clients.find(c => c.id === clientId)?.name}</h3>
           <StepApprovers
-            companyId={companyId}
+            clientId={clientId}
             templateId={template.id}
             steps={template.tiers}
           />
           <AppliesTo
-            companyId={companyId}
+            clientId={clientId}
             category={template.category}
             templateId={template.id}
             onError={onError}
@@ -475,11 +475,11 @@ function AssignTemplate({ companies, chains, onChanged, onError, onSuccess }: {
 }
 
 // ── Applies to ────────────────────────────────────────────────────────────────
-// Whether this chain covers the whole company or named employees. Shared by
+// Whether this chain covers the whole client or named employees. Shared by
 // both flows so "assign" means the same thing in each.
 
-function AppliesTo({ companyId, category, templateId, onError, onSuccess }: {
-  companyId: string
+function AppliesTo({ clientId, category, templateId, onError, onSuccess }: {
+  clientId: string
   category: string
   templateId: string
   onError: (m: string) => void
@@ -491,12 +491,12 @@ function AppliesTo({ companyId, category, templateId, onError, onSuccess }: {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
 
-  useEffect(() => { load() }, [companyId, category])
+  useEffect(() => { load() }, [clientId, category])
 
   async function load() {
     setLoading(true)
     try {
-      const d = await fetch(`/api/tmc/approval-assignments?companyId=${companyId}`).then(r => r.json())
+      const d = await fetch(`/api/tmc/approval-assignments?clientId=${clientId}`).then(r => r.json())
       if (!d.ok) { onError(d.error || 'Could not load the roster.'); return }
       setRoster(d.employees); setDefaults(d.defaults); setSelected(new Set())
     } finally { setLoading(false) }
@@ -507,11 +507,11 @@ function AppliesTo({ companyId, category, templateId, onError, onSuccess }: {
     try {
       const d = await fetch('/api/tmc/approval-assignments', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ companyId, category, templateId, employeeIds }),
+        body: JSON.stringify({ clientId, category, templateId, employeeIds }),
       }).then(r => r.json())
       if (!d.ok) { onError(d.error || 'Could not assign.'); return }
       await load()
-      onSuccess(employeeIds ? `Applied to ${employeeIds.length} employee${employeeIds.length === 1 ? '' : 's'}.` : 'Set as the company default.')
+      onSuccess(employeeIds ? `Applied to ${employeeIds.length} employee${employeeIds.length === 1 ? '' : 's'}.` : 'Set as the client default.')
     } finally { setBusy(false) }
   }
 
@@ -523,7 +523,7 @@ function AppliesTo({ companyId, category, templateId, onError, onSuccess }: {
 
       <div style={s.applyRow}>
         <button onClick={() => assign()} disabled={busy || isDefault} style={{ ...s.primaryBtn, opacity: busy || isDefault ? 0.5 : 1 }}>
-          {isDefault ? 'Already the company default' : 'Apply to everyone at this client'}
+          {isDefault ? 'Already the client default' : 'Apply to everyone at this client'}
         </button>
         {selected.size > 0 && (
           <button onClick={() => assign(Array.from(selected))} disabled={busy} style={s.ghostBtn}>
@@ -578,7 +578,7 @@ function AppliesTo({ companyId, category, templateId, onError, onSuccess }: {
                         : assigned
                           ? <span style={s.muted}>Another chain</span>
                           : defaults[category]
-                            ? <span style={s.muted}>Company default</span>
+                            ? <span style={s.muted}>Client default</span>
                             : <span style={s.noRoute}>No approval</span>}
                     </td>
                   </tr>

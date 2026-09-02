@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 
-interface Company {
+interface Client {
   id: string
   name: string
 }
@@ -47,8 +47,8 @@ const VERDICT_STYLE: Record<string, { bg: string; fg: string; label: string }> =
 }
 
 export default function RuleEngineTestPage() {
-  const [companies, setCompanies] = useState<Company[]>([])
-  const [selectedCompanyId, setSelectedCompanyId] = useState('')
+  const [clients, setClients] = useState<Client[]>([])
+  const [selectedClientId, setSelectedClientId] = useState('')
   const [employees, setEmployees] = useState<Employee[]>([])
   const [selectedEmployeeId, setSelectedEmployeeId] = useState('')
 
@@ -60,27 +60,27 @@ export default function RuleEngineTestPage() {
   const [breakfastIncluded, setBreakfastIncluded] = useState(false)
   const [sponsoredTransport, setSponsoredTransport] = useState(false)
 
-  const [loadingCompanies, setLoadingCompanies] = useState(true)
+  const [loadingClients, setLoadingClients] = useState(true)
   const [loadingEmployees, setLoadingEmployees] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [result, setResult] = useState<TestResult | null>(null)
   const [error, setError] = useState('')
 
   useEffect(() => {
-    fetch('/api/tmc/companies')
+    fetch('/api/tmc/clients')
       .then(r => r.json())
-      .then(data => { if (data.ok) setCompanies(data.companies) })
-      .finally(() => setLoadingCompanies(false))
+      .then(data => { if (data.ok) setClients(data.clients) })
+      .finally(() => setLoadingClients(false))
   }, [])
 
   useEffect(() => {
-    if (!selectedCompanyId) { setEmployees([]); setSelectedEmployeeId(''); return }
+    if (!selectedClientId) { setEmployees([]); setSelectedEmployeeId(''); return }
     setLoadingEmployees(true)
-    fetch(`/api/tmc/employees?companyId=${selectedCompanyId}`)
+    fetch(`/api/tmc/employees?clientId=${selectedClientId}`)
       .then(r => r.json())
       .then(data => { if (data.ok) setEmployees(data.employees) })
       .finally(() => setLoadingEmployees(false))
-  }, [selectedCompanyId])
+  }, [selectedClientId])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -127,15 +127,15 @@ export default function RuleEngineTestPage() {
       <form onSubmit={handleSubmit} style={s.formCard}>
         <div style={s.fields}>
           <div style={s.field}>
-            <label style={s.label}>Company</label>
+            <label style={s.label}>Client</label>
             <select
-              value={selectedCompanyId}
-              onChange={e => setSelectedCompanyId(e.target.value)}
+              value={selectedClientId}
+              onChange={e => setSelectedClientId(e.target.value)}
               style={s.input}
-              disabled={loadingCompanies}
+              disabled={loadingClients}
             >
-              <option value="">{loadingCompanies ? 'Loading…' : 'Select a company…'}</option>
-              {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              <option value="">{loadingClients ? 'Loading…' : 'Select a client…'}</option>
+              {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
 
@@ -145,10 +145,10 @@ export default function RuleEngineTestPage() {
               value={selectedEmployeeId}
               onChange={e => setSelectedEmployeeId(e.target.value)}
               style={s.input}
-              disabled={!selectedCompanyId || loadingEmployees}
+              disabled={!selectedClientId || loadingEmployees}
             >
               <option value="">
-                {!selectedCompanyId ? 'Select a company first' : loadingEmployees ? 'Loading…' : 'Select an employee…'}
+                {!selectedClientId ? 'Select a client first' : loadingEmployees ? 'Loading…' : 'Select an employee…'}
               </option>
               {employees.map(e => (
                 <option key={e.id} value={e.id}>{e.full_name} ({e.band_code ?? 'no band'})</option>

@@ -4,25 +4,25 @@ import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission
 import { getBandRanksByGroup } from '@/app/lib/rule-engine/linkedPolicyGroups'
 import { NextRequest } from 'next/server'
 
-// ── GET /api/tmc/company-policy-groups?companyId=<uuid> ──────────────────
-// Lists every policy group currently linked to a company, with the band ranks
-// it covers, so a UI can show "this company uses PLCYGRP1 (ranks 1, 2) and
+// ── GET /api/tmc/client-policy-groups?clientId=<uuid> ──────────────────
+// Lists every policy group currently linked to a client, with the band ranks
+// it covers, so a UI can show "this client uses PLCYGRP1 (ranks 1, 2) and
 // PLCYGRP2 (ranks 4, 7)" and know which ranks are still uncovered.
 //
-// ── POST /api/tmc/company-policy-groups ───────────────────────────────────
-// Links a policy group to a company. Rejects if the group's rank set would
-// intersect any group already linked to that company — per explicit product
+// ── POST /api/tmc/client-policy-groups ───────────────────────────────────
+// Links a policy group to a client. Rejects if the group's rank set would
+// intersect any group already linked to that client — per explicit product
 // direction, overlapping coverage is a configuration error to prevent at
 // assignment time, not something resolveEffectivePolicy.ts should have to
 // arbitrate at read time.
 //
-// ── DELETE /api/tmc/company-policy-groups?companyId=<uuid>&policyGroupId=<uuid> ──
-// Unlinks a group from a company. Doesn't touch the group itself or any
-// other company using it — this only removes the one link row.
+// ── DELETE /api/tmc/client-policy-groups?clientId=<uuid>&policyGroupId=<uuid> ──
+// Unlinks a group from a client. Doesn't touch the group itself or any
+// other client using it — this only removes the one link row.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface LinkBody {
-  companyId: string
+  clientId: string
   policyGroupId: string
 }
 
@@ -43,21 +43,21 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const companyId = req.nextUrl.searchParams.get('companyId')
-  if (!companyId) {
-    return Response.json({ error: 'companyId is required' }, { status: 400 })
+  const clientId = req.nextUrl.searchParams.get('clientId')
+  if (!clientId) {
+    return Response.json({ error: 'clientId is required' }, { status: 400 })
   }
 
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, user.id, 'manage_policy', companyId)
+  const auth = await requireTmcPermission(service, user.id, 'manage_policy', clientId)
   if (!auth.authorized) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }
 
   const { data: links, error } = await service
-    .from('company_policy_groups')
+    .from('client_policy_groups')
     .select('policy_group_id, assigned_at')
-    .eq('company_id', companyId)
+    .eq('client_id', clientId)
 
   if (error) {
     return Response.json({ error: error.message }, { status: 500 })
@@ -103,14 +103,14 @@ export async function POST(req: NextRequest) {
   }
 
   const body: LinkBody = await req.json()
-  const { companyId, policyGroupId } = body
+  const { clientId, policyGroupId } = body
 
-  if (!companyId || !policyGroupId) {
-    return Response.json({ error: 'companyId and policyGroupId are required' }, { status: 400 })
+  if (!clientId || !policyGroupId) {
+    return Response.json({ error: 'clientId and policyGroupId are required' }, { status: 400 })
   }
 
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, user.id, 'manage_policy', companyId)
+  const auth = await requireTmcPermission(service, user.id, 'manage_policy', clientId)
   if (!auth.authorized) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }
@@ -129,28 +129,28 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'This policy group belongs to a different TMC' }, { status: 403 })
   }
 
-  // Confirm the company actually belongs to this TMC too — a crafted
-  // companyId from another TMC's client shouldn't be linkable even if the
+  // Confirm the client actually belongs to this TMC too — a crafted
+  // clientId from another TMC's client shouldn't be linkable even if the
   // caller passes the manage_policy check generically.
-  const { data: company } = await service
-    .from('companies')
+  const { data: client } = await service
+    .from('clients')
     .select('id, tmc_id')
-    .eq('id', companyId)
+    .eq('id', clientId)
     .maybeSingle()
 
-  if (!company || company.tmc_id !== auth.tmcId) {
-    return Response.json({ error: 'Company not found for this TMC' }, { status: 404 })
+  if (!client || client.tmc_id !== auth.tmcId) {
+    return Response.json({ error: 'Client not found for this TMC' }, { status: 404 })
   }
 
   const { data: existingLinks } = await service
-    .from('company_policy_groups')
+    .from('client_policy_groups')
     .select('policy_group_id')
-    .eq('company_id', companyId)
+    .eq('client_id', clientId)
 
   const existingGroupIds = (existingLinks ?? []).map(l => l.policy_group_id)
 
   if (existingGroupIds.includes(policyGroupId)) {
-    return Response.json({ error: `"${newGroup.name}" is already linked to this company` }, { status: 409 })
+    return Response.json({ error: `"${newGroup.name}" is already linked to this client` }, { status: 409 })
   }
 
   const ranksByGroup = await getBandRanksByGroup(service, [policyGroupId, ...existingGroupIds])
@@ -172,7 +172,7 @@ export async function POST(req: NextRequest) {
       const clash = sharedRanks(newRanks, ranksByGroup.get(existing.id) ?? [])
       if (clash.length > 0) {
         return Response.json({
-          error: `"${newGroup.name}" overlaps with "${existing.name}" at band rank${clash.length > 1 ? 's' : ''} ${clash.join(', ')}, which is already linked to this company. Each linked group must cover distinct ranks.`,
+          error: `"${newGroup.name}" overlaps with "${existing.name}" at band rank${clash.length > 1 ? 's' : ''} ${clash.join(', ')}, which is already linked to this client. Each linked group must cover distinct ranks.`,
         }, { status: 409 })
       }
     }
@@ -185,15 +185,15 @@ export async function POST(req: NextRequest) {
     .maybeSingle()
 
   const { error: insertError } = await service
-    .from('company_policy_groups')
+    .from('client_policy_groups')
     .insert({
-      company_id: companyId,
+      client_id: clientId,
       policy_group_id: policyGroupId,
       assigned_by: caller?.id ?? null,
     })
 
   if (insertError) {
-    // 23P01 is raised by the company_policy_groups_no_overlap constraint
+    // 23P01 is raised by the client_policy_groups_no_overlap constraint
     // trigger. The check above catches this in the ordinary case; the trigger
     // is the backstop for two links racing each other, where both requests
     // read the pre-insert state and neither sees the other's pending row.
@@ -214,23 +214,23 @@ export async function DELETE(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const companyId = req.nextUrl.searchParams.get('companyId')
+  const clientId = req.nextUrl.searchParams.get('clientId')
   const policyGroupId = req.nextUrl.searchParams.get('policyGroupId')
 
-  if (!companyId || !policyGroupId) {
-    return Response.json({ error: 'companyId and policyGroupId are required' }, { status: 400 })
+  if (!clientId || !policyGroupId) {
+    return Response.json({ error: 'clientId and policyGroupId are required' }, { status: 400 })
   }
 
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, user.id, 'manage_policy', companyId)
+  const auth = await requireTmcPermission(service, user.id, 'manage_policy', clientId)
   if (!auth.authorized) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }
 
   const { error } = await service
-    .from('company_policy_groups')
+    .from('client_policy_groups')
     .delete()
-    .eq('company_id', companyId)
+    .eq('client_id', clientId)
     .eq('policy_group_id', policyGroupId)
 
   if (error) {

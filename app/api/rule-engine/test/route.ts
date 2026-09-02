@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
 
   const { data: employee } = await service
     .from('employees')
-    .select('company_id')
+    .select('client_id')
     .eq('id', employeeId)
     .maybeSingle()
 
@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Employee not found' }, { status: 404 })
   }
 
-  const auth = await requireTmcPermission(service, user.id, 'manage_policy', employee.company_id)
+  const auth = await requireTmcPermission(service, user.id, 'manage_policy', employee.client_id)
   if (!auth.authorized) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }

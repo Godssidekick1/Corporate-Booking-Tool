@@ -6,7 +6,7 @@ import { NextRequest } from 'next/server'
 // ── POST /api/tmc/tcs ────────────────────────────────────────────────────────
 // tmc_admin creates a new TC (travel counsellor) — either via email invite
 // or direct-create, matching the existing employee-creation pattern.
-// Initial permissions and company access are set in the same request so a
+// Initial permissions and client access are set in the same request so a
 // TC is never created with default/unrestricted access even momentarily.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -16,7 +16,7 @@ interface CreateTcBody {
   full_name: string
   send_invite: boolean // true = email invite, false = direct-create
   permissions: string[]
-  companyIds: string[]
+  clientIds: string[]
 }
 
 export async function GET() {
@@ -54,7 +54,7 @@ export async function GET() {
 
   const [{ data: perms }, { data: access }] = await Promise.all([
     service.from('employee_permissions').select('employee_id, permission_key').in('employee_id', tcIds.length ? tcIds : ['00000000-0000-0000-0000-000000000000']),
-    service.from('employee_company_access').select('employee_id, company_id').in('employee_id', tcIds.length ? tcIds : ['00000000-0000-0000-0000-000000000000']),
+    service.from('employee_client_access').select('employee_id, client_id').in('employee_id', tcIds.length ? tcIds : ['00000000-0000-0000-0000-000000000000']),
   ])
 
   const permsByTc = new Map<string, string[]>()
@@ -66,13 +66,13 @@ export async function GET() {
   const accessByTc = new Map<string, string[]>()
   for (const a of access ?? []) {
     if (!accessByTc.has(a.employee_id)) accessByTc.set(a.employee_id, [])
-    accessByTc.get(a.employee_id)!.push(a.company_id)
+    accessByTc.get(a.employee_id)!.push(a.client_id)
   }
 
   const enriched = (tcs ?? []).map(tc => ({
     ...tc,
     permissions: permsByTc.get(tc.id) ?? [],
-    companyIds: accessByTc.get(tc.id) ?? [],
+    clientIds: accessByTc.get(tc.id) ?? [],
   }))
 
   return Response.json({ ok: true, tcs: enriched })
@@ -99,7 +99,7 @@ export async function POST(req: NextRequest) {
   }
 
   const body: CreateTcBody = await req.json()
-  const { email, full_name, send_invite, permissions = [], companyIds = [] } = body
+  const { email, full_name, send_invite, permissions = [], clientIds = [] } = body
 
   if (!email?.trim() || !full_name?.trim()) {
     return Response.json({ error: 'email and full_name are required' }, { status: 400 })
@@ -115,16 +115,16 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: `Invalid permission(s): ${invalidPerms.join(', ')}` }, { status: 400 })
   }
 
-  // Confirm every requested company actually belongs to this TMC
-  if (companyIds.length > 0) {
-    const { data: validCompanies } = await service
-      .from('companies')
+  // Confirm every requested client actually belongs to this TMC
+  if (clientIds.length > 0) {
+    const { data: validClients } = await service
+      .from('clients')
       .select('id')
       .eq('tmc_id', caller.tmc_id)
-      .in('id', companyIds)
+      .in('id', clientIds)
 
-    if ((validCompanies?.length ?? 0) !== companyIds.length) {
-      return Response.json({ error: 'One or more companies not found for your TMC' }, { status: 400 })
+    if ((validClients?.length ?? 0) !== clientIds.length) {
+      return Response.json({ error: 'One or more clients not found for your TMC' }, { status: 400 })
     }
   }
 
@@ -156,7 +156,7 @@ export async function POST(req: NextRequest) {
       id: authUserId,
       auth_user_id: authUserId,
       tmc_id: caller.tmc_id,
-      company_id: null,
+      client_id: null,
       full_name: full_name.trim(),
       email: normalizedEmail,
       role: 'tc',
@@ -172,9 +172,9 @@ export async function POST(req: NextRequest) {
       if (permError) throw new Error(permError.message)
     }
 
-    if (companyIds.length > 0) {
-      const { error: accessError } = await service.from('employee_company_access').insert(
-        companyIds.map(cid => ({ employee_id: authUserId, company_id: cid, granted_by: user.id }))
+    if (clientIds.length > 0) {
+      const { error: accessError } = await service.from('employee_client_access').insert(
+        clientIds.map(cid => ({ employee_id: authUserId, client_id: cid, granted_by: user.id }))
       )
       if (accessError) throw new Error(accessError.message)
     }

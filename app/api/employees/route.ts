@@ -3,7 +3,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { NextRequest } from 'next/server'
 
 // ── POST /api/employees ───────────────────────────────────────────────────────
-// Adds an employee to the admin's company. Behavior depends on the company's
+// Adds an employee to the admin's client. Behavior depends on the client's
 // booking_mode:
 //
 //   sbt / both — the employee needs to log in and book for themselves, so
@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
 
   const { data: caller, error: callerError } = await service
     .from('employees')
-    .select('company_id, role')
+    .select('client_id, role')
     .eq('id', user.id)
     .single()
 
@@ -62,16 +62,16 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Only admins can create employees directly' }, { status: 403 })
   }
 
-  const companyId = caller.company_id
+  const clientId = caller.client_id
 
-  const { data: company, error: companyError } = await service
-    .from('companies')
+  const { data: client, error: clientError } = await service
+    .from('clients')
     .select('booking_mode')
-    .eq('id', companyId)
+    .eq('id', clientId)
     .single()
 
-  if (companyError || !company) {
-    return Response.json({ error: 'Company not found' }, { status: 404 })
+  if (clientError || !client) {
+    return Response.json({ error: 'Client not found' }, { status: 404 })
   }
 
   const body: CreateEmployeeBody = await req.json()
@@ -105,18 +105,18 @@ export async function POST(req: NextRequest) {
   const { data: bandRow, error: bandError } = await service
     .from('bands')
     .select('id, code, rank')
-    .eq('company_id', companyId)
+    .eq('client_id', clientId)
     .eq('code', band.toUpperCase())
     .single()
 
   if (bandError || !bandRow) {
-    return Response.json({ error: `Band ${band} not found for this company` }, { status: 422 })
+    return Response.json({ error: `Band ${band} not found for this client` }, { status: 422 })
   }
 
   const { data: existing } = await service
     .from('employees')
     .select('id, status')
-    .eq('company_id', companyId)
+    .eq('client_id', clientId)
     .eq('email', normalizedEmail)
     .maybeSingle()
 
@@ -127,7 +127,7 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  // Every employee gets a real account now, whatever the company's
+  // Every employee gets a real account now, whatever the client's
   // booking_mode. CBT previously created a profile with auth_user_id null,
   // which meant those people could never sign in at all — not even to see
   // their own trips, approvals or travel profile. A counsellor booking on
@@ -135,7 +135,7 @@ export async function POST(req: NextRequest) {
   // login.
   const userMetadata = {
     full_name,
-    company_id: companyId,
+    client_id: clientId,
     role: normalizedRole,
     band_code: bandRow.code,
   }
@@ -181,7 +181,7 @@ export async function POST(req: NextRequest) {
     const { error: employeeError } = await service.from('employees').insert({
       id: authUserId,
       auth_user_id: authUserId,
-      company_id: companyId,
+      client_id: clientId,
       band_id: bandRow.id,
       band_code: bandRow.code,
       band_rank: bandRow.rank,

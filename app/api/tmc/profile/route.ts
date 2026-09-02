@@ -53,48 +53,48 @@ export async function GET() {
   // means the opposite, so the flag carries that distinction to the UI.
   const permissions = isAdmin ? [] : (permissionRows ?? []).map(p => p.permission_key)
 
-  // Which clients this person can reach: every company at the TMC for an admin,
+  // Which clients this person can reach: every client at the TMC for an admin,
   // only explicitly granted ones for a counsellor.
   const { data: accessRows } = isAdmin
     ? { data: null }
     : await service
-        .from('employee_company_access')
-        .select('company_id')
+        .from('employee_client_access')
+        .select('client_id')
         .eq('employee_id', employee.id)
 
-  let companyQuery = service
-    .from('companies')
+  let clientQuery = service
+    .from('clients')
     .select('id, name')
     .eq('tmc_id', employee.tmc_id)
     .order('name')
 
   if (!isAdmin) {
-    const ids = (accessRows ?? []).map(a => a.company_id)
+    const ids = (accessRows ?? []).map(a => a.client_id)
     if (ids.length === 0) {
       return Response.json({
         ok: true,
         account: accountOf(employee, tmc?.name ?? null),
-        access: { fullAccess: false, permissions, companies: [] },
+        access: { fullAccess: false, permissions, clients: [] },
         activity: { clients: 0, travellers: 0, bookings: 0, lastSignInAt: lastSignIn(user) },
       })
     }
-    companyQuery = companyQuery.in('id', ids)
+    clientQuery = clientQuery.in('id', ids)
   }
 
-  const { data: companies } = await companyQuery
-  const companyIds = (companies ?? []).map(c => c.id)
+  const { data: clients } = await clientQuery
+  const clientIds = (clients ?? []).map(c => c.id)
 
   // Portfolio activity, not personal activity. There is deliberately no
   // "bookings you made" figure: add-passenger writes requested_for identical to
   // employee_id (book-on-behalf does not exist yet), so no booking records which
   // counsellor created it. A personal count would be fabricated.
   const [{ count: travellers }, { count: bookings }] = await Promise.all([
-    companyIds.length
+    clientIds.length
       ? service.from('employees').select('id', { count: 'exact', head: true })
-          .in('company_id', companyIds).neq('status', 'deactivated')
+          .in('client_id', clientIds).neq('status', 'deactivated')
       : Promise.resolve({ count: 0 }),
-    companyIds.length
-      ? service.from('bookings').select('id', { count: 'exact', head: true }).in('company_id', companyIds)
+    clientIds.length
+      ? service.from('bookings').select('id', { count: 'exact', head: true }).in('client_id', clientIds)
       : Promise.resolve({ count: 0 }),
   ])
 
@@ -104,10 +104,10 @@ export async function GET() {
     access: {
       fullAccess: isAdmin,
       permissions,
-      companies: companies ?? [],
+      clients: clients ?? [],
     },
     activity: {
-      clients: companyIds.length,
+      clients: clientIds.length,
       travellers: travellers ?? 0,
       bookings: bookings ?? 0,
       lastSignInAt: lastSignIn(user),
@@ -157,7 +157,7 @@ export async function PATCH(req: NextRequest) {
 
   const body: { fullName?: string } = await req.json()
 
-  // Display name only. Role, status, permissions and company access are all
+  // Display name only. Role, status, permissions and client access are all
   // granted by someone else — letting a user PATCH their own role here would
   // make the whole permission system self-serve.
   if (!body.fullName?.trim()) {

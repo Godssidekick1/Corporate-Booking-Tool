@@ -2,7 +2,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 
 // ── GET /api/settings/users ──────────────────────────────────────────────────
-// List all employees in the admin's company, for the settings/users table.
+// List all employees in the admin's client, for the settings/users table.
 
 export async function GET() {
   const supabase = await createClient()
@@ -16,7 +16,7 @@ export async function GET() {
 
   const { data: caller, error: callerError } = await service
     .from('employees')
-    .select('company_id, role')
+    .select('client_id, role')
     .eq('id', user.id)
     .single()
 
@@ -31,7 +31,7 @@ export async function GET() {
   const { data: employees, error } = await service
     .from('employees')
     .select('id, full_name, email, role, status, band_code, department, cost_centre, onboarding_method, manager_id, top_of_hierarchy')
-    .eq('company_id', caller.company_id)
+    .eq('client_id', caller.client_id)
     .order('full_name')
 
   if (error) {

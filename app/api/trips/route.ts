@@ -10,7 +10,7 @@ import { NextRequest } from 'next/server'
 // multi-service trips, since the shape is identical either way).
 //
 // Scoped to "my trips" only (created_by = current employee) — not every
-// trip in the company. A manager wanting visibility into a report's trips
+// trip in the client. A manager wanting visibility into a report's trips
 // is a different, later feature (would need its own permission check, not
 // just relaxing this filter).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -30,7 +30,7 @@ export async function GET() {
   const service = createServiceClient()
   const { data: employee } = await service
     .from('employees')
-    .select('id, company_id')
+    .select('id, client_id')
     .eq('id', user.id)
     .maybeSingle()
 
@@ -41,7 +41,7 @@ export async function GET() {
   const { data: trips, error } = await service
     .from('trips')
     .select('id, name, status, travel_date, created_at, updated_at')
-    .eq('company_id', employee.company_id)
+    .eq('client_id', employee.client_id)
     .eq('created_by', employee.id)
     .neq('status', 'deleted')
     .order('updated_at', { ascending: false })
@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
   const service = createServiceClient()
   const { data: employee } = await service
     .from('employees')
-    .select('id, company_id')
+    .select('id, client_id')
     .eq('id', user.id)
     .maybeSingle()
 
@@ -83,7 +83,7 @@ export async function POST(req: NextRequest) {
   const { data: trip, error } = await service
     .from('trips')
     .insert({
-      company_id: employee.company_id,
+      client_id: employee.client_id,
       created_by: employee.id,
       name,
       status: 'open',

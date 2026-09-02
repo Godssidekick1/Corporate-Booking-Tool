@@ -48,7 +48,7 @@ export async function getBandRanksByGroup(
 }
 
 // ── getLinkedPolicyGroups ────────────────────────────────────────────────────
-// Every policy group linked to a company, with the ranks it covers.
+// Every policy group linked to a client, with the ranks it covers.
 //
 // Fetched as separate queries (link rows, then group rows, then ranks) rather
 // than a Supabase FK-embed — same reasoning used everywhere else in this
@@ -56,18 +56,18 @@ export async function getBandRanksByGroup(
 // consistent rather than introducing untested syntax in a path this central.
 //
 // Shared by resolveEffectivePolicy (one employee's rank) and the corporate
-// read-only policy view (every band the company has), so the two can never
-// disagree about which groups apply to a company.
+// read-only policy view (every band the client has), so the two can never
+// disagree about which groups apply to a client.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function getLinkedPolicyGroups(
   service: ServiceClient,
-  companyId: string
+  clientId: string
 ): Promise<LinkedPolicyGroup[]> {
   const { data: links } = await service
-    .from('company_policy_groups')
+    .from('client_policy_groups')
     .select('policy_group_id')
-    .eq('company_id', companyId)
+    .eq('client_id', clientId)
 
   const groupIds = (links ?? []).map(l => l.policy_group_id)
 
@@ -98,7 +98,7 @@ export async function getLinkedPolicyGroups(
 //
 // Returns every match rather than the first: exactly one group should ever
 // cover a given rank (enforced by constraint triggers on both
-// company_policy_groups and policy_group_band_ranks), and callers treat more
+// client_policy_groups and policy_group_band_ranks), and callers treat more
 // than one as a configuration error worth surfacing rather than arbitrarily
 // picking a winner.
 // ─────────────────────────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@
 import { usePathname } from 'next/navigation'
 
 const SECTIONS = [
-  { label: 'Company',      href: '/settings/company' },
+  { label: 'Company',     href: '/settings/company' },
   { label: 'Users',        href: '/settings/users' },
   { label: 'Policy',       href: '/settings/policy' },
   { label: 'Hierarchy',    href: '/settings/hierarchy' },

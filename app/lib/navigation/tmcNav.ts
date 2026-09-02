@@ -29,7 +29,7 @@ export interface NavGroup {
 // Primary rail. Operational surfaces — the things a desk is in all day.
 export const PRIMARY_NAV: NavItem[] = [
   { label: 'Dashboard',      href: '/tmc/dashboard',      icon: 'dashboard' },
-  { label: 'Clients',        href: '/tmc/companies',      icon: 'groups' },
+  { label: 'Clients',        href: '/tmc/clients',      icon: 'groups' },
   { label: 'Reports',        href: '/tmc/reports',        icon: 'assessment', permission: 'view_reports' },
   { label: 'Configurations', href: '/tmc/configurations', icon: 'settings' },
 ]
@@ -78,7 +78,7 @@ export const CONFIG_GROUPS: NavGroup[] = [
 
 // ── isActive ─────────────────────────────────────────────────────────────────
 // Exact match, or a child segment. `startsWith` alone would light up
-// /tmc/companies for /tmc/companies-archive, so the boundary is explicit.
+// /tmc/clients for /tmc/clients-archive, so the boundary is explicit.
 //
 // This replaces the old `activeLabel` prop — a typed union that had to be
 // widened by hand every time a section was added, and passed correctly by every

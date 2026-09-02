@@ -12,7 +12,7 @@ interface Employee {
   tmc_id: string
 }
 
-interface Company {
+interface Client {
   id: string
   name: string
   status: string
@@ -71,7 +71,7 @@ const initialBands: BandDraft[] = [
 export default function TmcDashboardPage() {
   const [employee, setEmployee] = useState<Employee | null>(null)
   const [permissions, setPermissions] = useState<string[]>([])
-  const [companies, setCompanies] = useState<Company[]>([])
+  const [clients, setClients] = useState<Client[]>([])
   const [client_groups, setclient_groups] = useState<client_group[]>([])
   const [loading, setLoading] = useState(true)
   const [showInviteForm, setShowInviteForm] = useState(false)
@@ -92,23 +92,23 @@ export default function TmcDashboardPage() {
   useEffect(() => {
     Promise.all([
       fetch('/api/me').then(r => r.json()),
-      fetch('/api/tmc/companies').then(r => r.json()),
+      fetch('/api/tmc/clients').then(r => r.json()),
       fetch('/api/tmc/client-groups').then(r => r.json()),
       // Existing policy groups, so a new client can reuse one at creation
       // instead of being left unprotected until someone links one later.
       fetch('/api/tmc/policy-groups').then(r => r.json()),
-    ]).then(([meData, companiesData, client_groupsData, policyGroupsData]) => {
+    ]).then(([meData, clientsData, client_groupsData, policyGroupsData]) => {
       if (meData.ok) {
         setEmployee(meData.employee)
         setPermissions(meData.permissions ?? [])
       }
-      if (companiesData.ok) setCompanies(companiesData.companies)
+      if (clientsData.ok) setClients(clientsData.clients)
       if (client_groupsData.ok) setclient_groups(client_groupsData.clientGroups)
       if (policyGroupsData.ok) setPolicyGroups(policyGroupsData.groups)
     }).finally(() => setLoading(false))
   }, [])
 
-  const canCreateCompany = canAccess(employee?.role, permissions, 'manage_users')
+  const canCreateClient = canAccess(employee?.role, permissions, 'manage_users')
 
   const firstName = employee?.full_name?.split(' ')[0] ?? '…'
 
@@ -234,7 +234,7 @@ export default function TmcDashboardPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          company: {
+          client: {
             ...form,
             client_groupId: form.client_groupId || null,
             policyGroupId: form.policyGroupId || null,
@@ -263,8 +263,8 @@ export default function TmcDashboardPage() {
       resetForm()
       setShowInviteForm(false)
 
-      const companiesData = await fetch('/api/tmc/companies').then(r => r.json())
-      if (companiesData.ok) setCompanies(companiesData.companies)
+      const clientsData = await fetch('/api/tmc/clients').then(r => r.json())
+      if (clientsData.ok) setClients(clientsData.clients)
     } finally {
       setSubmitting(false)
     }
@@ -279,7 +279,7 @@ export default function TmcDashboardPage() {
             <h1 style={s.heading}>Welcome, {firstName}</h1>
             <p style={s.sub}>Manage your corporate clients from here.</p>
           </div>
-          {canCreateCompany && (
+          {canCreateClient && (
             <button onClick={() => { setShowInviteForm(true); setFormError(''); setFormSuccess('') }} style={s.primaryBtn}>
               + Add client
             </button>
@@ -288,14 +288,14 @@ export default function TmcDashboardPage() {
 
         {formSuccess && <div style={s.successBanner}>✓ {formSuccess}</div>}
 
-        {showInviteForm && canCreateCompany && (
+        {showInviteForm && canCreateClient && (
           <form onSubmit={handleSubmit} style={s.formCard}>
             <div style={s.formHeader}>
               <h2 style={s.formTitle}>Add a client</h2>
               <button type="button" onClick={() => { setShowInviteForm(false); resetForm() }} style={s.closeBtn}>✕</button>
             </div>
             <p style={s.formSub}>
-              We'll create the company, seed default bands, and send the admin an invite.
+              We'll create the client, seed default bands, and send the admin an invite.
               Optionally upload a CSV to add their employee roster at the same time.
             </p>
 
@@ -319,13 +319,13 @@ export default function TmcDashboardPage() {
               </div>
             </div>
 
-            {/* ── Company basics ── */}
-            <SectionLabel>Company</SectionLabel>
+            {/* ── Client basics ── */}
+            <SectionLabel>Client</SectionLabel>
             <div style={s.fields}>
-              <Field label="Company name" name="corporateName" value={form.corporateName} onChange={handleFormChange} required placeholder="Acme Corp" />
+              <Field label="Client name" name="corporateName" value={form.corporateName} onChange={handleFormChange} required placeholder="Acme Corp" />
               <Field label="Industry" name="industry" value={form.industry} onChange={handleFormChange} placeholder="e.g. Manufacturing" />
               <div style={s.field}>
-                <label style={s.label}>Company size</label>
+                <label style={s.label}>Client size</label>
                 <select name="size" value={form.size} onChange={handleFormChange} style={s.input}>
                   <option value="">Select…</option>
                   {SIZES.map(sz => <option key={sz} value={sz}>{sz} employees</option>)}
@@ -447,13 +447,13 @@ export default function TmcDashboardPage() {
                 Cancel
               </button>
               <button type="submit" disabled={submitting} style={{ ...s.primaryBtn, opacity: submitting ? 0.7 : 1 }}>
-                {submitting ? 'Creating…' : 'Create company →'}
+                {submitting ? 'Creating…' : 'Create client →'}
               </button>
             </div>
           </form>
         )}
 
-        {/* The client list itself lives in the nav and on /tmc/companies. What
+        {/* The client list itself lives in the nav and on /tmc/clients. What
             belongs here is how the portfolio is performing, which a list of
             names never answered. */}
         <DashboardStats />
@@ -468,7 +468,7 @@ export default function TmcDashboardPage() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface ClientStat {
-  companyId: string
+  clientId: string
   name: string
   employees: number
   bookings: number
@@ -597,8 +597,8 @@ function DashboardStats() {
               <tbody>
                 {clients.map(c => (
                   <tr
-                    key={c.companyId}
-                    onClick={() => { window.location.href = `/tmc/companies/${c.companyId}` }}
+                    key={c.clientId}
+                    onClick={() => { window.location.href = `/tmc/clients/${c.clientId}` }}
                     style={st.tr}
                   >
                     <td style={{ ...st.td, fontWeight: 500, color: '#111827' }}>{c.name}</td>
@@ -751,7 +751,7 @@ const s: Record<string, React.CSSProperties> = {
   table: { width: '100%', borderCollapse: 'collapse' as const },
   th: { padding: '10px 20px', textAlign: 'left' as const, fontSize: '11px', fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.5px', backgroundColor: '#F9FAFB', borderBottom: '1px solid #F3F4F6' },
   td: { padding: '14px 20px', fontSize: '13px', color: '#374151', borderBottom: '1px solid #F9FAFB' },
-  companyName: { fontWeight: 500, color: '#111827' },
+  clientName: { fontWeight: 500, color: '#111827' },
   badge: { display: 'inline-block', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 500 },
   emptyState: { padding: '48px 20px', textAlign: 'center' as const },
   emptyTitle: { fontSize: '14px', fontWeight: 600, color: '#374151', margin: '0 0 6px' },

@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
     const { error: employeeError } = await service.from('employees').insert({
       id: authUserId,
       tmc_id: tmcId,
-      company_id: null,
+      client_id: null,
       full_name: adminName,
       email: adminEmail,
       role: 'tmc_admin',

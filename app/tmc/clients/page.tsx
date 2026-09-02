@@ -8,7 +8,7 @@ interface client_group {
   city: string | null
 }
 
-interface Company {
+interface Client {
   id: string
   name: string
   status: string
@@ -19,23 +19,23 @@ interface Company {
   client_groups: client_group | null
 }
 
-const BOOKING_MODE_LABEL: Record<Company['booking_mode'], string> = {
+const BOOKING_MODE_LABEL: Record<Client['booking_mode'], string> = {
   sbt: 'SBT', cbt: 'CBT', both: 'Hybrid',
 }
 
 const UNASSIGNED_KEY = '__unassigned__'
 
-export default function TmcCompaniesPage() {
-  const [companies, setCompanies] = useState<Company[]>([])
+export default function TmcClientsPage() {
+  const [clients, setClients] = useState<Client[]>([])
   const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState('')
   const [showSuggestions, setShowSuggestions] = useState(false)
   const searchRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    fetch('/api/tmc/companies')
+    fetch('/api/tmc/clients')
       .then(r => r.json())
-      .then(data => { if (data.ok) setCompanies(data.companies) })
+      .then(data => { if (data.ok) setClients(data.clients) })
       .finally(() => setLoading(false))
   }, [])
 
@@ -49,41 +49,41 @@ export default function TmcCompaniesPage() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  // ── Suggestions: matching companies and client_groupes, combined ────────────────
+  // ── Suggestions: matching clients and client_groupes, combined ────────────────
   const suggestions = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return { companies: [], client_groups: [] }
+    if (!q) return { clients: [], client_groups: [] }
 
-    const matchedCompanies = companies.filter(c => c.name.toLowerCase().includes(q)).slice(0, 6)
+    const matchedClients = clients.filter(c => c.name.toLowerCase().includes(q)).slice(0, 6)
 
     const client_groupMap = new Map<string, client_group>()
-    for (const c of companies) {
+    for (const c of clients) {
       if (c.client_groups && c.client_groups.name.toLowerCase().includes(q)) {
         client_groupMap.set(c.client_groups.id, c.client_groups)
       }
     }
     const matchedclient_groups = Array.from(client_groupMap.values()).slice(0, 6)
 
-    return { companies: matchedCompanies, client_groups: matchedclient_groups }
-  }, [query, companies])
+    return { clients: matchedClients, client_groups: matchedclient_groups }
+  }, [query, clients])
 
   // ── Filtered + grouped-by-client_group, alphabetical ─────────────────────────────
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase()
     const filtered = q
-      ? companies.filter(c =>
+      ? clients.filter(c =>
           c.name.toLowerCase().includes(q) ||
           (c.client_groups?.name.toLowerCase().includes(q) ?? false)
         )
-      : companies
+      : clients
 
-    const byclient_group = new Map<string, { client_group: client_group | null; companies: Company[] }>()
+    const byclient_group = new Map<string, { client_group: client_group | null; clients: Client[] }>()
     for (const c of filtered) {
       const key = c.client_groups?.id ?? UNASSIGNED_KEY
       if (!byclient_group.has(key)) {
-        byclient_group.set(key, { client_group: c.client_groups, companies: [] })
+        byclient_group.set(key, { client_group: c.client_groups, clients: [] })
       }
-      byclient_group.get(key)!.companies.push(c)
+      byclient_group.get(key)!.clients.push(c)
     }
 
     const groupList = Array.from(byclient_group.values())
@@ -93,26 +93,26 @@ export default function TmcCompaniesPage() {
       return a.client_group.name.localeCompare(b.client_group.name)
     })
     for (const g of groupList) {
-      g.companies.sort((a, b) => a.name.localeCompare(b.name))
+      g.clients.sort((a, b) => a.name.localeCompare(b.name))
     }
 
     return groupList
-  }, [companies, query])
+  }, [clients, query])
 
   function selectSuggestion(text: string) {
     setQuery(text)
     setShowSuggestions(false)
   }
 
-  const hasSuggestions = suggestions.companies.length > 0 || suggestions.client_groups.length > 0
+  const hasSuggestions = suggestions.clients.length > 0 || suggestions.client_groups.length > 0
 
   return (
     <>
     <div style={s.root}>
       <div style={s.header}>
         <div>
-          <h1 style={s.heading}>Companies</h1>
-          <p style={s.sub}>{companies.length} client{companies.length === 1 ? '' : 's'}, grouped by client group.</p>
+          <h1 style={s.heading}>Clients</h1>
+          <p style={s.sub}>{clients.length} client{clients.length === 1 ? '' : 's'}, grouped by client group.</p>
         </div>
       </div>
 
@@ -122,18 +122,18 @@ export default function TmcCompaniesPage() {
           value={query}
           onChange={e => { setQuery(e.target.value); setShowSuggestions(true) }}
           onFocus={() => setShowSuggestions(true)}
-          placeholder="Search companies or client groups…"
+          placeholder="Search clients or client groups…"
           style={s.searchInput}
         />
         {showSuggestions && query.trim() && hasSuggestions && (
           <div style={s.suggestionBox}>
-            {suggestions.companies.length > 0 && (
+            {suggestions.clients.length > 0 && (
               <div style={s.suggestionGroup}>
-                <p style={s.suggestionLabel}>Companies</p>
-                {suggestions.companies.map(c => (
+                <p style={s.suggestionLabel}>Clients</p>
+                {suggestions.clients.map(c => (
                   <div
                     key={c.id}
-                    onClick={() => { window.location.href = `/tmc/companies/${c.id}` }}
+                    onClick={() => { window.location.href = `/tmc/clients/${c.id}` }}
                     style={s.suggestionItem}
                   >
                     <span style={s.suggestionName}>{c.name}</span>
@@ -161,7 +161,7 @@ export default function TmcCompaniesPage() {
         )}
         {showSuggestions && query.trim() && !hasSuggestions && (
           <div style={s.suggestionBox}>
-            <p style={s.noResults}>No matches for "{query}"</p>
+            <p style={s.noResults}>No matches for &ldquo;{query}&rdquo;</p>
           </div>
         )}
       </div>
@@ -170,7 +170,7 @@ export default function TmcCompaniesPage() {
         <div style={s.emptyState}><p style={s.emptyTitle}>Loading…</p></div>
       ) : groups.length === 0 ? (
         <div style={s.emptyState}>
-          <p style={s.emptyTitle}>No companies found</p>
+          <p style={s.emptyTitle}>No clients found</p>
           <p style={s.emptyDesc}>Try a different search term, or add a client from the dashboard.</p>
         </div>
       ) : (
@@ -182,13 +182,13 @@ export default function TmcCompaniesPage() {
                   {g.client_group ? g.client_group.name : 'Unassigned'}
                   {g.client_group?.city && <span style={s.groupCity}> — {g.client_group.city}</span>}
                 </h2>
-                <span style={s.groupCount}>{g.companies.length}</span>
+                <span style={s.groupCount}>{g.clients.length}</span>
               </div>
               <div style={s.cardGrid}>
-                {g.companies.map(c => (
+                {g.clients.map(c => (
                   <div
                     key={c.id}
-                    onClick={() => { window.location.href = `/tmc/companies/${c.id}` }}
+                    onClick={() => { window.location.href = `/tmc/clients/${c.id}` }}
                     style={s.card}
                   >
                     <div style={s.cardTop}>

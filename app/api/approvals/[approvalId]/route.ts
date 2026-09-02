@@ -38,7 +38,7 @@ export async function PATCH(
   const service = createServiceClient()
   const { data: caller } = await service
     .from('employees')
-    .select('id, company_id')
+    .select('id, client_id')
     .eq('id', user.id)
     .maybeSingle()
 
@@ -48,7 +48,7 @@ export async function PATCH(
 
   const { data: approval } = await service
     .from('approvals')
-    .select('id, booking_id, company_id, approver_id, tier, status, chain_template_id, verdict, reason')
+    .select('id, booking_id, client_id, approver_id, tier, status, chain_template_id, verdict, reason')
     .eq('id', approvalId)
     .maybeSingle()
 
@@ -73,7 +73,7 @@ export async function PATCH(
 
   const { data: booking } = await service
     .from('bookings')
-    .select('id, employee_id, company_id, status')
+    .select('id, employee_id, client_id, status')
     .eq('id', approval.booking_id)
     .maybeSingle()
 
@@ -146,7 +146,7 @@ export async function PATCH(
   try {
     const outcome = await advanceApprovalChain(service, {
       bookingId: booking.id,
-      companyId: approval.company_id,
+      clientId: approval.client_id,
       employeeId: booking.employee_id,
       chainTemplateId: approval.chain_template_id,
       completedTier: approval.tier,

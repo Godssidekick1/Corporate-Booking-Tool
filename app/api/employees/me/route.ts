@@ -8,7 +8,7 @@ import type { TravelerProfile } from '@/app/lib/book/types'
 // traveler_profile only. Not a general employee-management route (that's
 // /api/employees, TMC/admin-facing); this is scoped to employees.id === the
 // caller's auth user id (same convention as every other /api/book/* route),
-// no company_id/role checks needed since it can never touch another row.
+// no client_id/role checks needed since it can never touch another row.
 //
 // GET returns the current profile (null if never filled in) plus
 // first_login_completed, so /profile can decide whether to show a

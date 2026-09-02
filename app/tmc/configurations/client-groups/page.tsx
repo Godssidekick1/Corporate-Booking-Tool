@@ -74,7 +74,7 @@ export default function TmcClientGroupsPage() {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('Delete this client group? Companies assigned to it will become unassigned, not deleted.')) return
+    if (!confirm('Delete this client group? Clients assigned to it will become unassigned, not deleted.')) return
     setError(''); setSuccess('')
     const res = await fetch(`/api/tmc/client-groups/${id}`, { method: 'DELETE' })
     const data = await res.json()
@@ -88,7 +88,7 @@ export default function TmcClientGroupsPage() {
       <div style={s.header}>
         <div>
           <h1 style={s.heading}>Client Groups</h1>
-          <p style={s.sub}>Group your client companies by region, office, or however makes sense for your team.</p>
+          <p style={s.sub}>Group your client clients by region, office, or however makes sense for your team.</p>
         </div>
         <button onClick={openCreate} style={s.primaryBtn}>+ Add client group</button>
       </div>
@@ -139,7 +139,7 @@ export default function TmcClientGroupsPage() {
         ) : clientGroups.length === 0 ? (
           <div style={s.emptyState}>
             <p style={s.emptyTitle}>No client groups yet</p>
-            <p style={s.emptyDesc}>Create your first client group to start grouping client companies.</p>
+            <p style={s.emptyDesc}>Create your first client group to start grouping client clients.</p>
           </div>
         ) : (
           <table style={s.table}>

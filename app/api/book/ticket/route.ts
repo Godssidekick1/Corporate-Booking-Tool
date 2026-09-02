@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
   const service = createServiceClient()
   const { data: employee } = await service
     .from('employees')
-    .select('id, company_id')
+    .select('id, client_id')
     .eq('id', user.id)
     .maybeSingle()
 

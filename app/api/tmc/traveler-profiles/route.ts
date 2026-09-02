@@ -3,7 +3,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
 
-// ── GET /api/tmc/traveler-profiles?companyId=<uuid> ──────────────────────────
+// ── GET /api/tmc/traveler-profiles?clientId=<uuid> ──────────────────────────
 // Every employee at a client with the details the list needs up front — name,
 // email, band, cost centre, department, designation — plus their trip count, so
 // the roster is useful without opening anyone.
@@ -12,26 +12,26 @@ import { NextRequest } from 'next/server'
 // per-row on tap would make the detail panel feel slower than it needs to.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function authoriseCompany(
+export async function authoriseClient(
   service: ReturnType<typeof createServiceClient>,
   userId: string,
-  companyId: string
+  clientId: string
 ): Promise<{ ok: true; tmcId: string } | { ok: false; error: string; status: number }> {
-  const auth = await requireTmcPermission(service, userId, 'manage_users', companyId)
+  const auth = await requireTmcPermission(service, userId, 'manage_users', clientId)
   if (!auth.authorized || !auth.tmcId) {
     return { ok: false, error: auth.error ?? 'Forbidden', status: auth.status ?? 403 }
   }
 
-  // A tmc_admin passes the permission check for any companyId, so the tenancy
+  // A tmc_admin passes the permission check for any clientId, so the tenancy
   // boundary is checked explicitly.
-  const { data: company } = await service
-    .from('companies')
+  const { data: client } = await service
+    .from('clients')
     .select('id, tmc_id')
-    .eq('id', companyId)
+    .eq('id', clientId)
     .maybeSingle()
 
-  if (!company || company.tmc_id !== auth.tmcId) {
-    return { ok: false, error: 'Company not found for this TMC', status: 404 }
+  if (!client || client.tmc_id !== auth.tmcId) {
+    return { ok: false, error: 'Client not found for this TMC', status: 404 }
   }
 
   return { ok: true, tmcId: auth.tmcId }
@@ -45,13 +45,13 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const companyId = req.nextUrl.searchParams.get('companyId')
-  if (!companyId) {
-    return Response.json({ error: 'companyId is required' }, { status: 400 })
+  const clientId = req.nextUrl.searchParams.get('clientId')
+  if (!clientId) {
+    return Response.json({ error: 'clientId is required' }, { status: 400 })
   }
 
   const service = createServiceClient()
-  const access = await authoriseCompany(service, user.id, companyId)
+  const access = await authoriseClient(service, user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
@@ -61,11 +61,11 @@ export async function GET(req: NextRequest) {
       service
         .from('employees')
         .select('id, full_name, email, role, status, band_code, band_rank, department, cost_centre, designation, manager_id, top_of_hierarchy, traveler_profile, first_login_completed')
-        .eq('company_id', companyId)
+        .eq('client_id', clientId)
         .order('full_name'),
-      service.from('bands').select('id, code, label, rank').eq('company_id', companyId).order('rank'),
-      service.from('cost_centres').select('id, code, name').eq('company_id', companyId).order('code'),
-      service.from('bookings').select('employee_id').eq('company_id', companyId),
+      service.from('bands').select('id, code, label, rank').eq('client_id', clientId).order('rank'),
+      service.from('cost_centres').select('id, code, name').eq('client_id', clientId).order('code'),
+      service.from('bookings').select('employee_id').eq('client_id', clientId),
     ])
 
   if (error) {

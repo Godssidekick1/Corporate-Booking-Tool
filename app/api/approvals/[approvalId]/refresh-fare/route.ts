@@ -40,7 +40,7 @@ export async function POST(
   const service = createServiceClient()
   const { data: caller } = await service
     .from('employees')
-    .select('id, company_id')
+    .select('id, client_id')
     .eq('id', user.id)
     .maybeSingle()
 

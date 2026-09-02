@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 
 // ── DirectChain ──────────────────────────────────────────────────────────────
-// The whole direct-mapping flow: company, who it covers, the approvers in
+// The whole direct-mapping flow: client, who it covers, the approvers in
 // order, a mode toggle, save.
 //
 // Everything is local state until Save. The earlier version wrote each step as
@@ -12,7 +12,7 @@ import { useEffect, useState } from 'react'
 // actually exist in the database.
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface Company { id: string; name: string }
+interface Client { id: string; name: string }
 interface Employee { id: string; full_name: string; band_code: string | null }
 
 type ApproverType =
@@ -35,7 +35,7 @@ const APPROVER_TYPES: { value: ApproverType; label: string }[] = [
   { value: 'manager',        label: "The traveller's own manager" },
   { value: 'any_manager_at', label: 'Any manager at rank…' },
   { value: 'finance_role',   label: 'Finance' },
-  { value: 'admin',          label: 'Company admin' },
+  { value: 'admin',          label: 'Client admin' },
   { value: 'self',           label: 'No review needed (auto-approve)' },
 ]
 
@@ -49,8 +49,8 @@ function blankApprover(): Approver {
   return { approver_type: '', approver_user_id: null, min_band_rank: null, min_verdict: 'amber' }
 }
 
-export default function DirectChain({ companies }: { companies: Company[] }) {
-  const [companyId, setCompanyId] = useState('')
+export default function DirectChain({ clients }: { clients: Client[] }) {
+  const [clientId, setClientId] = useState('')
   const [category, setCategory] = useState('flights_hotels')
   const [employeeId, setEmployeeId] = useState('') // '' means everyone
 
@@ -69,7 +69,7 @@ export default function DirectChain({ companies }: { companies: Company[] }) {
   async function loadChain() {
     setLoading(true); setError(''); setSuccess('')
     try {
-      const qs = new URLSearchParams({ companyId, category })
+      const qs = new URLSearchParams({ clientId, category })
       if (employeeId) qs.set('employeeId', employeeId)
       const d = await fetch(`/api/tmc/approval-chains/direct?${qs}`).then(r => r.json())
       if (!d.ok) { setError(d.error || 'Could not load the chain.'); return }
@@ -89,25 +89,25 @@ export default function DirectChain({ companies }: { companies: Company[] }) {
     } finally { setLoading(false) }
   }
 
-  // Roster is per company, so it only reloads when the company changes — not
-  // when the target employee does. Clearing on an empty company happens in the
+  // Roster is per client, so it only reloads when the client changes — not
+  // when the target employee does. Clearing on an empty client happens in the
   // picker's handler instead: setting state straight from an effect body is
   // what makes these cascade.
   useEffect(() => {
-    if (!companyId) return
+    if (!clientId) return
     let cancelled = false
 
-    fetch(`/api/tmc/employees?companyId=${companyId}`).then(r => r.json())
+    fetch(`/api/tmc/employees?clientId=${clientId}`).then(r => r.json())
       .then(d => { if (!cancelled && d.ok) setEmployees(d.employees) })
 
     return () => { cancelled = true }
-  }, [companyId])
+  }, [clientId])
 
   useEffect(() => {
-    if (!companyId) return
+    if (!clientId) return
     loadChain()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyId, category, employeeId])
+  }, [clientId, category, employeeId])
 
   function update(i: number, patch: Partial<Approver>) {
     setApprovers(prev => prev.map((a, idx) => (idx === i ? { ...a, ...patch } : a)))
@@ -130,7 +130,7 @@ export default function DirectChain({ companies }: { companies: Company[] }) {
       const d = await fetch('/api/tmc/approval-chains/direct', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          companyId,
+          clientId,
           employeeId: employeeId || null,
           category,
           mode,
@@ -153,7 +153,7 @@ export default function DirectChain({ companies }: { companies: Company[] }) {
     if (!confirm('Remove this approval chain? Bookings it covered will go through with no approval.')) return
     setSaving(true); setError('')
     try {
-      const qs = new URLSearchParams({ companyId, category })
+      const qs = new URLSearchParams({ clientId, category })
       if (employeeId) qs.set('employeeId', employeeId)
       const d = await fetch(`/api/tmc/approval-assignments?${qs}`, { method: 'DELETE' }).then(r => r.json())
       if (!d.ok) { setError(d.error || 'Could not remove the chain.'); return }
@@ -162,7 +162,7 @@ export default function DirectChain({ companies }: { companies: Company[] }) {
     } finally { setSaving(false) }
   }
 
-  const canSave = companyId && approvers.length > 0 && approvers.every(a =>
+  const canSave = clientId && approvers.length > 0 && approvers.every(a =>
     a.approver_type &&
     (a.approver_type !== 'specific_user' || a.approver_user_id) &&
     (a.approver_type !== 'any_manager_at' || a.min_band_rank !== null)
@@ -175,10 +175,10 @@ export default function DirectChain({ companies }: { companies: Company[] }) {
         <div style={s.field}>
           <label style={s.label}>Client</label>
           <select
-            value={companyId}
+            value={clientId}
             onChange={e => {
               const next = e.target.value
-              setCompanyId(next)
+              setClientId(next)
               // Switching clients invalidates both the roster and whoever was
               // picked from it.
               setEmployeeId('')
@@ -187,7 +187,7 @@ export default function DirectChain({ companies }: { companies: Company[] }) {
             style={{ ...s.input, width: 230 }}
           >
             <option value="">Select a client…</option>
-            {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </div>
 
@@ -196,7 +196,7 @@ export default function DirectChain({ companies }: { companies: Company[] }) {
           <select
             value={employeeId}
             onChange={e => setEmployeeId(e.target.value)}
-            disabled={!companyId}
+            disabled={!clientId}
             style={{ ...s.input, width: 230 }}
           >
             <option value="">Everyone at this client</option>
@@ -219,7 +219,7 @@ export default function DirectChain({ companies }: { companies: Company[] }) {
       {error && <div style={s.errorBanner}>⚠ {error}</div>}
       {success && <div style={s.successBanner}>✓ {success}</div>}
 
-      {!companyId ? (
+      {!clientId ? (
         <p style={s.muted}>Pick a client to set up their approvals.</p>
       ) : loading ? (
         <div style={s.loadingWrap}><div style={s.spinner} /></div>

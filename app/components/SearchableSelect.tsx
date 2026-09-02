@@ -6,10 +6,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 // A generic typable combobox: type to filter, click or arrow+enter to pick.
 // Same interaction pattern as AirportDropdown, but generic over any
 // {id, label, sublabel?} option shape instead of the airport-specific data
-// model — for company/employee/approver pickers across TMC settings pages.
+// model — for client/employee/approver pickers across TMC settings pages.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface SearchableOption {
+interface SearchableOption {
   id: string
   label: string
   sublabel?: string

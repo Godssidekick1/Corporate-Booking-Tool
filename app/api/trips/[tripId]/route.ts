@@ -22,7 +22,7 @@ export async function GET(
   const service = createServiceClient()
   const { data: employee } = await service
     .from('employees')
-    .select('id, company_id')
+    .select('id, client_id')
     .eq('id', user.id)
     .maybeSingle()
 
@@ -32,7 +32,7 @@ export async function GET(
 
   const { data: trip } = await service
     .from('trips')
-    .select('id, name, status, travel_date, created_by, company_id, created_at')
+    .select('id, name, status, travel_date, created_by, client_id, created_at')
     .eq('id', tripId)
     .maybeSingle()
 

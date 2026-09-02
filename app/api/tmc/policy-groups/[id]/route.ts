@@ -19,11 +19,11 @@ import { NextRequest } from 'next/server'
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── DELETE /api/tmc/policy-groups/[id] ───────────────────────────────────
-// Deletes a shared policy-group template. Blocked while any company is
-// still linked to it via company_policy_groups — a shared group in active
-// use shouldn't disappear out from under every company relying on it.
+// Deletes a shared policy-group template. Blocked while any client is
+// still linked to it via client_policy_groups — a shared group in active
+// use shouldn't disappear out from under every client relying on it.
 // Checks that link table now, not employee_policy_groups (which was the
-// old per-employee membership model — groups are linked to companies, not
+// old per-employee membership model — groups are linked to clients, not
 // individual employees, under the Policy Master model).
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -122,7 +122,7 @@ export async function PATCH(
 
       if (addError) {
         // 23P01 comes from policy_group_band_ranks_no_overlap: this rank is
-        // already covered by another group at a company using this one.
+        // already covered by another group at a client using this one.
         if (addError.code === '23P01') {
           return Response.json({ error: addError.message }, { status: 409 })
         }
@@ -178,8 +178,8 @@ export async function DELETE(
     return Response.json({ error: 'Policy group not found' }, { status: 404 })
   }
 
-  // No companyId to check anymore — a shared group isn't scoped to one
-  // company, so authorization is just "does this caller manage policy for
+  // No clientId to check anymore — a shared group isn't scoped to one
+  // client, so authorization is just "does this caller manage policy for
   // the TMC that owns this group."
   const auth = await requireTmcPermission(service, user.id, 'manage_policy')
   if (!auth.authorized) {
@@ -191,20 +191,20 @@ export async function DELETE(
   }
 
   const { count } = await service
-    .from('company_policy_groups')
-    .select('company_id', { count: 'exact', head: true })
+    .from('client_policy_groups')
+    .select('client_id', { count: 'exact', head: true })
     .eq('policy_group_id', id)
 
   if (count && count > 0) {
     return Response.json(
-      { error: `${count} compan${count > 1 ? 'ies are' : 'y is'} still linked to "${group.name}". Unlink them before deleting.` },
+      { error: `${count} client${count > 1 ? 's are' : ' is'} still linked to "${group.name}". Unlink them before deleting.` },
       { status: 409 }
     )
   }
 
   // policy_groups FK has ON DELETE CASCADE for policy_rules — deleting the
   // group also removes its rule rows (all versions). This is intentional:
-  // an unused group with no companies linked carries no meaningful audit
+  // an unused group with no clients linked carries no meaningful audit
   // history worth preserving.
   const { error } = await service.from('policy_groups').delete().eq('id', id)
 

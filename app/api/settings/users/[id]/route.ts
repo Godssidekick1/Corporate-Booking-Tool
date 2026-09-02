@@ -35,7 +35,7 @@ export async function PATCH(
 
   const { data: caller, error: callerError } = await service
     .from('employees')
-    .select('company_id, role')
+    .select('client_id, role')
     .eq('id', user.id)
     .single()
 
@@ -47,16 +47,16 @@ export async function PATCH(
     return Response.json({ error: 'Only admins can edit users' }, { status: 403 })
   }
 
-  // Confirm the target employee belongs to the same company
+  // Confirm the target employee belongs to the same client
   const { data: target, error: targetError } = await service
     .from('employees')
-    .select('id, company_id, status')
+    .select('id, client_id, status')
     .eq('id', id)
-    .eq('company_id', caller.company_id)
+    .eq('client_id', caller.client_id)
     .maybeSingle()
 
   if (targetError || !target) {
-    return Response.json({ error: 'Employee not found in your company' }, { status: 404 })
+    return Response.json({ error: 'Employee not found in your client' }, { status: 404 })
   }
 
   // Prevent an admin from deactivating themselves and getting locked out

@@ -1,21 +1,20 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
-import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
 
-// ── GET /api/tmc/companies/[id] ─────────────────────────────────────────────
-// Full detail view of one client company. tmc_admin sees any of their
-// companies; a TC needs explicit access to this specific company.
+// ── GET /api/tmc/clients/[id] ─────────────────────────────────────────────
+// Full detail view of one client client. tmc_admin sees any of their
+// clients; a TC needs explicit access to this specific client.
 //
-// ── PATCH /api/tmc/companies/[id] ───────────────────────────────────────────
-// tmc_admin only — company identity fields including booking_mode are a
+// ── PATCH /api/tmc/clients/[id] ───────────────────────────────────────────
+// tmc_admin only — client identity fields including booking_mode are a
 // TMC-exclusive edit, not delegable to TCs via the permission system.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ALLOWED_CURRENCIES = ['INR'] as const
 const ALLOWED_BOOKING_MODES = ['sbt', 'cbt', 'both'] as const
 
-// Must match the CHECK constraint on companies.size. Validated here rather than
+// Must match the CHECK constraint on clients.size. Validated here rather than
 // trusted from the select, since a PATCH is just an HTTP call — sending an
 // unlisted value would surface as a raw constraint violation and a 500.
 const ALLOWED_SIZES = ['1-50', '51-200', '201-1000', '1001+'] as const
@@ -24,15 +23,15 @@ const ALLOWED_SIZES = ['1-50', '51-200', '201-1000', '1001+'] as const
 // not a setting someone toggles.
 const ALLOWED_STATUSES = ['active', 'inactive'] as const
 
-interface UpdateCompanyBody {
+interface UpdateClientBody {
   name?: string
   timezone?: string
   currency?: string
   country?: string
   booking_mode?: string
   client_group_id?: string | null
-  // These four columns have existed on `companies` since onboarding was built —
-  // onboardCompany writes them — but nothing could edit them afterwards, so a
+  // These four columns have existed on `clients` since onboarding was built —
+  // onboardClient writes them — but nothing could edit them afterwards, so a
   // typo in a GST number at creation was permanent.
   registered_address?: string | null
   gst_number?: string | null
@@ -72,29 +71,29 @@ export async function GET(
 
   if (caller.role === 'tc') {
     const { data: access } = await service
-      .from('employee_company_access')
-      .select('company_id')
+      .from('employee_client_access')
+      .select('client_id')
       .eq('employee_id', user.id)
-      .eq('company_id', id)
+      .eq('client_id', id)
       .maybeSingle()
 
     if (!access) {
-      return Response.json({ error: 'No access to this company' }, { status: 403 })
+      return Response.json({ error: 'No access to this client' }, { status: 403 })
     }
   }
 
-  const { data: company, error } = await service
-    .from('companies')
+  const { data: client, error } = await service
+    .from('clients')
     .select('id, name, status, setup_completed, timezone, currency, country, booking_mode, created_at, client_group_id, managed_by, registered_address, gst_number, industry, primary_contact_phone')
     .eq('id', id)
     .eq('tmc_id', caller.tmc_id)
     .single()
 
-  if (error || !company) {
-    return Response.json({ error: 'Company not found' }, { status: 404 })
+  if (error || !client) {
+    return Response.json({ error: 'Client not found' }, { status: 404 })
   }
 
-  return Response.json({ ok: true, company })
+  return Response.json({ ok: true, client })
 }
 
 export async function PATCH(
@@ -111,7 +110,7 @@ export async function PATCH(
 
   const service = createServiceClient()
 
-  // tmc_admin only — booking_mode and company identity are not TC-delegable.
+  // tmc_admin only — booking_mode and client identity are not TC-delegable.
   const { data: caller } = await service
     .from('employees')
     .select('role, tmc_id')
@@ -119,21 +118,21 @@ export async function PATCH(
     .single()
 
   if (!caller || caller.role !== 'tmc_admin' || !caller.tmc_id) {
-    return Response.json({ error: 'Only TMC admins can edit company details' }, { status: 403 })
+    return Response.json({ error: 'Only TMC admins can edit client details' }, { status: 403 })
   }
 
   const { data: existing } = await service
-    .from('companies')
+    .from('clients')
     .select('id')
     .eq('id', id)
     .eq('tmc_id', caller.tmc_id)
     .maybeSingle()
 
   if (!existing) {
-    return Response.json({ error: 'Company not found' }, { status: 404 })
+    return Response.json({ error: 'Client not found' }, { status: 404 })
   }
 
-  const body: UpdateCompanyBody = await req.json()
+  const body: UpdateClientBody = await req.json()
   const { name, timezone, currency, country, booking_mode, client_group_id} = body
 
   const update: Record<string, string | null> = {}
@@ -141,7 +140,7 @@ export async function PATCH(
   if (name !== undefined) {
     const trimmed = name.trim()
     if (!trimmed) {
-      return Response.json({ error: 'Company name cannot be empty' }, { status: 400 })
+      return Response.json({ error: 'Client name cannot be empty' }, { status: 400 })
     }
     update.name = trimmed
   }
@@ -165,7 +164,7 @@ export async function PATCH(
     update.country = country.trim()
   }
 
-  // Free-text company details. Empty string clears rather than storing '' — a
+  // Free-text client details. Empty string clears rather than storing '' — a
   // blank GST field should read as "not recorded", and every consumer already
   // handles null.
   //
@@ -266,7 +265,7 @@ export async function PATCH(
   }
 
   const { data: updated, error: updateError } = await service
-    .from('companies')
+    .from('clients')
     .update(update)
     .eq('id', id)
     .select('id, name, timezone, currency, country, booking_mode, client_group_id, registered_address, gst_number, industry, primary_contact_phone, size, status, managed_by')
@@ -276,5 +275,5 @@ export async function PATCH(
     return Response.json({ error: updateError.message }, { status: 500 })
   }
 
-  return Response.json({ ok: true, company: updated })
+  return Response.json({ ok: true, client: updated })
 }

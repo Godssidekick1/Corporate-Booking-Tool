@@ -72,7 +72,7 @@ export default function SettingsHierarchyPage() {
   }, [employees, query])
 
   // Someone at the top of the org has no manager by design. Counting them made
-  // the company owner a permanent, unclearable warning.
+  // the client owner a permanent, unclearable warning.
   const unassignedCount = employees.filter(
     e => e.status === 'active' && !e.manager_id && !e.top_of_hierarchy
   ).length

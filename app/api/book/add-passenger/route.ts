@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
   const service = createServiceClient()
   const { data: employee } = await service
     .from('employees')
-    .select('id, company_id')
+    .select('id, client_id')
     .eq('id', user.id)
     .maybeSingle()
 
@@ -192,7 +192,7 @@ export async function POST(req: NextRequest) {
     const { data: booking, error: insertError } = await service
       .from('bookings')
       .insert({
-        company_id: employee.company_id,
+        client_id: employee.client_id,
         employee_id: employee.id,
         requested_for: employee.id,
         booking_type: 'flight',
@@ -236,7 +236,7 @@ export async function POST(req: NextRequest) {
     try {
       const outcome = await startApprovalForBooking(service, {
         bookingId: booking.id,
-        companyId: employee.company_id,
+        clientId: employee.client_id,
         employeeId: employee.id,
         travelType: travelTypeForApproval,
         verdict: (policyVerdict as 'green' | 'amber' | 'red') ?? 'green',
@@ -248,7 +248,7 @@ export async function POST(req: NextRequest) {
         await service.from('bookings').update({ status: 'approved' }).eq('id', booking.id)
       } else if (!outcome.approverId) {
         // Chain exists but couldn't resolve a real approver (no manager_id
-        // set, or no finance-role employee in the company). Surface this as
+        // set, or no finance-role employee in the client). Surface this as
         // its own status rather than silently stalling in 'pending_approval'
         // with no approvals row ever created for anyone to act on.
         finalStatus = 'approval_misconfigured'

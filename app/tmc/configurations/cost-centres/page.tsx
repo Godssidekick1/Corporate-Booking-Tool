@@ -11,13 +11,13 @@ import { useEffect, useState } from 'react'
 // can offer a dropdown, and a rename carries its people along.
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface Company { id: string; name: string }
+interface Client { id: string; name: string }
 interface CostCentre { id: string; code: string; name: string; employees: number }
 interface Unlisted { code: string; employees: number }
 
 export default function CostCentresPage() {
-  const [companies, setCompanies] = useState<Company[]>([])
-  const [companyId, setCompanyId] = useState('')
+  const [clients, setClients] = useState<Client[]>([])
+  const [clientId, setClientId] = useState('')
 
   const [centres, setCentres] = useState<CostCentre[]>([])
   const [departments, setDepartments] = useState<string[]>([])
@@ -32,20 +32,20 @@ export default function CostCentresPage() {
   const [success, setSuccess] = useState('')
 
   useEffect(() => {
-    fetch('/api/tmc/companies').then(r => r.json())
-      .then(d => { if (d.ok) setCompanies(d.companies) })
+    fetch('/api/tmc/clients').then(r => r.json())
+      .then(d => { if (d.ok) setClients(d.clients) })
   }, [])
 
   useEffect(() => {
-    if (!companyId) return
+    if (!clientId) return
     load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyId])
+  }, [clientId])
 
   async function load() {
     setLoading(true); setError('')
     try {
-      const d = await fetch(`/api/tmc/cost-centres?companyId=${companyId}`).then(r => r.json())
+      const d = await fetch(`/api/tmc/cost-centres?clientId=${clientId}`).then(r => r.json())
       if (!d.ok) { setError(d.error || 'Could not load cost centres.'); return }
       setCentres(d.costCentres)
       setDepartments(d.departments)
@@ -60,7 +60,7 @@ export default function CostCentresPage() {
     try {
       const d = await fetch('/api/tmc/cost-centres', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ companyId, code: form.code, name: form.name }),
+        body: JSON.stringify({ clientId, code: form.code, name: form.name }),
       }).then(r => r.json())
       if (!d.ok) { setError(d.error || 'Could not add that cost centre.'); return }
       setForm({ code: '', name: '' })
@@ -76,7 +76,7 @@ export default function CostCentresPage() {
       const d = await fetch('/api/tmc/cost-centres', {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          companyId,
+          clientId,
           previousCode: editing.previousCode,
           code: editing.code,
           name: editing.name,
@@ -97,7 +97,7 @@ export default function CostCentresPage() {
     if (!confirm(`Delete cost centre "${code}"?`)) return
     setBusy(true); setError('')
     try {
-      const d = await fetch(`/api/tmc/cost-centres?companyId=${companyId}&code=${encodeURIComponent(code)}`, {
+      const d = await fetch(`/api/tmc/cost-centres?clientId=${clientId}&code=${encodeURIComponent(code)}`, {
         method: 'DELETE',
       }).then(r => r.json())
       if (!d.ok) { setError(d.error || 'Could not delete.'); return }
@@ -111,7 +111,7 @@ export default function CostCentresPage() {
     try {
       const d = await fetch('/api/tmc/cost-centres', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ companyId, code, name: code }),
+        body: JSON.stringify({ clientId, code, name: code }),
       }).then(r => r.json())
       if (!d.ok) { setError(d.error || 'Could not add that cost centre.'); return }
       await load()
@@ -131,16 +131,16 @@ export default function CostCentresPage() {
 
       <div style={s.field}>
         <label style={s.label}>Client</label>
-        <select value={companyId} onChange={e => setCompanyId(e.target.value)} style={{ ...s.input, width: 240 }}>
+        <select value={clientId} onChange={e => setClientId(e.target.value)} style={{ ...s.input, width: 240 }}>
           <option value="">Select a client…</option>
-          {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
       </div>
 
       {error && <div style={s.errorBanner}>⚠ {error}</div>}
       {success && <div style={s.successBanner}>✓ {success}</div>}
 
-      {!companyId ? (
+      {!clientId ? (
         <div style={s.empty}>
           <p style={s.emptyTitle}>Pick a client</p>
           <p style={s.emptyDesc}>Their cost centres will appear here.</p>

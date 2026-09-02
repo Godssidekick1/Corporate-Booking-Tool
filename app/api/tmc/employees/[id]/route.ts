@@ -17,7 +17,7 @@ import { NextRequest } from 'next/server'
 //
 // topOfHierarchy marks someone with nobody above them, which is different from
 // nobody having got round to setting their manager yet. Without it the owner of
-// a company is permanently reported as a misconfiguration.
+// a client is permanently reported as a misconfiguration.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface UpdateBody {
@@ -42,30 +42,30 @@ export async function PATCH(
 
   const { data: target } = await service
     .from('employees')
-    .select('id, company_id, full_name, top_of_hierarchy')
+    .select('id, client_id, full_name, top_of_hierarchy')
     .eq('id', id)
     .maybeSingle()
 
-  if (!target?.company_id) {
+  if (!target?.client_id) {
     return Response.json({ error: 'Employee not found' }, { status: 404 })
   }
 
-  // Passing companyId also enforces per-company access for 'tc' callers, not
+  // Passing clientId also enforces per-client access for 'tc' callers, not
   // just the manage_users permission itself.
-  const auth = await requireTmcPermission(service, user.id, 'manage_users', target.company_id)
+  const auth = await requireTmcPermission(service, user.id, 'manage_users', target.client_id)
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
 
-  // A tmc_admin passes the permission check for any companyId, so the tenancy
+  // A tmc_admin passes the permission check for any clientId, so the tenancy
   // boundary is checked explicitly here.
-  const { data: company } = await service
-    .from('companies')
+  const { data: client } = await service
+    .from('clients')
     .select('id, tmc_id')
-    .eq('id', target.company_id)
+    .eq('id', target.client_id)
     .maybeSingle()
 
-  if (!company || company.tmc_id !== auth.tmcId) {
+  if (!client || client.tmc_id !== auth.tmcId) {
     return Response.json({ error: 'Employee not found for this TMC' }, { status: 404 })
   }
 
@@ -93,7 +93,7 @@ export async function PATCH(
     const validation = await validateManagerAssignment(
       service,
       target.id,
-      target.company_id,
+      target.client_id,
       body.managerId
     )
 
@@ -114,13 +114,13 @@ export async function PATCH(
     const { data: bandRow } = await service
       .from('bands')
       .select('id, code, rank')
-      .eq('company_id', target.company_id)
+      .eq('client_id', target.client_id)
       .eq('code', body.band)
       .maybeSingle()
 
     if (!bandRow) {
       return Response.json(
-        { error: `Band "${body.band}" is not configured for this company` },
+        { error: `Band "${body.band}" is not configured for this client` },
         { status: 422 }
       )
     }

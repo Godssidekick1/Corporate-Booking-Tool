@@ -9,7 +9,7 @@ export interface BandInput {
   rank: number
 }
 
-export interface OnboardCompanyInput {
+export interface OnboardClientInput {
   corporateName: string
   adminEmail: string
   adminName: string
@@ -23,18 +23,18 @@ export interface OnboardCompanyInput {
   // Required. Bands used to be hardcoded L1..L5 here with no way to change
   // them afterwards, which forced every client into one naming scheme. They
   // are now the caller's own vocabulary — "A1", "C", "Band 3" are all valid.
-  // Only `rank` is structural: it is the company-agnostic integer that policy
+  // Only `rank` is structural: it is the client-agnostic integer that policy
   // groups match on.
   bands: BandInput[]
-  // Optional. Links an existing policy group at creation so a new company can
+  // Optional. Links an existing policy group at creation so a new client can
   // be policy-covered from day one instead of silently unprotected until
   // someone remembers to link one.
   policyGroupId?: string | null
 }
 
-export interface OnboardCompanyResult {
+export interface OnboardClientResult {
   ok: boolean
-  companyId?: string
+  clientId?: string
   error?: string
 }
 
@@ -77,19 +77,19 @@ export function validateBands(bands: BandInput[] | undefined): string | null {
   return null
 }
 
-// ── onboardCompany ────────────────────────────────────────────────────────────
-// Creates a company with the bands the TMC defined, optionally links a policy
+// ── onboardClient ────────────────────────────────────────────────────────────
+// Creates a client with the bands the TMC defined, optionally links a policy
 // group, and invites the corporate admin.
-// Shared by the single-company form and CSV bulk import so both stay in sync —
+// Shared by the single-client form and CSV bulk import so both stay in sync —
 // never fork this logic between the two entry points.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function onboardCompany(
+export async function onboardClient(
   service: ServiceClient,
   tmcId: string,
   appUrl: string,
-  input: OnboardCompanyInput
-): Promise<OnboardCompanyResult> {
+  input: OnboardClientInput
+): Promise<OnboardClientResult> {
   const { corporateName, adminEmail, adminName } = input
 
   if (!corporateName?.trim() || !adminEmail?.trim() || !adminName?.trim()) {
@@ -110,7 +110,7 @@ export async function onboardCompany(
     return { ok: false, error: bandError }
   }
 
-  // Confirm the policy group belongs to this TMC before the company exists, so
+  // Confirm the policy group belongs to this TMC before the client exists, so
   // a bad id fails fast rather than after a partial create.
   if (input.policyGroupId) {
     const { data: group } = await service
@@ -140,12 +140,12 @@ export async function onboardCompany(
     }
   }
 
-  let companyId: string | null = null
+  let clientId: string | null = null
   let authUserId: string | null = null
 
   try {
-    const { data: company, error: companyError } = await service
-      .from('companies')
+    const { data: client, error: clientError } = await service
+      .from('clients')
       .insert({
         tmc_id: tmcId,
         name: corporateName.trim(),
@@ -162,17 +162,17 @@ export async function onboardCompany(
       .select('id')
       .single()
 
-    if (companyError) {
-      console.error('onboardCompany: company insert failed. Raw error:', JSON.stringify(companyError, null, 2))
-      throw new Error(companyError.message || companyError.details || companyError.hint || 'company insert failed')
+    if (clientError) {
+      console.error('onboardClient: client insert failed. Raw error:', JSON.stringify(clientError, null, 2))
+      throw new Error(clientError.message || clientError.details || clientError.hint || 'client insert failed')
     }
-    companyId = company.id
+    clientId = client.id
 
     const { data: bands, error: bandsError } = await service
       .from('bands')
       .insert(
         input.bands.map(b => ({
-          company_id: companyId,
+          client_id: clientId,
           code: b.code.trim(),
           label: b.label.trim(),
           rank: Number(b.rank),
@@ -181,7 +181,7 @@ export async function onboardCompany(
       .select('id, code, rank')
 
     if (bandsError) {
-      console.error('onboardCompany: bands insert failed. Raw error:', JSON.stringify(bandsError, null, 2))
+      console.error('onboardClient: bands insert failed. Raw error:', JSON.stringify(bandsError, null, 2))
       throw new Error(bandsError.message || bandsError.details || bandsError.hint || 'bands insert failed')
     }
 
@@ -193,11 +193,11 @@ export async function onboardCompany(
 
     if (input.policyGroupId) {
       const { error: linkError } = await service
-        .from('company_policy_groups')
-        .insert({ company_id: companyId, policy_group_id: input.policyGroupId })
+        .from('client_policy_groups')
+        .insert({ client_id: clientId, policy_group_id: input.policyGroupId })
 
       if (linkError) {
-        console.error('onboardCompany: policy group link failed. Raw error:', JSON.stringify(linkError, null, 2))
+        console.error('onboardClient: policy group link failed. Raw error:', JSON.stringify(linkError, null, 2))
         throw new Error(linkError.message || 'policy group link failed')
       }
     }
@@ -219,14 +219,14 @@ export async function onboardCompany(
       })
 
     if (inviteError) {
-      console.error('onboardCompany: invite failed. Raw error:', JSON.stringify(inviteError, null, 2))
+      console.error('onboardClient: invite failed. Raw error:', JSON.stringify(inviteError, null, 2))
       throw new Error(inviteError.message || 'invite failed')
     }
     authUserId = authData.user.id
 
     const { error: employeeError } = await service.from('employees').insert({
       id: authUserId,
-      company_id: companyId,
+      client_id: clientId,
       tmc_id: null,
       band_id: adminBand.id,
       band_code: adminBand.code,
@@ -238,21 +238,21 @@ export async function onboardCompany(
     })
 
     if (employeeError) {
-      console.error('onboardCompany: employee insert failed. Raw error:', JSON.stringify(employeeError, null, 2))
+      console.error('onboardClient: employee insert failed. Raw error:', JSON.stringify(employeeError, null, 2))
       throw new Error(employeeError.message || employeeError.details || employeeError.hint || 'employee insert failed')
     }
 
-    return { ok: true, companyId: companyId! }
+    return { ok: true, clientId: clientId! }
 
   } catch (err) {
-    console.error('onboardCompany error:', err)
+    console.error('onboardClient error:', err)
     if (authUserId) await service.auth.admin.deleteUser(authUserId)
-    if (companyId) await service.from('companies').delete().eq('id', companyId)
+    if (clientId) await service.from('clients').delete().eq('id', clientId)
 
     const message =
       err instanceof Error ? err.message :
       typeof err === 'object' && err !== null && 'message' in err ? String((err as { message: unknown }).message) :
       JSON.stringify(err)
-    return { ok: false, error: message || 'Failed to onboard company (no error details available)' }
+    return { ok: false, error: message || 'Failed to onboard client (no error details available)' }
   }
 }

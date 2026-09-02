@@ -13,7 +13,7 @@ export interface TmcCallerCheck {
 // ── requireTmcPermission ─────────────────────────────────────────────────────
 // Server-side authorization check for TMC-side routes. tmc_admin always
 // passes. A 'tc' caller must have the given permission key, and — if a
-// companyId is provided — must also have explicit access to that company.
+// clientId is provided — must also have explicit access to that client.
 // Always queries fresh; never trust a permissions array passed in from
 // the client.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -22,7 +22,7 @@ export async function requireTmcPermission(
   service: ServiceClient,
   userId: string,
   permissionKey: string,
-  companyId?: string
+  clientId?: string
 ): Promise<TmcCallerCheck> {
   const { data: caller, error: callerError } = await service
     .from('employees')
@@ -58,28 +58,28 @@ export async function requireTmcPermission(
     return { authorized: false, error: `Missing permission: ${permissionKey}`, status: 403 }
   }
 
-  if (companyId) {
+  if (clientId) {
     const { data: access } = await service
-      .from('employee_company_access')
-      .select('company_id')
+      .from('employee_client_access')
+      .select('client_id')
       .eq('employee_id', userId)
-      .eq('company_id', companyId)
+      .eq('client_id', clientId)
       .maybeSingle()
 
     if (!access) {
-      return { authorized: false, error: 'No access to this company', status: 403 }
+      return { authorized: false, error: 'No access to this client', status: 403 }
     }
   }
 
   return { authorized: true, role: caller.role, tmcId: caller.tmc_id }
 }
 
-// ── getAccessibleCompanyIds ──────────────────────────────────────────────────
-// For list endpoints: returns the company IDs a caller is allowed to see.
-// tmc_admin gets null (meaning "all companies for their TMC", no filter needed).
-// tc gets the explicit list from employee_company_access (possibly empty).
+// ── getAccessibleClientIds ──────────────────────────────────────────────────
+// For list endpoints: returns the client IDs a caller is allowed to see.
+// tmc_admin gets null (meaning "all clients for their TMC", no filter needed).
+// tc gets the explicit list from employee_client_access (possibly empty).
 
-export async function getAccessibleCompanyIds(
+export async function getAccessibleClientIds(
   service: ServiceClient,
   userId: string,
   role: string
@@ -87,9 +87,9 @@ export async function getAccessibleCompanyIds(
   if (role === 'tmc_admin') return null
 
   const { data: access } = await service
-    .from('employee_company_access')
-    .select('company_id')
+    .from('employee_client_access')
+    .select('client_id')
     .eq('employee_id', userId)
 
-  return (access ?? []).map(a => a.company_id)
+  return (access ?? []).map(a => a.client_id)
 }

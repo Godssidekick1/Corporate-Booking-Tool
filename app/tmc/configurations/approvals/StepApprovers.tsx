@@ -3,10 +3,10 @@
 import { useEffect, useState } from 'react'
 
 // ── StepApprovers ────────────────────────────────────────────────────────────
-// Who fills each step of one approval chain at one company.
+// Who fills each step of one approval chain at one client.
 //
 // Used by BOTH the direct-mapping flow and the assign-a-template flow, which is
-// the point: a company-owned chain and an adopted shared template are
+// the point: a client-owned chain and an adopted shared template are
 // configured in exactly the same place, the same way. The structure/binding
 // split never surfaces as vocabulary.
 //
@@ -43,7 +43,7 @@ const APPROVER_TYPES: { value: ApproverType; label: string }[] = [
   { value: 'specific_user',  label: 'A specific person…' },
   { value: 'any_manager_at', label: 'Any manager at rank…' },
   { value: 'finance_role',   label: 'Finance' },
-  { value: 'admin',          label: 'Company admin' },
+  { value: 'admin',          label: 'Client admin' },
   { value: 'self',           label: 'No review needed (auto-approve)' },
 ]
 
@@ -54,12 +54,12 @@ const VERDICT_LABEL: Record<string, string> = {
 }
 
 interface Props {
-  companyId: string
+  clientId: string
   templateId: string
   steps: TemplateStep[]
 }
 
-export default function StepApprovers({ companyId, templateId, steps }: Props) {
+export default function StepApprovers({ clientId, templateId, steps }: Props) {
   const [bindings, setBindings] = useState<Binding[]>([])
   const [employees, setEmployees] = useState<Employee[]>([])
   const [loading, setLoading] = useState(true)
@@ -67,15 +67,15 @@ export default function StepApprovers({ companyId, templateId, steps }: Props) {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    if (!companyId || !templateId) return
+    if (!clientId || !templateId) return
     let cancelled = false
 
     async function load() {
       setLoading(true); setError('')
       try {
         const [bindingData, employeeData] = await Promise.all([
-          fetch(`/api/tmc/approval-tier-approvers?companyId=${companyId}&templateId=${templateId}`).then(r => r.json()),
-          fetch(`/api/tmc/employees?companyId=${companyId}`).then(r => r.json()),
+          fetch(`/api/tmc/approval-tier-approvers?clientId=${clientId}&templateId=${templateId}`).then(r => r.json()),
+          fetch(`/api/tmc/employees?clientId=${clientId}`).then(r => r.json()),
         ])
         if (cancelled) return
         if (!bindingData.ok) { setError(bindingData.error || 'Could not load approvers.'); return }
@@ -88,7 +88,7 @@ export default function StepApprovers({ companyId, templateId, steps }: Props) {
 
     load()
     return () => { cancelled = true }
-  }, [companyId, templateId])
+  }, [clientId, templateId])
 
   const byTier = new Map(bindings.map(b => [b.tier, b]))
 
@@ -120,7 +120,7 @@ export default function StepApprovers({ companyId, templateId, steps }: Props) {
       const d = await fetch('/api/tmc/approval-tier-approvers', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          companyId,
+          clientId,
           templateId,
           tier,
           approverType: next.approver_type,
@@ -139,7 +139,7 @@ export default function StepApprovers({ companyId, templateId, steps }: Props) {
     setSavingTier(tier); setError('')
     try {
       const d = await fetch(
-        `/api/tmc/approval-tier-approvers?companyId=${companyId}&templateId=${templateId}&tier=${tier}`,
+        `/api/tmc/approval-tier-approvers?clientId=${clientId}&templateId=${templateId}&tier=${tier}`,
         { method: 'DELETE' }
       ).then(r => r.json())
       if (!d.ok) { setError(d.error || 'Could not clear this step.'); return }
