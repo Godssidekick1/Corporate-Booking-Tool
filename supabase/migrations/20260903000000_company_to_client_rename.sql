@@ -183,6 +183,35 @@ begin
 end;
 $$;
 
+-- Keeps employees' denormalised band_code/band_rank in step with the band row.
+-- The function name carries no "company", so it is replaced in place rather
+-- than renamed -- which also leaves its trigger on `bands` untouched, since
+-- `create or replace function` rebinds the body without dropping dependents.
+--
+-- Only the body needed changing: it scopes the update by client, and both
+-- sides of that comparison (`employees` and `bands`) were renamed in step 2.
+create or replace function sync_employees_on_band_change()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.code is distinct from old.code or new.rank is distinct from old.rank then
+    -- Match on band_id where it is set, and fall back to the old code for rows
+    -- written by paths that only populated the denormalised columns.
+    update employees
+       set band_code = new.code,
+           band_rank = new.rank
+     where client_id = new.client_id
+       and (
+         band_id = new.id
+         or (band_id is null and band_code = old.code)
+       );
+  end if;
+
+  return new;
+end;
+$$;
+
 -- These two guarded `company_approval_templates`, a table replaced by the
 -- per-employee assignment model and since dropped. They have been dead ever
 -- since -- their bodies reference a relation that no longer exists, so they
