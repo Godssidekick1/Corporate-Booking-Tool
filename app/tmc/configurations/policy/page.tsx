@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import SearchableSelect from '@/app/components/SearchableSelect'
 import {
   CATEGORIES,
   ALL_FIELDS,
@@ -308,7 +309,7 @@ export default function TmcPolicyPage() {
   }
 
   async function handleDeleteGroup(id: string, name: string) {
-    if (!confirm(`Delete "${name}"? This only works if no companies are using it.`)) return
+    if (!confirm(`Delete "${name}"? This only works if no clients are using it.`)) return
     setError('')
     const d = await fetch(`/api/tmc/policy-groups/${id}`, { method: 'DELETE' }).then(r => r.json())
     if (!d.ok) { setError(d.error || 'Could not delete group.'); return }
@@ -441,7 +442,7 @@ export default function TmcPolicyPage() {
   }
 
   async function handleUnlinkGroup(policyGroupId: string, name: string) {
-    if (!confirm(`Unlink "${name}" from this company? Employees in its rank range will have no policy until another group covers them.`)) return
+    if (!confirm(`Unlink "${name}" from this client? Employees in its rank range will have no policy until another group covers them.`)) return
     setError('')
     const d = await fetch(
       `/api/tmc/company-policy-groups?companyId=${selectedCompanyId}&policyGroupId=${policyGroupId}`,
@@ -467,7 +468,7 @@ export default function TmcPolicyPage() {
         <div>
           <h1 style={s.heading}>Policy editor</h1>
           <p style={s.sub}>
-            Build reusable policy groups by band rank, then link them to client companies.
+            Build reusable policy groups by band rank, then link them to clients.
           </p>
         </div>
       </div>
@@ -478,7 +479,7 @@ export default function TmcPolicyPage() {
           Policy groups
         </button>
         <button onClick={() => setTab('companies')} style={{ ...s.tabBtn, ...(tab === 'companies' ? s.tabActive : {}) }}>
-          Company assignments
+          Client assignments
         </button>
       </div>
 
@@ -506,7 +507,7 @@ export default function TmcPolicyPage() {
                 <h2 style={s.cardTitle}>Policy groups</h2>
                 <p style={s.cardSub}>
                   A group holds one set of limits for a range of band ranks, and can be
-                  reused across any number of client companies.
+                  reused across any number of clients.
                 </p>
               </div>
               <button onClick={() => setShowGroupForm(v => !v)} style={s.ghostBtn}>
@@ -605,8 +606,8 @@ export default function TmcPolicyPage() {
                     {g.description && <p style={s.groupCardDesc}>{g.description}</p>}
                     <p style={s.groupCardMeta}>
                       {g.companyCount === 0
-                        ? 'Not used by any company'
-                        : `Used by ${g.companyCount} compan${g.companyCount === 1 ? 'y' : 'ies'}`}
+                        ? 'Not used by any client'
+                        : `Used by ${g.companyCount} client${g.companyCount === 1 ? '' : 's'}`}
                     </p>
                   </div>
                 ))}
@@ -701,14 +702,14 @@ export default function TmcPolicyPage() {
               {ranks.length === 0 && (
                 <div style={s.blastBanner}>
                   This group covers no band ranks, so it applies to nobody and cannot be
-                  linked to a company. Add ranks above to start configuring limits.
+                  linked to a client. Add ranks above to start configuring limits.
                 </div>
               )}
 
               {/* Blast radius: a shared template's limits apply everywhere it's linked. */}
               {selectedGroup.companyCount > 1 && (
                 <div style={s.blastBanner}>
-                  This group is shared by <strong>{selectedGroup.companyCount} companies</strong>.
+                  This group is shared by <strong>{selectedGroup.companyCount} clients</strong>.
                   Saving changes the policy in force for all of them.
                 </div>
               )}
@@ -855,31 +856,30 @@ export default function TmcPolicyPage() {
       )}
 
       {/* ══════════════════════════════════════════════════════════ */}
-      {/* COMPANIES TAB                                              */}
+      {/* CLIENT ASSIGNMENTS TAB                                     */}
       {/* ══════════════════════════════════════════════════════════ */}
       {tab === 'companies' && (
         <div style={s.card}>
           <div style={s.cardHeader}>
             <div>
-              <h2 style={s.cardTitle}>Company assignments</h2>
+              <h2 style={s.cardTitle}>Client assignments</h2>
               <p style={s.cardSub}>
-                Link policy groups to a company so their rank ranges cover every band.
+                Link policy groups to a client so their rank ranges cover every band.
                 Ranges may not overlap — an employee must match exactly one group.
               </p>
             </div>
           </div>
 
           <div style={{ ...s.field, maxWidth: 320, marginBottom: 20 }}>
-            <label style={s.label}>Company</label>
-            <select
+            <label style={s.label}>Client</label>
+            <SearchableSelect
               value={selectedCompanyId}
-              onChange={e => setSelectedCompanyId(e.target.value)}
-              style={s.select}
+              onChange={setSelectedCompanyId}
+              options={companies.map(c => ({ id: c.id, label: c.name }))}
+              placeholder={loadingCompanies ? 'Loading…' : 'Select a client…'}
               disabled={loadingCompanies}
-            >
-              <option value="">{loadingCompanies ? 'Loading…' : 'Select a company…'}</option>
-              {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+              emptyMessage="No clients match"
+            />
           </div>
 
           {selectedCompanyId && (
@@ -912,7 +912,7 @@ export default function TmcPolicyPage() {
                 <div style={s.emptyGroups}>
                   <p style={s.emptyTitle}>No policy groups linked</p>
                   <p style={s.emptyDesc}>
-                    Until a group is linked, this company&apos;s bookings are not checked
+                    Until a group is linked, this client&apos;s bookings are not checked
                     against any policy.
                   </p>
                 </div>
