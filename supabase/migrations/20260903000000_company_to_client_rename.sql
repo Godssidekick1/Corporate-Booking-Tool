@@ -264,6 +264,89 @@ create constraint trigger approval_tier_approvers_client_check
   execute function check_tier_approver_client();
 
 -- ----------------------------------------------------------------------------
+-- 4b. Policies
+--
+-- Two groups, and they need opposite treatment.
+--
+-- GROUP ONE, inert: fourteen policies keyed on
+-- `current_setting('app.current_company_id')`. Nothing in the application sets
+-- that GUC, so it reads NULL, `client_id = NULL` evaluates to NULL rather than
+-- true, and every row is denied. Service-role queries bypass RLS entirely,
+-- which is why the app works at all. Their column references were rewritten by
+-- step 2; the GUC name is a string literal and was not, which is harmless
+-- because nothing reads it. Renaming the setting would mean recreating all
+-- fourteen to change a name nobody uses, so they keep it -- and the check
+-- below is written not to flag it.
+--
+-- GROUP TWO, live: the two `employees` policies below key on auth.uid(), which
+-- Supabase does populate. These genuinely gate what an authenticated session
+-- can read through the anon client.
+--
+-- They are dropped and recreated rather than renamed. A rename would leave the
+-- stored expression tree in place, and the stored tree is what still carries a
+-- pre-rename reference -- rebuilding from source text is the only way to be
+-- certain nothing stale survives. Recreated with identical semantics: same
+-- command, same roles (PUBLIC by default), same USING expression, no WITH
+-- CHECK, since neither had one.
+-- ----------------------------------------------------------------------------
+drop policy if exists "Employees: read own company" on employees;
+drop policy if exists "Employees: read own client"  on employees;
+
+create policy "Employees: read own client"
+  on employees
+  for select
+  using (
+    client_id = (
+      select peer.client_id
+      from employees peer
+      where peer.id = auth.uid()
+    )
+  );
+
+drop policy if exists "Employees: admin update company" on employees;
+drop policy if exists "Employees: admin update client"  on employees;
+
+create policy "Employees: admin update client"
+  on employees
+  for update
+  using (
+    client_id = (
+      select peer.client_id
+      from employees peer
+      where peer.id = auth.uid()
+        and peer.role = 'admin'
+    )
+  );
+
+-- The remaining policy names still read "own company". Names carry no
+-- behaviour, so these are renamed rather than rebuilt.
+--
+-- Driven off the catalogue because `alter policy` has no IF EXISTS: these were
+-- created in the base schema rather than in this migrations folder, so a fresh
+-- database replaying migrations from empty has no such policies and a literal
+-- list would abort the whole rename on a missing one.
+do $$
+declare
+  target record;
+begin
+  for target in
+    select policyname, tablename
+    from pg_policies
+    where schemaname = 'public'
+      and policyname like '%own company%'
+    order by tablename, policyname
+  loop
+    execute format(
+      'alter policy %I on public.%I rename to %I',
+      target.policyname,
+      target.tablename,
+      replace(target.policyname, 'own company', 'own client')
+    );
+    raise notice 'renamed policy % on %', target.policyname, target.tablename;
+  end loop;
+end $$;
+
+-- ----------------------------------------------------------------------------
 -- 5. Refuse to commit a half-finished rename
 --
 -- Sections 1 and 2 are catalogue-driven and cannot miss anything. Section 3 is
@@ -294,20 +377,31 @@ begin
       stale_functions;
   end if;
 
-  -- Policies are stored parsed, so these should already read the new names.
-  -- Checked anyway: this is the assumption the whole migration rests on, and
-  -- verifying it costs one query.
-  select string_agg(policyname || ' on ' || tablename, ', ')
+  -- The GUC name `app.current_company_id` is a string literal inside fourteen
+  -- inert policies and is deliberately left alone (see 4b), so it is excluded
+  -- here rather than being reported every run as a problem that is not one.
+  -- Excluded by matching the literal, not by loosening the pattern: a real
+  -- `company_id` column reference elsewhere in the same policy must still trip.
+  --
+  -- Reports the offending expression, not just the object name. The previous
+  -- version named the policy and left the actual surviving reference to be
+  -- guessed at, which cost a round trip to diagnose.
+  select string_agg(
+           policyname || ' on ' || tablename || ' -> ' ||
+           replace(coalesce(qual, '') || ' ' || coalesce(with_check, ''),
+                   'app.current_company_id', 'app.current_company_id[ignored]'),
+           E'\n  ')
     into stale_policies
   from pg_policies
   where schemaname = 'public'
-    and (coalesce(qual, '') || ' ' || coalesce(with_check, ''))
+    and replace(coalesce(qual, '') || ' ' || coalesce(with_check, ''),
+                'app.current_company_id', '')
         ~* '\ycompany_id\y|\ycompanies\y';
 
   if stale_policies is not null then
     raise exception
-      'Rename incomplete: these policies still reference pre-rename names: %',
-      stale_policies;
+      'Rename incomplete: these policies still reference pre-rename names:%  %',
+      E'\n  ', stale_policies;
   end if;
 end $$;
 
