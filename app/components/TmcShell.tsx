@@ -130,28 +130,41 @@ export default function TmcShell({ children }: { children: React.ReactNode }) {
           })}
         </nav>
 
-        <div className={`mt-auto border-t border-white/[0.08] py-3 ${collapsed ? 'px-2' : 'px-3'}`}>
+        {/* Collapse toggle — a chevron straddling the rail's right edge, sitting
+            just below the last nav item.
+
+            Positioned rather than sitting in the footer because that is where
+            the affordance actually belongs: it acts on the rail's WIDTH, so it
+            lives on the edge it moves. A zero-height relative wrapper keeps it
+            out of the flow, so the gap below the nav is exactly the margin here
+            and not the button's own box.
+
+            The rail is z-30 and the Configurations sub-nav is in normal flow,
+            so a button hanging half-way over the border paints above the seam
+            rather than being clipped by it. */}
+        <div className="relative mt-4 h-0">
           <button
             type="button"
             onClick={toggleCollapsed}
             title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className={[
-              'mb-0.5 flex w-full items-center gap-3 rounded-lg py-2 text-[13px] text-white/45 transition-colors hover:bg-white/5 hover:text-white',
-              collapsed ? 'justify-center px-0' : 'px-3',
-            ].join(' ')}
+            aria-expanded={!collapsed}
+            className="absolute -right-[11px] top-0 flex h-[22px] w-[22px] items-center justify-center rounded-full border border-white/20 bg-rail text-white/55 shadow-[0_1px_4px_rgba(0,0,0,0.3)] transition-colors hover:border-white/40 hover:bg-rail-hover hover:text-white"
           >
             <svg
-              className="h-[18px] w-[18px] shrink-0 transition-transform duration-200"
+              className="h-[13px] w-[13px] transition-transform duration-200"
+              // Left when expanded (click to close), right when collapsed
+              // (click to open) — the arrow points the way the rail will move.
               style={{ transform: collapsed ? 'rotate(180deg)' : 'none' }}
               viewBox="0 0 24 24" fill="none" stroke="currentColor"
-              strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"
+              strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
             >
               <path d="M15 18l-6-6 6-6" />
             </svg>
-            {!collapsed && 'Collapse'}
           </button>
+        </div>
 
+        <div className={`mt-auto border-t border-white/[0.08] py-3 ${collapsed ? 'px-2' : 'px-3'}`}>
           {/* /tmc/profile, not /profile. The latter is the traveller profile —
               passport, meal preference — which no TMC or TC user should ever be
               asked for. */}
