@@ -145,11 +145,21 @@ export async function proxy(request: NextRequest) {
     (needsRoleCheck || needsOnboardingCheck) &&
     (!resolvedRole || firstLoginCompleted === undefined)
   ) {
-    const { data: employee } = await supabase
+    const { data: employee, error: employeeError } = await supabase
       .from('employees')
       .select('role, first_login_completed')
       .eq('id', user!.id)
       .single()
+
+    // This query runs on the anon client, so RLS applies to it. Discarding the
+    // error hid a broken policy for a long time: the read failed on every
+    // request, firstLoginCompleted stayed undefined, and the onboarding gate
+    // below silently never fired because it tests `=== false`. Failing open is
+    // the right call in middleware -- a database blip should not lock everyone
+    // out -- but it must be loud when it happens.
+    if (employeeError) {
+      console.error('[proxy] employee lookup failed:', employeeError.message)
+    }
 
     resolvedRole = resolvedRole ?? employee?.role
     firstLoginCompleted = employee?.first_login_completed
