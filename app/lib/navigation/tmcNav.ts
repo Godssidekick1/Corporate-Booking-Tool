@@ -45,7 +45,12 @@ export const CONFIG_GROUPS: NavGroup[] = [
     items: [
       { label: 'Policy',           href: '/tmc/configurations/policy',    permission: 'manage_policy' },
       { label: 'Approvals',        href: '/tmc/configurations/approvals', permission: 'manage_approvals' },
-      { label: 'Deal codes',       href: '#', soon: true },
+      { label: 'Deal codes',       href: '/tmc/configurations/deal-codes', permission: 'manage_deal_codes' },
+      // Buckets are sets of clients, and they sit here rather than under
+      // Profiles because they are reference data reused across masters — deal
+      // codes today, forms of payment and markup next — not a description of
+      // who someone is.
+      { label: 'Buckets',          href: '/tmc/configurations/buckets',    permission: 'manage_deal_codes' },
       { label: 'Forms of payment', href: '#', soon: true },
       { label: 'Branches',         href: '#', soon: true },
     ],

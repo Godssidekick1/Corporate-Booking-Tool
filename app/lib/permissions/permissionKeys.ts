@@ -13,6 +13,7 @@ export const PERMISSION_KEYS = [
   'manage_users',
   'manage_approvals',
   'manage_client_groups',
+  'manage_deal_codes',
   'view_reports',
   'book_on_behalf',
 ] as const
@@ -48,6 +49,11 @@ export const PERMISSIONS: PermissionDef[] = [
     key: 'manage_client_groups',
     label: 'Manage client groups',
     desc: 'Create and edit the groups clients are organised into',
+  },
+  {
+    key: 'manage_deal_codes',
+    label: 'Manage deal codes',
+    desc: 'Negotiated airline codes, buckets, and which clients they reach',
   },
   {
     key: 'view_reports',

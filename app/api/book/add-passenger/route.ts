@@ -5,6 +5,7 @@ import { NextRequest } from 'next/server'
 import { checkBookingAgainstPolicy } from '@/app/lib/rule-engine/checkBookingAgainstPolicy'
 import { buildPolicyInputsFromFlight } from '@/app/lib/rule-engine/buildPolicyInputs'
 import { startApprovalForBooking, buildReason } from '@/app/lib/approval-engine/resolveApprovalTier'
+import { stampDealCodes } from '@/app/lib/deal-codes/stampBooking'
 import type { FlatFlightResult } from '@/app/lib/book/types'
 
 // ── POST /api/book/add-passenger ─────────────────────────────────────────────
@@ -185,6 +186,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Which negotiated codes applied, frozen at booking time. Never throws and
+    // never blocks: deal codes are advisory today, since the aggregator API has
+    // no field to carry one. Recorded so a counsellor can key it into the GDS
+    // and finance can reconcile the rate.
+    const resolvedDealCodes = await stampDealCodes(service, employee.client_id, flight ?? null)
+
     // Insert immediately after a successful AddPassenger call — this is the
     // first point in the flow where we have a real ReferenceNo tied to real
     // passenger data, so it's the right moment to start persisting state.
@@ -192,6 +199,7 @@ export async function POST(req: NextRequest) {
     const { data: booking, error: insertError } = await service
       .from('bookings')
       .insert({
+        resolved_deal_codes: resolvedDealCodes,
         client_id: employee.client_id,
         employee_id: employee.id,
         requested_for: employee.id,
