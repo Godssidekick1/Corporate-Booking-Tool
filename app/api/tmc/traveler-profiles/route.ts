@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
+import { parsePageParams, pagedResponse, ilikeAcross } from '@/app/lib/pagination'
 import { NextRequest } from 'next/server'
 
 // ── GET /api/tmc/traveler-profiles?clientId=<uuid> ──────────────────────────
@@ -56,39 +57,75 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: access.error }, { status: access.status })
   }
 
-  const [{ data: employees, error }, { data: bands }, { data: costCentres }, { data: bookings }] =
+  const params = parsePageParams(req.nextUrl.searchParams)
+  const ids = req.nextUrl.searchParams.get('ids')?.split(',').filter(Boolean) ?? []
+
+  let employeeQuery = service
+    .from('employees')
+    .select(
+      'id, full_name, email, role, status, band_code, band_rank, department, cost_centre, designation, manager_id, top_of_hierarchy, traveler_profile, first_login_completed',
+      { count: 'exact' }
+    )
+    .eq('client_id', clientId)
+    .order('full_name')
+
+  if (ids.length > 0) {
+    employeeQuery = employeeQuery.in('id', ids)
+  } else {
+    const filter = ilikeAcross(
+      ['full_name', 'email', 'department', 'designation', 'cost_centre'],
+      params.search
+    )
+    if (filter) employeeQuery = employeeQuery.or(filter)
+    employeeQuery = employeeQuery.range(params.from, params.to)
+  }
+
+  // Bands and cost centres stay unpaged: they feed dropdowns inside the detail
+  // panel, are bounded by how many a client defines, and paging them would mean
+  // a round trip to open a select.
+  const [{ data: employees, error, count }, { data: bands }, { data: costCentres }] =
     await Promise.all([
-      service
-        .from('employees')
-        .select('id, full_name, email, role, status, band_code, band_rank, department, cost_centre, designation, manager_id, top_of_hierarchy, traveler_profile, first_login_completed')
-        .eq('client_id', clientId)
-        .order('full_name'),
+      employeeQuery,
       service.from('bands').select('id, code, label, rank').eq('client_id', clientId).order('rank'),
       service.from('cost_centres').select('id, code, name').eq('client_id', clientId).order('code'),
-      service.from('bookings').select('employee_id').eq('client_id', clientId),
     ])
 
   if (error) {
     return Response.json({ error: error.message }, { status: 500 })
   }
 
+  // Trip counts for the page's employees only. This previously pulled every
+  // booking the client had ever made to count rows for a roster of ten.
+  const pageIds = (employees ?? []).map(e => e.id)
   const tripsByEmployee = new Map<string, number>()
-  for (const b of bookings ?? []) {
-    if (!b.employee_id) continue
-    tripsByEmployee.set(b.employee_id, (tripsByEmployee.get(b.employee_id) ?? 0) + 1)
+
+  if (pageIds.length > 0) {
+    const { data: bookings } = await service
+      .from('bookings')
+      .select('employee_id')
+      .eq('client_id', clientId)
+      .in('employee_id', pageIds)
+
+    for (const b of bookings ?? []) {
+      if (!b.employee_id) continue
+      tripsByEmployee.set(b.employee_id, (tripsByEmployee.get(b.employee_id) ?? 0) + 1)
+    }
   }
 
   return Response.json({
-    ok: true,
-    employees: (employees ?? []).map(e => ({
-      ...e,
-      trips: tripsByEmployee.get(e.id) ?? 0,
-      // A profile with no date of birth can't produce a valid passenger record,
-      // so the list can flag who still needs completing.
-      profileComplete: Boolean(
-        (e.traveler_profile as Record<string, unknown> | null)?.dateOfBirth
-      ),
-    })),
+    ...pagedResponse(
+      (employees ?? []).map(e => ({
+        ...e,
+        trips: tripsByEmployee.get(e.id) ?? 0,
+        // A profile with no date of birth can't produce a valid passenger record,
+        // so the list can flag who still needs completing.
+        profileComplete: Boolean(
+          (e.traveler_profile as Record<string, unknown> | null)?.dateOfBirth
+        ),
+      })),
+      count ?? null,
+      params
+    ),
     bands: bands ?? [],
     costCentres: costCentres ?? [],
   })

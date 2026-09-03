@@ -1,6 +1,9 @@
 'use client'
 
 import { useEffect, useMemo, useState, useRef } from 'react'
+import Pagination from '@/app/components/Pagination'
+import { SkeletonTable } from '@/app/components/Skeleton'
+import { usePagedList } from '@/app/hooks/usePagedList'
 
 interface client_group {
   id: string
@@ -26,18 +29,16 @@ const BOOKING_MODE_LABEL: Record<Client['booking_mode'], string> = {
 const UNASSIGNED_KEY = '__unassigned__'
 
 export default function TmcClientsPage() {
-  const [clients, setClients] = useState<Client[]>([])
-  const [loading, setLoading] = useState(true)
-  const [query, setQuery] = useState('')
   const [showSuggestions, setShowSuggestions] = useState(false)
   const searchRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    fetch('/api/tmc/clients')
-      .then(r => r.json())
-      .then(data => { if (data.ok) setClients(data.clients) })
-      .finally(() => setLoading(false))
-  }, [])
+  // Server-paged and server-searched. The suggestion box below is now built from
+  // whatever the SERVER matched rather than from a locally held array — with a
+  // paged list, filtering in the browser would quietly search ten rows and
+  // present the result as if it had searched everything.
+  const list = usePagedList<Client>('/api/tmc/clients')
+  const clients = list.items
+  const query = list.search
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -54,7 +55,9 @@ export default function TmcClientsPage() {
     const q = query.trim().toLowerCase()
     if (!q) return { clients: [], client_groups: [] }
 
-    const matchedClients = clients.filter(c => c.name.toLowerCase().includes(q)).slice(0, 6)
+    // `clients` is already the server's matches for this query, so this is a
+    // slice for display, not a second filter.
+    const matchedClients = clients.slice(0, 6)
 
     const client_groupMap = new Map<string, client_group>()
     for (const c of clients) {
@@ -69,16 +72,9 @@ export default function TmcClientsPage() {
 
   // ── Filtered + grouped-by-client_group, alphabetical ─────────────────────────────
   const groups = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    const filtered = q
-      ? clients.filter(c =>
-          c.name.toLowerCase().includes(q) ||
-          (c.client_groups?.name.toLowerCase().includes(q) ?? false)
-        )
-      : clients
-
+    // Grouping only — the server has already applied the search.
     const byclient_group = new Map<string, { client_group: client_group | null; clients: Client[] }>()
-    for (const c of filtered) {
+    for (const c of clients) {
       const key = c.client_groups?.id ?? UNASSIGNED_KEY
       if (!byclient_group.has(key)) {
         byclient_group.set(key, { client_group: c.client_groups, clients: [] })
@@ -97,10 +93,10 @@ export default function TmcClientsPage() {
     }
 
     return groupList
-  }, [clients, query])
+  }, [clients])
 
   function selectSuggestion(text: string) {
-    setQuery(text)
+    list.setSearch(text)
     setShowSuggestions(false)
   }
 
@@ -112,7 +108,7 @@ export default function TmcClientsPage() {
       <div style={s.header}>
         <div>
           <h1 style={s.heading}>Clients</h1>
-          <p style={s.sub}>{clients.length} client{clients.length === 1 ? '' : 's'}, grouped by client group.</p>
+          <p style={s.sub}>{list.total} client{list.total === 1 ? '' : 's'}, grouped by client group.</p>
         </div>
       </div>
 
@@ -120,7 +116,7 @@ export default function TmcClientsPage() {
         <input
           type="text"
           value={query}
-          onChange={e => { setQuery(e.target.value); setShowSuggestions(true) }}
+          onChange={e => { list.setSearch(e.target.value); setShowSuggestions(true) }}
           onFocus={() => setShowSuggestions(true)}
           placeholder="Search clients or client groups…"
           style={s.searchInput}
@@ -166,8 +162,8 @@ export default function TmcClientsPage() {
         )}
       </div>
 
-      {loading ? (
-        <div style={s.emptyState}><p style={s.emptyTitle}>Loading…</p></div>
+      {list.loading ? (
+        <SkeletonTable rows={8} cols={4} />
       ) : groups.length === 0 ? (
         <div style={s.emptyState}>
           <p style={s.emptyTitle}>No clients found</p>
@@ -211,6 +207,11 @@ export default function TmcClientsPage() {
           ))}
         </div>
       )}
+
+      <Pagination
+        page={list.page} pageSize={10} total={list.total}
+        onPageChange={list.setPage} busy={list.refreshing} noun="clients"
+      />
     </div>
     </>
   )

@@ -69,7 +69,7 @@ export default function RuleEngineTestPage() {
   useEffect(() => {
     fetch('/api/tmc/clients')
       .then(r => r.json())
-      .then(data => { if (data.ok) setClients(data.clients) })
+      .then(data => { if (data.ok) setClients(data.items) })
       .finally(() => setLoadingClients(false))
   }, [])
 

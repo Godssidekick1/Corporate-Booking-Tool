@@ -1,8 +1,11 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Papa from 'papaparse'
 import SearchableSelect from '@/app/components/SearchableSelect'
+import Pagination from '@/app/components/Pagination'
+import { SkeletonTable } from '@/app/components/Skeleton'
+import { usePagedList } from '@/app/hooks/usePagedList'
 
 // ── /tmc/configurations/traveller-profiles ─────────────────────────────────────────
 // One screen for everything a travel desk maintains about a client's people:
@@ -90,18 +93,14 @@ export default function TravellerProfilesPage() {
   const [clients, setClients] = useState<Client[]>([])
   const [clientId, setClientId] = useState('')
 
-  const [employees, setEmployees] = useState<Employee[]>([])
-  const [bands, setBands] = useState<Band[]>([])
-  const [costCentres, setCostCentres] = useState<CostCentre[]>([])
+  // employees / bands / costCentres come from the paged hook further down.
 
   const [selectedId, setSelectedId] = useState('')
   const [draft, setDraft] = useState<Employee | null>(null)
   const [dirty, setDirty] = useState(false)
 
-  const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [importing, setImporting] = useState(false)
-  const [query, setQuery] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [importReport, setImportReport] = useState<{ updated: number; skipped: number; errors: { row: number; email: string; error: string }[] } | null>(null)
@@ -117,38 +116,35 @@ export default function TravellerProfilesPage() {
 
   useEffect(() => {
     fetch('/api/tmc/clients').then(r => r.json())
-      .then(d => { if (d.ok) setClients(d.clients) })
+      .then(d => { if (d.ok) setClients(d.items) })
   }, [])
 
-  // Declared before the effect that calls it: a function declaration is hoisted
-  // at runtime, but referencing it earlier means the effect closes over the
-  // binding before it is initialised as far as the linter is concerned.
-  async function load() {
-    setLoading(true); setError(''); setImportReport(null)
-    try {
-      const d = await fetch(`/api/tmc/traveler-profiles?clientId=${clientId}`).then(r => r.json())
-      if (!d.ok) { setError(d.error || 'Could not load traveller profiles.'); return }
-      setEmployees(d.employees)
-      setBands(d.bands)
-      setCostCentres(d.costCentres)
-      setSelectedId('')
-      setDraft(null)
-      setDirty(false)
-    } finally { setLoading(false) }
+  // Server-paged and server-searched. Searching the whole roster from the client
+  // meant downloading it first, which is exactly what breaks once a client has a
+  // few hundred people.
+  const roster = usePagedList<Employee>('/api/tmc/traveler-profiles', {
+    params: { clientId },
+    enabled: Boolean(clientId),
+  })
+
+  const employees = roster.items
+  const bands = (roster.raw?.bands as Band[] | undefined) ?? []
+  const costCentres = (roster.raw?.costCentres as CostCentre[] | undefined) ?? []
+
+  function load() {
+    roster.refetch()
   }
 
+  // Clear the open profile when the roster is reloaded under it: after a save,
+  // an import, or a page change, the row behind the panel may no longer exist.
   useEffect(() => {
-    if (!clientId) return
-    // load() sets state before its first await. Fetch-on-mount is the pattern
-    // this whole app uses; the alternative here would be a server component,
-    // which this page cannot be — it is heavily interactive.
+    // Syncing panel state to the list underneath it, which the server owns.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    load()
-
-    // `load` is intentionally not a dependency: it is redeclared every render,
-    // so depending on it would refetch the roster on every keystroke.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientId])
+    setSelectedId('')
+    setDraft(null)
+    setDirty(false)
+    setImportReport(null)
+  }, [clientId, roster.page, roster.search])
 
   function select(emp: Employee) {
     if (dirty && !confirm('You have unsaved changes. Discard them?')) return
@@ -234,7 +230,9 @@ export default function TravellerProfilesPage() {
       if (!profileResult.ok) { setError(profileResult.error || 'Could not save the profile.'); return }
       if (!hierarchyResult.ok) { setError(hierarchyResult.error || 'Could not save the reporting line.'); return }
 
-      setEmployees(prev => prev.map(e => (e.id === draft.id ? { ...draft } : e)))
+      // Re-read rather than patching a local array we no longer own: the row's
+      // derived fields (profileComplete, trips) are computed server-side.
+      roster.refetch()
       setDirty(false)
       showSuccess(`${draft.full_name} saved.`)
     } finally { setSaving(false) }
@@ -278,17 +276,8 @@ export default function TravellerProfilesPage() {
     })
   }
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return employees
-    return employees.filter(e =>
-      e.full_name.toLowerCase().includes(q) ||
-      e.email.toLowerCase().includes(q) ||
-      (e.cost_centre ?? '').toLowerCase().includes(q) ||
-      (e.department ?? '').toLowerCase().includes(q) ||
-      (e.designation ?? '').toLowerCase().includes(q)
-    )
-  }, [employees, query])
+  // No client-side filter any more: search runs on the server so it spans every
+  // page rather than the ten rows currently loaded.
 
   const incomplete = employees.filter(e => !e.profileComplete).length
 
@@ -360,11 +349,8 @@ export default function TravellerProfilesPage() {
           <p style={s.emptyTitle}>Pick a client</p>
           <p style={s.emptyDesc}>Their people and travel profiles will appear here.</p>
         </div>
-      ) : loading ? (
-        <div style={s.loadingWrap}>
-          <div style={s.spinner} />
-          <p style={s.muted}>Loading traveller profiles…</p>
-        </div>
+      ) : roster.loading ? (
+        <SkeletonTable rows={10} cols={6} />
       ) : (
         <>
           {incomplete > 0 && (
@@ -378,15 +364,15 @@ export default function TravellerProfilesPage() {
           <input
             type="search"
             placeholder="Search name, email, cost centre, designation…"
-            value={query}
-            onChange={e => setQuery(e.target.value)}
+            value={roster.search}
+            onChange={e => roster.setSearch(e.target.value)}
             style={s.search}
           />
 
           {/* Roster takes the full content width. It previously shared a row
               with the detail panel, which left each about 448px once the rail
               and sub-nav were accounted for — too narrow for either. */}
-          <div style={s.listPane}>
+          <div style={{ ...s.listPane, ...(roster.refreshing ? s.dimmed : {}) }}>
             <table style={s.table}>
               <thead>
                 <tr>
@@ -396,7 +382,7 @@ export default function TravellerProfilesPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(emp => (
+                {employees.map(emp => (
                   <tr
                     key={emp.id}
                     onClick={() => select(emp)}
@@ -433,14 +419,21 @@ export default function TravellerProfilesPage() {
               </tbody>
             </table>
 
-            {filtered.length === 0 && (
+            {employees.length === 0 && (
               <div style={s.empty}>
                 <p style={s.emptyDesc}>
-                  {query ? 'Nobody matches that search.' : 'This client has no employees yet.'}
+                  {roster.search
+                    ? 'Nobody at this client matches that search.'
+                    : 'This client has no employees yet.'}
                 </p>
               </div>
             )}
           </div>
+
+          <Pagination
+            page={roster.page} pageSize={10} total={roster.total}
+            onPageChange={roster.setPage} busy={roster.refreshing} noun="travellers"
+          />
 
           {/* ── Detail slide-over ───────────────────────────────────── */}
           {draft && (
@@ -637,6 +630,9 @@ const s: Record<string, React.CSSProperties> = {
   warnBanner: { background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 8, padding: '11px 14px', fontSize: 12, color: '#92400E', marginBottom: 14, lineHeight: 1.6 },
   errorList: { margin: '6px 0 0', paddingLeft: 18 },
 
+  // Refetch state: the table holds its position and fades, so a search reads
+  // as the rows updating rather than the page rebuilding.
+  dimmed: { opacity: 0.55, transition: 'opacity 120ms ease' },
   listPane: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: 10, overflow: 'hidden', overflowY: 'auto', maxHeight: '72vh' },
 
   // Slide-over. Fixed rather than absolute so it escapes the sub-nav's

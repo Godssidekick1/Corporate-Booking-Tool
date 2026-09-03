@@ -1,6 +1,9 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Pagination from '@/app/components/Pagination'
+import { SkeletonTable } from '@/app/components/Skeleton'
+import { usePagedList } from '@/app/hooks/usePagedList'
 import { PERMISSIONS } from '@/app/lib/permissions/permissionKeys'
 
 interface Client {
@@ -32,30 +35,25 @@ const STATUS_COLORS: Record<string, { bg: string; fg: string }> = {
 type Mode = 'list' | 'create'
 
 export default function TmcUsersPage() {
-  const [tcs, setTcs] = useState<Tc[]>([])
   const [clients, setClients] = useState<Client[]>([])
-  const [loading, setLoading] = useState(true)
   const [mode, setMode] = useState<Mode>('list')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
+  // Counsellors are server-paged and server-searched. Clients stay a single
+  // fetch: they populate the access checkbox list in the editor, which needs
+  // every option present at once to show what is and is not ticked.
+  const list = usePagedList<Tc>('/api/tmc/tcs')
+  const tcs = list.items
+
   useEffect(() => {
-    loadAll()
+    fetch('/api/tmc/clients').then(r => r.json())
+      .then(d => { if (d.ok) setClients(d.items) })
   }, [])
 
-  async function loadAll() {
-    setLoading(true)
-    try {
-      const [tcsRes, clientsRes] = await Promise.all([
-        fetch('/api/tmc/tcs').then(r => r.json()),
-        fetch('/api/tmc/clients').then(r => r.json()),
-      ])
-      if (tcsRes.ok) setTcs(tcsRes.tcs)
-      if (clientsRes.ok) setClients(clientsRes.clients)
-    } finally {
-      setLoading(false)
-    }
+  function loadAll() {
+    list.refetch()
   }
 
   async function handleStatusToggle(tc: Tc) {
@@ -68,7 +66,7 @@ export default function TmcUsersPage() {
     })
     const data = await res.json()
     if (!res.ok) { setError(data.error || 'Could not update status.'); return }
-    setTcs(prev => prev.map(t => t.id === tc.id ? { ...t, status: newStatus } : t))
+    list.refetch()
     setSuccess(newStatus === 'deactivated' ? 'TC deactivated.' : 'TC reactivated.')
   }
 
@@ -79,7 +77,7 @@ export default function TmcUsersPage() {
       <div style={s.header}>
         <div>
           <h1 style={s.heading}>TMC users</h1>
-          <p style={s.sub}>{tcs.length} travel counsellor{tcs.length === 1 ? '' : 's'} with access to your account.</p>
+          <p style={s.sub}>{list.total} travel counsellor{list.total === 1 ? '' : 's'} with access to your account.</p>
         </div>
         <button onClick={() => { setMode('create'); setError(''); setSuccess('') }} style={s.primaryBtn}>
           + Add TC
@@ -109,8 +107,8 @@ export default function TmcUsersPage() {
       )}
 
       <div style={s.card}>
-        {loading ? (
-          <div style={s.emptyState}><p style={s.emptyTitle}>Loading…</p></div>
+        {list.loading ? (
+          <SkeletonTable rows={8} cols={6} />
         ) : tcs.length === 0 ? (
           <div style={s.emptyState}>
             <p style={s.emptyTitle}>No TCs yet</p>
@@ -155,6 +153,11 @@ export default function TmcUsersPage() {
           </table>
         )}
       </div>
+
+      <Pagination
+        page={list.page} pageSize={10} total={list.total}
+        onPageChange={list.setPage} busy={list.refreshing} noun="counsellors"
+      />
     </div>
   )
 }

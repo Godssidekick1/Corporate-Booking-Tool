@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { isPermissionKey } from '@/app/lib/permissions/permissionKeys'
+import { parsePageParams, pagedResponse, ilikeAcross } from '@/app/lib/pagination'
 import { NextRequest } from 'next/server'
 
 // ── POST /api/tmc/tcs ────────────────────────────────────────────────────────
@@ -19,7 +20,7 @@ interface CreateTcBody {
   clientIds: string[]
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -39,12 +40,25 @@ export async function GET() {
     return Response.json({ error: 'Only TMC admins can view TCs' }, { status: 403 })
   }
 
-  const { data: tcs, error } = await service
+  const params = parsePageParams(req.nextUrl.searchParams)
+  const ids = req.nextUrl.searchParams.get('ids')?.split(',').filter(Boolean) ?? []
+
+  let query = service
     .from('employees')
-    .select('id, full_name, email, status, created_at')
+    .select('id, full_name, email, status, created_at', { count: 'exact' })
     .eq('tmc_id', caller.tmc_id)
     .eq('role', 'tc')
     .order('full_name')
+
+  if (ids.length > 0) {
+    query = query.in('id', ids)
+  } else {
+    const filter = ilikeAcross(['full_name', 'email'], params.search)
+    if (filter) query = query.or(filter)
+    query = query.range(params.from, params.to)
+  }
+
+  const { data: tcs, error, count } = await query
 
   if (error) {
     return Response.json({ error: error.message }, { status: 500 })
@@ -75,7 +89,7 @@ export async function GET() {
     clientIds: accessByTc.get(tc.id) ?? [],
   }))
 
-  return Response.json({ ok: true, tcs: enriched })
+  return Response.json(pagedResponse(enriched, count ?? null, params))
 }
 
 export async function POST(req: NextRequest) {

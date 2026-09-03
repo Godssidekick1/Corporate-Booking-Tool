@@ -44,13 +44,15 @@ export default function SettingsHierarchyPage() {
     setLoading(true)
     setError('')
     try {
-      const res = await fetch('/api/settings/users')
+      // all=true: this screen renders a reporting tree, and a tree needs every
+      // node to resolve manager_id to a name.
+      const res = await fetch('/api/settings/users?all=true')
       const data = await res.json()
       if (!data.ok) {
         setError(data.error || 'Could not load employees.')
         return
       }
-      setEmployees(data.employees)
+      setEmployees(data.items)
     } finally {
       setLoading(false)
     }

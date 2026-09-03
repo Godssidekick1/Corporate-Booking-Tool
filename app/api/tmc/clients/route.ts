@@ -1,8 +1,21 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { getAccessibleClientIds } from '@/app/lib/permissions/requireTmcPermission'
+import { parsePageParams, pagedResponse, ilikeAcross } from '@/app/lib/pagination'
+import { NextRequest } from 'next/server'
 
-export async function GET() {
+// ── GET /api/tmc/clients ─────────────────────────────────────────────────────
+// Paged. Serves both the clients table and every client picker in the app, so
+// it takes `search` (server-side, spanning the whole set) and `ids` (resolve
+// specific rows by id).
+//
+// `ids` exists for pickers: once a selection has been made and the search moves
+// on, the selected client is no longer in the current page of results, and a
+// picker that derives its label from the visible list would blank itself. The
+// caller asks for that one row back instead.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function GET(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -25,21 +38,36 @@ export async function GET() {
   }
 
   const accessibleIds = await getAccessibleClientIds(service, user.id, caller.role)
+  const params = parsePageParams(req.nextUrl.searchParams)
+  const ids = req.nextUrl.searchParams.get('ids')?.split(',').filter(Boolean) ?? []
 
   let query = service
     .from('clients')
-    .select('id, name, status, setup_completed, created_at, booking_mode, client_group_id, client_groups(id, name, city)')
+    .select(
+      'id, name, status, setup_completed, created_at, booking_mode, client_group_id, client_groups(id, name, city)',
+      { count: 'exact' }
+    )
     .eq('tmc_id', caller.tmc_id)
     .order('created_at', { ascending: false })
 
   if (accessibleIds !== null) {
     if (accessibleIds.length === 0) {
-      return Response.json({ ok: true, clients: [] })
+      return Response.json(pagedResponse([], 0, params))
     }
     query = query.in('id', accessibleIds)
   }
 
-  const { data: clients, error } = await query
+  if (ids.length > 0) {
+    // Resolving specific rows for a picker's label — not a page of results, so
+    // the range below is skipped and the caller gets exactly what it asked for.
+    query = query.in('id', ids)
+  } else {
+    const filter = ilikeAcross(['name'], params.search)
+    if (filter) query = query.or(filter)
+    query = query.range(params.from, params.to)
+  }
+
+  const { data: clients, error, count } = await query
 
   if (error) {
     return Response.json({ error: error.message }, { status: 500 })
@@ -64,11 +92,11 @@ export async function GET() {
     }
   }
 
-  return Response.json({
-    ok: true,
-    clients: (clients ?? []).map(c => ({
-      ...c,
-      employeeCount: employeeCounts.get(c.id) ?? 0,
-    })),
-  })
+  return Response.json(
+    pagedResponse(
+      (clients ?? []).map(c => ({ ...c, employeeCount: employeeCounts.get(c.id) ?? 0 })),
+      count ?? null,
+      params
+    )
+  )
 }

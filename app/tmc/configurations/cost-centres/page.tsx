@@ -33,7 +33,7 @@ export default function CostCentresPage() {
 
   useEffect(() => {
     fetch('/api/tmc/clients').then(r => r.json())
-      .then(d => { if (d.ok) setClients(d.clients) })
+      .then(d => { if (d.ok) setClients(d.items) })
   }, [])
 
   useEffect(() => {

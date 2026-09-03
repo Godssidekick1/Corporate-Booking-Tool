@@ -31,7 +31,7 @@ export default function TmcClientGroupsPage() {
     try {
       const res = await fetch('/api/tmc/client-groups')
       const data = await res.json()
-      if (data.ok) setClientGroups(data.clientGroups)
+      if (data.ok) setClientGroups(data.items)
     } finally {
       setLoading(false)
     }

@@ -28,7 +28,11 @@ export default function SignInPage() {
   // landing here with a hash-fragment token. This page no longer needs to
   // parse anything off the URL on load — see /auth/callback/route.ts.
 
-  async function redirectByRole() {
+  // Returns true when a navigation was started, so the caller knows to KEEP the
+  // loading state up rather than clearing it. router.push resolves immediately
+  // while the destination is still loading, so clearing here left the button
+  // idle and the screen blank for the whole wait.
+  async function redirectByRole(): Promise<boolean> {
     const res = await fetch('/api/me')
     const data = await res.json()
     const role = data.employee?.role
@@ -41,12 +45,15 @@ export default function SignInPage() {
     // session and no visible error, since nothing here threw.
     if (role === 'tmc_admin' || role === 'tc') {
       router.push('/tmc/dashboard')
+      return true
     } else if (role) {
       router.push('/dashboard')
+      return true
     } else {
       // No role at all (e.g. employee row missing) — same failure mode
       // /dashboard's own fetch handler treats as unauthenticated.
       setError('Could not determine your account role. Please contact support.')
+      return false
     }
   }
 
@@ -54,6 +61,7 @@ export default function SignInPage() {
     e.preventDefault()
     setError('')
     setLoading(true)
+    let navigating = false
     try {
       const res = await fetch('/api/auth/signin', {
         method: 'POST',
@@ -62,11 +70,14 @@ export default function SignInPage() {
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error || 'Sign in failed'); return }
-      await redirectByRole()
+      navigating = await redirectByRole()
     } catch {
       setError('Something went wrong. Please try again.')
     } finally {
-      setLoading(false)
+      // Left up on success: this component unmounts when the destination
+      // renders, and clearing it here is what made the spinner stop while the
+      // dashboard was still fetching.
+      if (!navigating) setLoading(false)
     }
   }
 
@@ -106,6 +117,19 @@ export default function SignInPage() {
 
   return (
     <div style={styles.root}>
+      {/* Covers the gap between "credentials accepted" and "dashboard painted",
+          which is the longest wait in the whole app and previously showed
+          nothing at all. Sits above the panel so the form cannot be resubmitted
+          while a navigation is already under way. */}
+      {loading && (
+        <div style={styles.signingIn} role="status" aria-live="polite">
+          <div style={styles.signingInCard}>
+            <span style={styles.spinner} />
+            <span style={styles.signingInText}>Signing you in…</span>
+          </div>
+        </div>
+      )}
+
       <div style={styles.panel}>
         <div style={styles.panelInner}>
           <div style={styles.wordmark}>
@@ -225,6 +249,24 @@ export default function SignInPage() {
 
 const styles: Record<string, React.CSSProperties> = {
   root: { display: 'flex', minHeight: '100vh', fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif", backgroundColor: '#F7F8FC' },
+
+  signingIn: {
+    position: 'fixed', inset: 0, zIndex: 60,
+    background: 'rgba(0, 8, 53, 0.55)', backdropFilter: 'blur(2px)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+  },
+  signingInCard: {
+    display: 'flex', alignItems: 'center', gap: 12,
+    background: '#fff', borderRadius: 12, padding: '18px 24px',
+    boxShadow: '0 24px 64px rgba(0,8,53,0.28)',
+  },
+  spinner: {
+    width: 18, height: 18, borderRadius: '50%',
+    border: '2px solid #E5E7EB', borderTopColor: '#000835',
+    // `spin` is defined once in globals.css rather than per component.
+    animation: 'spin 0.7s linear infinite', flexShrink: 0,
+  },
+  signingInText: { fontSize: 14, fontWeight: 500, color: '#0A0A14' },
   panel: { width: '420px', flexShrink: 0, backgroundColor: '#000835', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '48px 40px' },
   panelInner: { display: 'flex', flexDirection: 'column', gap: '24px' },
   wordmark: { display: 'flex', flexDirection: 'column', gap: '4px' },

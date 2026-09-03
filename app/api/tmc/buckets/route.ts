@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
+import { parsePageParams, pagedResponse, ilikeAcross } from '@/app/lib/pagination'
 import { NextRequest } from 'next/server'
 
 // ── /api/tmc/buckets ─────────────────────────────────────────────────────────
@@ -16,7 +17,7 @@ import { NextRequest } from 'next/server'
 // concept within months.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -30,11 +31,24 @@ export async function GET() {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
 
-  const { data: buckets, error } = await service
+  const params = parsePageParams(req.nextUrl.searchParams)
+  const ids = req.nextUrl.searchParams.get('ids')?.split(',').filter(Boolean) ?? []
+
+  let query = service
     .from('buckets')
-    .select('id, name, code, description, created_at')
+    .select('id, name, code, description, created_at', { count: 'exact' })
     .eq('tmc_id', auth.tmcId)
     .order('name')
+
+  if (ids.length > 0) {
+    query = query.in('id', ids)
+  } else {
+    const filter = ilikeAcross(['name', 'code'], params.search)
+    if (filter) query = query.or(filter)
+    query = query.range(params.from, params.to)
+  }
+
+  const { data: buckets, error, count } = await query
 
   if (error) {
     return Response.json({ error: error.message }, { status: 500 })
@@ -64,14 +78,17 @@ export async function GET() {
     dealCount.set(a.bucket_id, (dealCount.get(a.bucket_id) ?? 0) + 1)
   }
 
-  return Response.json({
-    ok: true,
-    buckets: (buckets ?? []).map(b => ({
-      ...b,
-      clientCount: clientCount.get(b.id) ?? 0,
-      dealCodeCount: dealCount.get(b.id) ?? 0,
-    })),
-  })
+  return Response.json(
+    pagedResponse(
+      (buckets ?? []).map(b => ({
+        ...b,
+        clientCount: clientCount.get(b.id) ?? 0,
+        dealCodeCount: dealCount.get(b.id) ?? 0,
+      })),
+      count ?? null,
+      params
+    )
+  )
 }
 
 interface CreateBody {

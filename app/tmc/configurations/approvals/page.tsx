@@ -90,7 +90,7 @@ export default function TmcApprovalsPage() {
       ])
       if (!chainData.ok) { setError(chainData.error || 'Could not load approval chains.'); return }
       setChains(chainData.templates)
-      if (clientData.ok) setClients(clientData.clients)
+      if (clientData.ok) setClients(clientData.items)
     } finally { setLoading(false) }
   }
 

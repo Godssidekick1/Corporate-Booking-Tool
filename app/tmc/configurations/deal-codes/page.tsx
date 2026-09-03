@@ -1,7 +1,10 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState } from 'react'
 import SearchableSelect from '@/app/components/SearchableSelect'
+import Pagination from '@/app/components/Pagination'
+import { SkeletonTable } from '@/app/components/Skeleton'
+import { usePagedList } from '@/app/hooks/usePagedList'
 import { formatFlightSpec } from '@/app/lib/deal-codes/flightSpec'
 import { STATUS_LABELS, type DealCodeStatus } from '@/app/lib/deal-codes/dealCodeStatus'
 
@@ -40,7 +43,14 @@ interface DealCode {
 }
 interface Assignment { id: string; kind: string; targetId: string; targetName: string }
 interface Named { id: string; name: string }
-interface Effective {
+// Coverage is the OUTCOME of resolution, not a definition: one row per client
+// per airline per type, carrying only the winner. It deliberately shares no
+// columns with the master beside it — category, flight and the date windows
+// describe a deal, not what a client ends up with, and having both tables show
+// them is what made the two tabs read as the same screen.
+interface Coverage {
+  clientId: string
+  clientName: string
   airline: string
   codeType: string
   code: string
@@ -73,16 +83,25 @@ const EMPTY_FORM = {
 }
 
 export default function DealCodesPage() {
-  const [tab, setTab] = useState<'codes' | 'effective'>('codes')
+  const [tab, setTab] = useState<'codes' | 'coverage'>('codes')
 
   const [categories, setCategories] = useState<Category[]>([])
-  const [dealCodes, setDealCodes] = useState<DealCode[]>([])
-  const [loading, setLoading] = useState(true)
 
-  const [search, setSearch] = useState('')
   const [filterCategory, setFilterCategory] = useState('')
   const [filterType, setFilterType] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
+
+  // Both tabs are server-paged and server-searched. The hook owns the request
+  // sequencing, so a slow response for an earlier keystroke cannot overwrite a
+  // newer one — which is the bug the previous hand-rolled version had.
+  const codes = usePagedList<DealCode>('/api/tmc/deal-codes', {
+    params: { categoryId: filterCategory, type: filterType, status: filterStatus },
+    enabled: tab === 'codes',
+  })
+
+  const coverage = usePagedList<Coverage>('/api/tmc/deal-codes/effective', {
+    enabled: tab === 'coverage',
+  })
 
   const [selected, setSelected] = useState<DealCode | null>(null)
   const [creating, setCreating] = useState(false)
@@ -95,9 +114,6 @@ export default function DealCodesPage() {
   const [assignKind, setAssignKind] = useState<'client' | 'client_group' | 'bucket'>('client')
   const [assignTarget, setAssignTarget] = useState('')
 
-  const [effectiveClientId, setEffectiveClientId] = useState('')
-  const [effective, setEffective] = useState<Effective[]>([])
-
   const [importOpen, setImportOpen] = useState(false)
   const [importRows, setImportRows] = useState<Record<string, string>[]>([])
   const [verdicts, setVerdicts] = useState<Verdict[]>([])
@@ -107,21 +123,6 @@ export default function DealCodesPage() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
-  const load = useCallback(async () => {
-    setLoading(true); setError('')
-    try {
-      const qs = new URLSearchParams()
-      if (search.trim()) qs.set('search', search.trim())
-      if (filterCategory) qs.set('categoryId', filterCategory)
-      if (filterType) qs.set('type', filterType)
-      if (filterStatus) qs.set('status', filterStatus)
-
-      const d = await fetch(`/api/tmc/deal-codes?${qs}`).then(r => r.json())
-      if (!d.ok) { setError(d.error || 'Could not load deal codes.'); return }
-      setDealCodes(d.dealCodes)
-    } finally { setLoading(false) }
-  }, [search, filterCategory, filterType, filterStatus])
-
   useEffect(() => {
     Promise.all([
       fetch('/api/tmc/deal-code-categories').then(r => r.json()),
@@ -130,18 +131,11 @@ export default function DealCodesPage() {
       fetch('/api/tmc/buckets').then(r => r.json()),
     ]).then(([cats, cl, gr, bk]) => {
       if (cats.ok) setCategories(cats.categories)
-      if (cl.ok) setClients(cl.clients ?? [])
-      if (gr.ok) setGroups(gr.clientGroups ?? [])
-      if (bk.ok) setBuckets(bk.buckets ?? [])
+      if (cl.ok) setClients(cl.items ?? [])
+      if (gr.ok) setGroups(gr.items ?? [])
+      if (bk.ok) setBuckets(bk.items ?? [])
     })
   }, [])
-
-  // Debounced so typing in the search box does not fire a request per keystroke.
-  // Also covers the initial load — it runs once on mount with empty filters.
-  useEffect(() => {
-    const t = setTimeout(() => load(), 250)
-    return () => clearTimeout(t)
-  }, [load])
 
   const category = categories.find(c => c.id === form.category_id)
   const allowedTypes = category?.allowedTypes ?? CODE_TYPES.map(t => t.value)
@@ -212,7 +206,7 @@ export default function DealCodesPage() {
       if (!d.ok) { setError(d.error || 'Could not save.'); return }
       setSuccess(creating ? 'Deal code created.' : 'Deal code saved.')
       closePanel()
-      await load()
+      codes.refetch()
     } finally { setBusy(false) }
   }
 
@@ -224,7 +218,7 @@ export default function DealCodesPage() {
       const d = await fetch(`/api/tmc/deal-codes/${selected.id}`, { method: 'DELETE' }).then(r => r.json())
       if (!d.ok) { setError(d.error || 'Could not delete.'); return }
       closePanel()
-      await load()
+      codes.refetch()
     } finally { setBusy(false) }
   }
 
@@ -240,7 +234,7 @@ export default function DealCodesPage() {
       setAssignTarget('')
       const refreshed = await fetch(`/api/tmc/deal-codes/${selected.id}`).then(r => r.json())
       if (refreshed.ok) setAssignments(refreshed.assignments)
-      await load()
+      codes.refetch()
     } finally { setBusy(false) }
   }
 
@@ -249,16 +243,8 @@ export default function DealCodesPage() {
     try {
       await fetch(`/api/tmc/deal-code-assignments?id=${id}`, { method: 'DELETE' })
       setAssignments(prev => prev.filter(a => a.id !== id))
-      await load()
+      codes.refetch()
     } finally { setBusy(false) }
-  }
-
-  async function loadEffective(clientId: string) {
-    setEffectiveClientId(clientId)
-    if (!clientId) { setEffective([]); return }
-    const d = await fetch(`/api/tmc/deal-codes/effective?clientId=${clientId}`).then(r => r.json())
-    if (d.ok) setEffective(d.effective)
-    else setError(d.error || 'Could not resolve codes.')
   }
 
   // ── CSV ────────────────────────────────────────────────────────────────────
@@ -310,7 +296,7 @@ export default function DealCodesPage() {
       if (!d.ok) { setError(d.error || 'Import failed.'); return }
       setSuccess(`Imported ${d.imported} deal code${d.imported === 1 ? '' : 's'}.`)
       setImportOpen(false); setImportRows([]); setVerdicts([]); setImportFile('')
-      await load()
+      codes.refetch()
     } finally { setBusy(false) }
   }
 
@@ -342,10 +328,10 @@ export default function DealCodesPage() {
 
       <div style={s.tabs}>
         <button onClick={() => setTab('codes')} style={{ ...s.tab, ...(tab === 'codes' ? s.tabOn : {}) }}>
-          Deal codes {dealCodes.length > 0 && <span style={s.tabCount}>{dealCodes.length}</span>}
+          Deal codes {codes.total > 0 && <span style={s.tabCount}>{codes.total}</span>}
         </button>
-        <button onClick={() => setTab('effective')} style={{ ...s.tab, ...(tab === 'effective' ? s.tabOn : {}) }}>
-          Effective codes
+        <button onClick={() => setTab('coverage')} style={{ ...s.tab, ...(tab === 'coverage' ? s.tabOn : {}) }}>
+          Coverage {coverage.total > 0 && <span style={s.tabCount}>{coverage.total}</span>}
         </button>
       </div>
 
@@ -356,7 +342,7 @@ export default function DealCodesPage() {
         <>
           <div style={s.filters}>
             <input
-              value={search} onChange={e => setSearch(e.target.value)}
+              value={codes.search} onChange={e => codes.setSearch(e.target.value)}
               placeholder="Search code or airline" style={{ ...s.input, flex: 2, minWidth: 180 }}
             />
             <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)} style={{ ...s.input, flex: 1 }}>
@@ -375,18 +361,25 @@ export default function DealCodesPage() {
             </select>
           </div>
 
-          {loading ? (
-            <p style={s.muted}>Loading deal codes…</p>
-          ) : dealCodes.length === 0 ? (
+          {/* Three loading states, deliberately different. Skeleton on first
+              paint, because there is nothing on screen to keep. Dimmed table on
+              every refetch after that — collapsing a rendered table to a
+              skeleton on each keystroke reads as the page breaking. */}
+          {codes.loading ? (
+            <SkeletonTable rows={10} cols={9} />
+          ) : codes.items.length === 0 ? (
             <div style={s.empty}>
-              <p style={s.emptyTitle}>No deal codes yet</p>
+              <p style={s.emptyTitle}>
+                {codes.search ? 'No deal codes match that search' : 'No deal codes yet'}
+              </p>
               <p style={s.emptyDesc}>
-                Add one, or import a spreadsheet from an airline. Until a code is assigned to a
-                client it is recorded but reaches nobody.
+                {codes.search
+                  ? 'Search covers every deal code, not just this page — so nothing here matches.'
+                  : 'Add one, or import a spreadsheet from an airline. Until a code is assigned to a client it is recorded but reaches nobody.'}
               </p>
             </div>
           ) : (
-            <div style={s.tableWrap}>
+            <div style={{ ...s.tableWrap, ...(codes.refreshing ? s.dimmed : {}) }}>
               <table style={s.table}>
                 <thead>
                   <tr>
@@ -396,7 +389,7 @@ export default function DealCodesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {dealCodes.map((d, i) => (
+                  {codes.items.map((d, i) => (
                     <tr
                       key={d.id}
                       onClick={() => openDeal(d)}
@@ -426,46 +419,61 @@ export default function DealCodesPage() {
               </table>
             </div>
           )}
+
+          <Pagination
+            page={codes.page} pageSize={10} total={codes.total}
+            onPageChange={codes.setPage} busy={codes.refreshing} noun="deal codes"
+          />
         </>
       )}
 
-      {tab === 'effective' && (
-        <div style={{ maxWidth: 980 }}>
-          <div style={{ ...s.field, maxWidth: 320 }}>
-            <label style={s.label}>Client</label>
-            <SearchableSelect
-              value={effectiveClientId}
-              onChange={loadEffective}
-              options={clients.map(c => ({ id: c.id, label: c.name }))}
-              placeholder="Select a client…"
-              emptyMessage="No clients match"
+      {tab === 'coverage' && (
+        <>
+          <p style={s.tabIntro}>
+            What each client actually ends up with. One row per client per airline per type,
+            showing the winner and what it beat — the outcome of resolution, not the deals that
+            fed it.
+          </p>
+
+          <div style={s.filters}>
+            <input
+              value={coverage.search} onChange={e => coverage.setSearch(e.target.value)}
+              placeholder="Search client, bucket, group, code or airline"
+              style={{ ...s.input, flex: 1, minWidth: 260, maxWidth: 420 }}
             />
           </div>
 
-          {!effectiveClientId ? (
-            <p style={s.muted}>Pick a client to see what resolves for them today.</p>
-          ) : effective.length === 0 ? (
+          {coverage.loading ? (
+            <SkeletonTable rows={10} cols={6} />
+          ) : coverage.items.length === 0 ? (
             <div style={s.empty}>
-              <p style={s.emptyTitle}>Nothing resolves for this client</p>
+              <p style={s.emptyTitle}>
+                {coverage.search ? 'Nothing matches that search' : 'No codes resolve for anyone yet'}
+              </p>
               <p style={s.emptyDesc}>
-                No deal code reaches them, or every one that does is outside its sales or travel
-                window today.
+                {coverage.search
+                  ? 'Coverage is searched across every client, so nothing anywhere matches.'
+                  : 'Either no deal code is assigned to a client, or every assigned code is outside its sales or travel window today.'}
               </p>
             </div>
           ) : (
             <>
-              <div style={s.tableWrap}>
+              <div style={{ ...s.tableWrap, ...(coverage.refreshing ? s.dimmed : {}) }}>
                 <table style={s.table}>
                   <thead>
                     <tr>
-                      {['Airline', 'Type', 'Winning code', 'Via', 'Beat'].map(h => (
+                      {['Client', 'Airline', 'Type', 'Code', 'Via', 'Beat'].map(h => (
                         <th key={h} style={s.th}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {effective.map((e, i) => (
-                      <tr key={`${e.airline}-${e.codeType}`} style={{ ...s.tr, background: i % 2 === 0 ? '#fff' : '#FAFAFA' }}>
+                    {coverage.items.map((e, i) => (
+                      <tr
+                        key={`${e.clientId}-${e.airline}-${e.codeType}`}
+                        style={{ ...s.tr, background: i % 2 === 0 ? '#fff' : '#FAFAFA' }}
+                      >
+                        <td style={{ ...s.td, fontWeight: 500, color: 'var(--color-ink)' }}>{e.clientName}</td>
                         <td style={{ ...s.td, ...s.mono }}>{e.airline}</td>
                         <td style={s.td}><span style={s.typePill}>{e.codeType}</span></td>
                         <td style={s.td}>
@@ -483,14 +491,21 @@ export default function DealCodesPage() {
                   </tbody>
                 </table>
               </div>
+
+              <Pagination
+                page={coverage.page} pageSize={10} total={coverage.total}
+                onPageChange={coverage.setPage} busy={coverage.refreshing} noun="resolved codes"
+              />
+
               <p style={s.footnote}>
                 One winner per airline per type — a private fare, a tour code and a tracking code
                 can all apply to the same booking. Direct assignment beats a bucket, which beats a
-                client group.
+                client group. <strong>Beat</strong> names the codes that also reached that client
+                but lost.
               </p>
             </>
           )}
-        </div>
+        </>
       )}
 
       {/* ── Editor slide-over ─────────────────────────────────────────────── */}
@@ -772,6 +787,10 @@ const s: Record<string, React.CSSProperties> = {
   tabCount: { marginLeft: 6, fontSize: 11, color: 'var(--color-secondary)', background: '#F3F4F6', borderRadius: 10, padding: '1px 7px' },
 
   filters: { display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' },
+  tabIntro: { fontSize: 12.5, color: 'var(--color-secondary)', lineHeight: 1.6, margin: '0 0 14px', maxWidth: 680 },
+  // Refetch state: the table stays exactly where it is and fades slightly, so a
+  // search feels like the rows updating rather than the page rebuilding.
+  dimmed: { opacity: 0.55, transition: 'opacity 120ms ease' },
   field: { display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 14 },
   row: { display: 'flex', gap: 10, alignItems: 'flex-end' },
   label: { fontSize: 11, fontWeight: 600, color: 'var(--color-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' },

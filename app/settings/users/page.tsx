@@ -1,6 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import Pagination from '@/app/components/Pagination'
+import { SkeletonTable } from '@/app/components/Skeleton'
+import { usePagedList } from '@/app/hooks/usePagedList'
 
 interface Employee {
   id: string
@@ -27,25 +30,14 @@ const STATUS_COLORS: Record<string, { bg: string; fg: string }> = {
 type Mode = 'list' | 'invite' | 'direct'
 
 export default function SettingsUsersPage() {
-  const [employees, setEmployees] = useState<Employee[]>([])
-  const [loading, setLoading] = useState(true)
+  const list = usePagedList<Employee>('/api/settings/users')
+  const employees = list.items
   const [mode, setMode] = useState<Mode>('list')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
-  useEffect(() => {
-    loadEmployees()
-  }, [])
-
-  async function loadEmployees() {
-    setLoading(true)
-    try {
-      const res = await fetch('/api/settings/users')
-      const data = await res.json()
-      if (data.ok) setEmployees(data.employees)
-    } finally {
-      setLoading(false)
-    }
+  function loadEmployees() {
+    list.refetch()
   }
 
   async function handleRoleChange(id: string, role: string) {
@@ -57,7 +49,7 @@ export default function SettingsUsersPage() {
     })
     const data = await res.json()
     if (!res.ok) { setError(data.error || 'Could not update role.'); return }
-    setEmployees(prev => prev.map(e => e.id === id ? { ...e, role: data.employee.role } : e))
+    list.refetch()
     setSuccess('Role updated.')
   }
 
@@ -70,7 +62,7 @@ export default function SettingsUsersPage() {
     })
     const data = await res.json()
     if (!res.ok) { setError(data.error || 'Could not update band.'); return }
-    setEmployees(prev => prev.map(e => e.id === id ? { ...e, band_code: data.employee.band_code } : e))
+    list.refetch()
     setSuccess('Band updated.')
   }
 
@@ -84,7 +76,7 @@ export default function SettingsUsersPage() {
     })
     const data = await res.json()
     if (!res.ok) { setError(data.error || 'Could not update status.'); return }
-    setEmployees(prev => prev.map(e => e.id === emp.id ? { ...e, status: data.employee.status } : e))
+    list.refetch()
     setSuccess(newStatus === 'deactivated' ? 'User deactivated.' : 'User reactivated.')
   }
 
@@ -93,7 +85,7 @@ export default function SettingsUsersPage() {
       <div style={s.header}>
         <div>
           <h1 style={s.heading}>Users</h1>
-          <p style={s.sub}>{employees.length} {employees.length === 1 ? 'person' : 'people'} in your company.</p>
+          <p style={s.sub}>{list.total} {list.total === 1 ? 'person' : 'people'} in your company.</p>
         </div>
         <div style={s.headerBtns}>
           <button onClick={() => setMode('direct')} style={s.ghostBtn}>+ Add directly</button>
@@ -121,8 +113,8 @@ export default function SettingsUsersPage() {
       )}
 
       <div style={s.card}>
-        {loading ? (
-          <div style={s.emptyState}><p style={s.emptyTitle}>Loading…</p></div>
+        {list.loading ? (
+          <SkeletonTable rows={8} cols={6} />
         ) : employees.length === 0 ? (
           <div style={s.emptyState}>
             <p style={s.emptyTitle}>No employees yet</p>
@@ -186,6 +178,11 @@ export default function SettingsUsersPage() {
           </table>
         )}
       </div>
+
+      <Pagination
+        page={list.page} pageSize={10} total={list.total}
+        onPageChange={list.setPage} busy={list.refreshing} noun="people"
+      />
     </div>
   )
 }

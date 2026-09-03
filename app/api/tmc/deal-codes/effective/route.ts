@@ -1,25 +1,43 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
-import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
+import { requireTmcPermission, getAccessibleClientIds } from '@/app/lib/permissions/requireTmcPermission'
 import {
   resolveDealCodes,
   describeVia,
   type ResolvableAssignment,
 } from '@/app/lib/deal-codes/resolveDealCodes'
+import { parsePageParams, paginateInMemory } from '@/app/lib/pagination'
 import { NextRequest } from 'next/server'
 
-// ── GET /api/tmc/deal-codes/effective?clientId= ──────────────────────────────
-// What one client actually resolves to, and why.
+// ── GET /api/tmc/deal-codes/effective ────────────────────────────────────────
+// Coverage: which code actually applies, for every client, and why.
 //
-// This is the view the screen being replaced has no answer for. Overlap is
-// normal, so the interesting part is not the list of winners but the "via" and
-// "beat" columns beside them: an admin who expected a different code can see
-// which rule took it away instead of guessing.
+// Distinct from the deal-codes master beside it. The master is one row per deal
+// the TMC has negotiated, whether or not anyone receives it. This is one row per
+// client per airline per type, containing only the winner — the outcome of
+// resolution rather than the definitions that fed it.
 //
-// The gathering below is the ONLY part specific to the database. The ranking
-// lives in resolveDealCodes, which the booking path calls with the same inputs
-// plus an itinerary — so this screen and a real booking can never disagree.
+// WHY IT RESOLVES EVERYTHING BEFORE PAGING
+// Search has to span the whole result set, and a row's searchable text (client
+// name, bucket name, group name) is only known after resolution. Filtering a
+// page of already-resolved rows would silently hide matches on page four.
+//
+// The query count does NOT grow with clients: four fixed queries, then
+// resolveDealCodes runs in memory per client. That holds comfortably into the
+// low thousands of clients. Beyond that this wants a materialised table — worth
+// knowing before it bites, not worth building now.
 // ─────────────────────────────────────────────────────────────────────────────
+
+interface CoverageRow {
+  clientId: string
+  clientName: string
+  airline: string
+  codeType: string
+  code: string
+  via: string
+  ambiguous: boolean
+  beat: { code: string; via: string }[]
+}
 
 export async function GET(req: NextRequest) {
   const supabase = await createClient()
@@ -29,54 +47,50 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const clientId = req.nextUrl.searchParams.get('clientId')
-  if (!clientId) {
-    return Response.json({ error: 'clientId is required' }, { status: 400 })
-  }
-
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, user.id, 'manage_deal_codes', clientId)
+  const auth = await requireTmcPermission(service, user.id, 'manage_deal_codes')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
 
-  const { data: client } = await service
+  const params = parsePageParams(req.nextUrl.searchParams)
+  // Optional: narrow to one client. The screen no longer requires it, but the
+  // client detail page reuses this endpoint for its own section.
+  const onlyClientId = req.nextUrl.searchParams.get('clientId')
+
+  const accessibleIds = await getAccessibleClientIds(service, user.id, auth.role ?? '')
+
+  let clientQuery = service
     .from('clients')
     .select('id, name, client_group_id')
-    .eq('id', clientId)
     .eq('tmc_id', auth.tmcId)
-    .maybeSingle()
+    .order('name')
 
-  if (!client) {
-    return Response.json({ error: 'Client not found' }, { status: 404 })
+  if (onlyClientId) clientQuery = clientQuery.eq('id', onlyClientId)
+  if (accessibleIds !== null) {
+    if (accessibleIds.length === 0) return Response.json(paginateInMemory([], params))
+    clientQuery = clientQuery.in('id', accessibleIds)
   }
 
-  // The three routes a deal can reach this client by.
-  const { data: bucketRows } = await service
-    .from('bucket_clients')
-    .select('bucket_id')
-    .eq('client_id', clientId)
+  const [{ data: clients }, { data: memberships }, { data: assignmentRows }, { data: groups }] =
+    await Promise.all([
+      clientQuery,
+      service.from('bucket_clients').select('bucket_id, client_id'),
+      service
+        .from('deal_code_assignments')
+        .select('deal_code_id, kind, client_id, client_group_id, bucket_id')
+        .eq('tmc_id', auth.tmcId),
+      service.from('client_groups').select('id, name').eq('tmc_id', auth.tmcId),
+    ])
 
-  const bucketIds = (bucketRows ?? []).map(b => b.bucket_id)
-
-  const { data: assignmentRows } = await service
-    .from('deal_code_assignments')
-    .select('deal_code_id, kind, client_id, client_group_id, bucket_id')
-    .eq('tmc_id', auth.tmcId)
-
-  const reaching = (assignmentRows ?? []).filter(a => {
-    if (a.kind === 'client') return a.client_id === clientId
-    if (a.kind === 'bucket') return a.bucket_id !== null && bucketIds.includes(a.bucket_id)
-    return a.client_group_id !== null && a.client_group_id === client.client_group_id
-  })
-
-  if (reaching.length === 0) {
-    return Response.json({ ok: true, client, effective: [] })
+  if (!clients || clients.length === 0 || !assignmentRows || assignmentRows.length === 0) {
+    return Response.json(paginateInMemory([], params))
   }
 
-  const dealIds = [...new Set(reaching.map(a => a.deal_code_id))]
+  const dealIds = [...new Set(assignmentRows.map(a => a.deal_code_id))]
+  const bucketIds = [...new Set(assignmentRows.map(a => a.bucket_id).filter(Boolean) as string[])]
 
-  const [{ data: deals }, { data: buckets }, { data: groups }] = await Promise.all([
+  const [{ data: deals }, { data: buckets }] = await Promise.all([
     service
       .from('deal_codes')
       .select(
@@ -86,37 +100,69 @@ export async function GET(req: NextRequest) {
     bucketIds.length
       ? service.from('buckets').select('id, name').in('id', bucketIds)
       : Promise.resolve({ data: [] }),
-    client.client_group_id
-      ? service.from('client_groups').select('id, name').eq('id', client.client_group_id)
-      : Promise.resolve({ data: [] }),
   ])
 
   const bucketName = new Map((buckets ?? []).map(b => [b.id, b.name]))
   const groupName = new Map((groups ?? []).map(g => [g.id, g.name]))
 
-  const assignments: ResolvableAssignment[] = reaching.map(a => ({
-    deal_code_id: a.deal_code_id,
-    kind: a.kind,
-    via_name:
-      a.kind === 'bucket'
-        ? bucketName.get(a.bucket_id!) ?? null
-        : a.kind === 'client_group'
-          ? groupName.get(a.client_group_id!) ?? null
-          : null,
-  }))
+  // Which buckets each client sits in, built once rather than per client.
+  const bucketsByClient = new Map<string, string[]>()
+  for (const m of memberships ?? []) {
+    const list = bucketsByClient.get(m.client_id)
+    if (list) list.push(m.bucket_id)
+    else bucketsByClient.set(m.client_id, [m.bucket_id])
+  }
 
-  // No airline or flight passed: this answers "everything this client could
-  // get", not "what applies to one itinerary". Sales and travel windows are
-  // still enforced, so an expired deal does not appear as effective.
-  const effective = resolveDealCodes({ deals: deals ?? [], assignments })
+  const rows: CoverageRow[] = []
 
-  return Response.json({
-    ok: true,
-    client,
-    effective: effective.map(e => ({
-      ...e,
-      via: describeVia(e.kind, e.viaName),
-      beat: e.beat.map(b => ({ ...b, via: describeVia(b.kind, b.viaName) })),
-    })),
-  })
+  for (const client of clients) {
+    const clientBuckets = bucketsByClient.get(client.id) ?? []
+
+    const reaching = assignmentRows.filter(a => {
+      if (a.kind === 'client') return a.client_id === client.id
+      if (a.kind === 'bucket') return a.bucket_id !== null && clientBuckets.includes(a.bucket_id)
+      return a.client_group_id !== null && a.client_group_id === client.client_group_id
+    })
+
+    if (reaching.length === 0) continue
+
+    const assignments: ResolvableAssignment[] = reaching.map(a => ({
+      deal_code_id: a.deal_code_id,
+      kind: a.kind,
+      via_name:
+        a.kind === 'bucket'
+          ? bucketName.get(a.bucket_id!) ?? null
+          : a.kind === 'client_group'
+            ? groupName.get(a.client_group_id!) ?? null
+            : null,
+    }))
+
+    for (const r of resolveDealCodes({ deals: deals ?? [], assignments })) {
+      rows.push({
+        clientId: client.id,
+        clientName: client.name,
+        airline: r.airline,
+        codeType: r.codeType,
+        code: r.code,
+        via: describeVia(r.kind, r.viaName),
+        ambiguous: r.ambiguous,
+        beat: r.beat.map(b => ({ code: b.code, via: describeVia(b.kind, b.viaName) })),
+      })
+    }
+  }
+
+  // Matched against the client, the code, and the route it arrived by — which
+  // is how searching a bucket or a group name finds everything it hands out.
+  // `via` already reads "Bucket · Star Alliance FY26", so one field covers both.
+  const search = params.search.toLowerCase()
+  const filtered = search
+    ? rows.filter(r =>
+        r.clientName.toLowerCase().includes(search) ||
+        r.code.toLowerCase().includes(search) ||
+        r.via.toLowerCase().includes(search) ||
+        r.airline.toLowerCase().includes(search)
+      )
+    : rows
+
+  return Response.json(paginateInMemory(filtered, params))
 }

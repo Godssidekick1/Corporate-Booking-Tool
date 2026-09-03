@@ -22,10 +22,28 @@ interface SearchableSelectProps {
   placeholder?: string
   disabled?: boolean
   emptyMessage?: string
+  // ── Server-backed mode ────────────────────────────────────────────────────
+  // Supplying onSearch switches this from "filter the array I gave you" to
+  // "ask the server". Needed anywhere the option list is unbounded: a picker
+  // over 2,000 travellers should not download 2,000 travellers.
+  //
+  // When present, local filtering is skipped entirely — the caller's options
+  // ARE the result, and filtering them again would hide rows the server chose
+  // to return.
+  onSearch?: (query: string) => void
+  loading?: boolean
+  // The label for `value`, supplied by the caller.
+  //
+  // Not optional in server mode, and the reason is easy to miss: after a search
+  // the selected option usually is not in `options` any more, so deriving the
+  // label from the list blanks the field the moment somebody types. The caller
+  // knows what it selected; this is it telling us.
+  selectedLabel?: string
 }
 
 export default function SearchableSelect({
   value, onChange, options, placeholder = 'Search…', disabled, emptyMessage = 'No matches',
+  onSearch, loading = false, selectedLabel,
 }: SearchableSelectProps) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
@@ -37,17 +55,36 @@ export default function SearchableSelect({
   // When closed, the input shows the selected option's label. While open
   // and being typed into, it shows the raw query instead — otherwise every
   // keystroke would be fighting the selected-label display.
-  const displayValue = open ? query : (selected?.label ?? '')
+  //
+  // selectedLabel wins over the list lookup because in server mode the selected
+  // row is usually absent from the current results.
+  const displayValue = open ? query : (selected?.label ?? selectedLabel ?? '')
 
   const filtered = useMemo(() => {
+    // Server mode: the options ARE the answer. Filtering them again would drop
+    // rows the server matched on a field this component cannot see, such as an
+    // employee's email or a client's code.
+    if (onSearch) return options
+
     const q = query.trim().toLowerCase()
     if (!q) return options
     return options.filter(o =>
       o.label.toLowerCase().includes(q) || (o.sublabel ?? '').toLowerCase().includes(q)
     )
-  }, [options, query])
+  }, [options, query, onSearch])
+
+  // Debounced here rather than in every caller, so a picker is one prop to wire
+  // up instead of a timer each screen has to remember to clear.
+  useEffect(() => {
+    if (!onSearch) return
+    const t = setTimeout(() => onSearch(query), 220)
+    return () => clearTimeout(t)
+  }, [query, onSearch])
 
   useEffect(() => {
+    // Reset the keyboard cursor whenever the visible list changes, or arrowing
+    // down would start from a position that no longer points at anything.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setHighlightIndex(0)
   }, [query, open])
 
@@ -102,7 +139,11 @@ export default function SearchableSelect({
       />
       {open && (
         <div style={s.dropdown}>
-          {filtered.length === 0 ? (
+          {/* "No matches" during a fetch is a lie — the server has not answered
+              yet. Checked before the empty case for exactly that reason. */}
+          {loading ? (
+            <div style={s.emptyRow}>Searching…</div>
+          ) : filtered.length === 0 ? (
             <div style={s.emptyRow}>{emptyMessage}</div>
           ) : (
             filtered.map((o, i) => (

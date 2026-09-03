@@ -250,7 +250,7 @@ export default function TmcPolicyPage() {
     setLoadingClients(true)
     fetch('/api/tmc/clients')
       .then(r => r.json())
-      .then(d => { if (d.ok) setClients(d.clients) })
+      .then(d => { if (d.ok) setClients(d.items) })
       .finally(() => setLoadingClients(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab])

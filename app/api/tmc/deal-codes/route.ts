@@ -3,6 +3,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { validateFlightSpec } from '@/app/lib/deal-codes/flightSpec'
 import { dealCodeStatus, type DealCodeStatus } from '@/app/lib/deal-codes/dealCodeStatus'
+import { parsePageParams, paginateInMemory, escapeFilterValue } from '@/app/lib/pagination'
 import { NextRequest } from 'next/server'
 
 // ── GET /api/tmc/deal-codes ──────────────────────────────────────────────────
@@ -124,11 +125,11 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
 
-  const params = req.nextUrl.searchParams
-  const search = params.get('search')?.trim()
-  const categoryId = params.get('categoryId')
-  const codeType = params.get('type')
-  const status = params.get('status') as DealCodeStatus | null
+  const query_ = req.nextUrl.searchParams
+  const params = parsePageParams(query_)
+  const categoryId = query_.get('categoryId')
+  const codeType = query_.get('type')
+  const status = query_.get('status') as DealCodeStatus | null
 
   let query = service
     .from('deal_codes')
@@ -140,11 +141,11 @@ export async function GET(req: NextRequest) {
   if (categoryId) query = query.eq('category_id', categoryId)
   if (codeType) query = query.eq('code_type', codeType)
 
-  if (search) {
+  if (params.search) {
     // Escaped before interpolation: PostgREST parses this string, and a comma
     // or parenthesis in the search box would otherwise change the filter's
     // structure rather than being matched literally.
-    const safe = search.replace(/[,()\\]/g, '')
+    const safe = escapeFilterValue(params.search)
     if (safe) query = query.or(`code.ilike.%${safe}%,airline_code.ilike.%${safe}%`)
   }
 
@@ -153,6 +154,15 @@ export async function GET(req: NextRequest) {
   if (error) {
     return Response.json({ error: error.message }, { status: 500 })
   }
+
+  // Status cannot be filtered or paged in SQL — it is derived from `active` plus
+  // two date windows, and reimplementing that rule as a SQL predicate would give
+  // us two definitions of "expired" that drift. So the rows are enriched and
+  // filtered here, then paged in memory.
+  //
+  // The cost is bounded by deals per TMC, which is hundreds at most: a TMC holds
+  // one agreement per airline per type, not one per client. If that ever stops
+  // being true, the fix is a stored status column maintained by a trigger.
 
   const [{ data: categories }, { data: assignments }] = await Promise.all([
     service.from('deal_code_categories').select('id, code, label').eq('tmc_id', auth.tmcId),
@@ -178,7 +188,7 @@ export async function GET(req: NextRequest) {
 
   const filtered = status ? enriched.filter(d => d.status === status) : enriched
 
-  return Response.json({ ok: true, dealCodes: filtered })
+  return Response.json(paginateInMemory(filtered, params))
 }
 
 interface CreateBody {

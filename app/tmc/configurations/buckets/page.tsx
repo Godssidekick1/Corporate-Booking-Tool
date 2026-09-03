@@ -1,7 +1,11 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
 import SearchableSelect from '@/app/components/SearchableSelect'
+import Pagination from '@/app/components/Pagination'
+import { SkeletonTable } from '@/app/components/Skeleton'
+import { usePagedList } from '@/app/hooks/usePagedList'
+import { useLookup } from '@/app/hooks/useLookup'
 
 // ── /tmc/configurations/buckets ──────────────────────────────────────────────
 // A bucket is a curated set of CLIENTS.
@@ -28,42 +32,31 @@ interface Client { id: string; name: string }
 interface DealCodeRef { id: string; code: string; code_type: string; airline_code: string }
 
 export default function BucketsPage() {
-  const [buckets, setBuckets] = useState<Bucket[]>([])
-  const [clients, setClients] = useState<Client[]>([])
+  const [addClientId, setAddClientId] = useState('')
 
   const [selectedId, setSelectedId] = useState('')
   const [members, setMembers] = useState<Client[]>([])
   const [dealCodes, setDealCodes] = useState<DealCodeRef[]>([])
   const [detail, setDetail] = useState({ name: '', code: '', description: '' })
 
-  const [addClientId, setAddClientId] = useState('')
   const [creating, setCreating] = useState(false)
   const [newBucket, setNewBucket] = useState({ name: '', code: '', description: '' })
 
-  const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
-  // Declared above the effect that calls it: a function hoisted below its own
-  // useEffect reads as available but does not update when its closure changes.
-  const loadBuckets = useCallback(async () => {
-    setLoading(true); setError('')
-    try {
-      const d = await fetch('/api/tmc/buckets').then(r => r.json())
-      if (!d.ok) { setError(d.error || 'Could not load buckets.'); return }
-      setBuckets(d.buckets)
-    } finally { setLoading(false) }
-  }, [])
+  const list = usePagedList<Bucket>('/api/tmc/buckets')
+  const buckets = list.items
 
-  useEffect(() => {
-    // Fetch-on-mount, the pattern every screen here uses. The alternative is a
-    // server component, which this cannot be — it is entirely interactive.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadBuckets()
-    fetch('/api/tmc/clients').then(r => r.json())
-      .then(d => { if (d.ok) setClients(d.clients ?? []) })
-  }, [loadBuckets])
+  function loadBuckets() {
+    list.refetch()
+  }
+
+  // Clients feed the "add a member" picker. Server-searched rather than loaded
+  // whole, so a TMC with hundreds of clients does not download all of them to
+  // add one to a bucket.
+  const clientLookup = useLookup('/api/tmc/clients', addClientId)
 
   async function openBucket(id: string) {
     setSelectedId(id)
@@ -136,13 +129,17 @@ export default function BucketsPage() {
   }
 
   function addMember() {
-    const client = clients.find(c => c.id === addClientId)
-    if (!client || members.some(m => m.id === client.id)) return
+    const picked = clientLookup.options.find(o => o.id === addClientId)
+    if (!picked || members.some(m => m.id === picked.id)) return
     setAddClientId('')
-    saveMembers([...members, client].sort((a, b) => a.name.localeCompare(b.name)))
+    saveMembers(
+      [...members, { id: picked.id, name: picked.label }].sort((a, b) => a.name.localeCompare(b.name))
+    )
   }
 
-  const unassigned = clients.filter(c => !members.some(m => m.id === c.id))
+  // Already-added clients are hidden from the picker. Filtered over the search
+  // results rather than a full roster, which is all this needs.
+  const pickable = clientLookup.options.filter(o => !members.some(m => m.id === o.id))
 
   return (
     <div style={s.root}>
@@ -162,8 +159,8 @@ export default function BucketsPage() {
 
       <div style={s.split}>
         <div style={s.list}>
-          {loading ? (
-            <p style={s.muted}>Loading…</p>
+          {list.loading ? (
+            <SkeletonTable rows={6} cols={2} />
           ) : buckets.length === 0 ? (
             <div style={s.empty}>
               <p style={s.emptyTitle}>No buckets yet</p>
@@ -184,6 +181,11 @@ export default function BucketsPage() {
               </button>
             ))
           )}
+
+          <Pagination
+            page={list.page} pageSize={10} total={list.total}
+            onPageChange={list.setPage} busy={list.refreshing} noun="buckets"
+          />
         </div>
 
         <div style={s.detail}>
@@ -266,9 +268,12 @@ export default function BucketsPage() {
                   <SearchableSelect
                     value={addClientId}
                     onChange={setAddClientId}
-                    options={unassigned.map(c => ({ id: c.id, label: c.name }))}
-                    placeholder="Add a client…"
-                    emptyMessage="Every client is already in this bucket"
+                    options={pickable}
+                    onSearch={clientLookup.onSearch}
+                    loading={clientLookup.loading}
+                    selectedLabel={clientLookup.selectedLabel}
+                    placeholder="Search clients to add…"
+                    emptyMessage="No clients match"
                   />
                 </div>
                 <button onClick={addMember} disabled={!addClientId || busy}

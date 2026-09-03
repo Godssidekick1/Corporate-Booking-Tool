@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
+import { parsePageParams, pagedResponse, ilikeAcross } from '@/app/lib/pagination'
 import { NextRequest } from 'next/server'
 
 // ── GET /api/tmc/client-groups ────────────────────────────────────────────────
@@ -16,7 +17,7 @@ interface CreateClientGroupBody {
   country?: string
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -36,17 +37,30 @@ export async function GET() {
     return Response.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  const { data: clientGroups, error } = await service
+  const params = parsePageParams(req.nextUrl.searchParams)
+  const ids = req.nextUrl.searchParams.get('ids')?.split(',').filter(Boolean) ?? []
+
+  let query = service
     .from('client_groups')
-    .select('id, name, city, country, created_at')
+    .select('id, name, city, country, created_at', { count: 'exact' })
     .eq('tmc_id', caller.tmc_id)
     .order('name')
+
+  if (ids.length > 0) {
+    query = query.in('id', ids)
+  } else {
+    const filter = ilikeAcross(['name', 'city'], params.search)
+    if (filter) query = query.or(filter)
+    query = query.range(params.from, params.to)
+  }
+
+  const { data: clientGroups, error, count } = await query
 
   if (error) {
     return Response.json({ error: error.message }, { status: 500 })
   }
 
-  return Response.json({ ok: true, clientGroups: clientGroups ?? [] })
+  return Response.json(pagedResponse(clientGroups ?? [], count ?? null, params))
 }
 
 export async function POST(req: NextRequest) {

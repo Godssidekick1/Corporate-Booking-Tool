@@ -80,7 +80,7 @@ export default function TmcClientDetailPage() {
       fetch('/api/tmc/client-groups').then(r => r.json()),
       fetch('/api/tmc/tcs').then(r => r.json()),
     ]).then(([clientData, client_groupsData, tcsData]) => {
-        if (tcsData?.ok) setTmcStaff(tcsData.tcs ?? [])
+        if (tcsData?.ok) setTmcStaff(tcsData.items ?? [])
         if (!clientData.ok) {
           setError(clientData.error || 'Could not load client.')
           return
@@ -102,7 +102,7 @@ export default function TmcClientDetailPage() {
           status: c.status ?? 'active',
           managed_by: c.managed_by ?? '',
         })
-        if (client_groupsData.ok) setclient_groups(client_groupsData.clientGroups ?? [])
+        if (client_groupsData.ok) setclient_groups(client_groupsData.items ?? [])
       })
       .catch(() => setError('Could not load client.'))
       .finally(() => setLoading(false))
