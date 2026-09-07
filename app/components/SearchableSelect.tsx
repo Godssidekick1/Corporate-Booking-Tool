@@ -39,11 +39,19 @@ interface SearchableSelectProps {
   // label from the list blanks the field the moment somebody types. The caller
   // knows what it selected; this is it telling us.
   selectedLabel?: string
+  // Commit whatever was typed even when it matches nothing.
+  //
+  // For fields where the option list is a SUGGESTION rather than the set of
+  // legal values — a city, say. Our list of Indian cities is ours, not the
+  // world's, and a branch in a town we have not heard of still has to be
+  // recordable. Off by default: for a client or a bucket, a value that is not
+  // an option is simply wrong.
+  allowFreeText?: boolean
 }
 
 export default function SearchableSelect({
   value, onChange, options, placeholder = 'Search…', disabled, emptyMessage = 'No matches',
-  onSearch, loading = false, selectedLabel,
+  onSearch, loading = false, selectedLabel, allowFreeText = false,
 }: SearchableSelectProps) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
@@ -91,18 +99,33 @@ export default function SearchableSelect({
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        // Clicking away commits typed text in free-text mode. Without this the
+        // most natural thing a user can do — type a city, click the next field —
+        // would silently discard what they typed.
+        commitFreeText()
         setOpen(false)
         setQuery('')
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
+    // commitFreeText closes over the current query, which is what it needs to
+    // read at click time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allowFreeText, query, value])
 
   function pick(option: SearchableOption) {
     onChange(option.id)
     setQuery('')
     setOpen(false)
+  }
+
+  // Only fires when free text is allowed, something was typed, and it is not
+  // already the value — so a plain open-and-close never rewrites the field.
+  function commitFreeText() {
+    if (!allowFreeText) return
+    const typed = query.trim()
+    if (typed && typed !== value) onChange(typed)
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -118,7 +141,15 @@ export default function SearchableSelect({
       setHighlightIndex(i => Math.max(i - 1, 0))
     } else if (e.key === 'Enter') {
       e.preventDefault()
+      // A highlighted suggestion always wins over the raw text — otherwise
+      // typing "Mumb" and pressing Enter would store "Mumb" rather than the
+      // Mumbai sitting highlighted in front of them.
       if (filtered[highlightIndex]) pick(filtered[highlightIndex])
+      else if (allowFreeText) {
+        commitFreeText()
+        setQuery('')
+        setOpen(false)
+      }
     } else if (e.key === 'Escape') {
       setOpen(false)
       setQuery('')

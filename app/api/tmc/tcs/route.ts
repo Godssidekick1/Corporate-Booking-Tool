@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
 
   let query = service
     .from('employees')
-    .select('id, full_name, email, status, created_at', { count: 'exact' })
+    .select('id, full_name, email, status, created_at, branch_id', { count: 'exact' })
     .eq('tmc_id', caller.tmc_id)
     .eq('role', 'tc')
     .order('full_name')
@@ -83,10 +83,26 @@ export async function GET(req: NextRequest) {
     accessByTc.get(a.employee_id)!.push(a.client_id)
   }
 
+  // Branch names for this page's counsellors. One lookup over the ids actually
+  // on screen, rather than embedding — this codebase does not rely on PostgREST
+  // embed-alias inference anywhere else.
+  const branchIds = [...new Set((tcs ?? []).map(t => t.branch_id).filter(Boolean) as string[])]
+  const branchName = new Map<string, string>()
+
+  if (branchIds.length > 0) {
+    const { data: branches } = await service
+      .from('branches')
+      .select('id, name')
+      .in('id', branchIds)
+
+    for (const b of branches ?? []) branchName.set(b.id, b.name)
+  }
+
   const enriched = (tcs ?? []).map(tc => ({
     ...tc,
     permissions: permsByTc.get(tc.id) ?? [],
     clientIds: accessByTc.get(tc.id) ?? [],
+    branchName: tc.branch_id ? branchName.get(tc.branch_id) ?? null : null,
   }))
 
   return Response.json(pagedResponse(enriched, count ?? null, params))

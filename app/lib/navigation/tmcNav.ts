@@ -51,8 +51,8 @@ export const CONFIG_GROUPS: NavGroup[] = [
       // codes today, forms of payment and markup next — not a description of
       // who someone is.
       { label: 'Buckets',          href: '/tmc/configurations/buckets',    permission: 'manage_deal_codes' },
+      { label: 'Branches',         href: '/tmc/configurations/branches',   permission: 'manage_branches' },
       { label: 'Forms of payment', href: '#', soon: true },
-      { label: 'Branches',         href: '#', soon: true },
     ],
   },
   {

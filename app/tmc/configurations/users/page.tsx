@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react'
 import Pagination from '@/app/components/Pagination'
 import { SkeletonTable } from '@/app/components/Skeleton'
 import { usePagedList } from '@/app/hooks/usePagedList'
+import { useLookup } from '@/app/hooks/useLookup'
+import SearchableSelect from '@/app/components/SearchableSelect'
 import { PERMISSIONS } from '@/app/lib/permissions/permissionKeys'
 
 interface Client {
@@ -19,6 +21,8 @@ interface Tc {
   created_at: string
   permissions: string[]
   clientIds: string[]
+  branch_id: string | null
+  branchName: string | null
 }
 
 // PERMISSIONS now comes from the shared list. It used to be a third copy of the
@@ -118,7 +122,7 @@ export default function TmcUsersPage() {
           <table style={s.table}>
             <thead>
               <tr>
-                {['Name', 'Email', 'Status', 'Permissions', 'Clients', ''].map(h => (
+                {['Name', 'Email', 'Branch', 'Status', 'Permissions', 'Clients', ''].map(h => (
                   <th key={h} style={s.th}>{h}</th>
                 ))}
               </tr>
@@ -130,6 +134,7 @@ export default function TmcUsersPage() {
                   <tr key={tc.id} style={{ background: i % 2 === 0 ? '#fff' : '#FAFAFA' }}>
                     <td style={s.td}><span style={s.name}>{tc.full_name}</span></td>
                     <td style={{ ...s.td, color: '#6B7280' }}>{tc.email}</td>
+                    <td style={s.td}>{tc.branchName ?? <span style={{ color: '#9CA3AF' }}>—</span>}</td>
                     <td style={s.td}>
                       <span style={{ ...s.badge, background: colors.bg, color: colors.fg }}>{tc.status}</span>
                     </td>
@@ -273,7 +278,12 @@ function TcPermissionsEditor({ tc, clients, onClose, onDone, onError }: {
 }) {
   const [permissions, setPermissions] = useState<string[]>(tc.permissions)
   const [clientIds, setClientIds] = useState<string[]>(tc.clientIds)
+  const [branchId, setBranchId] = useState<string>(tc.branch_id ?? '')
   const [submitting, setSubmitting] = useState(false)
+
+  // Server-searched: a TMC's branch list is small, but this is the same picker
+  // pattern as everywhere else and costs nothing to keep consistent.
+  const branchLookup = useLookup('/api/tmc/branches', branchId)
 
   function togglePermission(key: string) {
     setPermissions(prev => prev.includes(key) ? prev.filter(p => p !== key) : [...prev, key])
@@ -289,7 +299,7 @@ function TcPermissionsEditor({ tc, clients, onClose, onDone, onError }: {
       const res = await fetch(`/api/tmc/tcs/${tc.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ permissions, clientIds }),
+        body: JSON.stringify({ permissions, clientIds, branchId: branchId || null }),
       })
       const data = await res.json()
       if (!res.ok) { onError(data.error || 'Could not update.'); return }
@@ -317,6 +327,23 @@ function TcPermissionsEditor({ tc, clients, onClose, onDone, onError }: {
             </div>
           </label>
         ))}
+      </div>
+
+      <p style={s.sectionLabel}>Branch</p>
+      <div style={{ maxWidth: 320 }}>
+        <SearchableSelect
+          value={branchId}
+          onChange={setBranchId}
+          options={branchLookup.options}
+          onSearch={branchLookup.onSearch}
+          loading={branchLookup.loading}
+          selectedLabel={branchLookup.selectedLabel}
+          placeholder="Search branches…"
+          emptyMessage="No branches match"
+        />
+        <p style={s.permDesc}>
+          Which office they work out of. Organisational only — it grants no access on its own.
+        </p>
       </div>
 
       <p style={s.sectionLabel}>Clients</p>

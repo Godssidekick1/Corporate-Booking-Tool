@@ -13,6 +13,7 @@ interface UpdateTcBody {
   permissions?: string[]
   clientIds?: string[]
   status?: 'active' | 'deactivated'
+  branchId?: string | null
 }
 
 async function getTmcCaller(userId: string, service: ReturnType<typeof createServiceClient>) {
@@ -56,7 +57,7 @@ export async function PATCH(
   }
 
   const body: UpdateTcBody = await req.json()
-  const { permissions, clientIds, status } = body
+  const { permissions, clientIds, status, branchId } = body
 
   if (permissions !== undefined) {
     const invalid = permissions.filter(p => !isPermissionKey(p))
@@ -101,6 +102,31 @@ export async function PATCH(
     }
     const { error } = await service.from('employees').update({ status }).eq('id', id)
     if (error) return Response.json({ error: error.message }, { status: 500 })
+  }
+
+  // Which office this counsellor works out of. Organisational only — it grants
+  // nothing, since client access is employee_client_access above.
+  if (branchId !== undefined) {
+    if (branchId === null || branchId === '') {
+      const { error } = await service.from('employees').update({ branch_id: null }).eq('id', id)
+      if (error) return Response.json({ error: error.message }, { status: 500 })
+    } else {
+      // branch_id is a plain FK, so another tenant's branch would satisfy the
+      // constraint and quietly file this person under someone else's office.
+      const { data: branch } = await service
+        .from('branches')
+        .select('id')
+        .eq('id', branchId)
+        .eq('tmc_id', caller.tmc_id)
+        .maybeSingle()
+
+      if (!branch) {
+        return Response.json({ error: 'That branch does not belong to your TMC' }, { status: 422 })
+      }
+
+      const { error } = await service.from('employees').update({ branch_id: branchId }).eq('id', id)
+      if (error) return Response.json({ error: error.message }, { status: 500 })
+    }
   }
 
   return Response.json({ ok: true })

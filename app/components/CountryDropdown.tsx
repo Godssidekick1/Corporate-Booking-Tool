@@ -1,6 +1,17 @@
 'use client'
 
+import SearchableSelect from './SearchableSelect'
 import { COMMON_COUNTRIES } from '@/app/lib/data/locations'
+
+// ── CountryDropdown ──────────────────────────────────────────────────────────
+// Typable, wrapping SearchableSelect so there is one dropdown pattern in the app
+// rather than a plain <select> here and a combobox everywhere else.
+//
+// Unlike the city field this is NOT free text: the country list is short,
+// deliberate, and drives real behaviour elsewhere (which airports are offered,
+// which currency). An unrecognised country is a mistake, not a gap in our data,
+// so the existing warning is kept.
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface CountryDropdownProps {
   value: string
@@ -10,36 +21,27 @@ interface CountryDropdownProps {
   disabled?: boolean
 }
 
-export default function CountryDropdown({ value, onChange, id, name, disabled }: CountryDropdownProps) {
+export default function CountryDropdown({ value, onChange, disabled }: CountryDropdownProps) {
   const isInvalid = value !== '' && !COMMON_COUNTRIES.includes(value)
 
   return (
     <div>
-      <select
-        id={id}
-        name={name}
-        value={COMMON_COUNTRIES.includes(value) ? value : ''}
-        onChange={e => onChange(e.target.value)}
+      <SearchableSelect
+        value={value}
+        onChange={onChange}
+        options={COMMON_COUNTRIES.map(country => ({ id: country, label: country }))}
+        selectedLabel={value}
+        placeholder="Search countries…"
+        emptyMessage="No countries match"
         disabled={disabled}
-        style={{ ...inputStyle, borderColor: isInvalid ? '#DC2626' : '#D1D5DB' }}
-      >
-        <option value="">Select a country…</option>
-        {COMMON_COUNTRIES.map(country => (
-          <option key={country} value={country}>{country}</option>
-        ))}
-      </select>
+      />
       {isInvalid && (
         <p style={errorStyle}>
-          "{value}" isn't a recognized country. Please select one from the list.
+          &ldquo;{value}&rdquo; isn&rsquo;t a recognised country. Please pick one from the list.
         </p>
       )}
     </div>
   )
-}
-
-const inputStyle: React.CSSProperties = {
-  height: '38px', padding: '0 10px', fontSize: '13px', color: '#111827',
-  background: '#fff', border: '1px solid #D1D5DB', borderRadius: '7px', outline: 'none', width: '100%',
 }
 
 const errorStyle: React.CSSProperties = {
