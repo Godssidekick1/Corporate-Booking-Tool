@@ -6,6 +6,7 @@ import { checkBookingAgainstPolicy } from '@/app/lib/rule-engine/checkBookingAga
 import { buildPolicyInputsFromFlight } from '@/app/lib/rule-engine/buildPolicyInputs'
 import { startApprovalForBooking, buildReason } from '@/app/lib/approval-engine/resolveApprovalTier'
 import { stampDealCodes } from '@/app/lib/deal-codes/stampBooking'
+import { stampFop } from '@/app/lib/fop/stampFop'
 import type { FlatFlightResult } from '@/app/lib/book/types'
 
 // ── POST /api/book/add-passenger ─────────────────────────────────────────────
@@ -190,7 +191,13 @@ export async function POST(req: NextRequest) {
     // never blocks: deal codes are advisory today, since the aggregator API has
     // no field to carry one. Recorded so a counsellor can key it into the GDS
     // and finance can reconcile the rate.
-    const resolvedDealCodes = await stampDealCodes(service, employee.client_id, flight ?? null)
+    // Both are advisory and neither can block: the aggregator has no field for
+    // a tour code, and its Payment object's contract is undocumented. Resolved
+    // in parallel since neither depends on the other.
+    const [resolvedDealCodes, resolvedFop] = await Promise.all([
+      stampDealCodes(service, employee.client_id, flight ?? null),
+      stampFop(service, employee.client_id, flight ?? null),
+    ])
 
     // Insert immediately after a successful AddPassenger call — this is the
     // first point in the flow where we have a real ReferenceNo tied to real
@@ -200,6 +207,7 @@ export async function POST(req: NextRequest) {
       .from('bookings')
       .insert({
         resolved_deal_codes: resolvedDealCodes,
+        resolved_fop: resolvedFop,
         client_id: employee.client_id,
         employee_id: employee.id,
         requested_for: employee.id,

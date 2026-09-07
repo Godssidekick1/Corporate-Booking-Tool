@@ -43,6 +43,9 @@ interface UpdateClientBody {
   // foreign key to employees since the schema was created and has never been
   // set or displayed anywhere.
   managed_by?: string | null
+  // The TMC branch servicing this client. Drives which branch-scoped form of
+  // payment applies to their bookings.
+  branch_id?: string | null
 }
 
 export async function GET(
@@ -84,7 +87,7 @@ export async function GET(
 
   const { data: client, error } = await service
     .from('clients')
-    .select('id, name, status, setup_completed, timezone, currency, country, booking_mode, created_at, client_group_id, managed_by, registered_address, gst_number, industry, primary_contact_phone')
+    .select('id, name, status, setup_completed, timezone, currency, country, booking_mode, created_at, client_group_id, managed_by, branch_id, registered_address, gst_number, industry, primary_contact_phone')
     .eq('id', id)
     .eq('tmc_id', caller.tmc_id)
     .single()
@@ -232,6 +235,27 @@ export async function PATCH(
     }
   }
 
+  if (body.branch_id !== undefined) {
+    if (!body.branch_id) {
+      update.branch_id = null
+    } else {
+      // Verified against this TMC: branch_id is a plain FK, so another tenant's
+      // branch would satisfy the constraint and silently drive this client's
+      // form-of-payment resolution.
+      const { data: branch } = await service
+        .from('branches')
+        .select('id')
+        .eq('id', body.branch_id)
+        .eq('tmc_id', caller.tmc_id)
+        .maybeSingle()
+
+      if (!branch) {
+        return Response.json({ error: 'Branch not found for this TMC' }, { status: 422 })
+      }
+      update.branch_id = body.branch_id
+    }
+  }
+
   if (client_group_id !== undefined) {
     if (client_group_id === null || client_group_id === '') {
       update.client_group_id = null
@@ -268,7 +292,7 @@ export async function PATCH(
     .from('clients')
     .update(update)
     .eq('id', id)
-    .select('id, name, timezone, currency, country, booking_mode, client_group_id, registered_address, gst_number, industry, primary_contact_phone, size, status, managed_by')
+    .select('id, name, timezone, currency, country, booking_mode, client_group_id, registered_address, gst_number, industry, primary_contact_phone, size, status, managed_by, branch_id')
     .single()
 
   if (updateError) {

@@ -102,42 +102,56 @@ export async function stampDealCodes(
             : null,
     }))
 
-    // FlatFlightResult carries ONE marketing airline and no flight number --
-    // it has `airline`, `origin`, `destination` and `stops`, but nothing
-    // per-segment. So the flight restriction on a deal cannot be checked here.
+    // Per-leg data now exists, so a flight restriction can finally be CHECKED
+    // rather than flagged. This previously passed flightNumber: null and marked
+    // every restricted deal "unverifiable", because FlatFlightResult carried one
+    // airline and no flight number at all.
     //
-    // Rather than drop restricted deals (losing a code the client is entitled
-    // to) or apply them silently (claiming a fare that may not hold), they are
-    // resolved on airline and dates and then flagged. A counsellor keying the
-    // code into the GDS is the one who can see the flight number, and the flag
-    // tells them this one needs checking first.
-    const airline = flight?.airline?.code ?? null
+    // Resolved once per leg, because a connection can be flown by two carriers
+    // and each may carry its own negotiated code.
+    const legs = flight?.legs ?? []
     const departure = flight?.origin?.dateTime?.slice(0, 10) ?? null
     const bookingDate = new Date().toISOString().slice(0, 10)
 
-    const restrictedDeals = new Set(
-      (deals ?? []).filter(d => d.flight_spec?.trim()).map(d => d.id)
-    )
+    // Falls back to the flight-level airline for a result whose legs were not
+    // mapped, so an unmapped payload still resolves on airline alone.
+    const runs = legs.length > 0
+      ? legs.map(l => ({ airline: l.airlineCode ?? null, flightNumber: l.flightNumber ?? null }))
+      : [{ airline: flight?.airline?.code ?? null, flightNumber: null }]
 
-    const resolved = resolveDealCodes({
-      deals: deals ?? [],
-      assignments,
-      airlineCode: airline,
-      // Explicitly null: no flight number exists in this payload, and passing a
-      // wrong one would silently exclude valid deals.
-      flightNumber: null,
-      bookingDate,
-      departureDate: departure,
-    })
+    const stamped: StampedDealCode[] = []
+    const seen = new Set<string>()
 
-    const stamped: StampedDealCode[] = resolved.map(r => ({
-      airline: r.airline,
-      codeType: r.codeType,
-      code: r.code,
-      via: describeVia(r.kind, r.viaName),
-      ambiguous: r.ambiguous,
-      flightRestricted: restrictedDeals.has(r.dealId),
-    }))
+    for (const run of runs) {
+      const resolved = resolveDealCodes({
+        deals: deals ?? [],
+        assignments,
+        airlineCode: run.airline,
+        flightNumber: run.flightNumber,
+        bookingDate,
+        departureDate: departure,
+      })
+
+      for (const r of resolved) {
+        // One winner per airline per type across the whole itinerary — two legs
+        // on the same carrier must not stamp the same code twice.
+        const key = `${r.airline}::${r.codeType}`
+        if (seen.has(key)) continue
+        seen.add(key)
+
+        stamped.push({
+          airline: r.airline,
+          codeType: r.codeType,
+          code: r.code,
+          via: describeVia(r.kind, r.viaName),
+          ambiguous: r.ambiguous,
+          // Kept in the shape for older stamped rows, but always false now: a
+          // flight-restricted deal that survived resolution was matched against
+          // a real flight number rather than waved through.
+          flightRestricted: false,
+        })
+      }
+    }
 
     return stamped.length > 0 ? stamped : null
   } catch (error) {

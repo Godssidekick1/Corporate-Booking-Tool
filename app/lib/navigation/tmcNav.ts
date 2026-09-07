@@ -52,7 +52,7 @@ export const CONFIG_GROUPS: NavGroup[] = [
       // who someone is.
       { label: 'Buckets',          href: '/tmc/configurations/buckets',    permission: 'manage_deal_codes' },
       { label: 'Branches',         href: '/tmc/configurations/branches',   permission: 'manage_branches' },
-      { label: 'Forms of payment', href: '#', soon: true },
+      { label: 'Forms of payment', href: '/tmc/configurations/forms-of-payment', permission: 'manage_fops' },
     ],
   },
   {

@@ -15,6 +15,7 @@ export const PERMISSION_KEYS = [
   'manage_client_groups',
   'manage_deal_codes',
   'manage_branches',
+  'manage_fops',
   'view_reports',
   'book_on_behalf',
 ] as const
@@ -60,6 +61,11 @@ export const PERMISSIONS: PermissionDef[] = [
     key: 'manage_branches',
     label: 'Manage branches',
     desc: 'The TMC’s own offices, their GST registration and which staff work there',
+  },
+  {
+    key: 'manage_fops',
+    label: 'Manage forms of payment',
+    desc: 'Agency, corporate and traveller payment methods, and which clients they apply to',
   },
   {
     key: 'view_reports',

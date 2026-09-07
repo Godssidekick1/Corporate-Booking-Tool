@@ -74,13 +74,35 @@ export interface FareOption {
   brandedServices?: string[]
 }
 
+// One flown segment. Kept per-leg because a connection can carry a different
+// carrier, flight number and booking class on each hop, and the rules that read
+// them care about all of them:
+//
+//   - An FOP restricted to certain RBDs only applies if EVERY leg is in the set;
+//     matching the first leg alone would apply a card the airline refuses on the
+//     second.
+//   - A deal code restricted to a flight number range could not be checked at
+//     all before this existed, so those deals were stamped with an
+//     "unverifiable" flag instead of being matched.
+export interface FlightLeg {
+  airlineCode?: string
+  flightNumber?: string
+  // The RBD — the single-letter fare bucket (Y/B/M/H… economy, C/D/J business).
+  // Not the cabin: one cabin holds many RBDs at different prices and rules.
+  bookingCode?: string
+  cabin?: string
+}
+
 export interface FlatFlightResult {
   flightKey: string
   provider: string
   isLcc: boolean
   itemNo: string
   cabin?: string
+  // The first leg's RBD. Retained because several screens already read it;
+  // `legs` is the complete picture and what the rule engines use.
   bookingCode?: string
+  legs?: FlightLeg[]
 
   origin?: {
     code: string

@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import CountryDropdown from '@/app/components/CountryDropdown'
 import SearchableSelect from '@/app/components/SearchableSelect'
+import { useLookup } from '@/app/hooks/useLookup'
 
 interface Client {
   id: string
@@ -23,6 +24,7 @@ interface Client {
   primary_contact_phone: string | null
   size: string | null
   managed_by: string | null
+  branch_id: string | null
 }
 
 interface TmcStaff {
@@ -66,13 +68,17 @@ export default function TmcClientDetailPage() {
   const [form, setForm] = useState({
     name: '', timezone: '', currency: '', country: '', booking_mode: 'sbt' as Client['booking_mode'], client_group_id: '',
     registered_address: '', gst_number: '', industry: '', primary_contact_phone: '',
-    size: '', status: 'active', managed_by: '',
+    size: '', status: 'active', managed_by: '', branch_id: '',
   })
 
   // TMC-side staff only — managed_by is a plain FK to employees, so a corporate
   // employee would be a valid row and a nonsense account manager. The server
   // enforces the same restriction; this keeps it out of the picker.
   const [tmcStaff, setTmcStaff] = useState<TmcStaff[]>([])
+
+  // Server-searched: a TMC's branch list is small today but is a master that
+  // grows, and this is the same picker pattern as everywhere else.
+  const branchLookup = useLookup('/api/tmc/branches', form.branch_id)
 
   useEffect(() => {
     Promise.all([
@@ -101,6 +107,7 @@ export default function TmcClientDetailPage() {
           size: c.size ?? '',
           status: c.status ?? 'active',
           managed_by: c.managed_by ?? '',
+          branch_id: c.branch_id ?? '',
         })
         if (client_groupsData.ok) setclient_groups(client_groupsData.items ?? [])
       })
@@ -280,6 +287,24 @@ export default function TmcClientDetailPage() {
 
         {/* Ownership and lifecycle — who runs this client, and whether it is
             still trading. */}
+        <div style={s.field}>
+          <label style={s.label}>Servicing branch</label>
+          <SearchableSelect
+            value={form.branch_id}
+            onChange={id => setForm(prev => ({ ...prev, branch_id: id }))}
+            options={branchLookup.options}
+            onSearch={branchLookup.onSearch}
+            loading={branchLookup.loading}
+            selectedLabel={branchLookup.selectedLabel}
+            placeholder="Search branches…"
+            emptyMessage="No branches match"
+          />
+          <p style={s.hint}>
+            Which of your offices looks after this client. Decides which branch-scoped form of
+            payment applies to their bookings.
+          </p>
+        </div>
+
         <div style={s.field}>
           <label style={s.label}>Account manager</label>
           <SearchableSelect

@@ -224,6 +224,16 @@ export async function POST(req: NextRequest) {
     itemNo: flight.ItemNo ?? '',
     cabin: allPricingInfos[0]?.FareInfos?.FareInfo?.[0]?.PaxCabin ?? firstLeg?.Cabin,
     bookingCode: firstLeg?.BookingCode,
+    // Every leg, not just the first. The FOP resolver needs each leg's RBD (a
+    // card the airline refuses in one class must not be applied because the
+    // first leg happened to be in another), and the deal-code resolver needs
+    // flight numbers, which it previously had no way to see.
+    legs: itineraries.map(leg => ({
+      airlineCode: leg.AirLine?.OperatingCarrier || leg.AirLine?.Code,
+      flightNumber: leg.Flight,
+      bookingCode: leg.BookingCode,
+      cabin: leg.Cabin,
+    })),
     origin: firstLeg?.Origin ? {
       code: firstLeg.Origin.AirportCode,
       name: firstLeg.Origin.AirportName,
