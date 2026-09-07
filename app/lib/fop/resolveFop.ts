@@ -73,7 +73,18 @@ export interface ResolvedFop {
 
 export interface ResolveFopInput {
   fops: ResolvableFop[]
+  // Only the assignments that reach THIS client.
   assignments: ResolvableFopAssignment[]
+  // Every form of payment that is assigned to anything at all, anywhere.
+  //
+  // Needed to tell two very different situations apart, which the first version
+  // conflated: a form of payment nobody has assigned (the scope default) and
+  // one assigned to somebody ELSE. Without this, a card targeted at one client
+  // silently became the default for every other client at the TMC.
+  //
+  // Omitted entirely = treat every unmatched form of payment as a default,
+  // which is the old behaviour and only correct when nothing is assigned.
+  assignedFopIds?: string[]
   // The branch servicing this client. A branch-scoped FOP only applies here.
   branchId?: string | null
   airlineCode?: string | null
@@ -142,6 +153,7 @@ export function resolveFop(input: ResolveFopInput): ResolvedFop | null {
   const {
     fops,
     assignments,
+    assignedFopIds,
     branchId = null,
     airlineCode = null,
     legBookingCodes = [],
@@ -169,11 +181,17 @@ export function resolveFop(input: ResolveFopInput): ResolvedFop | null {
     }
   }
 
-  // Anything with no assignment at all enters as the scope default.
+  // A form of payment nobody has assigned anywhere enters as the scope default.
+  //
+  // One assigned to somebody ELSE does not: it was aimed at them, and treating
+  // it as everyone's fallback is how a client ends up settling on a card that
+  // was never meant for them.
+  const targeted = assignedFopIds ? new Set(assignedFopIds) : null
+
   for (const fop of fops) {
-    if (!strongestClaim.has(fop.id)) {
-      strongestClaim.set(fop.id, { fop, kind: 'default', viaName: null })
-    }
+    if (strongestClaim.has(fop.id)) continue
+    if (targeted?.has(fop.id)) continue
+    strongestClaim.set(fop.id, { fop, kind: 'default', viaName: null })
   }
 
   const eligible = [...strongestClaim.values()].filter(({ fop }) => {

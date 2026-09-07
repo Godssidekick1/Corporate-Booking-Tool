@@ -2,7 +2,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { fopStatus, describeFop } from '@/app/lib/fop/fopStatus'
-import { FOP_COLUMNS, validateFop, normaliseFop } from '../route'
+import { FOP_COLUMNS, validateFop, normaliseFop, deriveFopType } from '../route'
 import { NextRequest } from 'next/server'
 
 // ── /api/tmc/forms-of-payment/[id] ───────────────────────────────────────────
@@ -109,13 +109,18 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   // the DB constraint.
   const { data: current } = await service
     .from('forms_of_payment')
-    .select('fop_type, payer, card_type, last4, expiry_month, expiry_year, owner_client_id, owner_employee_id, rbd_spec, airline_code')
+    .select('fop_code, fop_type, payer, gds_entry_id, payment_type_id, card_type, last4, expiry_month, expiry_year, owner_client_id, owner_employee_id, rbd_spec, airline_code')
     .eq('id', id)
     .single()
 
-  // Normalised through the shared helper rather than a copy of the same rules,
+  // Normalised through the shared helpers rather than a copy of the same rules,
   // which is how POST and PATCH drifted apart in the first place.
-  const merged = normaliseFop({ ...current, ...body })
+  const derived = await deriveFopType(service, tmcId, { ...current, ...body })
+  if ('error' in derived) {
+    return Response.json({ error: derived.error }, { status: derived.status })
+  }
+
+  const merged = normaliseFop(derived.body)
 
   const validationError = validateFop(merged)
   if (validationError) {
@@ -132,7 +137,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const update: Record<string, unknown> = { updated_at: new Date().toISOString() }
   const editable = [
-    'label', 'fop_type', 'payer', 'card_type', 'last4', 'expiry_month', 'expiry_year',
+    'fop_code', 'label', 'gds_entry_id', 'payment_type_id',
+    'fop_type', 'payer', 'card_type', 'last4', 'expiry_month', 'expiry_year',
     'gds_alias', 'branch_id', 'owner_client_id', 'owner_employee_id',
     'airline_code', 'rbd_spec', 'active', 'notes',
   ] as const
@@ -144,6 +150,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
 
   if (typeof update.label === 'string') update.label = update.label.trim()
+  if (typeof update.fop_code === 'string') update.fop_code = update.fop_code.trim().toUpperCase() || null
   if (typeof update.airline_code === 'string') update.airline_code = update.airline_code.trim().toUpperCase() || null
   if (typeof update.rbd_spec === 'string') update.rbd_spec = update.rbd_spec.trim().toUpperCase() || null
 

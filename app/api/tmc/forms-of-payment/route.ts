@@ -30,7 +30,7 @@ import { NextRequest } from 'next/server'
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const FOP_COLUMNS =
-  'id, label, fop_type, payer, card_type, last4, expiry_month, expiry_year, gds_alias, branch_id, owner_client_id, owner_employee_id, airline_code, rbd_spec, active, notes, created_at'
+  'id, fop_code, label, fop_type, payer, gds_entry_id, payment_type_id, card_type, last4, expiry_month, expiry_year, gds_alias, branch_id, owner_client_id, owner_employee_id, airline_code, rbd_spec, active, notes, created_at'
 
 export const FOP_TYPES = ['card', 'cash'] as const
 export const PAYERS = ['agency', 'corporate', 'traveller'] as const
@@ -123,7 +123,13 @@ export async function GET(req: NextRequest) {
 
     if (params.search) {
       const safe = escapeFilterValue(params.search)
-      if (safe) query = query.or(`label.ilike.%${safe}%,airline_code.ilike.%${safe}%,last4.ilike.%${safe}%`)
+      // fop_code included: it is the short identifier a counsellor actually
+      // says out loud, so it is the first thing anyone searches by.
+      if (safe) {
+        query = query.or(
+          `fop_code.ilike.%${safe}%,label.ilike.%${safe}%,airline_code.ilike.%${safe}%,last4.ilike.%${safe}%`
+        )
+      }
     }
   }
 
@@ -157,7 +163,10 @@ export async function GET(req: NextRequest) {
 }
 
 interface CreateBody {
+  fop_code?: string | null
   label: string
+  gds_entry_id?: string | null
+  payment_type_id?: string | null
   fop_type: string
   payer: string
   card_type?: string | null
@@ -172,6 +181,45 @@ interface CreateBody {
   rbd_spec?: string | null
   active?: boolean
   notes?: string | null
+}
+
+// ── deriveFopType ────────────────────────────────────────────────────────────
+// Sets fop_type from the chosen payment type's requires_card flag, and checks
+// both code-list references belong to this TMC.
+//
+// Those are plain FKs, so another tenant's payment type would satisfy the
+// constraint. Checked here for the same reason branch and owner are.
+//
+// A form of payment with no payment type set keeps whatever fop_type it was
+// given: the field is optional, and refusing to save without it would make the
+// code lists mandatory rather than useful.
+export async function deriveFopType<T extends Partial<CreateBody>>(
+  service: ReturnType<typeof createServiceClient>,
+  tmcId: string,
+  body: T
+): Promise<{ body: T } | { error: string; status: number }> {
+  const next = { ...body }
+
+  if (next.gds_entry_id) {
+    const { data: entry } = await service
+      .from('fop_gds_entries').select('id').eq('id', next.gds_entry_id).eq('tmc_id', tmcId).maybeSingle()
+    if (!entry) return { error: 'That GDS entry does not belong to your TMC', status: 422 }
+  }
+
+  if (next.payment_type_id) {
+    const { data: paymentType } = await service
+      .from('fop_payment_types')
+      .select('id, requires_card')
+      .eq('id', next.payment_type_id)
+      .eq('tmc_id', tmcId)
+      .maybeSingle()
+
+    if (!paymentType) return { error: 'That payment type does not belong to your TMC', status: 422 }
+
+    next.fop_type = paymentType.requires_card ? 'card' : 'cash'
+  }
+
+  return { body: next }
 }
 
 // ── normaliseFop ─────────────────────────────────────────────────────────────
@@ -289,7 +337,19 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
 
-  const body = normaliseFop((await req.json()) as CreateBody)
+  const raw = (await req.json()) as CreateBody
+
+  // fop_type is DERIVED from the payment type rather than picked separately.
+  // Two fields answering "does this need card details" is exactly how they end
+  // up disagreeing — a CC payment type on a cash FOP. The payment type's
+  // requires_card flag is the one source of truth; this reads it and normalise
+  // then clears the card fields if it says no.
+  const derived = await deriveFopType(service, auth.tmcId, raw)
+  if ('error' in derived) {
+    return Response.json({ error: derived.error }, { status: derived.status })
+  }
+
+  const body = normaliseFop(derived.body)
 
   const validationError = validateFop(body)
   if (validationError) {
@@ -331,7 +391,10 @@ export async function POST(req: NextRequest) {
     .from('forms_of_payment')
     .insert({
       tmc_id: auth.tmcId,
+      fop_code: body.fop_code?.trim().toUpperCase() || null,
       label: body.label.trim(),
+      gds_entry_id: body.gds_entry_id || null,
+      payment_type_id: body.payment_type_id || null,
       fop_type: body.fop_type,
       payer: body.payer,
       card_type: body.fop_type === 'card' ? body.card_type : null,

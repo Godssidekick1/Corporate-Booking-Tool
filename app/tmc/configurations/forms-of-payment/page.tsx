@@ -26,7 +26,10 @@ import { FOP_STATUS_LABELS, CARD_TYPE_LABELS, type FopStatus } from '@/app/lib/f
 
 interface Fop {
   id: string
+  fop_code: string | null
   label: string
+  gds_entry_id: string | null
+  payment_type_id: string | null
   fop_type: 'card' | 'cash'
   payer: 'agency' | 'corporate' | 'traveller'
   card_type: string | null
@@ -45,7 +48,8 @@ interface Fop {
   description: string
 }
 
-interface Assignment { id: string; kind: string; targetId: string; targetName: string }
+interface Assignment { id: string; kind: string; targetId: string; targetName: string; is_active: boolean }
+interface CodeOption { id: string; code: string; label: string; requires_card?: boolean }
 
 const PAYER_LABELS: Record<Fop['payer'], string> = {
   agency: 'Agency',
@@ -69,10 +73,17 @@ const STATUS_STYLE: Record<FopStatus, React.CSSProperties> = {
 }
 
 const EMPTY_FORM = {
-  label: '', fop_type: 'card' as Fop['fop_type'], payer: 'agency' as Fop['payer'],
+  fop_code: '', label: '', gds_entry_id: '', payment_type_id: '', fop_type: 'card' as Fop['fop_type'], payer: 'agency' as Fop['payer'],
   card_type: 'AX', last4: '', expiry_month: '', expiry_year: '', gds_alias: '',
   branch_id: '', owner_client_id: '', owner_employee_id: '',
   airline_code: '', rbd_spec: '', active: true, notes: '',
+}
+
+// Renders a code-list reference as its short code, which is what the old screen
+// shows and what people say out loud.
+function codeOf(options: CodeOption[], id: string | null): string {
+  if (!id) return '—'
+  return options.find(o => o.id === id)?.code ?? '—'
 }
 
 export default function FormsOfPaymentPage() {
@@ -96,6 +107,24 @@ export default function FormsOfPaymentPage() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
+  const [gdsEntries, setGdsEntries] = useState<CodeOption[]>([])
+  const [paymentTypes, setPaymentTypes] = useState<CodeOption[]>([])
+
+  useEffect(() => {
+    fetch('/api/tmc/fop-codes').then(r => r.json())
+      .then(d => {
+        if (!d.ok) return
+        setGdsEntries(d.gdsEntries ?? [])
+        setPaymentTypes(d.paymentTypes ?? [])
+      })
+  }, [])
+
+  // Whether card details apply is decided by the chosen payment type, not by a
+  // separate toggle. Two fields answering the same question is how a "CC"
+  // payment type ends up on a form of payment marked cash.
+  const selectedPaymentType = paymentTypes.find(p => p.id === form.payment_type_id)
+  const isCard = selectedPaymentType ? Boolean(selectedPaymentType.requires_card) : form.fop_type === 'card'
+
   const branchLookup = useLookup('/api/tmc/branches', form.branch_id)
   const clientLookup = useLookup('/api/tmc/clients', form.owner_client_id)
   const assignLookup = useLookup(
@@ -115,7 +144,10 @@ export default function FormsOfPaymentPage() {
   async function openFop(fop: Fop) {
     setCreating(false); setSelected(fop); setError(''); setSuccess('')
     setForm({
+      fop_code: fop.fop_code ?? '',
       label: fop.label,
+      gds_entry_id: fop.gds_entry_id ?? '',
+      payment_type_id: fop.payment_type_id ?? '',
       fop_type: fop.fop_type,
       payer: fop.payer,
       card_type: fop.card_type ?? 'AX',
@@ -151,10 +183,16 @@ export default function FormsOfPaymentPage() {
       // state while they are hidden — so switching to cash and saving used to
       // post card_type: 'AX' from the default, and the form showing no card
       // fields at all came back with "cash cannot carry card details".
-      const isCardNow = form.fop_type === 'card'
+      const isCardNow = isCard
 
       const payload = {
         ...form,
+        // Derived from the payment type where one is chosen, so the two cannot
+        // disagree. The server derives it the same way and does not trust this.
+        fop_type: isCardNow ? 'card' : 'cash',
+        gds_entry_id: form.gds_entry_id || null,
+        payment_type_id: form.payment_type_id || null,
+        fop_code: form.fop_code || null,
         card_type: isCardNow ? form.card_type : null,
         last4: isCardNow ? form.last4 || null : null,
         expiry_month: isCardNow && form.expiry_month ? Number(form.expiry_month) : null,
@@ -219,7 +257,20 @@ export default function FormsOfPaymentPage() {
     } finally { setBusy(false) }
   }
 
-  const isCard = form.fop_type === 'card'
+  // Switch one mapping off without deleting it. Distinct from the method's own
+  // active flag: this takes ONE client off it while it keeps working for
+  // everyone else — and the record of who was on it survives.
+  async function toggleAssignment(id: string, isActive: boolean) {
+    setBusy(true)
+    try {
+      const d = await fetch('/api/tmc/fop-assignments', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, is_active: isActive }),
+      }).then(r => r.json())
+      if (!d.ok) { setError(d.error || 'Could not update the mapping.'); return }
+      setAssignments(prev => prev.map(a => (a.id === id ? { ...a, is_active: isActive } : a)))
+    } finally { setBusy(false) }
+  }
 
   return (
     <div style={s.root}>
@@ -281,7 +332,7 @@ export default function FormsOfPaymentPage() {
             <table style={s.table}>
               <thead>
                 <tr>
-                  {['Label', 'Instrument', 'Payer', 'Airline', 'Classes', 'Branch', 'Status'].map(h => (
+                  {['FOP', 'Description', 'Payment', 'Payer', 'Airline', 'Card', 'RBD', 'Status'].map(h => (
                     <th key={h} style={s.th}>{h}</th>
                   ))}
                 </tr>
@@ -293,14 +344,18 @@ export default function FormsOfPaymentPage() {
                     onClick={() => openFop(f)}
                     style={{ ...s.tr, background: i % 2 === 0 ? '#fff' : '#FAFAFA', cursor: 'pointer' }}
                   >
+                    <td style={{ ...s.td, ...s.mono }}>{f.fop_code ?? <span style={s.muted}>—</span>}</td>
                     <td style={{ ...s.td, fontWeight: 500, color: 'var(--color-ink)' }}>{f.label}</td>
-                    <td style={{ ...s.td, fontSize: 12 }}>{f.description}</td>
-                    <td style={s.td}><span style={s.payerPill}>{PAYER_LABELS[f.payer]}</span></td>
-                    <td style={{ ...s.td, ...s.mono }}>{f.airline_code ?? <span style={s.muted}>Any</span>}</td>
-                    <td style={{ ...s.td, fontSize: 12 }}>{formatRbdSpec(f.rbd_spec)}</td>
-                    <td style={{ ...s.td, fontSize: 12 }}>
-                      {f.branch_id ? 'Branch-specific' : <span style={s.muted}>All branches</span>}
+                    <td style={{ ...s.td, ...s.mono, fontSize: 12 }}>
+                      {codeOf(gdsEntries, f.gds_entry_id)}
+                      {f.payment_type_id && <span style={s.muted}> / {codeOf(paymentTypes, f.payment_type_id)}</span>}
                     </td>
+                    <td style={s.td}><span style={s.payerPill}>{PAYER_LABELS[f.payer]}</span></td>
+                    {/* NULL displays as ALL, matching the old screen's vocabulary
+                        without storing the literal string. */}
+                    <td style={{ ...s.td, ...s.mono }}>{f.airline_code ?? <span style={s.muted}>ALL</span>}</td>
+                    <td style={{ ...s.td, ...s.mono }}>{f.card_type ?? <span style={s.muted}>ALL</span>}</td>
+                    <td style={{ ...s.td, fontSize: 12 }}>{formatRbdSpec(f.rbd_spec)}</td>
                     <td style={s.td}>
                       <span style={{ ...s.statusPill, ...STATUS_STYLE[f.status] }}>
                         <span style={{ ...s.dot, background: 'currentColor' }} />
@@ -333,27 +388,75 @@ export default function FormsOfPaymentPage() {
             <div style={s.panelBody}>
               <div style={s.sectionLabel}>Identity</div>
 
-              <div style={s.field}>
-                <label style={s.label}>Label</label>
-                <input
-                  value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))}
-                  placeholder="Amex BTA — Delhi" style={s.input}
-                />
-                <p style={s.hint}>What a counsellor will recognise it by.</p>
-              </div>
-
               <div style={s.row}>
                 <div style={{ ...s.field, flex: 1 }}>
-                  <label style={s.label}>Instrument</label>
+                  <label style={s.label}>FOP code</label>
+                  <input
+                    value={form.fop_code}
+                    onChange={e => setForm(f => ({ ...f, fop_code: e.target.value.toUpperCase() }))}
+                    placeholder="1" style={{ ...s.input, ...s.mono }}
+                  />
+                </div>
+                <div style={{ ...s.field, flex: 3 }}>
+                  <label style={s.label}>Description</label>
+                  <input
+                    value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))}
+                    placeholder="Amex Non Pass Through" style={s.input}
+                  />
+                </div>
+              </div>
+              <p style={s.hint}>
+                The code is the short reference you use elsewhere; the description is what a
+                counsellor reads.
+              </p>
+
+              <div style={{ ...s.row, marginTop: 12 }}>
+                <div style={{ ...s.field, flex: 1 }}>
+                  <label style={s.label}>GDS entry</label>
                   <select
-                    value={form.fop_type}
-                    onChange={e => setForm(f => ({ ...f, fop_type: e.target.value as Fop['fop_type'] }))}
+                    value={form.gds_entry_id}
+                    onChange={e => setForm(f => ({ ...f, gds_entry_id: e.target.value }))}
                     style={s.input}
                   >
-                    <option value="card">Card</option>
-                    <option value="cash">Cash / BSP settlement</option>
+                    <option value="">Select…</option>
+                    {gdsEntries.map(g => <option key={g.id} value={g.id}>{g.code}</option>)}
                   </select>
                 </div>
+                <div style={{ ...s.field, flex: 1 }}>
+                  <label style={s.label}>Payment type</label>
+                  <select
+                    value={form.payment_type_id}
+                    onChange={e => setForm(f => ({ ...f, payment_type_id: e.target.value }))}
+                    style={s.input}
+                  >
+                    <option value="">Select…</option>
+                    {paymentTypes.map(p => <option key={p.id} value={p.id}>{p.code} — {p.label}</option>)}
+                  </select>
+                </div>
+              </div>
+              <p style={s.hint}>
+                {gdsEntries.find(g => g.id === form.gds_entry_id)?.label ??
+                  'The GDS entry decides whether the airline charges the card itself, or the ticket settles as an agency invoice and you charge the card separately.'}
+              </p>
+
+              <div style={s.row}>
+                {/* No "instrument" picker: whether card details apply follows
+                    from the payment type. It only appears when no payment type
+                    has been chosen, so an older record without one can still be
+                    edited. */}
+                {!form.payment_type_id && (
+                  <div style={{ ...s.field, flex: 1 }}>
+                    <label style={s.label}>Instrument</label>
+                    <select
+                      value={form.fop_type}
+                      onChange={e => setForm(f => ({ ...f, fop_type: e.target.value as Fop['fop_type'] }))}
+                      style={s.input}
+                    >
+                      <option value="card">Card</option>
+                      <option value="cash">Cash / BSP settlement</option>
+                    </select>
+                  </div>
+                )}
                 <div style={{ ...s.field, flex: 1 }}>
                   <label style={s.label}>Payer</label>
                   <select
@@ -516,9 +619,19 @@ export default function FormsOfPaymentPage() {
                       in its scope. Assign clients only to override that for them.
                     </p>
                   ) : (
+                    <>
                     <div style={s.chipRow}>
                       {assignments.map(a => (
-                        <span key={a.id} style={s.assignChip}>
+                        <span
+                          key={a.id}
+                          style={{ ...s.assignChip, ...(a.is_active ? {} : s.assignChipOff) }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={a.is_active}
+                            onChange={e => toggleAssignment(a.id, e.target.checked)}
+                            title={a.is_active ? 'Active — switch off to suspend' : 'Suspended'}
+                          />
                           <strong style={{ fontWeight: 600 }}>{a.targetName}</strong>
                           <span style={{ color: '#6B7280' }}>
                             {a.kind === 'client' ? 'Client' : a.kind === 'bucket' ? 'Bucket' : 'Group'}
@@ -527,6 +640,11 @@ export default function FormsOfPaymentPage() {
                         </span>
                       ))}
                     </div>
+                    <p style={s.hint}>
+                      Untick to suspend a mapping without losing it. A suspended one does not apply,
+                      and does not turn this into the default for anyone either.
+                    </p>
+                    </>
                   )}
 
                   <div style={{ ...s.row, marginTop: 10 }}>
@@ -612,6 +730,8 @@ const s: Record<string, React.CSSProperties> = {
 
   chipRow: { display: 'flex', gap: 6, flexWrap: 'wrap' },
   assignChip: { display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: '1px solid var(--color-line-strong)', borderRadius: 6, padding: '4px 8px', fontSize: 12 },
+  // A suspended mapping stays visible but reads as switched off.
+  assignChipOff: { opacity: 0.5, borderStyle: 'dashed' },
   chipX: { background: 'none', border: 'none', color: '#9CA3AF', fontSize: 15, lineHeight: 1, cursor: 'pointer', padding: 0 },
 
   backdrop: { position: 'fixed', inset: 0, background: 'rgba(10,10,20,0.28)', zIndex: 40 },

@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
 
   let query = service
     .from('fop_assignments')
-    .select('id, fop_id, kind, client_id, client_group_id, bucket_id, created_at')
+    .select('id, fop_id, kind, client_id, client_group_id, bucket_id, is_active, created_at, created_by')
     .eq('tmc_id', auth.tmcId)
 
   if (fopId) query = query.eq('fop_id', fopId)
@@ -140,6 +140,42 @@ export async function POST(req: NextRequest) {
   }
 
   return Response.json({ ok: true, assigned: rows.length })
+}
+
+// Switch one mapping off without deleting it — the old screen's Is Active
+// column. Separate from the form of payment's own active flag: this takes ONE
+// client off it while it keeps working for everyone else.
+export async function PATCH(req: NextRequest) {
+  const supabase = await createClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+  if (authError || !user) {
+    return Response.json({ error: 'Not authenticated' }, { status: 401 })
+  }
+
+  const service = createServiceClient()
+  const auth = await requireTmcPermission(service, user.id, 'manage_fops')
+  if (!auth.authorized || !auth.tmcId) {
+    return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
+  }
+
+  const body: { id?: string; is_active?: boolean } = await req.json()
+
+  if (!body.id || typeof body.is_active !== 'boolean') {
+    return Response.json({ error: 'id and is_active are required' }, { status: 400 })
+  }
+
+  const { error } = await service
+    .from('fop_assignments')
+    .update({ is_active: body.is_active })
+    .eq('id', body.id)
+    .eq('tmc_id', auth.tmcId)
+
+  if (error) {
+    return Response.json({ error: error.message }, { status: 500 })
+  }
+
+  return Response.json({ ok: true })
 }
 
 export async function DELETE(req: NextRequest) {
