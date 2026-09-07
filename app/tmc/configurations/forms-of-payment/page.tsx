@@ -147,12 +147,19 @@ export default function FormsOfPaymentPage() {
   async function save() {
     setBusy(true); setError('')
     try {
+      // Card fields are sent only when this IS a card. The editor keeps them in
+      // state while they are hidden — so switching to cash and saving used to
+      // post card_type: 'AX' from the default, and the form showing no card
+      // fields at all came back with "cash cannot carry card details".
+      const isCardNow = form.fop_type === 'card'
+
       const payload = {
         ...form,
-        last4: form.last4 || null,
-        expiry_month: form.expiry_month ? Number(form.expiry_month) : null,
-        expiry_year: form.expiry_year ? Number(form.expiry_year) : null,
-        gds_alias: form.gds_alias || null,
+        card_type: isCardNow ? form.card_type : null,
+        last4: isCardNow ? form.last4 || null : null,
+        expiry_month: isCardNow && form.expiry_month ? Number(form.expiry_month) : null,
+        expiry_year: isCardNow && form.expiry_year ? Number(form.expiry_year) : null,
+        gds_alias: isCardNow ? form.gds_alias || null : null,
         branch_id: form.branch_id || null,
         owner_client_id: form.payer === 'corporate' ? form.owner_client_id || null : null,
         owner_employee_id: form.payer === 'traveller' ? form.owner_employee_id || null : null,

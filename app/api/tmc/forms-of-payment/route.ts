@@ -174,7 +174,45 @@ interface CreateBody {
   notes?: string | null
 }
 
+// ── normaliseFop ─────────────────────────────────────────────────────────────
+// Clears the fields the chosen type and payer make meaningless, so a stale
+// value left behind by a form the user has since switched cannot fail a save.
+//
+// This is CLEARING, not validating, and the distinction matters: someone who
+// picks cash has said unambiguously that the card brand is irrelevant. Making
+// them hunt for a hidden field to empty first is friction with no safety in it.
+//
+// Run by both POST and PATCH so create and edit cannot disagree — they did,
+// and that was the bug.
+export function normaliseFop<T extends Partial<CreateBody>>(body: T): T {
+  const next = { ...body }
+
+  if (next.fop_type === 'cash') {
+    next.card_type = null
+    next.last4 = null
+    next.expiry_month = null
+    next.expiry_year = null
+  }
+
+  // An agency card is the TMC's own, so it has no owner. A corporate card
+  // belongs to a client and a traveller card to a person — never both.
+  if (next.payer === 'agency') {
+    next.owner_client_id = null
+    next.owner_employee_id = null
+  } else if (next.payer === 'corporate') {
+    next.owner_employee_id = null
+  } else if (next.payer === 'traveller') {
+    next.owner_client_id = null
+  }
+
+  return next
+}
+
 // Shared with PATCH in [id]. Returns an error string or null.
+//
+// Expects an already-normalised body: the rules below are about input that is
+// genuinely contradictory, not input that merely carries fields the user has
+// since made irrelevant.
 //
 // The card/cash and payer/owner rules are also DB CHECK constraints. Repeated
 // here so the message names the field rather than surfacing a raw constraint
@@ -192,11 +230,12 @@ export function validateFop(body: Partial<CreateBody>): string | null {
     return `Unknown payer: ${body.payer}`
   }
 
-  if (body.fop_type === 'cash') {
-    if (body.card_type || body.last4 || body.expiry_month || body.expiry_year) {
-      return 'Cash settlement cannot carry card details.'
-    }
-  }
+  // Card fields on a cash FOP are NOT an error — see normaliseFop below, which
+  // clears them before this runs. Rejecting here was a real bug: the editor
+  // defaults card_type to 'AX', so switching to cash and saving failed with
+  // "Cash settlement cannot carry card details" on a form showing no card
+  // fields at all. PATCH already normalised; POST refused. Same input, two
+  // answers depending on whether you were creating or editing.
 
   if (body.fop_type === 'card') {
     if (!body.card_type) return 'Pick a card type.'
@@ -250,7 +289,7 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
 
-  const body: CreateBody = await req.json()
+  const body = normaliseFop((await req.json()) as CreateBody)
 
   const validationError = validateFop(body)
   if (validationError) {

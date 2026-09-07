@@ -2,7 +2,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { fopStatus, describeFop } from '@/app/lib/fop/fopStatus'
-import { FOP_COLUMNS, validateFop } from '../route'
+import { FOP_COLUMNS, validateFop, normaliseFop } from '../route'
 import { NextRequest } from 'next/server'
 
 // ── /api/tmc/forms-of-payment/[id] ───────────────────────────────────────────
@@ -113,27 +113,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     .eq('id', id)
     .single()
 
-  const merged = { ...current, ...body }
-
-  // Switching to cash clears the card fields rather than refusing: the user's
-  // intent is unambiguous, and making them empty three boxes first is friction
-  // for no safety.
-  if (merged.fop_type === 'cash') {
-    merged.card_type = null
-    merged.last4 = null
-    merged.expiry_month = null
-    merged.expiry_year = null
-  }
-
-  // Same for the payer: an agency card has no owner by definition.
-  if (merged.payer === 'agency') {
-    merged.owner_client_id = null
-    merged.owner_employee_id = null
-  } else if (merged.payer === 'corporate') {
-    merged.owner_employee_id = null
-  } else if (merged.payer === 'traveller') {
-    merged.owner_client_id = null
-  }
+  // Normalised through the shared helper rather than a copy of the same rules,
+  // which is how POST and PATCH drifted apart in the first place.
+  const merged = normaliseFop({ ...current, ...body })
 
   const validationError = validateFop(merged)
   if (validationError) {
