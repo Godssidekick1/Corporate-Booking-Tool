@@ -47,11 +47,23 @@ interface SearchableSelectProps {
   // recordable. Off by default: for a client or a bucket, a value that is not
   // an option is simply wrong.
   allowFreeText?: boolean
+  // Offer an explicit "none" row at the top of the list.
+  //
+  // A <select> gets this for free — you add an <option value="">. A combobox
+  // does not: clearing the text just leaves an empty query, and there is no
+  // gesture that means "go back to unset". Without it, assigning a client group
+  // by accident would be permanent, which is the sort of one-way door a picker
+  // should never be.
+  allowClear?: boolean
+  clearLabel?: string
 }
+
+const CLEAR_ID = '__clear__'
 
 export default function SearchableSelect({
   value, onChange, options, placeholder = 'Search…', disabled, emptyMessage = 'No matches',
   onSearch, loading = false, selectedLabel, allowFreeText = false,
+  allowClear = false, clearLabel = 'None',
 }: SearchableSelectProps) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
@@ -80,6 +92,15 @@ export default function SearchableSelect({
       o.label.toLowerCase().includes(q) || (o.sublabel ?? '').toLowerCase().includes(q)
     )
   }, [options, query, onSearch])
+
+  // The clear row is part of the visible list, not a decoration beside it: it
+  // has to be arrow-navigable and Enter-selectable like any other row, and it
+  // has to shift the highlight indices to match. Only offered when there is
+  // something to clear — "Unassigned" on an already-unassigned field is noise.
+  const rows = useMemo(
+    () => (allowClear && value ? [{ id: CLEAR_ID, label: clearLabel }, ...filtered] : filtered),
+    [allowClear, value, clearLabel, filtered]
+  )
 
   // Debounced here rather than in every caller, so a picker is one prop to wire
   // up instead of a timer each screen has to remember to clear.
@@ -115,7 +136,9 @@ export default function SearchableSelect({
   }, [allowFreeText, query, value])
 
   function pick(option: SearchableOption) {
-    onChange(option.id)
+    // The clear row is a sentinel, not a real id — it maps back to the empty
+    // string the rest of the app already uses for "not set".
+    onChange(option.id === CLEAR_ID ? '' : option.id)
     setQuery('')
     setOpen(false)
   }
@@ -135,7 +158,7 @@ export default function SearchableSelect({
     }
     if (e.key === 'ArrowDown') {
       e.preventDefault()
-      setHighlightIndex(i => Math.min(i + 1, filtered.length - 1))
+      setHighlightIndex(i => Math.min(i + 1, rows.length - 1))
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       setHighlightIndex(i => Math.max(i - 1, 0))
@@ -144,7 +167,7 @@ export default function SearchableSelect({
       // A highlighted suggestion always wins over the raw text — otherwise
       // typing "Mumb" and pressing Enter would store "Mumb" rather than the
       // Mumbai sitting highlighted in front of them.
-      if (filtered[highlightIndex]) pick(filtered[highlightIndex])
+      if (rows[highlightIndex]) pick(rows[highlightIndex])
       else if (allowFreeText) {
         commitFreeText()
         setQuery('')
@@ -174,17 +197,17 @@ export default function SearchableSelect({
               yet. Checked before the empty case for exactly that reason. */}
           {loading ? (
             <div style={s.emptyRow}>Searching…</div>
-          ) : filtered.length === 0 ? (
+          ) : rows.length === 0 ? (
             <div style={s.emptyRow}>{emptyMessage}</div>
           ) : (
-            filtered.map((o, i) => (
+            rows.map((o, i) => (
               <div
                 key={o.id}
                 onMouseDown={e => { e.preventDefault(); pick(o) }}
                 onMouseEnter={() => setHighlightIndex(i)}
                 style={{ ...s.option, ...(i === highlightIndex ? s.optionHighlight : {}), ...(o.id === value ? s.optionSelected : {}) }}
               >
-                <div style={s.optionLabel}>{o.label}</div>
+                <div style={{ ...s.optionLabel, ...(o.id === CLEAR_ID ? s.clearLabel : {}) }}>{o.label}</div>
                 {o.sublabel && <div style={s.optionSublabel}>{o.sublabel}</div>}
               </div>
             ))
@@ -212,5 +235,6 @@ const s: Record<string, React.CSSProperties> = {
   optionHighlight: { background: '#F3F4F6' },
   optionSelected: { background: '#EEF2FF' },
   optionLabel: { fontSize: '13px', color: '#111827', fontWeight: 500 },
+  clearLabel: { color: '#9CA3AF', fontWeight: 400, fontStyle: 'italic' as const },
   optionSublabel: { fontSize: '11px', color: '#9CA3AF', marginTop: '1px' },
 }

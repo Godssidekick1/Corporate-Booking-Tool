@@ -52,8 +52,22 @@ export default function PasswordInput({
         required={required}
         disabled={disabled}
         autoComplete={autoComplete}
-        // Room for the button, so a long password does not run underneath it.
-        style={{ ...style, paddingRight: 42 }}
+        style={{
+          ...style,
+          // The input is a flex item now, so it no longer stretches on its own
+          // the way a bare <input> in a column does — without this it collapses
+          // to its intrinsic ~20-character width and reads as a shorter field
+          // than the email box above it.
+          width: '100%',
+          // paddingRight after the spread so it beats a `padding` shorthand in
+          // the caller's style. This is the gap the button sits in: the text
+          // caret stops before the icon rather than running underneath it.
+          paddingRight: 42,
+          // The caller's height and padding are stated in border-box terms
+          // everywhere else in the app; without this the extra padding would
+          // push the field wider than its neighbours.
+          boxSizing: 'border-box',
+        }}
       />
       <button
         type="button"

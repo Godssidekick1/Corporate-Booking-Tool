@@ -80,6 +80,17 @@ export default function TmcClientDetailPage() {
   // grows, and this is the same picker pattern as everywhere else.
   const branchLookup = useLookup('/api/tmc/branches', form.branch_id)
 
+  // Client groups are server-searched for the same reason. The list endpoint is
+  // paged at 10, so a plain <select> was not just awkward to scan — past the
+  // tenth group the option you wanted was not in the markup at all.
+  const groupLookup = useLookup('/api/tmc/client-groups', form.client_group_id, {
+    toOption: row => ({
+      id: String(row.id),
+      label: String(row.name),
+      sublabel: row.city ? String(row.city) : undefined,
+    }),
+  })
+
   useEffect(() => {
     Promise.all([
       fetch(`/api/tmc/clients/${clientId}`).then(r => r.json()),
@@ -211,12 +222,18 @@ export default function TmcClientDetailPage() {
               No client groups yet — <a href="/tmc/configurations/client-groups" style={s.inlineLink}>create one</a> to assign this client.
             </p>
           ) : (
-            <select id="client_group_id" name="client_group_id" value={form.client_group_id} onChange={handleChange} style={s.input}>
-              <option value="">Unassigned</option>
-              {client_groups.map(b => (
-                <option key={b.id} value={b.id}>{b.name}{b.city ? ` — ${b.city}` : ''}</option>
-              ))}
-            </select>
+            <SearchableSelect
+              value={form.client_group_id}
+              onChange={id => setForm(prev => ({ ...prev, client_group_id: id }))}
+              options={groupLookup.options}
+              onSearch={groupLookup.onSearch}
+              loading={groupLookup.loading}
+              selectedLabel={groupLookup.selectedLabel}
+              placeholder="Search client groups…"
+              emptyMessage="No client groups match"
+              allowClear
+              clearLabel="Unassigned"
+            />
           )}
         </div>
 

@@ -43,6 +43,7 @@ interface Fop {
   airline_code: string | null
   rbd_spec: string | null
   active: boolean
+  is_default: boolean
   notes: string | null
   status: FopStatus
   description: string
@@ -50,6 +51,26 @@ interface Fop {
 
 interface Assignment { id: string; kind: string; targetId: string; targetName: string; is_active: boolean }
 interface CodeOption { id: string; code: string; label: string; requires_card?: boolean }
+
+// One row of the Mapping tab: a form of payment joined to whatever it reaches.
+interface Mapping {
+  id: string
+  fop_id: string
+  fop_code: string | null
+  fop_label: string
+  kind: 'client' | 'client_group' | 'bucket'
+  target_id: string
+  target_name: string
+  is_active: boolean
+  created_at: string
+  created_by_name: string | null
+}
+
+const KIND_LABELS: Record<Mapping['kind'], string> = {
+  client: 'Client',
+  bucket: 'Bucket',
+  client_group: 'Client group',
+}
 
 const PAYER_LABELS: Record<Fop['payer'], string> = {
   agency: 'Agency',
@@ -76,7 +97,7 @@ const EMPTY_FORM = {
   fop_code: '', label: '', gds_entry_id: '', payment_type_id: '', fop_type: 'card' as Fop['fop_type'], payer: 'agency' as Fop['payer'],
   card_type: 'AX', last4: '', expiry_month: '', expiry_year: '', gds_alias: '',
   branch_id: '', owner_client_id: '', owner_employee_id: '',
-  airline_code: '', rbd_spec: '', active: true, notes: '',
+  airline_code: '', rbd_spec: '', active: true, is_default: false, notes: '',
 }
 
 // Renders a code-list reference as its short code, which is what the old screen
@@ -87,12 +108,23 @@ function codeOf(options: CodeOption[], id: string | null): string {
 }
 
 export default function FormsOfPaymentPage() {
+  // Two views of the same relation, same pattern as Deal codes / Coverage. The
+  // master answers "what payment methods exist"; the mapping answers "what is
+  // attached to CBTGROUP", which you cannot get by opening methods one at a
+  // time — and that second question is the one the old FOP Mapper existed for.
+  const [tab, setTab] = useState<'master' | 'mapping'>('master')
+
   const [filterType, setFilterType] = useState('')
   const [filterPayer, setFilterPayer] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
 
   const list = usePagedList<Fop>('/api/tmc/forms-of-payment', {
     params: { type: filterType, payer: filterPayer, status: filterStatus },
+    enabled: tab === 'master',
+  })
+
+  const mappings = usePagedList<Mapping>('/api/tmc/fop-assignments', {
+    enabled: tab === 'mapping',
   })
 
   const [selected, setSelected] = useState<Fop | null>(null)
@@ -124,6 +156,21 @@ export default function FormsOfPaymentPage() {
   // payment type ends up on a form of payment marked cash.
   const selectedPaymentType = paymentTypes.find(p => p.id === form.payment_type_id)
   const isCard = selectedPaymentType ? Boolean(selectedPaymentType.requires_card) : form.fop_type === 'card'
+
+  // ── INVAGT + CC is not a mistake ───────────────────────────────────────────
+  // INVAGT (agency invoice) and CL (credit limit) travel together almost always,
+  // which is why they get mistaken for the same field. They are not: INVAGT says
+  // how the ticket SETTLES, CL says what the commercial arrangement IS.
+  //
+  // "Amex Non Pass Through" is the counter-example, and it is the row whose name
+  // describes the whole concept — INVAGT with CC. The ticket settles as an agency
+  // invoice, and the agency then charges the Amex separately. If INVAGT forced
+  // CL that row could not exist, and neither could non pass-through.
+  //
+  // So CL is a DEFAULT here, never a constraint.
+  const isInvagt = gdsEntries.find(g => g.id === form.gds_entry_id)?.code === 'INVAGT'
+  const paymentCode = paymentTypes.find(p => p.id === form.payment_type_id)?.code
+  const isNonPassThrough = isInvagt && paymentCode === 'CC'
 
   const branchLookup = useLookup('/api/tmc/branches', form.branch_id)
   const clientLookup = useLookup('/api/tmc/clients', form.owner_client_id)
@@ -161,6 +208,7 @@ export default function FormsOfPaymentPage() {
       airline_code: fop.airline_code ?? '',
       rbd_spec: fop.rbd_spec ?? '',
       active: fop.active,
+      is_default: fop.is_default ?? false,
       notes: fop.notes ?? '',
     })
     const d = await fetch(`/api/tmc/forms-of-payment/${fop.id}`).then(r => r.json())
@@ -289,6 +337,17 @@ export default function FormsOfPaymentPage() {
       {error && <div style={s.errorBanner}>{error}</div>}
       {success && <div style={s.successBanner}>{success}</div>}
 
+      <div style={s.tabs}>
+        <button onClick={() => setTab('master')} style={{ ...s.tab, ...(tab === 'master' ? s.tabOn : {}) }}>
+          Master {list.total > 0 && <span style={s.tabCount}>{list.total}</span>}
+        </button>
+        <button onClick={() => setTab('mapping')} style={{ ...s.tab, ...(tab === 'mapping' ? s.tabOn : {}) }}>
+          Mapping {mappings.total > 0 && <span style={s.tabCount}>{mappings.total}</span>}
+        </button>
+      </div>
+
+      {tab === 'master' && (
+      <>
       <div style={s.filters}>
         <input
           value={list.search} onChange={e => list.setSearch(e.target.value)}
@@ -323,7 +382,7 @@ export default function FormsOfPaymentPage() {
           <p style={s.emptyDesc}>
             {list.search
               ? 'Search covers every payment method, not just this page.'
-              : 'Add one. A method with no client assigned becomes the default for everyone in its scope — which is what you want for the card you settle most bookings on.'}
+              : 'Add one, then map it to the clients, buckets or groups it settles for. Mark one as the fallback for everything that matches nothing else.'}
           </p>
         </div>
       ) : (
@@ -345,7 +404,13 @@ export default function FormsOfPaymentPage() {
                     style={{ ...s.tr, background: i % 2 === 0 ? '#fff' : '#FAFAFA', cursor: 'pointer' }}
                   >
                     <td style={{ ...s.td, ...s.mono }}>{f.fop_code ?? <span style={s.muted}>—</span>}</td>
-                    <td style={{ ...s.td, fontWeight: 500, color: 'var(--color-ink)' }}>{f.label}</td>
+                    <td style={{ ...s.td, fontWeight: 500, color: 'var(--color-ink)' }}>
+                      {f.label}
+                      {/* The fallback is worth seeing at a glance: it is the row
+                          that decides what happens to every client nobody
+                          mapped. */}
+                      {f.is_default && <span style={s.defaultPill}>Fallback</span>}
+                    </td>
                     <td style={{ ...s.td, ...s.mono, fontSize: 12 }}>
                       {codeOf(gdsEntries, f.gds_entry_id)}
                       {f.payment_type_id && <span style={s.muted}> / {codeOf(paymentTypes, f.payment_type_id)}</span>}
@@ -373,6 +438,25 @@ export default function FormsOfPaymentPage() {
             onPageChange={list.setPage} busy={list.refreshing} noun="payment methods"
           />
         </>
+      )}
+      </>
+      )}
+
+      {/* ── Mapping ───────────────────────────────────────────────────────── */}
+      {tab === 'mapping' && (
+        <MappingTab
+          list={mappings}
+          onError={setError}
+          onOpenFop={async fopId => {
+            // Opening the method from a mapping row: fetch it rather than
+            // hunting the master page, which may not even be loaded — and the
+            // row it belongs to is very likely on a different page of it.
+            const d = await fetch(`/api/tmc/forms-of-payment/${fopId}`).then(r => r.json())
+            if (!d.ok) { setError(d.error || 'Could not open that payment method.'); return }
+            setTab('master')
+            openFop(d.fop)
+          }}
+        />
       )}
 
       {/* ── Editor ────────────────────────────────────────────────────────── */}
@@ -415,7 +499,21 @@ export default function FormsOfPaymentPage() {
                   <label style={s.label}>GDS entry</label>
                   <select
                     value={form.gds_entry_id}
-                    onChange={e => setForm(f => ({ ...f, gds_entry_id: e.target.value }))}
+                    onChange={e => {
+                      const id = e.target.value
+                      setForm(f => {
+                        const next = { ...f, gds_entry_id: id }
+                        // Fill CL in only when nothing has been chosen yet.
+                        // Overwriting a deliberate CC would be exactly the
+                        // "these two are the same field" mistake this avoids.
+                        const cl = paymentTypes.find(p => p.code === 'CL')
+                        const picked = gdsEntries.find(g => g.id === id)?.code
+                        if (picked === 'INVAGT' && !f.payment_type_id && cl) {
+                          next.payment_type_id = cl.id
+                        }
+                        return next
+                      })
+                    }}
                     style={s.input}
                   >
                     <option value="">Select…</option>
@@ -438,6 +536,13 @@ export default function FormsOfPaymentPage() {
                 {gdsEntries.find(g => g.id === form.gds_entry_id)?.label ??
                   'The GDS entry decides whether the airline charges the card itself, or the ticket settles as an agency invoice and you charge the card separately.'}
               </p>
+              {isNonPassThrough && (
+                <p style={s.hintNote}>
+                  <strong>Non pass-through.</strong> The ticket settles as an agency invoice and you
+                  charge the card yourself — the airline never sees it. That combination is
+                  deliberate, not an error: it is what &ldquo;Amex Non Pass Through&rdquo; means.
+                </p>
+              )}
 
               <div style={s.row}>
                 {/* No "instrument" picker: whether card details apply follows
@@ -604,6 +709,18 @@ export default function FormsOfPaymentPage() {
                 The status in the list also accounts for the card&rsquo;s expiry date.
               </p>
 
+              <label style={{ ...s.checkRow, marginTop: 10 }}>
+                <input type="checkbox" checked={form.is_default}
+                  onChange={e => setForm(f => ({ ...f, is_default: e.target.checked }))} />
+                <span>Use as the fallback when nothing else applies</span>
+              </label>
+              <p style={s.hint}>
+                One per TMC. A client that matches no mapping settles on this. Ticking it here
+                clears it from whichever method holds it now — and leaving every method unticked is
+                allowed: bookings that match nothing then resolve to no payment method and say so,
+                which is a gap you can see rather than one filled by guesswork.
+              </p>
+
               <div style={s.field}>
                 <label style={s.label}>Notes</label>
                 <input value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
@@ -615,8 +732,10 @@ export default function FormsOfPaymentPage() {
                   <div style={s.sectionLabel}>Applies to which clients</div>
                   {assignments.length === 0 ? (
                     <p style={s.hint}>
-                      Not assigned to anyone — so this is the <strong>default</strong> for everything
-                      in its scope. Assign clients only to override that for them.
+                      Not assigned to anyone, so it reaches nobody
+                      {form.is_default
+                        ? ' by mapping — it still applies as the fallback, which is ticked above.'
+                        : '. Assign a client, bucket or group below, or tick the fallback above.'}
                     </p>
                   ) : (
                     <>
@@ -641,8 +760,8 @@ export default function FormsOfPaymentPage() {
                       ))}
                     </div>
                     <p style={s.hint}>
-                      Untick to suspend a mapping without losing it. A suspended one does not apply,
-                      and does not turn this into the default for anyone either.
+                      Untick to suspend a mapping without losing it — the record of who was on it
+                      survives. Every mapping across every method is listed on the Mapping tab.
                     </p>
                     </>
                   )}
@@ -691,13 +810,205 @@ export default function FormsOfPaymentPage() {
   )
 }
 
+// ── Mapping tab ──────────────────────────────────────────────────────────────
+// Every mapping across every form of payment, flat.
+//
+// The per-method editor already lists a method's own targets, and that is the
+// right place when you are looking AT a method. It cannot answer the opposite
+// question — "what is mapped to CBTGROUP" — without opening each method in turn
+// and remembering what you saw. That is the question the old FOP Mapper screen
+// existed to answer, and the only one this tab is for.
+//
+// Its own component rather than more branches inside the page: it has its own
+// list, its own search and its own form, and none of that has anything to say
+// to the master tab's filters.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function MappingTab({ list, onError, onOpenFop }: {
+  list: ReturnType<typeof usePagedList<Mapping>>
+  onError: (message: string) => void
+  onOpenFop: (fopId: string) => void
+}) {
+  const [fopId, setFopId] = useState('')
+  const [kind, setKind] = useState<Mapping['kind']>('client')
+  const [targetId, setTargetId] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const fopLookup = useLookup('/api/tmc/forms-of-payment', fopId, {
+    toOption: row => ({
+      id: String(row.id),
+      label: String(row.label),
+      sublabel: row.fop_code ? `FOP ${row.fop_code}` : undefined,
+    }),
+  })
+
+  const targetLookup = useLookup(
+    kind === 'client' ? '/api/tmc/clients'
+      : kind === 'bucket' ? '/api/tmc/buckets'
+      : '/api/tmc/client-groups',
+    targetId
+  )
+
+  async function add() {
+    if (!fopId || !targetId) return
+    setBusy(true)
+    try {
+      const d = await fetch('/api/tmc/fop-assignments', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fopId, targets: [{ kind, id: targetId }] }),
+      }).then(r => r.json())
+      if (!d.ok) { onError(d.error || 'Could not create the mapping.'); return }
+      setTargetId('')
+      list.refetch()
+    } finally { setBusy(false) }
+  }
+
+  async function toggle(id: string, isActive: boolean) {
+    setBusy(true)
+    try {
+      const d = await fetch('/api/tmc/fop-assignments', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, is_active: isActive }),
+      }).then(r => r.json())
+      if (!d.ok) { onError(d.error || 'Could not update the mapping.'); return }
+      list.refetch()
+    } finally { setBusy(false) }
+  }
+
+  async function remove(row: Mapping) {
+    if (!confirm(`Remove "${row.fop_label}" from ${row.target_name}?`)) return
+    setBusy(true)
+    try {
+      await fetch(`/api/tmc/fop-assignments?id=${row.id}`, { method: 'DELETE' })
+      list.refetch()
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <>
+      <p style={s.tabIntro}>
+        Everything mapped, across every payment method. A method reaches a client through a direct
+        mapping, a bucket that client is in, or their client group — most specific wins. Suspending a
+        row here stops that one mapping without touching the others.
+      </p>
+
+      <div style={s.mapForm}>
+        <div style={{ flex: 2, minWidth: 200 }}>
+          <SearchableSelect
+            value={fopId} onChange={setFopId}
+            options={fopLookup.options} onSearch={fopLookup.onSearch}
+            loading={fopLookup.loading} selectedLabel={fopLookup.selectedLabel}
+            placeholder="Payment method…" emptyMessage="No methods match"
+          />
+        </div>
+        <select
+          value={kind}
+          onChange={e => { setKind(e.target.value as Mapping['kind']); setTargetId('') }}
+          style={{ ...s.input, flex: 1, minWidth: 120 }}
+        >
+          <option value="client">Client</option>
+          <option value="bucket">Bucket</option>
+          <option value="client_group">Client group</option>
+        </select>
+        <div style={{ flex: 2, minWidth: 180 }}>
+          <SearchableSelect
+            value={targetId} onChange={setTargetId}
+            options={targetLookup.options} onSearch={targetLookup.onSearch}
+            loading={targetLookup.loading} selectedLabel={targetLookup.selectedLabel}
+            placeholder="Map to…" emptyMessage="No matches"
+          />
+        </div>
+        <button onClick={add} disabled={!fopId || !targetId || busy}
+          style={{ ...s.primaryBtn, opacity: !fopId || !targetId || busy ? 0.5 : 1 }}>
+          Map
+        </button>
+      </div>
+
+      <div style={s.filters}>
+        <input
+          value={list.search} onChange={e => list.setSearch(e.target.value)}
+          placeholder="Search by payment method or by what it is mapped to"
+          style={{ ...s.input, flex: 1, minWidth: 240 }}
+        />
+      </div>
+
+      {list.loading ? (
+        <SkeletonTable rows={10} cols={7} />
+      ) : list.items.length === 0 ? (
+        <div style={s.empty}>
+          <p style={s.emptyTitle}>{list.search ? 'Nothing matches that search' : 'Nothing mapped yet'}</p>
+          <p style={s.emptyDesc}>
+            {list.search
+              ? 'Search covers the payment method’s code and description, and the name of whatever it is mapped to.'
+              : 'Map a payment method to a client, a bucket or a client group above. Anything that matches no mapping falls back to the method marked as the fallback.'}
+          </p>
+        </div>
+      ) : (
+        <>
+          <div style={{ ...s.tableWrap, ...(list.refreshing ? s.dimmed : {}) }}>
+            <table style={s.table}>
+              <thead>
+                <tr>
+                  {['FOP', 'Description', 'Mapped to', 'Kind', 'Active', 'Created', 'By', ''].map(h => (
+                    <th key={h} style={s.th}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {list.items.map((m, i) => (
+                  <tr key={m.id} style={{ ...s.tr, background: i % 2 === 0 ? '#fff' : '#FAFAFA', ...(m.is_active ? {} : s.rowOff) }}>
+                    <td style={{ ...s.td, ...s.mono }}>{m.fop_code ?? <span style={s.muted}>—</span>}</td>
+                    <td style={s.td}>
+                      <button onClick={() => onOpenFop(m.fop_id)} style={s.linkBtn}>{m.fop_label}</button>
+                    </td>
+                    <td style={{ ...s.td, fontWeight: 500, color: 'var(--color-ink)' }}>{m.target_name}</td>
+                    <td style={s.td}><span style={s.payerPill}>{KIND_LABELS[m.kind]}</span></td>
+                    <td style={s.td}>
+                      <input
+                        type="checkbox" checked={m.is_active} disabled={busy}
+                        onChange={e => toggle(m.id, e.target.checked)}
+                        title={m.is_active ? 'Active — untick to suspend' : 'Suspended'}
+                      />
+                    </td>
+                    <td style={{ ...s.td, ...s.dates }}>
+                      {new Date(m.created_at).toLocaleDateString()}
+                    </td>
+                    <td style={{ ...s.td, color: 'var(--color-secondary)' }}>
+                      {m.created_by_name ?? <span style={s.muted}>—</span>}
+                    </td>
+                    <td style={{ ...s.td, textAlign: 'right' }}>
+                      <button onClick={() => remove(m)} disabled={busy} style={s.dangerBtn}>Remove</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <Pagination
+            page={list.page} pageSize={10} total={list.total}
+            onPageChange={list.setPage} busy={list.refreshing} noun="mappings"
+          />
+        </>
+      )}
+    </>
+  )
+}
+
 const s: Record<string, React.CSSProperties> = {
   root: { paddingBottom: 60 },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap', marginBottom: 16 },
   title: { fontSize: 20, fontWeight: 600, color: 'var(--color-ink)', margin: '0 0 4px', letterSpacing: '-0.3px' },
   sub: { fontSize: 13, color: 'var(--color-secondary)', margin: 0, lineHeight: 1.6, maxWidth: 640 },
 
+  tabs: { display: 'flex', gap: 20, borderBottom: '1px solid var(--color-line)', marginBottom: 18 },
+  tab: { background: 'none', border: 'none', padding: '0 0 9px', fontSize: 13, color: 'var(--color-secondary)', cursor: 'pointer' },
+  tabOn: { color: 'var(--color-ink)', fontWeight: 600, boxShadow: 'inset 0 -2px 0 var(--color-rail)' },
+  tabCount: { marginLeft: 6, fontSize: 11, color: 'var(--color-secondary)', background: '#F3F4F6', borderRadius: 10, padding: '1px 7px' },
+  tabIntro: { fontSize: 12.5, color: 'var(--color-secondary)', lineHeight: 1.6, margin: '0 0 14px', maxWidth: 680 },
+
   filters: { display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' },
+  mapForm: { display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center', background: '#fff', border: '1px solid var(--color-line)', borderRadius: 10, padding: 10 },
   field: { display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 14 },
   row: { display: 'flex', gap: 10, alignItems: 'flex-end' },
   label: { fontSize: 11, fontWeight: 600, color: 'var(--color-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' },
@@ -717,9 +1028,16 @@ const s: Record<string, React.CSSProperties> = {
   dot: { width: 5, height: 5, borderRadius: '50%', flexShrink: 0 },
   dimmed: { opacity: 0.55, transition: 'opacity 120ms ease' },
 
+  // A suspended mapping stays legible but reads as switched off.
+  rowOff: { opacity: 0.5 },
+  dates: { fontSize: 12, fontVariantNumeric: 'tabular-nums', color: 'var(--color-secondary)' },
+  defaultPill: { marginLeft: 7, fontSize: 10, fontWeight: 600, color: '#065F46', background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 4, padding: '1px 6px', textTransform: 'uppercase', letterSpacing: '0.04em' },
+  linkBtn: { background: 'none', border: 'none', padding: 0, fontSize: 13, color: 'var(--color-ink)', fontWeight: 500, cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 2 },
+
   muted: { color: '#9CA3AF' },
   hint: { fontSize: 12, color: 'var(--color-secondary)', lineHeight: 1.55, margin: '4px 0 0' },
   hintWarn: { fontSize: 12, color: '#92400E', lineHeight: 1.55, margin: '4px 0 0' },
+  hintNote: { fontSize: 12, color: '#3730A3', background: '#EEF2FF', border: '1px solid #E0E7FF', borderRadius: 7, padding: '8px 10px', lineHeight: 1.55, margin: '8px 0 0' },
 
   empty: { background: '#fff', border: '1px dashed var(--color-line-strong)', borderRadius: 10, padding: '28px 22px', textAlign: 'center' },
   emptyTitle: { fontSize: 14, fontWeight: 600, color: 'var(--color-ink)', margin: '0 0 5px' },

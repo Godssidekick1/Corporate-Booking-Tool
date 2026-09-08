@@ -30,7 +30,34 @@ import { NextRequest } from 'next/server'
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const FOP_COLUMNS =
-  'id, fop_code, label, fop_type, payer, gds_entry_id, payment_type_id, card_type, last4, expiry_month, expiry_year, gds_alias, branch_id, owner_client_id, owner_employee_id, airline_code, rbd_spec, active, notes, created_at'
+  'id, fop_code, label, fop_type, payer, gds_entry_id, payment_type_id, card_type, last4, expiry_month, expiry_year, gds_alias, branch_id, owner_client_id, owner_employee_id, airline_code, rbd_spec, active, is_default, notes, created_at'
+
+// ── claimDefault ─────────────────────────────────────────────────────────────
+// Clears the TMC's existing default before a new one is set.
+//
+// A partial unique index enforces one-per-TMC, and without this the second
+// person to tick the box gets a raw "duplicate key value violates unique
+// constraint fop_one_default_per_tmc" — which tells them nothing about what to
+// do. Marking a second default is a SWAP, which is what anyone ticking the box
+// means, so the swap happens here rather than being reported as a conflict.
+//
+// `exceptId` is the row about to be written; skipping it keeps a save that does
+// not change the flag from pointlessly clearing and re-setting it.
+export async function claimDefault(
+  service: ReturnType<typeof createServiceClient>,
+  tmcId: string,
+  exceptId?: string
+) {
+  let query = service
+    .from('forms_of_payment')
+    .update({ is_default: false })
+    .eq('tmc_id', tmcId)
+    .eq('is_default', true)
+
+  if (exceptId) query = query.neq('id', exceptId)
+
+  await query
+}
 
 export const FOP_TYPES = ['card', 'cash'] as const
 export const PAYERS = ['agency', 'corporate', 'traveller'] as const
@@ -180,6 +207,7 @@ interface CreateBody {
   airline_code?: string | null
   rbd_spec?: string | null
   active?: boolean
+  is_default?: boolean
   notes?: string | null
 }
 
@@ -387,6 +415,8 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  if (body.is_default) await claimDefault(service, auth.tmcId)
+
   const { data: created, error } = await service
     .from('forms_of_payment')
     .insert({
@@ -408,6 +438,7 @@ export async function POST(req: NextRequest) {
       airline_code: body.airline_code?.trim().toUpperCase() || null,
       rbd_spec: body.rbd_spec?.trim().toUpperCase() || null,
       active: body.active ?? true,
+      is_default: body.is_default ?? false,
       notes: body.notes?.trim() || null,
       created_by: user.id,
     })

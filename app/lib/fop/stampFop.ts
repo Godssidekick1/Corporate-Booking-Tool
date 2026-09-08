@@ -51,13 +51,10 @@ export async function stampFop(
       service
         .from('forms_of_payment')
         .select(
-          'id, label, fop_type, payer, card_type, last4, expiry_month, expiry_year, branch_id, airline_code, rbd_spec, active, created_at'
+          'id, label, fop_type, payer, card_type, last4, expiry_month, expiry_year, branch_id, airline_code, rbd_spec, active, is_default, created_at'
         )
         .eq('tmc_id', client.tmc_id),
       service.from('bucket_clients').select('bucket_id').eq('client_id', clientId),
-      // is_active filtered here rather than after: a switched-off mapping must
-      // not reach this client AND must not make the form of payment look
-      // unassigned, which would promote it to everyone's default.
       service
         .from('fop_assignments')
         .select('fop_id, kind, client_id, client_group_id, bucket_id, is_active')
@@ -68,11 +65,9 @@ export async function stampFop(
 
     const bucketIds = (bucketRows ?? []).map(b => b.bucket_id)
 
-    // Every form of payment aimed at anybody, active or not. A card assigned to
-    // one client must not become the default for the rest, and switching that
-    // mapping off does not change who it was meant for.
-    const assignedFopIds = [...new Set((assignmentRows ?? []).map(a => a.fop_id))]
-
+    // A switched-off mapping does not reach this client. It no longer needs to
+    // be tracked separately either: the fallback is now the form of payment
+    // flagged is_default, so suspending a mapping cannot promote anything.
     const reaching = (assignmentRows ?? []).filter(a => {
       if (!a.is_active) return false
       if (a.kind === 'client') return a.client_id === clientId
@@ -120,7 +115,6 @@ export async function stampFop(
     const resolved = resolveFop({
       fops,
       assignments,
-      assignedFopIds,
       branchId: client.branch_id,
       airlineCode,
       legBookingCodes,

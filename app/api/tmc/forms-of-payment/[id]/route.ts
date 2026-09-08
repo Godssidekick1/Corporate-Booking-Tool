@@ -2,7 +2,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { fopStatus, describeFop } from '@/app/lib/fop/fopStatus'
-import { FOP_COLUMNS, validateFop, normaliseFop, deriveFopType } from '../route'
+import { FOP_COLUMNS, validateFop, normaliseFop, deriveFopType, claimDefault } from '../route'
 import { NextRequest } from 'next/server'
 
 // ── /api/tmc/forms-of-payment/[id] ───────────────────────────────────────────
@@ -56,7 +56,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     service.from('forms_of_payment').select(FOP_COLUMNS).eq('id', id).single(),
     service
       .from('fop_assignments')
-      .select('id, kind, client_id, client_group_id, bucket_id')
+      // is_active included: the editor renders a checkbox bound to it, and
+      // without the column every mapping came back undefined and drew as
+      // suspended regardless of what the row actually said.
+      .select('id, kind, client_id, client_group_id, bucket_id, is_active')
       .eq('fop_id', id),
   ])
 
@@ -81,7 +84,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     fop: { ...fop, status: fopStatus(fop!), description: describeFop(fop!) },
     assignments: (assignments ?? []).map(a => {
       const targetId = a.client_id ?? a.client_group_id ?? a.bucket_id!
-      return { id: a.id, kind: a.kind, targetId, targetName: nameOf.get(targetId) ?? 'Unknown' }
+      return {
+        id: a.id, kind: a.kind, targetId,
+        targetName: nameOf.get(targetId) ?? 'Unknown',
+        is_active: a.is_active,
+      }
     }),
   })
 }
@@ -109,7 +116,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   // the DB constraint.
   const { data: current } = await service
     .from('forms_of_payment')
-    .select('fop_code, fop_type, payer, gds_entry_id, payment_type_id, card_type, last4, expiry_month, expiry_year, owner_client_id, owner_employee_id, rbd_spec, airline_code')
+    .select('fop_code, fop_type, payer, gds_entry_id, payment_type_id, card_type, last4, expiry_month, expiry_year, owner_client_id, owner_employee_id, rbd_spec, airline_code, is_default')
     .eq('id', id)
     .single()
 
@@ -140,7 +147,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     'fop_code', 'label', 'gds_entry_id', 'payment_type_id',
     'fop_type', 'payer', 'card_type', 'last4', 'expiry_month', 'expiry_year',
     'gds_alias', 'branch_id', 'owner_client_id', 'owner_employee_id',
-    'airline_code', 'rbd_spec', 'active', 'notes',
+    'airline_code', 'rbd_spec', 'active', 'is_default', 'notes',
   ] as const
 
   for (const field of editable) {
@@ -153,6 +160,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (typeof update.fop_code === 'string') update.fop_code = update.fop_code.trim().toUpperCase() || null
   if (typeof update.airline_code === 'string') update.airline_code = update.airline_code.trim().toUpperCase() || null
   if (typeof update.rbd_spec === 'string') update.rbd_spec = update.rbd_spec.trim().toUpperCase() || null
+
+  // Ticking default on a second form of payment is a swap, not a conflict —
+  // the previous holder is cleared first so the partial unique index never has
+  // to reject the write. Skips this row, so a save that leaves the flag alone
+  // does not clear and re-set it.
+  if (update.is_default === true) await claimDefault(service, tmcId, id)
 
   const { data: updated, error } = await service
     .from('forms_of_payment')

@@ -1,15 +1,20 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
+import { parsePageParams, pagedResponse, ilikeAcross, escapeFilterValue } from '@/app/lib/pagination'
 import { NextRequest } from 'next/server'
 
 // ── /api/tmc/fop-assignments ─────────────────────────────────────────────────
 // Who a form of payment applies to.
 //
-// Mirrors deal-code-assignments, with one meaning inverted: a form of payment
-// with NO row here is the DEFAULT for its scope, not dormant. An unassigned
-// deal code reaching nobody is safe; a booking that resolves to no payment
-// method at all tells the counsellor nothing.
+// Mirrors deal-code-assignments. A form of payment with no row here reaches
+// nobody — the fallback for a client matching nothing is the one flagged
+// `is_default`, chosen deliberately, not inferred from an absence of rows.
+//
+// GET is the MAPPING LIST: every mapping across every form of payment, one flat
+// paged table, which is the view the per-FOP editor cannot give you. The
+// question it answers is "what is mapped to CBTGROUP" — you cannot answer that
+// by opening forms of payment one at a time.
 //
 // POST takes an ARRAY of targets so assigning twelve clients is one request.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -44,21 +49,117 @@ export async function GET(req: NextRequest) {
   }
 
   const fopId = req.nextUrl.searchParams.get('fopId')
+  const params = parsePageParams(req.nextUrl.searchParams)
 
   let query = service
     .from('fop_assignments')
-    .select('id, fop_id, kind, client_id, client_group_id, bucket_id, is_active, created_at, created_by')
+    .select(
+      'id, fop_id, kind, client_id, client_group_id, bucket_id, is_active, created_at, created_by',
+      { count: 'exact' }
+    )
     .eq('tmc_id', auth.tmcId)
+    .order('created_at', { ascending: false })
 
   if (fopId) query = query.eq('fop_id', fopId)
 
-  const { data: assignments, error } = await query
+  // SEARCH SPANS TWO SIDES OF A JOIN, WHICH POSTGREST CANNOT OR TOGETHER.
+  //
+  // A mapping is "FOP → target", and someone typing "CBTGROUP" could mean
+  // either half. PostgREST's .or() works on ONE resource: a filter on the
+  // embedded form of payment is ANDed with the parent's conditions, never
+  // ORed. And the target itself lives in whichever of three tables the `kind`
+  // says, so there is no single column to match on at all.
+  //
+  // So the search is resolved to IDS first — the forms of payment whose code or
+  // description matches, and the clients, buckets and groups whose name does —
+  // and those become one parent-level .or() over four id columns.
+  if (params.search) {
+    const safe = escapeFilterValue(params.search)
+    if (!safe) {
+      return Response.json(pagedResponse([], 0, params))
+    }
+
+    const [fops, clients, groups, buckets] = await Promise.all([
+      service.from('forms_of_payment').select('id')
+        .eq('tmc_id', auth.tmcId).or(ilikeAcross(['fop_code', 'label'], safe)!),
+      service.from('clients').select('id').eq('tmc_id', auth.tmcId).ilike('name', `%${safe}%`),
+      service.from('client_groups').select('id').eq('tmc_id', auth.tmcId).ilike('name', `%${safe}%`),
+      service.from('buckets').select('id').eq('tmc_id', auth.tmcId).ilike('name', `%${safe}%`),
+    ])
+
+    const clauses: string[] = []
+    const add = (column: string, rows: { id: string }[] | null) => {
+      if (rows && rows.length) clauses.push(`${column}.in.(${rows.map(r => r.id).join(',')})`)
+    }
+    add('fop_id', fops.data)
+    add('client_id', clients.data)
+    add('client_group_id', groups.data)
+    add('bucket_id', buckets.data)
+
+    // Nothing anywhere matched the term. Returning an empty page directly rather
+    // than building an `in.()` with no values, which PostgREST rejects outright.
+    if (clauses.length === 0) {
+      return Response.json(pagedResponse([], 0, params))
+    }
+
+    query = query.or(clauses.join(','))
+  }
+
+  const { data: assignments, error, count } = await query.range(params.from, params.to)
 
   if (error) {
     return Response.json({ error: error.message }, { status: 500 })
   }
 
-  return Response.json({ ok: true, assignments: assignments ?? [] })
+  const rows = assignments ?? []
+
+  // Names resolved only for the rows on THIS page — four small `in` lookups
+  // rather than joining every client at the TMC to label ten of them.
+  const idsOf = (column: 'client_id' | 'client_group_id' | 'bucket_id') =>
+    [...new Set(rows.map(r => r[column]).filter(Boolean) as string[])]
+
+  const fopIds = [...new Set(rows.map(r => r.fop_id))]
+  const authorIds = [...new Set(rows.map(r => r.created_by).filter(Boolean) as string[])]
+
+  const pick = <T,>(ids: string[], run: () => PromiseLike<{ data: T[] | null }>) =>
+    ids.length ? run() : Promise.resolve({ data: [] as T[] })
+
+  const [fopRows, clientRows, groupRows, bucketRows, authorRows] = await Promise.all([
+    pick(fopIds, () => service.from('forms_of_payment').select('id, fop_code, label').in('id', fopIds)),
+    pick(idsOf('client_id'), () => service.from('clients').select('id, name').in('id', idsOf('client_id'))),
+    pick(idsOf('client_group_id'), () => service.from('client_groups').select('id, name').in('id', idsOf('client_group_id'))),
+    pick(idsOf('bucket_id'), () => service.from('buckets').select('id, name').in('id', idsOf('bucket_id'))),
+    pick(authorIds, () => service.from('employees').select('id, full_name').in('id', authorIds)),
+  ])
+
+  const fopById = new Map((fopRows.data ?? []).map(f => [f.id, f]))
+  const targetName = new Map<string, string>([
+    ...(clientRows.data ?? []).map(c => [c.id, c.name] as [string, string]),
+    ...(groupRows.data ?? []).map(g => [g.id, g.name] as [string, string]),
+    ...(bucketRows.data ?? []).map(b => [b.id, b.name] as [string, string]),
+  ])
+  const authorName = new Map((authorRows.data ?? []).map(e => [e.id, e.full_name]))
+
+  const items = rows.map(r => {
+    const targetId = r.client_id ?? r.client_group_id ?? r.bucket_id!
+    const fop = fopById.get(r.fop_id)
+    return {
+      id: r.id,
+      fop_id: r.fop_id,
+      fop_code: fop?.fop_code ?? null,
+      fop_label: fop?.label ?? 'Unknown',
+      kind: r.kind as Kind,
+      target_id: targetId,
+      // A target whose row is gone reads as Unknown rather than blank — a
+      // mapping pointing at nothing is a thing an admin needs to see and remove.
+      target_name: targetName.get(targetId) ?? 'Unknown',
+      is_active: r.is_active,
+      created_at: r.created_at,
+      created_by_name: r.created_by ? authorName.get(r.created_by) ?? null : null,
+    }
+  })
+
+  return Response.json(pagedResponse(items, count ?? null, params))
 }
 
 interface CreateBody {

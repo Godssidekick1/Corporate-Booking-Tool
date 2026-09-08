@@ -15,11 +15,16 @@ import { isUsable, describeFop } from './fopStatus'
 //      because a private fare, a tour code and a tracking code all legitimately
 //      apply to the same ticket. You pay one way.
 //
-//   2. An UNASSIGNED form of payment is the DEFAULT for its scope, not dormant.
-//      An unassigned deal code reaching nobody is safe; a booking that resolves
-//      to no payment method at all tells the counsellor nothing. So candidates
-//      with no assignment stay in the running, ranked below anything explicitly
-//      assigned.
+//   2. There is a DEFAULT, and it is chosen rather than inferred. An unassigned
+//      deal code reaching nobody is safe; a booking that resolves to no payment
+//      method at all tells the counsellor nothing. So one form of payment per
+//      TMC can carry `is_default` and enters the running for every client,
+//      ranked below anything explicitly assigned.
+//
+//      It used to be that any UNASSIGNED form of payment was the default for its
+//      scope. That made adding the first assignment to a card silently remove it
+//      as everyone else's fallback — one edit changing how unrelated clients
+//      settle. A client that matches nothing is now a visible gap instead.
 //
 //   3. Fails closed on RBD. matchesAllLegs requires every leg to be in the set,
 //      and a missing booking code cannot be shown to be. Falling back to the
@@ -43,6 +48,9 @@ export interface ResolvableFop {
   airline_code: string | null
   rbd_spec: string | null
   active: boolean
+  // The TMC's chosen fallback. At most one row has it; enforced by a partial
+  // unique index rather than trusted from here.
+  is_default: boolean
   created_at: string
 }
 
@@ -75,16 +83,6 @@ export interface ResolveFopInput {
   fops: ResolvableFop[]
   // Only the assignments that reach THIS client.
   assignments: ResolvableFopAssignment[]
-  // Every form of payment that is assigned to anything at all, anywhere.
-  //
-  // Needed to tell two very different situations apart, which the first version
-  // conflated: a form of payment nobody has assigned (the scope default) and
-  // one assigned to somebody ELSE. Without this, a card targeted at one client
-  // silently became the default for every other client at the TMC.
-  //
-  // Omitted entirely = treat every unmatched form of payment as a default,
-  // which is the old behaviour and only correct when nothing is assigned.
-  assignedFopIds?: string[]
   // The branch servicing this client. A branch-scoped FOP only applies here.
   branchId?: string | null
   airlineCode?: string | null
@@ -153,7 +151,6 @@ export function resolveFop(input: ResolveFopInput): ResolvedFop | null {
   const {
     fops,
     assignments,
-    assignedFopIds,
     branchId = null,
     airlineCode = null,
     legBookingCodes = [],
@@ -181,16 +178,13 @@ export function resolveFop(input: ResolveFopInput): ResolvedFop | null {
     }
   }
 
-  // A form of payment nobody has assigned anywhere enters as the scope default.
-  //
-  // One assigned to somebody ELSE does not: it was aimed at them, and treating
-  // it as everyone's fallback is how a client ends up settling on a card that
-  // was never meant for them.
-  const targeted = assignedFopIds ? new Set(assignedFopIds) : null
-
+  // The chosen fallback enters for every client, ranked last. Only this one:
+  // a form of payment aimed at somebody else is not a candidate here, and one
+  // aimed at nobody is not either — it is simply unused until assigned or
+  // marked default.
   for (const fop of fops) {
+    if (!fop.is_default) continue
     if (strongestClaim.has(fop.id)) continue
-    if (targeted?.has(fop.id)) continue
     strongestClaim.set(fop.id, { fop, kind: 'default', viaName: null })
   }
 

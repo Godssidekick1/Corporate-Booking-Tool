@@ -1,8 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import CityDropdown from '@/app/components/CityDropdown'
 import CountryDropdown from '@/app/components/CountryDropdown'
+import Pagination from '@/app/components/Pagination'
+import { SkeletonTable } from '@/app/components/Skeleton'
+import { usePagedList } from '@/app/hooks/usePagedList'
 
 interface ClientGroup {
   id: string
@@ -13,8 +16,13 @@ interface ClientGroup {
 }
 
 export default function TmcClientGroupsPage() {
-  const [clientGroups, setClientGroups] = useState<ClientGroup[]>([])
-  const [loading, setLoading] = useState(true)
+  // Server-paged and server-searched. It used to be a bare fetch rendering
+  // whatever came back — but the endpoint has paged at 10 since pagination
+  // landed, so past the tenth group the rest were simply invisible with nothing
+  // on screen saying so.
+  const list = usePagedList<ClientGroup>('/api/tmc/client-groups')
+  const clientGroups = list.items
+
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState({ name: '', city: '', country: '' })
@@ -22,19 +30,8 @@ export default function TmcClientGroupsPage() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
-  useEffect(() => {
-    loadClientGroups()
-  }, [])
-
-  async function loadClientGroups() {
-    setLoading(true)
-    try {
-      const res = await fetch('/api/tmc/client-groups')
-      const data = await res.json()
-      if (data.ok) setClientGroups(data.items)
-    } finally {
-      setLoading(false)
-    }
+  function loadClientGroups() {
+    list.refetch()
   }
 
   function openCreate() {
@@ -133,13 +130,28 @@ export default function TmcClientGroupsPage() {
         </form>
       )}
 
-      <div style={s.card}>
-        {loading ? (
-          <div style={s.emptyState}><p style={s.emptyTitle}>Loading…</p></div>
+      <div style={s.filters}>
+        <input
+          value={list.search}
+          onChange={e => list.setSearch(e.target.value)}
+          placeholder="Search name or city"
+          style={s.searchInput}
+        />
+      </div>
+
+      <div style={{ ...s.card, ...(list.refreshing ? s.dimmed : {}) }}>
+        {list.loading ? (
+          <SkeletonTable rows={8} cols={4} />
         ) : clientGroups.length === 0 ? (
           <div style={s.emptyState}>
-            <p style={s.emptyTitle}>No client groups yet</p>
-            <p style={s.emptyDesc}>Create your first client group to start grouping client clients.</p>
+            <p style={s.emptyTitle}>
+              {list.search ? 'No client groups match that search' : 'No client groups yet'}
+            </p>
+            <p style={s.emptyDesc}>
+              {list.search
+                ? 'Search covers every client group, not just this page.'
+                : 'Create your first client group to start grouping clients.'}
+            </p>
           </div>
         ) : (
           <table style={s.table}>
@@ -154,9 +166,15 @@ export default function TmcClientGroupsPage() {
                   <td style={s.td}><span style={s.name}>{g.name}</span></td>
                   <td style={{ ...s.td, color: '#6B7280' }}>{g.city ?? '—'}</td>
                   <td style={{ ...s.td, color: '#6B7280' }}>{g.country ?? '—'}</td>
-                  <td style={{ ...s.td, textAlign: 'right' as const, display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                    <button onClick={() => openEdit(g)} style={s.editBtn}>Edit</button>
-                    <button onClick={() => handleDelete(g.id)} style={s.deleteBtn}>Delete</button>
+                  {/* Same fix as the TC screen: display:flex on a <td> takes the
+                      cell out of the table layout algorithm, so it can no longer
+                      be sized against its neighbours and the buttons get pushed
+                      out of view at tight widths. */}
+                  <td style={{ ...s.td, ...s.actionsCell }}>
+                    <div style={s.actions}>
+                      <button onClick={() => openEdit(g)} style={s.editBtn}>Edit</button>
+                      <button onClick={() => handleDelete(g.id)} style={s.deleteBtn}>Delete</button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -164,6 +182,11 @@ export default function TmcClientGroupsPage() {
           </table>
         )}
       </div>
+
+      <Pagination
+        page={list.page} pageSize={10} total={list.total}
+        onPageChange={list.setPage} busy={list.refreshing} noun="client groups"
+      />
     </div>
   )
 }
@@ -186,8 +209,13 @@ const s: Record<string, React.CSSProperties> = {
   label: { fontSize: '11px', fontWeight: 500, color: '#374151' },
   input: { height: '36px', padding: '0 10px', fontSize: '13px', color: '#111827', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '6px', outline: 'none' },
   formActions: { display: 'flex', gap: '10px', justifyContent: 'flex-end' },
-  card: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '10px', overflow: 'hidden' },
-  table: { width: '100%', borderCollapse: 'collapse' as const },
+  filters: { display: 'flex', gap: '10px', marginBottom: '12px' },
+  searchInput: { height: '36px', padding: '0 10px', fontSize: '13px', color: '#111827', background: '#fff', border: '1px solid #E5E7EB', borderRadius: '6px', outline: 'none', flex: 1, maxWidth: 340 },
+  dimmed: { opacity: 0.55, transition: 'opacity 120ms ease' },
+  card: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '10px', overflowX: 'auto' },
+  table: { width: '100%', minWidth: 640, borderCollapse: 'collapse' as const },
+  actionsCell: { textAlign: 'right' as const, whiteSpace: 'nowrap' as const, width: '1%' },
+  actions: { display: 'flex', gap: '8px', justifyContent: 'flex-end' },
   th: { padding: '10px 16px', textAlign: 'left' as const, fontSize: '11px', fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.4px', background: '#F9FAFB', borderBottom: '1px solid #F3F4F6' },
   td: { padding: '12px 16px', fontSize: '13px', color: '#374151', borderBottom: '1px solid #F9FAFB' },
   name: { fontWeight: 500, color: '#111827' },
