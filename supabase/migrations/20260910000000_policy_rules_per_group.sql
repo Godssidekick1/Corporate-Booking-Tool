@@ -44,10 +44,13 @@ do $$
 declare
   offender text;
 begin
+  -- ::text on both branches: proname and viewname are `name`, and while
+  -- Postgres will implicitly cast that for string_agg, being explicit avoids
+  -- depending on an implicit cast in a guard whose whole job is to be reliable.
   select string_agg(name, ', ')
     into offender
   from (
-    select p.proname as name
+    select p.proname::text as name
     from pg_proc p
     join pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'public'
@@ -58,7 +61,7 @@ begin
 
     union all
 
-    select v.viewname
+    select v.viewname::text
     from pg_views v
     where v.schemaname = 'public'
       and v.definition ~* 'policy_rules'

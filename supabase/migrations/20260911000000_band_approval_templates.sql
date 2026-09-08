@@ -75,11 +75,13 @@ begin
     where n.nspname = 'public'
       and t.relname = 'bands'
       and c.contype in ('p', 'u')
+      -- attname is `name`, not `text`, and Postgres has no name[] = text[]
+      -- operator — the array comparison needs both sides to be text[].
       and (
-        select array_agg(a.attname order by a.attname)
+        select array_agg(a.attname::text order by a.attname::text)
         from unnest(c.conkey) as k(attnum)
         join pg_attribute a on a.attrelid = t.oid and a.attnum = k.attnum
-      ) = array['client_id', 'code']
+      ) = array['client_id', 'code']::text[]
   ) and not exists (
     select 1 from pg_constraint
     where conname = 'band_approval_templates_band_fk'
