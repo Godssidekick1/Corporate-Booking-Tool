@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { PersonPicker } from './DirectChain'
 
 // ── StepApprovers ────────────────────────────────────────────────────────────
 // Who fills each step of one approval chain at one client.
@@ -30,14 +31,6 @@ export interface Binding {
   min_band_rank?: number | null
 }
 
-interface Employee {
-  id: string
-  full_name: string
-  band_code: string | null
-  manager_id: string | null
-  top_of_hierarchy: boolean
-}
-
 const APPROVER_TYPES: { value: ApproverType; label: string }[] = [
   { value: 'manager',        label: "The traveller's own manager" },
   { value: 'specific_user',  label: 'A specific person…' },
@@ -61,7 +54,11 @@ interface Props {
 
 export default function StepApprovers({ clientId, templateId, steps }: Props) {
   const [bindings, setBindings] = useState<Binding[]>([])
-  const [employees, setEmployees] = useState<Employee[]>([])
+  // A COUNT, not a roster. The warning below only needs "how many people have
+  // no reporting line", and downloading every employee to filter them in the
+  // browser both scaled badly and quietly stopped being true once the endpoint
+  // started paging. `missingManager=1` asks the server that question directly.
+  const [managerlessCount, setManagerlessCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [savingTier, setSavingTier] = useState<number | null>(null)
   const [error, setError] = useState('')
@@ -73,14 +70,14 @@ export default function StepApprovers({ clientId, templateId, steps }: Props) {
     async function load() {
       setLoading(true); setError('')
       try {
-        const [bindingData, employeeData] = await Promise.all([
+        const [bindingData, managerless] = await Promise.all([
           fetch(`/api/tmc/approval-tier-approvers?clientId=${clientId}&templateId=${templateId}`).then(r => r.json()),
-          fetch(`/api/tmc/employees?clientId=${clientId}`).then(r => r.json()),
+          fetch(`/api/tmc/employees?clientId=${clientId}&missingManager=1`).then(r => r.json()),
         ])
         if (cancelled) return
         if (!bindingData.ok) { setError(bindingData.error || 'Could not load approvers.'); return }
         setBindings(bindingData.bindings)
-        if (employeeData.ok) setEmployees(employeeData.employees)
+        if (managerless.ok) setManagerlessCount(managerless.total ?? 0)
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -148,10 +145,12 @@ export default function StepApprovers({ clientId, templateId, steps }: Props) {
   }
 
   const unboundCount = steps.filter(s => !byTier.get(s.tier)).length
-  // Someone at the top of the hierarchy has no manager by design, and the
-  // engine auto-approves their manager steps rather than stalling — so they are
-  // not part of this gap.
-  const managerlessCount = employees.filter(e => !e.manager_id && !e.top_of_hierarchy).length
+  // managerlessCount comes from the server (see the fetch above). Someone at the
+  // top of the hierarchy has no manager by design and the engine auto-approves
+  // their manager steps rather than stalling, so the query excludes them — which
+  // the old in-browser filter only appeared to do: `top_of_hierarchy` was not in
+  // the endpoint's select at all, so it read undefined for everyone and the
+  // owner of a client was counted as a misconfiguration.
   const usesManagerStep = steps.some(s => byTier.get(s.tier)?.approver_type === 'manager')
 
   if (loading) return <p style={s.muted}>Loading approvers…</p>
@@ -205,19 +204,14 @@ export default function StepApprovers({ clientId, templateId, steps }: Props) {
                 </select>
 
                 {bound?.approver_type === 'specific_user' && (
-                  <select
-                    value={bound.approver_user_id ?? ''}
-                    onChange={e => save(step.tier, { approver_user_id: e.target.value || null })}
-                    disabled={busy}
-                    style={{ ...s.input, flex: 1, minWidth: 180 }}
-                  >
-                    <option value="">Pick a person…</option>
-                    {employees.map(emp => (
-                      <option key={emp.id} value={emp.id}>
-                        {emp.full_name}{emp.band_code ? ` · ${emp.band_code}` : ''}
-                      </option>
-                    ))}
-                  </select>
+                  <div style={{ flex: 1, minWidth: 200 }}>
+                    <PersonPicker
+                      clientId={clientId}
+                      value={bound.approver_user_id ?? ''}
+                      onChange={id => save(step.tier, { approver_user_id: id || null })}
+                      disabled={busy}
+                    />
+                  </div>
                 )}
 
                 {bound?.approver_type === 'any_manager_at' && (

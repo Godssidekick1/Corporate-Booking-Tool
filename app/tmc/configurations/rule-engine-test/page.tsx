@@ -1,17 +1,12 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import SearchableSelect from '@/app/components/SearchableSelect'
+import { useLookup } from '@/app/hooks/useLookup'
 
 interface Client {
   id: string
   name: string
-}
-
-interface Employee {
-  id: string
-  full_name: string
-  email: string
-  band_code: string | null
 }
 
 interface VerdictBreach {
@@ -49,7 +44,6 @@ const VERDICT_STYLE: Record<string, { bg: string; fg: string; label: string }> =
 export default function RuleEngineTestPage() {
   const [clients, setClients] = useState<Client[]>([])
   const [selectedClientId, setSelectedClientId] = useState('')
-  const [employees, setEmployees] = useState<Employee[]>([])
   const [selectedEmployeeId, setSelectedEmployeeId] = useState('')
 
   const [travelType, setTravelType] = useState('flight_domestic')
@@ -61,7 +55,6 @@ export default function RuleEngineTestPage() {
   const [sponsoredTransport, setSponsoredTransport] = useState(false)
 
   const [loadingClients, setLoadingClients] = useState(true)
-  const [loadingEmployees, setLoadingEmployees] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [result, setResult] = useState<TestResult | null>(null)
   const [error, setError] = useState('')
@@ -73,14 +66,18 @@ export default function RuleEngineTestPage() {
       .finally(() => setLoadingClients(false))
   }, [])
 
-  useEffect(() => {
-    if (!selectedClientId) { setEmployees([]); setSelectedEmployeeId(''); return }
-    setLoadingEmployees(true)
-    fetch(`/api/tmc/employees?clientId=${selectedClientId}`)
-      .then(r => r.json())
-      .then(data => { if (data.ok) setEmployees(data.employees) })
-      .finally(() => setLoadingEmployees(false))
-  }, [selectedClientId])
+  // Server-searched rather than a full roster download. The endpoint pages at
+  // ten now, so a plain <select> over `data.employees` would silently show only
+  // the first ten of a client's staff with nothing on screen saying so.
+  const employeeLookup = useLookup('/api/tmc/employees', selectedEmployeeId, {
+    params: { clientId: selectedClientId },
+    enabled: !!selectedClientId,
+    toOption: row => ({
+      id: String(row.id),
+      label: String(row.full_name),
+      sublabel: (row.band_code as string | null) ?? 'no band',
+    }),
+  })
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -130,7 +127,12 @@ export default function RuleEngineTestPage() {
             <label style={s.label}>Client</label>
             <select
               value={selectedClientId}
-              onChange={e => setSelectedClientId(e.target.value)}
+              onChange={e => {
+                setSelectedClientId(e.target.value)
+                // The chosen employee belongs to the previous client's roster.
+                // The effect that used to clear this went with the roster fetch.
+                setSelectedEmployeeId('')
+              }}
               style={s.input}
               disabled={loadingClients}
             >
@@ -141,19 +143,17 @@ export default function RuleEngineTestPage() {
 
           <div style={s.field}>
             <label style={s.label}>Employee</label>
-            <select
+            <SearchableSelect
               value={selectedEmployeeId}
-              onChange={e => setSelectedEmployeeId(e.target.value)}
-              style={s.input}
-              disabled={!selectedClientId || loadingEmployees}
-            >
-              <option value="">
-                {!selectedClientId ? 'Select a client first' : loadingEmployees ? 'Loading…' : 'Select an employee…'}
-              </option>
-              {employees.map(e => (
-                <option key={e.id} value={e.id}>{e.full_name} ({e.band_code ?? 'no band'})</option>
-              ))}
-            </select>
+              onChange={setSelectedEmployeeId}
+              options={employeeLookup.options}
+              onSearch={employeeLookup.onSearch}
+              loading={employeeLookup.loading}
+              selectedLabel={employeeLookup.selectedLabel}
+              disabled={!selectedClientId}
+              placeholder={selectedClientId ? 'Search employees…' : 'Select a client first'}
+              emptyMessage="No one matches"
+            />
           </div>
 
           <div style={s.field}>

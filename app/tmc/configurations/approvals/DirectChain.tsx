@@ -1,6 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import SearchableSelect from '@/app/components/SearchableSelect'
+import { useLookup } from '@/app/hooks/useLookup'
 
 // ── DirectChain ──────────────────────────────────────────────────────────────
 // The whole direct-mapping flow: client, who it covers, the approvers in
@@ -10,10 +12,14 @@ import { useEffect, useState } from 'react'
 // you picked it and re-fetched the world afterwards, which meant the form
 // reloaded under you mid-edit and a half-built chain was a state that could
 // actually exist in the database.
+//
+// EVERY PERSON AND CLIENT PICKER IS SERVER-SEARCHED. They were plain <select>s
+// over a fully downloaded roster, which is fine at a demo's twelve employees
+// and unusable at a real client's two thousand — you cannot scan a list that
+// long, and the whole roster had to arrive before the field worked at all.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface Client { id: string; name: string }
-interface Employee { id: string; full_name: string; band_code: string | null }
 
 type ApproverType =
   'manager' | 'any_manager_at' | 'finance_role' | 'admin' | 'self' | 'specific_user'
@@ -49,12 +55,32 @@ function blankApprover(): Approver {
   return { approver_type: '', approver_user_id: null, min_band_rank: null, min_verdict: 'amber' }
 }
 
+// One toOption for every employee picker here, so the person you pick and the
+// person you see named in a saved message are labelled the same way.
+const employeeOption = (row: Record<string, unknown>) => ({
+  id: String(row.id),
+  label: String(row.full_name),
+  sublabel: [row.band_code, row.email].filter(Boolean).join(' · ') || undefined,
+})
+
 export default function DirectChain({ clients }: { clients: Client[] }) {
   const [clientId, setClientId] = useState('')
   const [category, setCategory] = useState('flights_hotels')
   const [employeeId, setEmployeeId] = useState('') // '' means everyone
 
-  const [employees, setEmployees] = useState<Employee[]>([])
+  // `clients` still arrives as a prop and seeds the label cache on first paint,
+  // but the picker searches the server — a TMC's client list is a master that
+  // grows, and this is the same picker pattern as everywhere else.
+  const clientLookup = useLookup('/api/tmc/clients', clientId)
+
+  // Scoped to the chosen client. `enabled` keeps it from firing before there is
+  // one: the endpoint requires clientId and would 400 on every keystroke.
+  const employeeLookup = useLookup('/api/tmc/employees', employeeId, {
+    params: { clientId },
+    enabled: !!clientId,
+    toOption: employeeOption,
+  })
+
   const [approvers, setApprovers] = useState<Approver[]>([blankApprover()])
   const [mode, setMode] = useState<'sequential' | 'parallel'>('sequential')
   const [quorum, setQuorum] = useState<'any' | 'all'>('all')
@@ -89,19 +115,8 @@ export default function DirectChain({ clients }: { clients: Client[] }) {
     } finally { setLoading(false) }
   }
 
-  // Roster is per client, so it only reloads when the client changes — not
-  // when the target employee does. Clearing on an empty client happens in the
-  // picker's handler instead: setting state straight from an effect body is
-  // what makes these cascade.
-  useEffect(() => {
-    if (!clientId) return
-    let cancelled = false
-
-    fetch(`/api/tmc/employees?clientId=${clientId}`).then(r => r.json())
-      .then(d => { if (!cancelled && d.ok) setEmployees(d.employees) })
-
-    return () => { cancelled = true }
-  }, [clientId])
+  // The roster fetch that used to live here is gone: useLookup owns fetching,
+  // debouncing and the last-write-wins guard for both employee pickers.
 
   useEffect(() => {
     if (!clientId) return
@@ -143,7 +158,7 @@ export default function DirectChain({ clients }: { clients: Client[] }) {
       setDirty(false); setExisting(true)
       setSuccess(
         employeeId
-          ? `Saved for ${employees.find(e => e.id === employeeId)?.full_name ?? 'this employee'}.`
+          ? `Saved for ${employeeLookup.selectedLabel || 'this employee'}.`
           : 'Saved for everyone at this client.'
       )
     } finally { setSaving(false) }
@@ -172,40 +187,43 @@ export default function DirectChain({ clients }: { clients: Client[] }) {
     <div style={s.card}>
       {/* ── Who it covers ─────────────────────────────────────────── */}
       <div style={s.row}>
-        <div style={s.field}>
+        <div style={{ ...s.field, width: 230 }}>
           <label style={s.label}>Client</label>
-          <select
+          <SearchableSelect
             value={clientId}
-            onChange={e => {
-              const next = e.target.value
+            onChange={next => {
               setClientId(next)
-              // Switching clients invalidates both the roster and whoever was
-              // picked from it.
+              // Switching clients invalidates whoever was picked from the old
+              // one's roster.
               setEmployeeId('')
-              if (!next) setEmployees([])
             }}
-            style={{ ...s.input, width: 230 }}
-          >
-            <option value="">Select a client…</option>
-            {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+            options={clientLookup.options.length ? clientLookup.options : clients.map(c => ({ id: c.id, label: c.name }))}
+            onSearch={clientLookup.onSearch}
+            loading={clientLookup.loading}
+            selectedLabel={clientLookup.selectedLabel}
+            placeholder="Select a client…"
+            emptyMessage="No clients match"
+          />
         </div>
 
-        <div style={s.field}>
+        <div style={{ ...s.field, width: 230 }}>
           <label style={s.label}>Applies to</label>
-          <select
+          <SearchableSelect
             value={employeeId}
-            onChange={e => setEmployeeId(e.target.value)}
+            onChange={setEmployeeId}
+            options={employeeLookup.options}
+            onSearch={employeeLookup.onSearch}
+            loading={employeeLookup.loading}
+            selectedLabel={employeeLookup.selectedLabel}
             disabled={!clientId}
-            style={{ ...s.input, width: 230 }}
-          >
-            <option value="">Everyone at this client</option>
-            {employees.map(e => (
-              <option key={e.id} value={e.id}>
-                {e.full_name}{e.band_code ? ` · ${e.band_code}` : ''}
-              </option>
-            ))}
-          </select>
+            placeholder="Everyone at this client"
+            emptyMessage="No one matches"
+            // Empty means everyone, so there has to be a way back to it once a
+            // person is picked — a combobox has no gesture for "unset" the way
+            // a <select> gets one free with an empty <option>.
+            allowClear
+            clearLabel="Everyone at this client"
+          />
         </div>
 
         <div style={s.field}>
@@ -247,18 +265,13 @@ export default function DirectChain({ clients }: { clients: Client[] }) {
                 </select>
 
                 {a.approver_type === 'specific_user' && (
-                  <select
-                    value={a.approver_user_id ?? ''}
-                    onChange={e => update(i, { approver_user_id: e.target.value || null })}
-                    style={{ ...s.input, flex: 1, minWidth: 170 }}
-                  >
-                    <option value="">Pick a person…</option>
-                    {employees.map(e => (
-                      <option key={e.id} value={e.id}>
-                        {e.full_name}{e.band_code ? ` · ${e.band_code}` : ''}
-                      </option>
-                    ))}
-                  </select>
+                  <div style={{ flex: 1, minWidth: 190 }}>
+                    <PersonPicker
+                      clientId={clientId}
+                      value={a.approver_user_id ?? ''}
+                      onChange={id => update(i, { approver_user_id: id || null })}
+                    />
+                  </div>
                 )}
 
                 {a.approver_type === 'any_manager_at' && (
@@ -353,6 +366,40 @@ export default function DirectChain({ clients }: { clients: Client[] }) {
         </>
       )}
     </div>
+  )
+}
+
+// ── PersonPicker ─────────────────────────────────────────────────────────────
+// Its own component because each approver row needs its own search state, and
+// hooks cannot be called inside the row loop. Exported so the template-binding
+// screen uses the identical control — "a specific person" should not mean two
+// different interactions depending on which flow you came in through.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function PersonPicker({ clientId, value, onChange, disabled }: {
+  clientId: string
+  value: string
+  onChange: (id: string) => void
+  disabled?: boolean
+}) {
+  const lookup = useLookup('/api/tmc/employees', value, {
+    params: { clientId },
+    enabled: !!clientId,
+    toOption: employeeOption,
+  })
+
+  return (
+    <SearchableSelect
+      value={value}
+      onChange={onChange}
+      options={lookup.options}
+      onSearch={lookup.onSearch}
+      loading={lookup.loading}
+      selectedLabel={lookup.selectedLabel}
+      disabled={disabled || !clientId}
+      placeholder="Pick a person…"
+      emptyMessage="No one matches"
+    />
   )
 }
 
