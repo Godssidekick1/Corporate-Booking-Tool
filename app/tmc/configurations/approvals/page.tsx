@@ -37,6 +37,16 @@ interface RosterEmployee {
   assignments: Record<string, string | null>
 }
 
+// The middle rung. One assignment here covers everyone in the band, which is
+// what gives a template a reason to exist rather than being indirection around
+// a per-person mapping.
+interface RosterBand {
+  code: string
+  label: string | null
+  rank: number
+  assignments: Record<string, string | null>
+}
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const CATEGORIES: { value: string; label: string }[] = [
@@ -486,6 +496,7 @@ function AppliesTo({ clientId, category, templateId, onError, onSuccess }: {
   onSuccess: (m: string) => void
 }) {
   const [roster, setRoster] = useState<RosterEmployee[]>([])
+  const [bands, setBands] = useState<RosterBand[]>([])
   const [defaults, setDefaults] = useState<Record<string, string | null>>({})
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
@@ -498,39 +509,109 @@ function AppliesTo({ clientId, category, templateId, onError, onSuccess }: {
     try {
       const d = await fetch(`/api/tmc/approval-assignments?clientId=${clientId}`).then(r => r.json())
       if (!d.ok) { onError(d.error || 'Could not load the roster.'); return }
-      setRoster(d.employees); setDefaults(d.defaults); setSelected(new Set())
+      setRoster(d.employees); setBands(d.bands ?? []); setDefaults(d.defaults); setSelected(new Set())
     } finally { setLoading(false) }
   }
 
-  async function assign(employeeIds?: string[]) {
+  // One writer for all three rungs, so "assign" means the same thing wherever
+  // it is called from and the ladder cannot drift apart across three functions.
+  async function assign(target: { employeeIds?: string[]; bandCode?: string } = {}) {
     setBusy(true)
     try {
       const d = await fetch('/api/tmc/approval-assignments', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientId, category, templateId, employeeIds }),
+        body: JSON.stringify({ clientId, category, templateId, ...target }),
       }).then(r => r.json())
       if (!d.ok) { onError(d.error || 'Could not assign.'); return }
       await load()
-      onSuccess(employeeIds ? `Applied to ${employeeIds.length} employee${employeeIds.length === 1 ? '' : 's'}.` : 'Set as the client default.')
+      onSuccess(
+        target.employeeIds
+          ? `Applied to ${target.employeeIds.length} employee${target.employeeIds.length === 1 ? '' : 's'}.`
+          : target.bandCode
+            ? `Applied to everyone in band ${target.bandCode}.`
+            : 'Set as the client default.'
+      )
+    } finally { setBusy(false) }
+  }
+
+  async function clearBand(bandCode: string) {
+    setBusy(true)
+    try {
+      const qs = `clientId=${clientId}&category=${category}&bandCode=${encodeURIComponent(bandCode)}`
+      const d = await fetch(`/api/tmc/approval-assignments?${qs}`, { method: 'DELETE' }).then(r => r.json())
+      if (!d.ok) { onError(d.error || 'Could not clear the band.'); return }
+      await load()
+      onSuccess(`Band ${bandCode} now falls back to the client default.`)
     } finally { setBusy(false) }
   }
 
   const isDefault = defaults[category] === templateId
+  const bandTemplate = (code: string | null) =>
+    code ? bands.find(b => b.code === code)?.assignments[category] ?? null : null
 
   return (
     <div style={s.appliesTo}>
       <h3 style={s.sectionTitle}>Who this applies to</h3>
+      <p style={s.ladderHint}>
+        Routing resolves most-specific-first: <strong>the person</strong>, then <strong>their
+        band</strong>, then <strong>the client default</strong>. Assigning a band covers everyone in
+        it without naming them one at a time.
+      </p>
 
       <div style={s.applyRow}>
         <button onClick={() => assign()} disabled={busy || isDefault} style={{ ...s.primaryBtn, opacity: busy || isDefault ? 0.5 : 1 }}>
           {isDefault ? 'Already the client default' : 'Apply to everyone at this client'}
         </button>
         {selected.size > 0 && (
-          <button onClick={() => assign(Array.from(selected))} disabled={busy} style={s.ghostBtn}>
+          <button onClick={() => assign({ employeeIds: Array.from(selected) })} disabled={busy} style={s.ghostBtn}>
             Apply to {selected.size} selected
           </button>
         )}
       </div>
+
+      {!loading && bands.length > 0 && (
+        <div style={{ ...s.tableWrap, marginBottom: 16 }}>
+          <table style={s.table}>
+            <thead>
+              <tr>{['Band', 'Rank', 'Routes through', ''].map(h => <th key={h} style={s.th}>{h}</th>)}</tr>
+            </thead>
+            <tbody>
+              {bands.map((b, i) => {
+                const assigned = b.assignments[category]
+                return (
+                  <tr key={b.code} style={{ background: i % 2 === 0 ? '#fff' : '#FAFAFA' }}>
+                    <td style={s.td}>
+                      <span style={s.bandBadge}>{b.code}</span>
+                      {b.label && <span style={s.empEmail}> {b.label}</span>}
+                    </td>
+                    <td style={s.td}><span style={s.muted}>{b.rank}</span></td>
+                    <td style={s.td}>
+                      {assigned === templateId
+                        ? <span style={s.onThis}>This chain</span>
+                        : assigned
+                          ? <span style={s.muted}>Another chain</span>
+                          : defaults[category]
+                            ? <span style={s.muted}>Client default</span>
+                            : <span style={s.noRoute}>No approval</span>}
+                    </td>
+                    <td style={{ ...s.td, textAlign: 'right' }}>
+                      {assigned === templateId ? (
+                        <button onClick={() => clearBand(b.code)} disabled={busy} style={s.ghostBtn}>
+                          Clear
+                        </button>
+                      ) : (
+                        <button onClick={() => assign({ bandCode: b.code })} disabled={busy} style={s.ghostBtn}>
+                          Apply to band
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {loading ? (
         <p style={s.muted}>Loading roster…</p>
@@ -572,14 +653,23 @@ function AppliesTo({ clientId, category, templateId, onError, onSuccess }: {
                     <td style={s.td}>
                       {emp.band_code ? <span style={s.bandBadge}>{emp.band_code}</span> : <span style={s.muted}>—</span>}
                     </td>
+                    {/* Reads the ladder in the same order the engine does, so
+                        what this cell says is what will actually happen. An
+                        inherited route names the rung it came from — "Band L2"
+                        and "Client default" behave identically until one of
+                        them changes, and then they do not. */}
                     <td style={s.td}>
-                      {assigned === templateId
-                        ? <span style={s.onThis}>This chain</span>
-                        : assigned
-                          ? <span style={s.muted}>Another chain</span>
-                          : defaults[category]
-                            ? <span style={s.muted}>Client default</span>
-                            : <span style={s.noRoute}>No approval</span>}
+                      {(() => {
+                        const viaBand = bandTemplate(emp.band_code)
+                        if (assigned === templateId) return <span style={s.onThis}>This chain</span>
+                        if (assigned) return <span style={s.muted}>Another chain</span>
+                        if (viaBand === templateId) {
+                          return <span style={s.onThis}>This chain · via band {emp.band_code}</span>
+                        }
+                        if (viaBand) return <span style={s.muted}>Band {emp.band_code}</span>
+                        if (defaults[category]) return <span style={s.muted}>Client default</span>
+                        return <span style={s.noRoute}>No approval</span>
+                      })()}
                     </td>
                   </tr>
                 )
@@ -655,6 +745,7 @@ const s: Record<string, React.CSSProperties> = {
 
   appliesTo: { borderTop: '1px solid #E5E7EB', paddingTop: 18, marginTop: 6 },
   applyRow: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 14 },
+  ladderHint: { fontSize: 12, color: '#6B7280', lineHeight: 1.6, margin: '0 0 14px', maxWidth: 620 },
 
   tableWrap: { overflowX: 'auto' },
   table: { borderCollapse: 'collapse', width: '100%' },

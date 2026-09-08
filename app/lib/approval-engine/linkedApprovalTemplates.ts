@@ -40,9 +40,10 @@ export interface ApprovalTemplate {
 }
 
 // Where a resolved template came from. Surfaced so the UI can show an employee
-// is on the client default rather than something chosen for them — the two
-// look identical otherwise, and only one of them changes when the default does.
-export type TemplateSource = 'employee' | 'client_default'
+// is on their band's chain or the client default rather than something chosen
+// for them — the three look identical otherwise, and each changes for a
+// different reason.
+export type TemplateSource = 'employee' | 'band' | 'client_default'
 
 export interface ResolvedTemplate {
   template: ApprovalTemplate
@@ -115,17 +116,38 @@ export function mergeTiers(
 // ── resolveTemplateForEmployee ───────────────────────────────────────────────
 // Which approval template applies to one employee for one category.
 //
-// Explicit assignment wins; the client default covers everyone else. Approver
-// routing is deliberately NOT band-derived: two employees at the same rank
-// commonly report to different managers, so a rank-wide route can't express
-// the ordinary case. Bands still matter for WHO may approve — the
-// 'any_manager_at' approver type is rank-scoped — just not for WHICH chain
-// applies.
+//   employee  ->  band  ->  client default
+//
+// Most specific wins. The band rung is what makes a template worth having: if
+// every assignment were per person, the template would be pure indirection and
+// mapping approvers directly would be simpler. Set a band's chain once and it
+// covers everyone in it; the per-employee row stays as the override for the
+// people who genuinely differ.
+//
+// Note what is still NOT band-derived: WHO fills a step. Two employees at the
+// same rank routinely report to different managers, so approver identity comes
+// from approval_tier_approvers and from the employee's own manager_id. Bands
+// choose the CHAIN, not the person — except 'any_manager_at', which is
+// explicitly rank-scoped and always was.
 //
 // Fetched as separate queries rather than a Supabase FK-embed, consistent with
 // the rest of this codebase: embed-alias inference isn't relied on anywhere
 // else, and this path decides whether a booking needs approval at all.
 // ─────────────────────────────────────────────────────────────────────────────
+
+async function loadTemplate(
+  service: ServiceClient,
+  templateId: string,
+  source: TemplateSource
+): Promise<ResolvedTemplate | null> {
+  const { data: template } = await service
+    .from('approval_chain_templates')
+    .select(TEMPLATE_COLUMNS)
+    .eq('id', templateId)
+    .maybeSingle()
+
+  return template ? { template: toTemplate(template), source } : null
+}
 
 export async function resolveTemplateForEmployee(
   service: ServiceClient,
@@ -141,13 +163,35 @@ export async function resolveTemplateForEmployee(
     .maybeSingle()
 
   if (assignment) {
-    const { data: template } = await service
-      .from('approval_chain_templates')
-      .select(TEMPLATE_COLUMNS)
-      .eq('id', assignment.template_id)
+    const resolved = await loadTemplate(service, assignment.template_id, 'employee')
+    // A dangling template id falls THROUGH to the next rung rather than
+    // resolving to nothing. The row exists but points at a template that is
+    // gone; the employee still deserves whatever their band or client says.
+    if (resolved) return resolved
+  }
+
+  // The band rung. Skipped entirely for an employee with no band — that is a
+  // separate configuration gap, reported by the policy engine, and not
+  // something to fail approval routing over.
+  const { data: employee } = await service
+    .from('employees')
+    .select('band_code')
+    .eq('id', employeeId)
+    .maybeSingle()
+
+  if (employee?.band_code) {
+    const { data: bandAssignment } = await service
+      .from('band_approval_templates')
+      .select('template_id')
+      .eq('client_id', clientId)
+      .eq('band_code', employee.band_code)
+      .eq('category', category)
       .maybeSingle()
 
-    if (template) return { template: toTemplate(template), source: 'employee' }
+    if (bandAssignment) {
+      const resolved = await loadTemplate(service, bandAssignment.template_id, 'band')
+      if (resolved) return resolved
+    }
   }
 
   const { data: fallback } = await service
@@ -159,15 +203,25 @@ export async function resolveTemplateForEmployee(
 
   if (!fallback) return null
 
-  const { data: defaultTemplate } = await service
-    .from('approval_chain_templates')
-    .select(TEMPLATE_COLUMNS)
-    .eq('id', fallback.template_id)
-    .maybeSingle()
+  return loadTemplate(service, fallback.template_id, 'client_default')
+}
 
-  if (!defaultTemplate) return null
+// ── getBandAssignmentsForClient ─────────────────────────────────────────────
+// Every band-level assignment at one client, as `${bandCode}::${category}` ->
+// templateId. Same shape as getAssignmentsForClient so the admin screen can
+// render both ladders from one payload.
+// ─────────────────────────────────────────────────────────────────────────────
 
-  return { template: toTemplate(defaultTemplate), source: 'client_default' }
+export async function getBandAssignmentsForClient(
+  service: ServiceClient,
+  clientId: string
+): Promise<Map<string, string>> {
+  const { data: rows } = await service
+    .from('band_approval_templates')
+    .select('band_code, category, template_id')
+    .eq('client_id', clientId)
+
+  return new Map((rows ?? []).map(r => [`${r.band_code}::${r.category}`, r.template_id]))
 }
 
 // ── getAssignmentsForClient ─────────────────────────────────────────────────

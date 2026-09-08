@@ -5,23 +5,18 @@ import { getBandRanksByGroup } from '@/app/lib/rule-engine/linkedPolicyGroups'
 import { NextRequest } from 'next/server'
 
 // ── GET /api/tmc/policy-rules?groupId=<uuid> ──────────────────────────────
-// Latest version's rules for one policy group, across every band_rank the
-// group has rules for. No clientId anymore — rules belong to the group
-// itself, not to any one client (that's the whole point of a shared,
-// reusable template).
+// The latest version's rules for one policy group. ONE set, not one per rank:
+// the group's rank set says who it covers, the rules say what they get.
 //
 // ── POST /api/tmc/policy-rules ────────────────────────────────────────────
 // Inserts a new version (append-only — same versioning pattern as before,
-// genuinely unchanged). Keyed by band_rank (a plain integer — "rank 1",
-// "rank 2"...) instead of a client-specific band_code, since a shared
-// group has no single client's band labels to key against. The TMC admin
-// building the group works in ranks directly; mapping a rank back to
-// whatever a given client happens to call it ("L1", "A1", "1") is
-// resolveEffectivePolicy.ts's job at read time, not this route's.
+// genuinely unchanged). Rules used to carry band_rank as well, which let a
+// group covering ranks 1-3 hold three sets of limits free to disagree. Ranks
+// needing different limits are a different group, which is what a policy group
+// was always supposed to mean.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface RuleInput {
-  band_rank: number
   travel_type: string
   limit_key: string
   limit_value?: number | null
@@ -45,7 +40,7 @@ async function getLatestVersionRows(
 
   const { data: rows } = await service
     .from('policy_rules')
-    .select('id, band_rank, travel_type, limit_key, limit_value, limit_bool, version')
+    .select('id, travel_type, limit_key, limit_value, limit_bool, version')
     .eq('policy_group_id', policyGroupId)
     .eq('version', latest.version)
     .is('deleted_at', null)
@@ -131,6 +126,11 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'This policy group belongs to a different TMC' }, { status: 403 })
   }
 
+  // Still checked, and for the same reason as before: a group covering no ranks
+  // reaches nobody, so its rules could never resolve. The check is no longer
+  // PER RULE — rules are not filed against a rank any more — but a group with an
+  // empty rank set is still an empty policy, and saving limits into one is
+  // almost certainly not what the admin thinks they are doing.
   const coveredRanks = (await getBandRanksByGroup(service, [policyGroupId])).get(policyGroupId) ?? []
 
   if (coveredRanks.length === 0) {
@@ -152,19 +152,8 @@ export async function POST(req: NextRequest) {
   const newRows: object[] = []
 
   for (const input of rules) {
-    if (input.band_rank === undefined || input.band_rank === null || !input.travel_type || !input.limit_key) {
-      return Response.json({ error: 'Each rule needs band_rank, travel_type, and limit_key' }, { status: 400 })
-    }
-
-    // A rule at a rank the group doesn't cover is almost certainly a mistake
-    // (e.g. copy-pasted from another group's editor state) — reject rather
-    // than silently accept a rule that resolveEffectivePolicy.ts could never
-    // reach, since it only matches groups whose rank set contains the
-    // employee's rank in the first place.
-    if (!coveredRanks.includes(input.band_rank)) {
-      return Response.json({
-        error: `This policy group does not cover band rank ${input.band_rank}. It covers ${coveredRanks.join(', ')}.`,
-      }, { status: 400 })
+    if (!input.travel_type || !input.limit_key) {
+      return Response.json({ error: 'Each rule needs travel_type and limit_key' }, { status: 400 })
     }
 
     const isNumeric = input.limit_value !== undefined && input.limit_value !== null
@@ -172,18 +161,18 @@ export async function POST(req: NextRequest) {
 
     if (!isNumeric && !isBool) {
       return Response.json(
-        { error: `Rule (rank ${input.band_rank}/${input.travel_type}/${input.limit_key}) needs either limit_value or limit_bool` },
+        { error: `Rule (${input.travel_type}/${input.limit_key}) needs either limit_value or limit_bool` },
         { status: 400 }
       )
     }
     if (isNumeric && isBool) {
       return Response.json(
-        { error: `Rule (rank ${input.band_rank}/${input.travel_type}/${input.limit_key}) cannot set both limit_value and limit_bool` },
+        { error: `Rule (${input.travel_type}/${input.limit_key}) cannot set both limit_value and limit_bool` },
         { status: 400 }
       )
     }
 
-    const dedupeKey = `${input.band_rank}::${input.travel_type}::${input.limit_key}`
+    const dedupeKey = `${input.travel_type}::${input.limit_key}`
     if (seen.has(dedupeKey)) {
       return Response.json({ error: `Duplicate rule: ${dedupeKey}` }, { status: 400 })
     }
@@ -195,7 +184,6 @@ export async function POST(req: NextRequest) {
       policy_group_id: policyGroupId,
       band_id: null,   // legacy column, no longer used for matching
       band_code: null, // legacy column, no longer used for matching
-      band_rank: input.band_rank,
       travel_type: input.travel_type,
       limit_key: input.limit_key,
       limit_value: isNumeric ? Number(input.limit_value) : null,

@@ -11,9 +11,8 @@ import {
 type ServiceClient = ReturnType<typeof createServiceClient>
 
 // ── Approval Engine v3 ───────────────────────────────────────────────────
-// Chains are assigned directly to a specific employee by a TMC/admin —
-// there is no band-based lookup anymore. A chain is resolved by
-// (employee_id, category), where category collapses travelType's finer
+// A chain is resolved for (employee, category) down a three-rung ladder —
+// employee, band, client default — where category collapses travelType's finer
 // granularity (flight_domestic, flight_international, hotel, ...) into
 // exactly two routing buckets:
 //   'flights_hotels' — flight_domestic, flight_international, hotel, etc.
@@ -21,11 +20,9 @@ type ServiceClient = ReturnType<typeof createServiceClient>
 // Policy rules (the Rule Engine) still use the finer travelType split for
 // evaluating limits — this collapsing is ONLY for approval routing.
 //
-// approver_type: 'manager' still resolves via manager_id, 'any_manager_at'
-// still resolves via band rank among active managers/admins — both
-// unchanged from before, since who's ELIGIBLE to approve is still a
-// legitimate band-scoped concept even though WHICH chain applies to a
-// given employee is no longer derived from their band.
+// approver_type: 'manager' resolves via manager_id, 'any_manager_at' resolves
+// via band rank among active managers/admins — who is ELIGIBLE to approve is a
+// band-scoped concept, and separate from which chain applies.
 //
 // tiers (jsonb on approval_chains) shape — walked in tier order:
 //   { tier: number, approver_type: ApproverType, min_verdict: Verdict,
@@ -149,15 +146,15 @@ export function buildReason(breaches: VerdictBreach[], costTier: string, totalCo
 // ── resolveChainForEmployee ──────────────────────────────────────────────────
 // Which approval template applies to this employee for this booking.
 //
-// Assignment is per employee, not per band. A spend limit genuinely is a
-// band-level concept, but an approver is not: two people at the same rank
-// routinely report to different managers, so a rank-wide route can't express
-// the ordinary case. Bands still decide WHO may approve — 'any_manager_at' is
-// rank-scoped — just not WHICH chain applies.
+// A three-rung ladder: employee, then band, then client default. Most specific
+// wins, so a new hire is routed from day one by their band or the default
+// rather than silently bypassing approval until somebody configures them.
 //
-// An explicit assignment wins; the client default catches everyone else, so a
-// new hire is routed from day one rather than silently bypassing approval
-// until somebody remembers to configure them.
+// The band rung is what gives a template a reason to exist — one assignment
+// covering everyone at that rank. WHO fills each step is still not band-derived:
+// two people at the same rank routinely report to different managers, so
+// approver identity comes from the client's bindings and the employee's own
+// manager_id. Bands pick the chain, not the person.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface ResolvedChain {
@@ -279,11 +276,21 @@ async function resolveApproverForTier(
 
     const rankByCode = new Map((bandRanks ?? []).map(b => [b.code, b.rank]))
     const qualifying = candidates
-      .map(c => ({ id: c.id, rank: rankByCode.get((c as { band_code: string | null }).band_code ?? '') ?? -1 }))
+      .map(c => ({
+        id: c.id as string,
+        rank: rankByCode.get((c as { band_code: string | null }).band_code ?? '') ?? -1,
+      }))
       .filter(c => c.rank >= minRank)
       .sort((a, b) => a.rank - b.rank)
 
-    return qualifying[0]?.id ?? null
+    // Returns the resolution object, not a bare id. It used to return
+    // `qualifying[0]?.id ?? null`, which type-checked only because the id came
+    // back as `any` from the query — so at runtime an 'any_manager_at' step
+    // produced a value with no `kind`, fell past both guards in raiseApprovals,
+    // and inserted approver_id: undefined, failing the NOT NULL constraint.
+    return qualifying[0]
+      ? { kind: 'approver', approverId: qualifying[0].id }
+      : { kind: 'unresolved' }
   }
 
   if (tier.approver_type === 'finance_role' || tier.approver_type === 'admin') {

@@ -23,7 +23,6 @@ interface PolicyGroup {
 }
 
 interface RuleRow {
-  band_rank: number
   travel_type: string
   limit_key: string
   limit_value: number | null
@@ -42,10 +41,13 @@ interface ClientLink {
 }
 
 // ── Rank helpers ──────────────────────────────────────────────────────────────
-// Rules are keyed by integer band_rank, not a client's band codes — a shared
-// template has no single client's labels to key against, and mapping a rank
-// back to whatever a client calls it ("L1", "A1", "C") is
+// A group's coverage is a set of integer ranks, not a client's band codes — a
+// shared template has no single client's labels to key against, and mapping a
+// rank back to whatever a client calls it ("L1", "A1", "C") is
 // resolveEffectivePolicy's job at read time.
+//
+// Coverage decides WHO a group applies to. The limits themselves belong to the
+// group and are entered once, for every rank it covers.
 //
 // Coverage is an explicit set, so a group can span non-contiguous ranks
 // (1, 4, 7). Contiguous spans are still the common case, hence the "1-3"
@@ -105,43 +107,36 @@ function ranksLabel(bandRanks: number[]): string {
 // ── Grid helpers ──────────────────────────────────────────────────────────────
 
 type CellVal = number | boolean | null
-// Keyed by String(rank) — object keys are strings in JS, so keeping the
-// conversion explicit avoids silent number/string key mismatches.
-type Grid = Record<string, Record<string, CellVal>>
+// One row of limits per group, keyed by field. It used to be nested by rank —
+// Record<rank, Record<field, value>> — which is what let a group covering ranks
+// 1-3 hold three sets of limits free to disagree with each other.
+type Grid = Record<string, CellVal>
 
-function buildEmptyGrid(ranks: number[]): Grid {
+function buildEmptyGrid(): Grid {
   const g: Grid = {}
-  for (const rank of ranks) {
-    g[String(rank)] = {}
-    for (const f of ALL_FIELDS) g[String(rank)][f.key] = f.kind === 'boolean' ? false : null
-  }
+  for (const f of ALL_FIELDS) g[f.key] = f.kind === 'boolean' ? false : null
   return g
 }
 
-function rowsToGrid(rows: RuleRow[], ranks: number[]): Grid {
-  const g = buildEmptyGrid(ranks)
+function rowsToGrid(rows: RuleRow[]): Grid {
+  const g = buildEmptyGrid()
   for (const r of rows) {
-    const key = String(r.band_rank)
-    if (!g[key]) g[key] = {}
-    g[key][r.limit_key] = r.limit_value ?? r.limit_bool ?? null
+    g[r.limit_key] = r.limit_value ?? r.limit_bool ?? null
   }
   return g
 }
 
-function gridToRules(grid: Grid, ranks: number[]): RuleRow[] {
+function gridToRules(grid: Grid): RuleRow[] {
   const rows: RuleRow[] = []
-  for (const rank of ranks) {
-    for (const f of ALL_FIELDS) {
-      const val = grid[String(rank)]?.[f.key]
-      if (val === null || val === undefined) continue
-      rows.push({
-        band_rank: rank,
-        travel_type: f.travelType,
-        limit_key: f.key,
-        limit_value: f.kind !== 'boolean' ? Number(val) : null,
-        limit_bool: f.kind === 'boolean' ? Boolean(val) : null,
-      })
-    }
+  for (const f of ALL_FIELDS) {
+    const val = grid[f.key]
+    if (val === null || val === undefined) continue
+    rows.push({
+      travel_type: f.travelType,
+      limit_key: f.key,
+      limit_value: f.kind !== 'boolean' ? Number(val) : null,
+      limit_bool: f.kind === 'boolean' ? Boolean(val) : null,
+    })
   }
   return rows
 }
@@ -150,16 +145,13 @@ function gridToRules(grid: Grid, ranks: number[]): RuleRow[] {
 // denominator here — they're real config, just not counted as "completion"
 // factors, since a correctly-configured "false" isn't meaningfully less done
 // than a correctly-configured "true".
-function countSetFields(grid: Grid, category: CategoryDef, ranks: number[]): { set: number; total: number } {
+function countSetFields(grid: Grid, category: CategoryDef): { set: number; total: number } {
   const countableFields = category.fields.filter(f => f.kind !== 'boolean')
   let set = 0
-  for (const rank of ranks) {
-    for (const f of countableFields) {
-      const val = grid[String(rank)]?.[f.key]
-      if (val !== null && val !== undefined) set++
-    }
+  for (const f of countableFields) {
+    if (grid[f.key] !== null && grid[f.key] !== undefined) set++
   }
-  return { set, total: ranks.length * countableFields.length }
+  return { set, total: countableFields.length }
 }
 
 // Small style helper that depends on state — kept OUTSIDE the `s` styles
@@ -204,7 +196,6 @@ export default function TmcPolicyPage() {
   const [groupForm, setGroupForm] = useState({ name: '', code: '', description: '', rankSpec: '' })
   const [editingRanks, setEditingRanks] = useState('')
   const [savingRanks, setSavingRanks] = useState(false)
-  const [copySourceRank, setCopySourceRank] = useState('')
   const [groupSubmitting, setGroupSubmitting] = useState(false)
 
   const [error, setError] = useState('')
@@ -276,8 +267,7 @@ export default function TmcPolicyPage() {
     try {
       const d = await fetch(`/api/tmc/policy-rules?groupId=${groupId}`).then(r => r.json())
       if (!d.ok) { setError(d.error || 'Could not load rules.'); return }
-      const group = groups.find(g => g.id === groupId)
-      setGrid(rowsToGrid(d.rows, group?.bandRanks ?? []))
+      setGrid(rowsToGrid(d.rows))
       setVersion(d.version)
       setDirty(false)
     } finally { setLoadingRules(false) }
@@ -356,69 +346,30 @@ export default function TmcPolicyPage() {
     } finally { setSavingRanks(false) }
   }
 
-  // ── Copying one rank across the rest ────────────────────────────────────────
-  // Most groups covering several ranks give them identical limits — that is
-  // usually why the ranks were grouped together in the first place. Filling
-  // rank 1 and copying it beats retyping the same grid three times.
-  //
-  // `fields` scopes the copy: one category's fields for the per-row action, or
-  // every field for the whole-policy action.
-  function copyRankAcross(sourceRank: number, fields: FieldDef[], label: string) {
-    const targets = ranks.filter(r => r !== sourceRank)
-    if (targets.length === 0) return
+  // The copy-one-rank-across-the-rest helper lived here. It is gone along with
+  // the reason it existed: there is one set of limits per group now, so there is
+  // nothing to copy between.
 
-    const source = grid[String(sourceRank)] ?? {}
-
-    // Only warn when a target actually holds something different that would be
-    // lost. Copying over blanks, or over values that already match, is not
-    // worth a confirm dialog.
-    const wouldOverwrite = targets.some(target =>
-      fields.some(f => {
-        const existing = grid[String(target)]?.[f.key]
-        if (existing === null || existing === undefined || existing === false) return false
-        return existing !== source[f.key]
-      })
-    )
-
-    if (wouldOverwrite && !confirm(
-      `Overwrite ${label} for rank${targets.length > 1 ? 's' : ''} ${targets.join(', ')} with rank ${sourceRank}'s values?`
-    )) return
-
-    setGrid(prev => {
-      const next = { ...prev }
-      for (const target of targets) {
-        const row = { ...(next[String(target)] ?? {}) }
-        for (const f of fields) row[f.key] = source[f.key] ?? (f.kind === 'boolean' ? false : null)
-        next[String(target)] = row
-      }
-      return next
-    })
-
-    setDirty(true)
-    setSuccess('')
-    showSuccess(`Copied rank ${sourceRank}'s ${label} to rank${targets.length > 1 ? 's' : ''} ${targets.join(', ')}.`)
-  }
-
-  function handleCellChange(rank: number, key: string, value: CellVal) {
-    setGrid(prev => ({ ...prev, [String(rank)]: { ...prev[String(rank)], [key]: value } }))
+  function handleCellChange(key: string, value: CellVal) {
+    setGrid(prev => ({ ...prev, [key]: value }))
     setDirty(true); setSuccess('')
   }
 
   // Whole-number fields round on entry so "why can I type 3.7 stars" can't
   // happen again — currency (₹) fields are left as-is since paise amounts
   // are legitimate.
-  function handleNumericInputChange(rank: number, field: FieldDef, raw: string) {
-    if (raw === '') { handleCellChange(rank, field.key, null); return }
+  function handleNumericInputChange(field: FieldDef, raw: string) {
+    if (raw === '') { handleCellChange(field.key, null); return }
     const n = Number(raw)
     if (Number.isNaN(n)) return
-    handleCellChange(rank, field.key, field.wholeNumber ? Math.round(n) : n)
+    handleCellChange(field.key, field.wholeNumber ? Math.round(n) : n)
   }
 
   async function handleSaveRules() {
     if (!selectedGroup) return
     setSaving(true); setError(''); setSuccess('')
     try {
-      const rules = gridToRules(grid, ranks)
+      const rules = gridToRules(grid)
       if (rules.length === 0) { setError('Set at least one value before saving.'); return }
       const d = await fetch('/api/tmc/policy-rules', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -674,38 +625,6 @@ export default function TmcPolicyPage() {
                 </span>
               </div>
 
-              {/* Copy one rank's whole policy across the rest. Ranks are usually
-                  grouped together precisely because they share limits, so this is
-                  the common path rather than an edge case. */}
-              {ranks.length > 1 && (
-                <div style={s.copyAllRow}>
-                  <label style={s.coverageLabel}>Same limits for every rank?</label>
-                  {/* Falls back to the lowest rank rather than tracking a default
-                      in state, so switching groups can't leave a stale source
-                      rank selected that the new group doesn't even cover. */}
-                  <select
-                    value={ranks.includes(Number(copySourceRank)) ? copySourceRank : String(ranks[0])}
-                    onChange={e => setCopySourceRank(e.target.value)}
-                    style={{ ...s.input, width: 130 }}
-                  >
-                    {ranks.map(r => <option key={r} value={String(r)}>Rank {r}</option>)}
-                  </select>
-                  <button
-                    onClick={() => copyRankAcross(
-                      ranks.includes(Number(copySourceRank)) ? Number(copySourceRank) : ranks[0],
-                      ALL_FIELDS,
-                      'limits'
-                    )}
-                    style={s.ghostBtn}
-                  >
-                    Copy to all other ranks
-                  </button>
-                  <span style={s.coverageHint}>
-                    Copies every category. Use ⧉ on a row to copy just that section.
-                  </span>
-                </div>
-              )}
-
               {ranks.length === 0 && (
                 <div style={s.blastBanner}>
                   This group covers no band ranks, so it applies to nobody and cannot be
@@ -730,7 +649,7 @@ export default function TmcPolicyPage() {
                 <div style={s.categories}>
                   {CATEGORIES.map((cat, ci) => {
                     const open = !!openCategories[cat.id]
-                    const { set, total } = countSetFields(grid, cat, ranks)
+                    const { set, total } = countSetFields(grid, cat)
                     return (
                       <div key={cat.id} style={{ ...s.categoryBlock, marginTop: ci === 0 ? 0 : 12 }}>
                         <button
@@ -758,7 +677,7 @@ export default function TmcPolicyPage() {
                               <table style={s.table}>
                                 <thead>
                                   <tr>
-                                    <th style={{ ...s.th, ...s.stickyCol, width: 120 }}>Band rank</th>
+                                    <th style={{ ...s.th, ...s.stickyCol, width: 140 }}>Applies to</th>
                                     {cat.fields.map(f => (
                                       <th key={f.key} style={{ ...s.th, minWidth: f.kind === 'tier' ? 160 : f.kind === 'boolean' ? 90 : 120 }}>
                                         <span style={s.colLabel}>{f.label}</span>
@@ -768,24 +687,18 @@ export default function TmcPolicyPage() {
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {ranks.map((rank, ri) => (
-                                    <tr key={rank} style={{ background: ri % 2 === 0 ? '#fff' : '#FAFAFA' }}>
+                                  {/* One row. The group's rank set is what it
+                                      applies to, shown here rather than as a
+                                      row per rank — the limits are the group's,
+                                      and every rank it covers gets them. */}
+                                  <tr>
                                       <td style={{ ...s.td, ...s.stickyCol }}>
                                         <div style={s.bandCell}>
-                                          <span style={s.bandBadge}>Rank {rank}</span>
-                                          {ranks.length > 1 && (
-                                            <button
-                                              onClick={() => copyRankAcross(rank, cat.fields, cat.label.toLowerCase())}
-                                              style={s.copyRowBtn}
-                                              title={`Copy this rank's ${cat.label.toLowerCase()} to every other rank`}
-                                            >
-                                              ⧉
-                                            </button>
-                                          )}
+                                          <span style={s.bandBadge}>{ranksLabel(ranks)}</span>
                                         </div>
                                       </td>
                                       {cat.fields.map(f => {
-                                        const val = grid[String(rank)]?.[f.key]
+                                        const val = grid[f.key]
                                         if (f.kind === 'boolean') {
                                           return (
                                             <td key={f.key} style={{ ...s.td, textAlign: 'center' as const }}>
@@ -793,7 +706,7 @@ export default function TmcPolicyPage() {
                                                 <input
                                                   type="checkbox"
                                                   checked={Boolean(val)}
-                                                  onChange={e => handleCellChange(rank, f.key, e.target.checked)}
+                                                  onChange={e => handleCellChange(f.key, e.target.checked)}
                                                   style={{ display: 'none' }}
                                                 />
                                                 <span style={{ ...s.toggle, background: val ? '#000835' : '#E5E7EB' }}>
@@ -811,7 +724,7 @@ export default function TmcPolicyPage() {
                                             <td key={f.key} style={s.td}>
                                               <select
                                                 value={val === null || val === undefined ? '' : String(val)}
-                                                onChange={e => handleCellChange(rank, f.key, e.target.value === '' ? null : Number(e.target.value))}
+                                                onChange={e => handleCellChange(f.key, e.target.value === '' ? null : Number(e.target.value))}
                                                 style={s.tierSelect}
                                               >
                                                 <option value="">— not set —</option>
@@ -827,7 +740,7 @@ export default function TmcPolicyPage() {
                                             <input
                                               type="number"
                                               value={val === null || val === undefined ? '' : Number(val)}
-                                              onChange={e => handleNumericInputChange(rank, f, e.target.value)}
+                                              onChange={e => handleNumericInputChange(f, e.target.value)}
                                               placeholder="—"
                                               min={0}
                                               step={f.wholeNumber ? 1 : 'any'}
@@ -836,8 +749,7 @@ export default function TmcPolicyPage() {
                                           </td>
                                         )
                                       })}
-                                    </tr>
-                                  ))}
+                                  </tr>
                                 </tbody>
                               </table>
                             </div>
@@ -1025,8 +937,6 @@ const s: Record<string, React.CSSProperties> = {
 
   rangeBadge: { display: 'inline-block', padding: '2px 7px', background: '#EEF2FF', color: '#3730A3', fontSize: 10, fontWeight: 600, borderRadius: 4 },
   coverageRow: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16, padding: '12px 14px', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 8 },
-  copyAllRow: { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16, padding: '12px 14px', background: '#F5F7FF', border: '1px solid #C7D2FE', borderRadius: 8 },
-  copyRowBtn: { background: 'transparent', border: 'none', color: '#6366F1', cursor: 'pointer', fontSize: 13, padding: '0 2px', lineHeight: 1, flexShrink: 0 },
   coverageLabel: { fontSize: 11, fontWeight: 600, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.6px' },
   coverageHint: { fontSize: 11, color: '#9CA3AF' },
   codeInline: { background: '#F3F4F6', padding: '1px 5px', borderRadius: 3, fontSize: 10 },

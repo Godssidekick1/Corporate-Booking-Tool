@@ -33,10 +33,15 @@ function toStoredCategory(travelType: string): string {
 // covering an explicit set of band ranks (policy_group_band_ranks), linked to
 // clients via client_policy_groups (many-to-many — a client can use
 // several groups covering different ranks, and the same group can be shared
-// live across multiple clients). Rules within a group are keyed by
-// band_rank, not a specific client's band row, so the same group's limits
-// apply positionally regardless of what a client calls its bands ("L3",
-// "A3", "C" all just mean rank 3).
+// live across multiple clients).
+//
+// RULES BELONG TO THE GROUP, NOT TO A RANK WITHIN IT. The rank set decides WHO
+// a group covers; the limits are the group's, once. They used to be keyed by
+// band_rank as well, which let a group covering ranks 1-3 hold three sets of
+// limits free to disagree — and a group whose ranks need different limits is by
+// definition a different group. Rank still does all the work of choosing the
+// group, and still maps positionally regardless of what a client calls its
+// bands ("L3", "A3", "C" all just mean rank 3).
 //
 // Coverage is a set rather than a range so a group can span non-contiguous
 // ranks (1, 4, 7) — and so a half-configured group covers nothing rather than
@@ -44,7 +49,7 @@ function toStoredCategory(travelType: string): string {
 //
 // Resolution: employee -> band_code -> that client's own bands row -> rank
 // -> which of the client's linked groups covers that rank -> that group's
-// rules at that rank. Exactly one group should ever match a given rank
+// rules. Exactly one group should ever match a given rank
 // (enforced by constraint triggers on client_policy_groups and
 // policy_group_band_ranks) — more than one match here means something got
 // past those guards, surfaced as its own distinct blocked reason rather than
@@ -140,15 +145,14 @@ export async function resolveEffectivePolicy(
   // of reporting that none are configured. Stale limits served as current are
   // worse than an honest "unevaluated".
   //
-  // This reads every live version for one (group, rank) slice and keeps the
-  // newest in memory — a few dozen rows per save, so it stays small. If a
-  // group ever accumulates enough history to matter, the bounded form is a
-  // DISTINCT ON in a Postgres function, not a second round trip.
+  // This reads every live version for the group and keeps the newest in
+  // memory — a few dozen rows per save, so it stays small. If a group ever
+  // accumulates enough history to matter, the bounded form is a DISTINCT ON in
+  // a Postgres function, not a second round trip.
   const { data: candidateRows } = await service
     .from('policy_rules')
     .select('version, travel_type, limit_key, limit_value, limit_bool')
     .eq('policy_group_id', group.id)
-    .eq('band_rank', bandRank)
     .is('deleted_at', null)
     .order('version', { ascending: false })
 
@@ -156,7 +160,7 @@ export async function resolveEffectivePolicy(
     return {
       ok: false,
       reason: 'no_policy_rules',
-      message: `No policy has been configured for band rank ${bandRank} in policy group "${group.name}" yet. Contact your TMC.`,
+      message: `Policy group "${group.name}" has no limits configured yet. Contact your TMC.`,
     }
   }
 
@@ -170,7 +174,7 @@ export async function resolveEffectivePolicy(
     return {
       ok: false,
       reason: 'no_policy_rules',
-      message: `No policy rules exist for ${travelType} at this employee's band in policy group "${group.name}" yet. Contact your TMC.`,
+      message: `Policy group "${group.name}" has no rules for ${travelType} yet. Contact your TMC.`,
     }
   }
 

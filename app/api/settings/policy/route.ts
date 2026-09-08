@@ -109,7 +109,7 @@ export async function GET() {
 
       const { data: rules } = await service
         .from('policy_rules')
-        .select('band_rank, travel_type, limit_key, limit_value, limit_bool')
+        .select('travel_type, limit_key, limit_value, limit_bool')
         .eq('policy_group_id', group.id)
         .eq('version', latest.version)
         .is('deleted_at', null)
@@ -152,7 +152,10 @@ export async function GET() {
 
     const group = covering[0]
     const ruleSet = ruleSetByGroupId.get(group.id)
-    const bandRules = (ruleSet?.rules ?? []).filter(r => r.band_rank === band.rank)
+    // The group's whole rule set applies. It is no longer filtered by rank —
+    // the rules belong to the group, and the rank set is what decided this band
+    // lands on this group in the first place.
+    const bandRules = ruleSet?.rules ?? []
 
     if (bandRules.length === 0) {
       unresolved.push({
@@ -160,7 +163,7 @@ export async function GET() {
         band_label: band.label,
         band_rank: band.rank,
         reason: 'no_policy_rules',
-        detail: `"${group.name}" has no rules configured at rank ${band.rank}.`,
+        detail: `"${group.name}" has no limits configured.`,
       })
       continue
     }
