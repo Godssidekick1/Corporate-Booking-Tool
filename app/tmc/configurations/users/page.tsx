@@ -110,13 +110,26 @@ export default function TmcUsersPage() {
         />
       )}
 
-      <div style={s.card}>
+      <div style={s.filters}>
+        <input
+          value={list.search}
+          onChange={e => list.setSearch(e.target.value)}
+          placeholder="Search name or email"
+          style={s.searchInput}
+        />
+      </div>
+
+      <div style={{ ...s.card, ...(list.refreshing ? s.dimmed : {}) }}>
         {list.loading ? (
           <SkeletonTable rows={8} cols={6} />
         ) : tcs.length === 0 ? (
           <div style={s.emptyState}>
-            <p style={s.emptyTitle}>No TCs yet</p>
-            <p style={s.emptyDesc}>Add a travel counsellor using the button above.</p>
+            <p style={s.emptyTitle}>{list.search ? 'No TCs match that search' : 'No TCs yet'}</p>
+            <p style={s.emptyDesc}>
+              {list.search
+                ? 'Search covers every counsellor, not just this page.'
+                : 'Add a travel counsellor using the button above.'}
+            </p>
           </div>
         ) : (
           <table style={s.table}>
@@ -140,16 +153,23 @@ export default function TmcUsersPage() {
                     </td>
                     <td style={s.td}>{tc.permissions.length} function{tc.permissions.length === 1 ? '' : 's'}</td>
                     <td style={s.td}>{tc.clientIds.length} client{tc.clientIds.length === 1 ? '' : 's'}</td>
-                    <td style={{ ...s.td, textAlign: 'right' as const, display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                      {tc.status !== 'invited' && (
-                        <button onClick={() => setEditingId(tc.id)} style={s.editBtn}>Edit access</button>
-                      )}
-                      <button
-                        onClick={() => handleStatusToggle(tc)}
-                        style={tc.status === 'active' ? s.deactivateBtn : s.reactivateBtn}
-                      >
-                        {tc.status === 'active' ? 'Deactivate' : 'Reactivate'}
-                      </button>
+                    {/* The flex row lives in a div, not on the <td>. A cell with
+                        display:flex leaves the table layout algorithm, so the
+                        browser can no longer size it against the other columns —
+                        which is how Deactivate got squeezed out of view whenever
+                        the rail was expanded. */}
+                    <td style={{ ...s.td, ...s.actionsCell }}>
+                      <div style={s.actions}>
+                        {tc.status !== 'invited' && (
+                          <button onClick={() => setEditingId(tc.id)} style={s.editBtn}>Edit access</button>
+                        )}
+                        <button
+                          onClick={() => handleStatusToggle(tc)}
+                          style={tc.status === 'active' ? s.deactivateBtn : s.reactivateBtn}
+                        >
+                          {tc.status === 'active' ? 'Deactivate' : 'Reactivate'}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 )
@@ -394,10 +414,17 @@ const s: Record<string, React.CSSProperties> = {
   clientGrid: { display: 'flex', flexWrap: 'wrap' as const, gap: '10px' },
   clientRow: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#374151', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '6px', padding: '6px 10px' },
   formActions: { display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '18px' },
-  card: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '10px', overflow: 'hidden' },
-  table: { width: '100%', borderCollapse: 'collapse' as const },
+  filters: { display: 'flex', gap: '10px', marginBottom: '12px' },
+  searchInput: { height: '36px', padding: '0 10px', fontSize: '13px', color: '#111827', background: '#fff', border: '1px solid #E5E7EB', borderRadius: '6px', outline: 'none', flex: 1, maxWidth: 340 },
+  dimmed: { opacity: 0.55, transition: 'opacity 120ms ease' },
+  // overflowX rather than overflow:hidden — the table has a min-width, so a
+  // narrow viewport scrolls the columns instead of clipping the last one.
+  card: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '10px', overflowX: 'auto' },
+  table: { width: '100%', minWidth: 860, borderCollapse: 'collapse' as const },
   th: { padding: '10px 16px', textAlign: 'left' as const, fontSize: '11px', fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.4px', background: '#F9FAFB', borderBottom: '1px solid #F3F4F6' },
   td: { padding: '12px 16px', fontSize: '13px', color: '#374151', borderBottom: '1px solid #F9FAFB' },
+  actionsCell: { textAlign: 'right' as const, whiteSpace: 'nowrap' as const, width: '1%' },
+  actions: { display: 'flex', gap: '8px', justifyContent: 'flex-end' },
   name: { fontWeight: 500, color: '#111827' },
   badge: { display: 'inline-block', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 500 },
   editBtn: { fontSize: '11px', color: '#374151', background: 'transparent', border: '1px solid #D1D5DB', borderRadius: '5px', padding: '4px 8px', cursor: 'pointer' },

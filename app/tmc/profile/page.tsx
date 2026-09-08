@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/utils/supabase/client'
 import { PERMISSIONS } from '@/app/lib/permissions/permissionKeys'
+import PasswordInput from '@/app/components/PasswordInput'
 
 // ── /tmc/profile ─────────────────────────────────────────────────────────────
 // The account page for TMC-side users.
@@ -241,17 +242,17 @@ export default function TmcProfilePage() {
         <form onSubmit={changePassword} style={s.passwordForm}>
           <div style={{ ...s.field, flex: 1, minWidth: 200 }}>
             <label style={s.label} htmlFor="password">New password</label>
-            <input
-              id="password" type="password" value={password} autoComplete="new-password"
-              onChange={e => setPassword(e.target.value)}
+            <PasswordInput
+              id="password" value={password} autoComplete="new-password"
+              onChange={setPassword}
               placeholder="At least 8 characters" style={s.input}
             />
           </div>
           <div style={{ ...s.field, flex: 1, minWidth: 200 }}>
             <label style={s.label} htmlFor="confirmPassword">Confirm</label>
-            <input
-              id="confirmPassword" type="password" value={confirmPassword} autoComplete="new-password"
-              onChange={e => setConfirmPassword(e.target.value)}
+            <PasswordInput
+              id="confirmPassword" value={confirmPassword} autoComplete="new-password"
+              onChange={setConfirmPassword}
               style={s.input}
             />
           </div>

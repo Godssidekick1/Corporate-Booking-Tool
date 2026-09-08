@@ -41,7 +41,12 @@ export async function POST(req: NextRequest) {
 
   const service = createServiceClient()
 
-  const auth = await requireTmcPermission(service, user.id, 'manage_users')
+  // manage_clients, not manage_users. This route's privileged act is bringing a
+  // new client company into existence; the employee roster is a consequence of
+  // that, not the point. manage_users governs people inside a client the TC has
+  // already been given, which is a narrower thing and was the wrong gate here —
+  // it let anyone who could edit travellers create tenants.
+  const auth = await requireTmcPermission(service, user.id, 'manage_clients')
   if (!auth.authorized) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }

@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import PasswordInput from '@/app/components/PasswordInput'
 import { createBrowserClient } from '@supabase/ssr'
 
 const supabase = createBrowserClient(
@@ -175,9 +176,9 @@ export default function SignInPage() {
                       Forgot password?
                     </button>
                   </div>
-                  <input
-                    id="password" type="password" autoComplete="current-password" required
-                    value={password} onChange={e => setPassword(e.target.value)}
+                  <PasswordInput
+                    id="password" autoComplete="current-password" required
+                    value={password} onChange={setPassword}
                     style={styles.input} placeholder="••••••••"
                   />
                 </div>

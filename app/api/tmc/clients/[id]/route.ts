@@ -1,5 +1,6 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
+import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
 
 // ── GET /api/tmc/clients/[id] ─────────────────────────────────────────────
@@ -7,8 +8,14 @@ import { NextRequest } from 'next/server'
 // clients; a TC needs explicit access to this specific client.
 //
 // ── PATCH /api/tmc/clients/[id] ───────────────────────────────────────────
-// tmc_admin only — client identity fields including booking_mode are a
-// TMC-exclusive edit, not delegable to TCs via the permission system.
+// tmc_admin, or a TC holding `manage_clients` who also has access to this
+// specific client. It used to be tmc_admin-only. Correcting a client's GST
+// number or phone is exactly the kind of routine account work a senior
+// counsellor does, and forcing it through an admin made the admin a bottleneck
+// rather than a control.
+//
+// The client-id argument to requireTmcPermission is what keeps it honest: the
+// permission alone is not enough, the TC must also be assigned to this client.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ALLOWED_CURRENCIES = ['INR'] as const
@@ -113,22 +120,17 @@ export async function PATCH(
 
   const service = createServiceClient()
 
-  // tmc_admin only — booking_mode and client identity are not TC-delegable.
-  const { data: caller } = await service
-    .from('employees')
-    .select('role, tmc_id')
-    .eq('id', user.id)
-    .single()
-
-  if (!caller || caller.role !== 'tmc_admin' || !caller.tmc_id) {
-    return Response.json({ error: 'Only TMC admins can edit client details' }, { status: 403 })
+  const auth = await requireTmcPermission(service, user.id, 'manage_clients', id)
+  if (!auth.authorized) {
+    return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }
+  const tmcId = auth.tmcId!
 
   const { data: existing } = await service
     .from('clients')
     .select('id')
     .eq('id', id)
-    .eq('tmc_id', caller.tmc_id)
+    .eq('tmc_id', tmcId)
     .maybeSingle()
 
   if (!existing) {
@@ -221,7 +223,7 @@ export async function PATCH(
         .from('employees')
         .select('id, role, tmc_id')
         .eq('id', body.managed_by)
-        .eq('tmc_id', caller.tmc_id)
+        .eq('tmc_id', tmcId)
         .in('role', ['tmc_admin', 'tc'])
         .maybeSingle()
 
@@ -246,7 +248,7 @@ export async function PATCH(
         .from('branches')
         .select('id')
         .eq('id', body.branch_id)
-        .eq('tmc_id', caller.tmc_id)
+        .eq('tmc_id', tmcId)
         .maybeSingle()
 
       if (!branch) {
@@ -264,7 +266,7 @@ export async function PATCH(
         .from('client_groups')
         .select('id')
         .eq('id', client_group_id)
-        .eq('tmc_id', caller.tmc_id)
+        .eq('tmc_id', tmcId)
         .maybeSingle()
 
       if (!clientGroup) {

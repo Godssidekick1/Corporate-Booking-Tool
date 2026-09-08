@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
+import PasswordInput from '@/app/components/PasswordInput'
 
 const supabase = createBrowserClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -87,7 +88,7 @@ export default function SetPasswordPage() {
             <span style={styles.wmBy}>by Amadeus</span>
           </div>
           <p style={styles.tagline}>
-            You've been invited to manage corporate travel for your organisation.
+            You&rsquo;ve been invited to manage corporate travel for your organisation.
           </p>
         </div>
         <p style={styles.panelFooter}>© {new Date().getFullYear()} Amadeus IT Group</p>
@@ -103,11 +104,11 @@ export default function SetPasswordPage() {
           <form onSubmit={handleSubmit} style={styles.form}>
             <div style={styles.field}>
               <label style={styles.label} htmlFor="password">Password</label>
-              <input
+              <PasswordInput
                 id="password"
-                type="password"
+                autoComplete="new-password"
                 value={password}
-                onChange={e => setPassword(e.target.value)}
+                onChange={setPassword}
                 placeholder="Min. 8 characters"
                 required
                 disabled={!sessionReady}
@@ -117,11 +118,11 @@ export default function SetPasswordPage() {
 
             <div style={styles.field}>
               <label style={styles.label} htmlFor="confirm">Confirm password</label>
-              <input
+              <PasswordInput
                 id="confirm"
-                type="password"
+                autoComplete="new-password"
                 value={confirm}
-                onChange={e => setConfirm(e.target.value)}
+                onChange={setConfirm}
                 placeholder="Repeat your password"
                 required
                 disabled={!sessionReady}
