@@ -1,13 +1,13 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
+import {
+  CLIENT_GROUP_COLUMNS,
+  normaliseClientGroup,
+  validateClientGroup,
+  type ClientGroupBody,
+} from '../route'
 import { NextRequest } from 'next/server'
-
-interface UpdateClientGroupBody {
-  name?: string
-  city?: string
-  country?: string
-}
 
 export async function PATCH(
   req: NextRequest,
@@ -39,17 +39,17 @@ export async function PATCH(
     return Response.json({ error: 'Client group not found' }, { status: 404 })
   }
 
-  const body: UpdateClientGroupBody = await req.json()
-  const update: Record<string, string> = {}
+  const body: ClientGroupBody = await req.json()
 
-  if (body.name !== undefined) {
-    if (!body.name.trim()) {
-      return Response.json({ error: 'Client group name cannot be empty' }, { status: 400 })
-    }
-    update.name = body.name.trim()
+  const validationError = validateClientGroup(body)
+  if (validationError) {
+    return Response.json({ error: validationError }, { status: 400 })
   }
-  if (body.city !== undefined) update.city = body.city.trim()
-  if (body.country !== undefined) update.country = body.country.trim()
+
+  // Normalised through the shared helper rather than a second copy of the same
+  // rules, which is how POST and PATCH drift apart.
+  const update: Record<string, string | null> = normaliseClientGroup(body)
+  if (body.name !== undefined) update.name = body.name.trim()
 
   if (Object.keys(update).length === 0) {
     return Response.json({ error: 'No fields to update' }, { status: 400 })
@@ -59,10 +59,16 @@ export async function PATCH(
     .from('client_groups')
     .update(update)
     .eq('id', id)
-    .select('id, name, city, country, created_at')
+    .select(CLIENT_GROUP_COLUMNS)
     .single()
 
   if (error) {
+    if (error.code === '23505') {
+      return Response.json(
+        { error: `Group code "${body.group_code}" is already used by another group.` },
+        { status: 409 }
+      )
+    }
     return Response.json({ error: error.message }, { status: 500 })
   }
 

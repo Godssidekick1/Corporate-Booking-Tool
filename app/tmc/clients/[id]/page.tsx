@@ -87,7 +87,9 @@ export default function TmcClientDetailPage() {
     toOption: row => ({
       id: String(row.id),
       label: String(row.name),
-      sublabel: row.city ? String(row.city) : undefined,
+      // Code first — it is the short reference people actually use, and the
+      // server searches on it too, so a match on code is visible in the row.
+      sublabel: [row.group_code, row.city].filter(Boolean).join(' · ') || undefined,
     }),
   })
 

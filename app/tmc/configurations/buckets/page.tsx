@@ -157,6 +157,17 @@ export default function BucketsPage() {
       {error && <div style={s.errorBanner}>{error}</div>}
       {success && <div style={s.successBanner}>{success}</div>}
 
+      {/* The other half of the distinction, stated on the client-groups screen
+          too and in `comment on table` for both. It only lived in commit
+          messages before, which is nowhere a new reader would look. */}
+      <p style={s.conceptNote}>
+        <strong>Not the same as a client group.</strong> A{' '}
+        <a href="/tmc/configurations/client-groups" style={s.inlineLink}>client group</a> is the
+        client&rsquo;s own org hierarchy — Acme Group above Acme India — and a client belongs to at
+        most one. A bucket is arbitrary and curated: a client can be in several, and the same bucket
+        can serve deal codes and forms of payment at once.
+      </p>
+
       <div style={s.split}>
         <div style={s.list}>
           {list.loading ? (
@@ -312,6 +323,8 @@ const s: Record<string, React.CSSProperties> = {
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap', marginBottom: 18 },
   title: { fontSize: 20, fontWeight: 600, color: 'var(--color-ink)', margin: '0 0 4px', letterSpacing: '-0.3px' },
   sub: { fontSize: 13, color: 'var(--color-secondary)', margin: 0, lineHeight: 1.6, maxWidth: 620 },
+  conceptNote: { fontSize: 12, color: 'var(--color-secondary)', lineHeight: 1.6, background: '#F9FAFB', border: '1px solid var(--color-line)', borderRadius: 8, padding: '10px 14px', margin: '0 0 16px', maxWidth: 760 },
+  inlineLink: { color: '#3730A3', textDecoration: 'underline', textUnderlineOffset: 2 },
 
   split: { display: 'flex', gap: 20, alignItems: 'flex-start', flexWrap: 'wrap' },
   list: { width: 260, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 6 },
