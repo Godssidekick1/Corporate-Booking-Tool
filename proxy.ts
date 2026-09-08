@@ -102,6 +102,13 @@ export async function proxy(request: NextRequest) {
     '/approvals',
     '/reports',
     '/profile',
+    // Listed here only so an anonymous visitor is sent to /login rather than
+    // rendering anything. The REAL gate is app/platform/layout.tsx, which checks
+    // platform_admins with the service client and 404s — this proxy runs on the
+    // anon client, and platform_admins has RLS on with no policies precisely so
+    // that an anon-key read of it returns nothing. Membership cannot be, and
+    // must not be, decided here.
+    '/platform',
   ]
 
   const isProtected = matchesAny(pathname, protectedBases)
