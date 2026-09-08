@@ -125,12 +125,20 @@ export async function proxy(request: NextRequest) {
     !!user &&
     (isAuthOnly || matchesBase(pathname, '/tmc'))
 
+  const isPlatformPage = matchesBase(pathname, '/platform')
+
   // Profile itself is where the user completes onboarding, so don't redirect
   // /profile → /profile when first_login_completed is false.
+  //
+  // /platform is excluded too, and for a different reason: first-login
+  // onboarding is a corporate-employee concept, and a platform admin has no
+  // employees row at all. Running the check for them means a failed .single()
+  // lookup — and a logged error — on every single request to the surface.
   const needsOnboardingCheck =
     !!user &&
     isProtected &&
-    !isProfilePage
+    !isProfilePage &&
+    !isPlatformPage
 
   // ─────────────────────────────────────────────────────────────────────────
   // USER ROLE / ONBOARDING DATA
@@ -228,9 +236,21 @@ export async function proxy(request: NextRequest) {
   // ─────────────────────────────────────────────────────────────────────────
 
   if (user && isAuthOnly) {
+    // A signed-in user with NO resolvable role is either a platform admin —
+    // who has no employees row by design — or an account in a broken state.
+    // Either way /dashboard cannot render for them, since it is built entirely
+    // around an employee and their client. /platform is the one surface that
+    // serves a role-less account, and it 404s for anyone who does not belong
+    // there, so sending them here grants nothing.
+    //
+    // This proxy runs on the anon client and platform_admins has RLS on with no
+    // policies, so membership genuinely cannot be checked here — hence routing
+    // on the absence of a role rather than on the presence of the privilege.
     const destination = isTmcSideRole
       ? '/tmc/dashboard'
-      : '/dashboard'
+      : resolvedRole
+        ? '/dashboard'
+        : '/platform'
 
     return NextResponse.redirect(
       new URL(destination, request.url)

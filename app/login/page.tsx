@@ -33,10 +33,39 @@ export default function SignInPage() {
   // loading state up rather than clearing it. router.push resolves immediately
   // while the destination is still loading, so clearing here left the button
   // idle and the screen blank for the whole wait.
+  // ── safeNext ───────────────────────────────────────────────────────────────
+  // proxy.ts puts the page you were trying to reach in ?next= when it bounces
+  // you here. Honouring it is what makes a bookmarked deep link work instead of
+  // dumping you on a dashboard.
+  //
+  // ONLY a same-origin path is accepted. A bare "/" prefix is not enough:
+  // "//evil.com" is a protocol-relative URL that browsers treat as absolute, so
+  // it would be an open redirect straight out of our login page. Requiring the
+  // second character not to be "/" or "\" closes that.
+  //
+  // Access is NOT decided here — every destination gates itself. /platform 404s
+  // for anyone who is not a platform admin, so following ?next= there cannot
+  // grant anything.
+  function safeNext(): string | null {
+    const raw = new URLSearchParams(window.location.search).get('next')
+    if (!raw) return null
+    if (!raw.startsWith('/')) return null
+    if (raw.startsWith('//') || raw.startsWith('/\\')) return null
+    // Would bounce straight back here.
+    if (raw === '/login' || raw.startsWith('/login?')) return null
+    return raw
+  }
+
   async function redirectByRole(): Promise<boolean> {
     const res = await fetch('/api/me')
     const data = await res.json()
     const role = data.employee?.role
+
+    const next = safeNext()
+    if (next) {
+      router.push(next)
+      return true
+    }
 
     // Only tmc_admin/tc are TMC-side — every other real role (admin,
     // manager, employee, finance, ...) is corporate-side and belongs on
@@ -49,6 +78,14 @@ export default function SignInPage() {
       return true
     } else if (role) {
       router.push('/dashboard')
+      return true
+    } else if (data.platformAdmin) {
+      // No employees row, and that is correct for this one account type:
+      // platform admins are Amadeus staff, not members of a tenant. Without this
+      // branch they signed in successfully and then landed on the error below,
+      // which is how /platform was unreachable for exactly the people it exists
+      // for.
+      router.push('/platform')
       return true
     } else {
       // No role at all (e.g. employee row missing) — same failure mode

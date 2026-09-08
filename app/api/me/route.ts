@@ -32,6 +32,34 @@ export async function GET() {
     .single()
 
   if (employeeError || !employee) {
+    // A platform admin has NO employees row — deliberately, since they are
+    // Amadeus staff rather than a member of any tenant. Returning 404 here left
+    // them signed in but stranded: the login page reads this to decide where to
+    // send someone, found no role, and showed "could not determine your account
+    // role". So the one account type that legitimately has no employee profile
+    // is answered rather than refused.
+    //
+    // Everyone else still gets the 404. A missing employees row for an ordinary
+    // user is a real broken state and must not be smoothed over.
+    const { data: platformAdmin } = await service
+      .from('platform_admins')
+      .select('user_id')
+      .eq('user_id', user.id)
+      .maybeSingle()
+
+    if (platformAdmin) {
+      return Response.json({
+        ok: true,
+        employee: null,
+        platformAdmin: true,
+        client: null,
+        employeeCount: 0,
+        hasBookings: false,
+        permissions: [],
+        clientAccess: [],
+      })
+    }
+
     return Response.json({ error: 'Employee profile not found' }, { status: 404 })
   }
 
@@ -78,9 +106,19 @@ export async function GET() {
     clientAccess = (access ?? []).map(a => a.client_id)
   }
 
+  // Someone can be both: a TMC employee who also runs the platform. Checked for
+  // everyone rather than only the no-employee case, so the nav can offer the
+  // link instead of making them remember the URL.
+  const { data: alsoPlatformAdmin } = await service
+    .from('platform_admins')
+    .select('user_id')
+    .eq('user_id', user.id)
+    .maybeSingle()
+
   return Response.json({
     ok: true,
     employee,
+    platformAdmin: !!alsoPlatformAdmin,
     client: client ?? null,
     employeeCount: employeeCount ?? 0,
     hasBookings: (bookingCount ?? 0) > 0,
