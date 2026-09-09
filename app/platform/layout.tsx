@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation'
 import { requirePlatformAdmin } from '@/app/lib/permissions/requirePlatformAdmin'
+import SignOutButton from './SignOutButton'
 
 // ── /platform layout ─────────────────────────────────────────────────────────
 // The gate. A server component, so the check runs before any of this reaches a
@@ -28,7 +29,14 @@ export default async function PlatformLayout({ children }: { children: React.Rea
           <span style={wmMain}>TravelDesk</span>
           <span style={wmBy}>Platform</span>
         </div>
-        <span style={who}>{check.admin.email}</span>
+        {/* A platform admin has no employees row, so neither the corporate
+            sidebar nor the TMC rail is reachable — and those hold every other
+            sign-out button in the app. Without this one there is no way out of
+            this surface at all. */}
+        <div style={headerRight}>
+          <span style={who}>{check.admin.email}</span>
+          <SignOutButton />
+        </div>
       </header>
       <main style={{ padding: '28px 32px', maxWidth: 1180, margin: '0 auto' }}>
         {children}
@@ -48,4 +56,5 @@ const wmBy: React.CSSProperties = {
   color: 'rgba(255,255,255,0.5)', border: '1px solid rgba(255,255,255,0.25)',
   borderRadius: 4, padding: '2px 6px',
 }
+const headerRight: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 14 }
 const who: React.CSSProperties = { fontSize: 12, color: 'rgba(255,255,255,0.55)' }
