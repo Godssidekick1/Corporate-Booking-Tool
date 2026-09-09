@@ -3,6 +3,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { validateFlightSpec } from '@/app/lib/deal-codes/flightSpec'
 import { CODE_TYPES, CODE_TYPE_LABELS, type CodeType } from '../route'
+import { validateAirlineCode, normaliseAirlineCode } from '@/app/lib/reference/airlineCode'
 import { NextRequest } from 'next/server'
 
 // ── /api/tmc/deal-codes/csv ──────────────────────────────────────────────────
@@ -163,9 +164,17 @@ export async function POST(req: NextRequest) {
       continue
     }
 
-    const airline = row.airline_code?.trim().toUpperCase() ?? ''
-    if (!/^[A-Z0-9]{2}$/.test(airline)) {
-      fail(`Unknown airline code '${row.airline_code?.trim() ?? ''}'`)
+    // "Unknown airline code" was the old wording and it was a lie: this is a
+    // shape check, not a lookup against any list. Deliberately still a shape
+    // check — see app/lib/reference/airlineCode.ts.
+    const airline = normaliseAirlineCode(row.airline_code) ?? ''
+    if (!airline) {
+      fail('Missing airline code')
+      continue
+    }
+    const airlineError = validateAirlineCode(airline)
+    if (airlineError) {
+      fail(airlineError)
       continue
     }
 

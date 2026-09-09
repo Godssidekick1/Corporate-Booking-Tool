@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import SearchableSelect from '@/app/components/SearchableSelect'
+import AirlineDropdown from '@/app/components/AirlineDropdown'
 import Pagination from '@/app/components/Pagination'
 import { SkeletonTable } from '@/app/components/Skeleton'
 import { usePagedList } from '@/app/hooks/usePagedList'
@@ -678,10 +679,10 @@ export default function FormsOfPaymentPage() {
               <div style={s.row}>
                 <div style={{ ...s.field, flex: 1 }}>
                   <label style={s.label}>Airline</label>
-                  <input
+                  <AirlineDropdown
                     value={form.airline_code}
-                    onChange={e => setForm(f => ({ ...f, airline_code: e.target.value.toUpperCase() }))}
-                    maxLength={2} placeholder="Any" style={{ ...s.input, ...s.mono }}
+                    onChange={code => setForm(f => ({ ...f, airline_code: code }))}
+                    placeholder="Any airline"
                   />
                 </div>
                 <div style={{ ...s.field, flex: 2 }}>

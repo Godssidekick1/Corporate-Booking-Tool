@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import SearchableSelect from '@/app/components/SearchableSelect'
+import AirlineDropdown from '@/app/components/AirlineDropdown'
 import Pagination from '@/app/components/Pagination'
 import { SkeletonTable } from '@/app/components/Skeleton'
 import { usePagedList } from '@/app/hooks/usePagedList'
@@ -536,13 +537,14 @@ export default function DealCodesPage() {
               <div style={s.row}>
                 <div style={{ ...s.field, flex: 1 }}>
                   <label style={s.label}>Airline</label>
-                  {/* Free text, not a picker: there is no airline reference list in
-                      this codebase — carrier names come back from Amadeus on each
-                      search — and a hardcoded list would go stale silently. */}
-                  <input
+                  {/* Now a picker over carriers harvested from real search
+                      responses — but still free-typable, because a carrier
+                      nobody has searched yet is legitimately absent and must
+                      not be impossible to file a deal against. */}
+                  <AirlineDropdown
                     value={form.airline_code}
-                    onChange={e => setForm(f => ({ ...f, airline_code: e.target.value.toUpperCase() }))}
-                    maxLength={2} placeholder="AI" style={{ ...s.input, ...s.mono }}
+                    onChange={code => setForm(f => ({ ...f, airline_code: code }))}
+                    placeholder="AI"
                   />
                 </div>
                 <div style={{ ...s.field, flex: 2 }}>

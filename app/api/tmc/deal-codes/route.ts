@@ -4,6 +4,7 @@ import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission
 import { validateFlightSpec } from '@/app/lib/deal-codes/flightSpec'
 import { dealCodeStatus, type DealCodeStatus } from '@/app/lib/deal-codes/dealCodeStatus'
 import { parsePageParams, paginateInMemory, escapeFilterValue } from '@/app/lib/pagination'
+import { validateAirlineCode } from '@/app/lib/reference/airlineCode'
 import { NextRequest } from 'next/server'
 
 // ── GET /api/tmc/deal-codes ──────────────────────────────────────────────────
@@ -74,10 +75,13 @@ export function validateDealCode(
   categoryCode: string
 ): string | null {
   if (body.airline_code !== undefined) {
-    const airline = body.airline_code.trim().toUpperCase()
-    if (!/^[A-Z0-9]{2}$/.test(airline)) {
-      return `"${body.airline_code}" is not a two-character airline code`
+    // A deal code MUST name an airline — unlike a form of payment, where blank
+    // means "all airlines".
+    if (!body.airline_code.trim()) {
+      return 'A deal code has to name an airline'
     }
+    const airlineError = validateAirlineCode(body.airline_code)
+    if (airlineError) return airlineError
   }
 
   if (body.code !== undefined && !body.code.trim()) {

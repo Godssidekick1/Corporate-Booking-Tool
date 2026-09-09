@@ -4,6 +4,7 @@ import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission
 import { parsePageParams, paginateInMemory, escapeFilterValue } from '@/app/lib/pagination'
 import { validateRbdSpec } from '@/app/lib/fop/rbdSpec'
 import { fopStatus, describeFop, type FopStatus } from '@/app/lib/fop/fopStatus'
+import { validateAirlineCode } from '@/app/lib/reference/airlineCode'
 import { NextRequest } from 'next/server'
 
 // ── GET /api/tmc/forms-of-payment ────────────────────────────────────────────
@@ -342,11 +343,10 @@ export function validateFop(body: Partial<CreateBody>): string | null {
     return 'An agency card is the TMC’s own — it cannot have an owner.'
   }
 
-  if (body.airline_code) {
-    if (!/^[A-Z0-9]{2}$/.test(body.airline_code.trim().toUpperCase())) {
-      return `"${body.airline_code}" is not a two-character airline code.`
-    }
-  }
+  // Blank is valid here and means "every airline" — validateAirlineCode treats
+  // an empty value as acceptable for exactly that reason.
+  const airlineError = validateAirlineCode(body.airline_code)
+  if (airlineError) return airlineError
 
   return validateRbdSpec(body.rbd_spec)
 }

@@ -1,7 +1,8 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic } from '@/app/lib/amadeus/client'
-import { NextRequest } from 'next/server'
+import { harvestAirlines } from '@/app/lib/reference/harvestAirlines'
+import { NextRequest, after } from 'next/server'
 
 // ── POST /api/book/search ────────────────────────────────────────────
 // Real flight search for the booking UI. Any authenticated employee (or TC,
@@ -154,6 +155,19 @@ export async function POST(req: NextRequest) {
 }
 
     const allFlights = availability.Availibilities.flatMap(a => a.Availibility)
+
+    // Record the carriers in this response so the deal-code and FOP editors have
+    // a list to pick from instead of a free-typed two-character box.
+    //
+    // Scheduled with after(), so it runs once the response has been sent and adds
+    // nothing to what the traveller waits for — this is the most latency-
+    // sensitive request in the product. harvestAirlines cannot throw.
+    //
+    // Deliberately reads allFlights, NOT the mapped `results` below: the map
+    // keeps only the first leg's carrier, so harvesting from it would miss the
+    // operating carrier on every connecting itinerary — which is precisely the
+    // long tail worth capturing.
+    after(() => harvestAirlines(allFlights))
 
   const results: FlatFlightResult[] = allFlights.map(flight => {
   const itineraries = flight.Itineraries?.Itinerary ?? []
