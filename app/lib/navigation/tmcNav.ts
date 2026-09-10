@@ -67,6 +67,10 @@ export const CONFIG_GROUPS: NavGroup[] = [
   {
     label: 'Commercials',
     items: [
+      // A door onto /tmc/clients/[id], not a second editor. Corporate Settings
+      // IS the client detail page — two screens storing one fact is how they
+      // drift, and this section had already been through that with policy.
+      { label: 'Corporate settings', href: '/tmc/configurations/corporate-settings', permission: 'manage_clients' },
       { label: 'Markup',          href: '#', soon: true },
       { label: 'Discounts',       href: '#', soon: true },
       { label: 'Processing fees', href: '#', soon: true },

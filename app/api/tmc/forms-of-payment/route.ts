@@ -149,6 +149,13 @@ export async function GET(req: NextRequest) {
     if (filterType) query = query.eq('fop_type', filterType)
     if (filterPayer) query = query.eq('payer', filterPayer)
 
+    // Corporate Settings shows the cards one client owns. Filtered in SQL
+    // rather than in the browser because this list is paged at ten — filtering
+    // a page would show "no cards" for a client whose card happens to sit on
+    // page two, which is worse than showing nothing at all.
+    const ownerClientId = query_.get('ownerClientId')
+    if (ownerClientId) query = query.eq('owner_client_id', ownerClientId)
+
     if (params.search) {
       const safe = escapeFilterValue(params.search)
       // fop_code included: it is the short identifier a counsellor actually
