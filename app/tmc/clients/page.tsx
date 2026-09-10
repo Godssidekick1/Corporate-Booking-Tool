@@ -185,9 +185,19 @@ export default function TmcClientsPage() {
         )}
       </div>
 
+      {/* A failed request must not render as an empty list. Without this the
+          screen says "No clients found" whether the TMC genuinely has none or
+          the query 500'd — which is exactly the wrong thing to show someone
+          trying to work out why their clients vanished. */}
+      {list.error && (
+        <div style={s.errorBanner}>
+          <strong>Could not load clients.</strong> {list.error}
+        </div>
+      )}
+
       {list.loading ? (
         <SkeletonTable rows={8} cols={8} />
-      ) : groups.length === 0 ? (
+      ) : list.error ? null : groups.length === 0 ? (
         <div style={s.emptyState}>
           <p style={s.emptyTitle}>No clients found</p>
           <p style={s.emptyDesc}>
@@ -316,6 +326,7 @@ const s: Record<string, React.CSSProperties> = {
   statusBadge: { fontSize: '11px', fontWeight: 500, borderRadius: '4px', padding: '2px 8px' },
   setupPill: { marginLeft: 6, fontSize: 10, color: '#92400E', background: '#FEF3C7', borderRadius: 4, padding: '2px 6px' },
 
+  errorBanner: { background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '11px 14px', fontSize: 12.5, color: '#DC2626', marginBottom: 14, lineHeight: 1.6 },
   emptyState: { padding: '48px 20px', textAlign: 'center' as const, background: '#fff', border: '1px dashed #D1D5DB', borderRadius: 10 },
   emptyTitle: { fontSize: '14px', fontWeight: 600, color: '#374151', margin: '0 0 6px' },
   emptyDesc: { fontSize: '13px', color: '#9CA3AF', margin: 0 },

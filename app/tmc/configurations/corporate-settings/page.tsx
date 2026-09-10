@@ -75,7 +75,11 @@ export default function CorporateSettingsPickerPage() {
       </div>
 
       <p style={s.sectionLabel}>Recently added</p>
-      {recent.loading ? (
+      {recent.error ? (
+        // Same reasoning as the clients list: "no clients yet" and "the request
+        // failed" must not look identical.
+        <p style={s.errorNote}><strong>Could not load clients.</strong> {recent.error}</p>
+      ) : recent.loading ? (
         <p style={s.muted}>Loading…</p>
       ) : recent.items.length === 0 ? (
         <p style={s.muted}>No clients yet.</p>
@@ -108,6 +112,7 @@ const s: Record<string, React.CSSProperties> = {
 
   sectionLabel: { fontSize: 11, fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 10px' },
   muted: { fontSize: 12.5, color: '#9CA3AF', margin: 0 },
+  errorNote: { fontSize: 12.5, color: '#DC2626', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '11px 14px', margin: 0, lineHeight: 1.6 },
 
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 },
   card: {
