@@ -41,10 +41,18 @@ export async function GET(req: NextRequest) {
   const params = parsePageParams(req.nextUrl.searchParams)
   const ids = req.nextUrl.searchParams.get('ids')?.split(',').filter(Boolean) ?? []
 
+  // Wider than it was, because the list is a table now rather than a grid of
+  // name-only cards — you could not see a single fact about a client without
+  // opening it. The embed pulls the group's code alongside its name so the
+  // Group Code column does not need a second query.
   let query = service
     .from('clients')
+    // Deliberately one long literal rather than a readable concatenation:
+    // Supabase derives the row type from the select STRING, and a concatenation
+    // is just `string` to the compiler, so every property access downstream
+    // becomes an error. Kept on one line so the inference survives.
     .select(
-      'id, name, status, setup_completed, created_at, booking_mode, client_group_id, client_groups(id, name, city)',
+      'id, name, status, setup_completed, created_at, booking_mode, client_group_id, client_code, city, country, email, primary_contact_phone, branch_id, client_groups(id, name, city, group_code), branches(id, name, branch_no)',
       { count: 'exact' }
     )
     .eq('tmc_id', caller.tmc_id)
@@ -62,7 +70,9 @@ export async function GET(req: NextRequest) {
     // the range below is skipped and the caller gets exactly what it asked for.
     query = query.in('id', ids)
   } else {
-    const filter = ilikeAcross(['name'], params.search)
+    // client_code and city included: the code is what a desk quotes on an
+    // invoice, and searching by city is how you find "the Mumbai one".
+    const filter = ilikeAcross(['name', 'client_code', 'city'], params.search)
     if (filter) query = query.or(filter)
     query = query.range(params.from, params.to)
   }

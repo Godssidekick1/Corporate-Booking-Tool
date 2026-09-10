@@ -30,30 +30,74 @@ const ALLOWED_SIZES = ['1-50', '51-200', '201-1000', '1001+'] as const
 // not a setting someone toggles.
 const ALLOWED_STATUSES = ['active', 'inactive'] as const
 
-interface UpdateClientBody {
+const ALLOWED_APPROVAL_MODES = ['before_booking', 'not_required'] as const
+
+// ── The Corporate Settings surface ───────────────────────────────────────────
+// Every column this route reads and writes, in one place, so GET and PATCH
+// cannot disagree about what a client is. They already did: `size` was in the
+// PATCH's returning select but NOT in the GET's, so the detail screen loaded the
+// field blank and wrote that blank back on the next save. Anyone who had ever
+// set a client's size had since silently lost it.
+export const CLIENT_COLUMNS =
+  'id, name, status, setup_completed, timezone, currency, country, booking_mode, created_at, ' +
+  'client_group_id, managed_by, branch_id, ' +
+  'registered_address, gst_number, industry, primary_contact_phone, size, ' +
+  'client_code, sap_customer_code, sap_group_code, email, phone, ' +
+  'address_1, address_2, city, state, pincode, ' +
+  'collections_name, collections_email, collections_mobile, ' +
+  'booking_activation, hold_activation, dom_ticketing, intl_ticketing, ' +
+  'hold_auto_issue, sbt_ticketing, policy_controlling, personal_bookings_allowed, ' +
+  'agency_fop_allowed, corporate_fop_allowed, traveller_fop_allowed, ' +
+  'discount_active, processing_fee_active, ' +
+  'fop_bucket_id, discount_bucket_id, processing_fee_bucket_id, ' +
+  'air_approval_mode, hotel_approval_mode'
+
+// Free text: trimmed, empty becomes NULL. A blank contact should read as "not
+// recorded", and every consumer already handles null.
+const TEXT_FIELDS = [
+  'registered_address', 'industry', 'primary_contact_phone',
+  'client_code', 'sap_customer_code', 'sap_group_code', 'email', 'phone',
+  'address_1', 'address_2', 'city', 'state', 'pincode',
+  'collections_name', 'collections_email', 'collections_mobile',
+] as const
+
+// Uppercased on write. GSTINs and client codes are canonically uppercase, and a
+// lowercase copy would not match anything searched for later.
+const UPPERCASE_FIELDS = new Set<string>(['gst_number', 'client_code'])
+
+// The Corporate Settings toggles. Booleans only — anything not a boolean is
+// ignored rather than coerced, so a stray "false" string cannot switch booking
+// off for a whole company.
+const BOOLEAN_FIELDS = [
+  'booking_activation', 'hold_activation', 'dom_ticketing', 'intl_ticketing',
+  'hold_auto_issue', 'sbt_ticketing', 'policy_controlling', 'personal_bookings_allowed',
+  'agency_fop_allowed', 'corporate_fop_allowed', 'traveller_fop_allowed',
+  'discount_active', 'processing_fee_active',
+] as const
+
+const BUCKET_FIELDS = ['fop_bucket_id', 'discount_bucket_id', 'processing_fee_bucket_id'] as const
+
+type UpdateClientBody = {
   name?: string
   timezone?: string
   currency?: string
   country?: string
   booking_mode?: string
   client_group_id?: string | null
-  // These four columns have existed on `clients` since onboarding was built —
-  // onboardClient writes them — but nothing could edit them afterwards, so a
-  // typo in a GST number at creation was permanent.
-  registered_address?: string | null
   gst_number?: string | null
-  industry?: string | null
-  primary_contact_phone?: string | null
   size?: string | null
   status?: string
-  // Which of the TMC's own staff owns this client. The column has existed as a
-  // foreign key to employees since the schema was created and has never been
-  // set or displayed anywhere.
+  // Which of the TMC's own staff owns this client — the KAM on the old screen.
   managed_by?: string | null
   // The TMC branch servicing this client. Drives which branch-scoped form of
-  // payment applies to their bookings.
+  // payment applies to their bookings, and is the Sales Office / Branch Location
+  // the old screen shows three separate ways.
   branch_id?: string | null
-}
+  air_approval_mode?: string
+  hotel_approval_mode?: string
+} & Partial<Record<typeof TEXT_FIELDS[number], string | null>>
+  & Partial<Record<typeof BOOLEAN_FIELDS[number], boolean>>
+  & Partial<Record<typeof BUCKET_FIELDS[number], string | null>>
 
 export async function GET(
   req: NextRequest,
@@ -94,7 +138,7 @@ export async function GET(
 
   const { data: client, error } = await service
     .from('clients')
-    .select('id, name, status, setup_completed, timezone, currency, country, booking_mode, created_at, client_group_id, managed_by, branch_id, registered_address, gst_number, industry, primary_contact_phone')
+    .select(CLIENT_COLUMNS)
     .eq('id', id)
     .eq('tmc_id', caller.tmc_id)
     .single()
@@ -140,7 +184,24 @@ export async function PATCH(
   const body: UpdateClientBody = await req.json()
   const { name, timezone, currency, country, booking_mode, client_group_id} = body
 
-  const update: Record<string, string | null> = {}
+  const update: Record<string, string | boolean | null> = {}
+
+  // Free text, uniformly. Empty clears rather than storing '' — a blank GST
+  // field should read as "not recorded", and every consumer already handles
+  // null. GST and client code are uppercased; neither is format-validated,
+  // because this is a TMC recording what a client told them and rejecting an
+  // unusual-but-real identifier is worse than storing one that needs fixing.
+  for (const field of TEXT_FIELDS) {
+    if (body[field] === undefined) continue
+    update[field] = body[field]?.trim() || null
+  }
+
+  // Booleans only. A stray "false" string would be truthy, and switching
+  // booking off for a whole company on a type coercion is not a failure mode
+  // worth allowing.
+  for (const field of BOOLEAN_FIELDS) {
+    if (typeof body[field] === 'boolean') update[field] = body[field]
+  }
 
   if (name !== undefined) {
     const trimmed = name.trim()
@@ -169,26 +230,18 @@ export async function PATCH(
     update.country = country.trim()
   }
 
-  // Free-text client details. Empty string clears rather than storing '' — a
-  // blank GST field should read as "not recorded", and every consumer already
-  // handles null.
-  //
-  // GST is uppercased because Indian GSTINs are canonically uppercase and a
-  // lowercase copy would not match anything searched for later. It is
-  // deliberately NOT format-validated: this is a TMC recording what a client
-  // told them, and rejecting an unusual-but-real identifier is worse than
-  // storing one that needs correcting.
-  if (body.registered_address !== undefined) {
-    update.registered_address = body.registered_address?.trim() || null
+  for (const field of UPPERCASE_FIELDS) {
+    const value = (body as Record<string, unknown>)[field]
+    if (value === undefined) continue
+    update[field] = (typeof value === 'string' ? value.trim().toUpperCase() : '') || null
   }
-  if (body.gst_number !== undefined) {
-    update.gst_number = body.gst_number?.trim().toUpperCase() || null
-  }
-  if (body.industry !== undefined) {
-    update.industry = body.industry?.trim() || null
-  }
-  if (body.primary_contact_phone !== undefined) {
-    update.primary_contact_phone = body.primary_contact_phone?.trim() || null
+
+  for (const mode of ['air_approval_mode', 'hotel_approval_mode'] as const) {
+    if (body[mode] === undefined) continue
+    if (!ALLOWED_APPROVAL_MODES.includes(body[mode] as typeof ALLOWED_APPROVAL_MODES[number])) {
+      return Response.json({ error: `Invalid ${mode}: ${body[mode]}` }, { status: 400 })
+    }
+    update[mode] = body[mode]
   }
 
   if (body.size !== undefined) {
@@ -210,6 +263,27 @@ export async function PATCH(
       )
     }
     update.status = body.status
+  }
+
+  // Every bucket verified against this TMC, for the same reason branch_id is
+  // below: these are plain FKs, so another tenant's bucket would satisfy the
+  // constraint and quietly attach their curated client set to this client's
+  // commercial arrangement.
+  for (const field of BUCKET_FIELDS) {
+    if (body[field] === undefined) continue
+    if (!body[field]) { update[field] = null; continue }
+
+    const { data: bucket } = await service
+      .from('buckets')
+      .select('id')
+      .eq('id', body[field])
+      .eq('tmc_id', tmcId)
+      .maybeSingle()
+
+    if (!bucket) {
+      return Response.json({ error: 'Bucket not found for this TMC' }, { status: 422 })
+    }
+    update[field] = body[field]
   }
 
   if (body.managed_by !== undefined) {
@@ -290,14 +364,25 @@ export async function PATCH(
     return Response.json({ error: 'No fields to update' }, { status: 400 })
   }
 
+  // The SAME column list the GET uses. These two having their own lists is what
+  // let `size` be returned by one and not the other, so the screen loaded it
+  // blank and wrote the blank back.
   const { data: updated, error: updateError } = await service
     .from('clients')
     .update(update)
     .eq('id', id)
-    .select('id, name, timezone, currency, country, booking_mode, client_group_id, registered_address, gst_number, industry, primary_contact_phone, size, status, managed_by, branch_id')
+    .select(CLIENT_COLUMNS)
     .single()
 
   if (updateError) {
+    // The partial unique index on (tmc_id, client_code) surfaces as a raw
+    // constraint name otherwise, which says nothing about what to fix.
+    if (updateError.code === '23505') {
+      return Response.json(
+        { error: `Client code "${body.client_code}" is already used by another client.` },
+        { status: 409 }
+      )
+    }
     return Response.json({ error: updateError.message }, { status: 500 })
   }
 
