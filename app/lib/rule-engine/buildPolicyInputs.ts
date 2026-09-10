@@ -1,4 +1,4 @@
-import { classifyTrip } from './classifyTrip'
+import { classifyFlight } from './classifyTrip'
 import type { FlatFlightResult } from '@/app/lib/book/types'
 
 // ── CABIN_RANK ────────────────────────────────────────────────────────────
@@ -75,15 +75,10 @@ export function buildPolicyInputsFromFlight(source: PolicyInputSource): BuiltPol
     return sum + (Number.isFinite(n) ? n : 0)
   }, 0)
 
-  const legs = [
-    { origin: flight.origin?.code ?? '', destination: flight.destination?.code ?? '' },
-    ...flight.stops.map((s, i) => ({
-      origin: i === 0 ? (flight.origin?.code ?? '') : flight.stops[i - 1].code,
-      destination: s.code,
-    })),
-  ].filter(l => l.origin && l.destination)
-
-  const classification = classifyTrip(legs.length > 0 ? legs : [{ origin: flight.origin?.code ?? '', destination: flight.destination?.code ?? '' }])
+  // Route reassembly moved into classifyFlight so the ticketing gate can reach
+  // the same answer. Two copies of "which legs is this trip made of" would mean
+  // a booking that is domestic for policy and international for ticketing.
+  const classification = classifyFlight(flight)
   const travelType = classification === 'domestic' ? 'flight_domestic' : 'flight_international'
 
   // Falls back to the first-leg-only `duration` if totalDuration wasn't

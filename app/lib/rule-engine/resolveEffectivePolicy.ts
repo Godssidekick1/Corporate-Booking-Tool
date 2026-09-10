@@ -15,7 +15,12 @@ export interface ResolvedPolicy {
 
 export interface PolicyBlocked {
   ok: false
-  reason: 'no_band' | 'no_policy_group' | 'overlapping_policy_groups' | 'no_policy_rules'
+  // 'policy_disabled' is not a gap — it is the TMC saying, in Corporate
+  // Settings, that this client's bookings are not policy-checked. It shares the
+  // `ok: false` shape with the genuine gaps because every caller already treats
+  // that as "not evaluated", which is exactly right: an unchecked booking is not
+  // a compliant one, and reporting it as green would be a lie.
+  reason: 'no_band' | 'no_policy_group' | 'overlapping_policy_groups' | 'no_policy_rules' | 'policy_disabled'
   message: string
 }
 

@@ -1,6 +1,8 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic } from '@/app/lib/amadeus/client'
+import { loadClientGates } from '@/app/lib/clients/clientGates'
+import { classifyFlight } from '@/app/lib/rule-engine/classifyTrip'
 import { NextRequest } from 'next/server'
 
 // ── POST /api/book/ticket ─────────────────────────────────────────────────────
@@ -56,7 +58,7 @@ export async function POST(req: NextRequest) {
 
   const { data: booking } = await service
     .from('bookings')
-    .select('id, employee_id, status, provider, provider_order_id, amadeus_key, pricing_key, pnr')
+    .select('id, employee_id, status, provider, provider_order_id, amadeus_key, pricing_key, pnr, itinerary')
     .eq('id', bookingId)
     .maybeSingle()
 
@@ -66,6 +68,33 @@ export async function POST(req: NextRequest) {
 
   if (booking.employee_id !== employee.id) {
     return Response.json({ error: 'Not authorized to act on this booking' }, { status: 403 })
+  }
+
+  // Corporate Settings can permit domestic ticketing but not international, or
+  // the reverse — a normal arrangement while a client's international account
+  // is still being set up.
+  //
+  // Checked here rather than at booking: a held PNR is useful either way, and
+  // refusing the hold would take away the thing that lets a desk sort the
+  // ticketing out. The route is classified the same way the policy engine
+  // classifies it, via the shared classifyFlight.
+  const gates = await loadClientGates(service, employee.client_id)
+  const itinerary = booking.itinerary as Parameters<typeof classifyFlight>[0] | null
+
+  if (itinerary) {
+    const trip = classifyFlight(itinerary)
+    if (trip === 'domestic' && !gates.domTicketing) {
+      return Response.json(
+        { error: 'Domestic ticketing is switched off for this account. Contact your travel desk.' },
+        { status: 403 }
+      )
+    }
+    if (trip === 'international' && !gates.intlTicketing) {
+      return Response.json(
+        { error: 'International ticketing is switched off for this account. Contact your travel desk.' },
+        { status: 403 }
+      )
+    }
   }
 
   if (booking.status !== 'held') {

@@ -1,5 +1,6 @@
 import { createServiceClient } from '@/utils/supabase/service'
 import { resolveFop, type ResolvableFopAssignment, type ResolvedFop } from './resolveFop'
+import { loadClientGates } from '@/app/lib/clients/clientGates'
 import type { FlatFlightResult } from '@/app/lib/book/types'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
@@ -63,6 +64,10 @@ export async function stampFop(
 
     if (!fops || fops.length === 0) return null
 
+    // Which payer types this client permits. Read here rather than inside
+    // resolveFop so that function stays pure and testable without a database.
+    const gates = await loadClientGates(service, clientId)
+
     const bucketIds = (bucketRows ?? []).map(b => b.bucket_id)
 
     // A switched-off mapping does not reach this client. It no longer needs to
@@ -115,6 +120,7 @@ export async function stampFop(
     const resolved = resolveFop({
       fops,
       assignments,
+      allowedPayers: gates.allowedPayers,
       branchId: client.branch_id,
       airlineCode,
       legBookingCodes,

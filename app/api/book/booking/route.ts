@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic, CustomerInfo } from '@/app/lib/amadeus/client'
+import { loadClientGates } from '@/app/lib/clients/clientGates'
 import { NextRequest } from 'next/server'
 import util from 'util'
 
@@ -84,6 +85,27 @@ export async function POST(req: NextRequest) {
 
   if (!employee) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
+  }
+
+  // Corporate Settings gates. Checked before the booking row is even loaded —
+  // a client who cannot book should get a clear refusal, not a 404 chase.
+  //
+  // This route creates the PNR, which in this app IS the hold: booking and
+  // ticketing are separate routes, so a confirmed-but-unticketed booking is
+  // exactly what "hold" means. Both switches therefore land here.
+  const gates = await loadClientGates(service, employee.client_id)
+
+  if (!gates.bookingActivation) {
+    return Response.json(
+      { error: 'Booking is switched off for this account. Contact your travel desk.' },
+      { status: 403 }
+    )
+  }
+  if (!gates.holdActivation) {
+    return Response.json(
+      { error: 'Holding a booking is switched off for this account. Contact your travel desk.' },
+      { status: 403 }
+    )
   }
 
   const { bookingId }: BookBody = await req.json()

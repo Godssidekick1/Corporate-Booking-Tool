@@ -27,6 +27,37 @@ export function classifyTrip(legs: Array<{ origin: string; destination: string }
   return allDomestic ? 'domestic' : 'international'
 }
 
+// ── classifyFlight ───────────────────────────────────────────────────────────
+// classifyTrip for a whole FlatFlightResult, rebuilding the leg list from the
+// origin, the stops and the final destination.
+//
+// FlightLeg carries no airports — only carrier, flight number, RBD and cabin —
+// so the route has to be reassembled from `stops`. That reassembly lived inline
+// in buildPolicyInputs and is now needed again by the ticketing gate, which is
+// exactly the point at which a copy would start to drift: a subtle difference in
+// how the two count a connection would mean a booking that is domestic for
+// policy and international for ticketing.
+// ─────────────────────────────────────────────────────────────────────────────
+export function classifyFlight(flight: {
+  origin?: { code: string }
+  destination?: { code: string }
+  stops?: { code: string }[]
+}): 'domestic' | 'international' {
+  const originCode = flight.origin?.code ?? ''
+  const destinationCode = flight.destination?.code ?? ''
+  const stops = flight.stops ?? []
+
+  const legs = [
+    { origin: originCode, destination: destinationCode },
+    ...stops.map((s, i) => ({
+      origin: i === 0 ? originCode : stops[i - 1].code,
+      destination: s.code,
+    })),
+  ].filter(l => l.origin && l.destination)
+
+  return classifyTrip(legs.length > 0 ? legs : [{ origin: originCode, destination: destinationCode }])
+}
+
 // departDate: dd/MM/yyyy (Amadeus's own format, as sent in the search request)
 export function advanceBookingDays(departDate: string, now: Date = new Date()): number {
   const [day, month, year] = departDate.split('/').map(Number)

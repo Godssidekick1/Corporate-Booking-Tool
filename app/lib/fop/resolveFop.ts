@@ -83,6 +83,15 @@ export interface ResolveFopInput {
   fops: ResolvableFop[]
   // Only the assignments that reach THIS client.
   assignments: ResolvableFopAssignment[]
+  // Which payer types this client permits, from Corporate Settings. A candidate
+  // whose payer is not in the set drops out before ranking — so switching
+  // "agency" off means agency cards stop applying to this client, and resolution
+  // falls through to whatever else reaches them.
+  //
+  // Passed in rather than looked up, because this function is pure by design
+  // (the same reason resolveDealCodes is). Omitted entirely means no filter,
+  // which keeps every existing caller and every test working unchanged.
+  allowedPayers?: Set<FopPayer>
   // The branch servicing this client. A branch-scoped FOP only applies here.
   branchId?: string | null
   airlineCode?: string | null
@@ -151,6 +160,7 @@ export function resolveFop(input: ResolveFopInput): ResolvedFop | null {
   const {
     fops,
     assignments,
+    allowedPayers,
     branchId = null,
     airlineCode = null,
     legBookingCodes = [],
@@ -190,6 +200,11 @@ export function resolveFop(input: ResolveFopInput): ResolvedFop | null {
 
   const eligible = [...strongestClaim.values()].filter(({ fop }) => {
     if (!isUsable(fop, now)) return false
+
+    // The client does not permit this kind of payer. Checked before everything
+    // else because it is the bluntest rule here: no amount of branch, airline or
+    // class matching makes a disallowed payer applicable.
+    if (allowedPayers && !allowedPayers.has(fop.payer)) return false
 
     // A branch-scoped rule only applies at its branch. A TMC-wide one applies
     // anywhere, including when the client has no branch recorded yet.
