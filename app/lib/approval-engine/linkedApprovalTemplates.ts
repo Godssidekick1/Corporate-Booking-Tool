@@ -29,11 +29,15 @@ export interface TierApprover {
   min_band_rank?: number | null
 }
 
+// No `category`, deliberately. A template is a sequence of steps and verdict
+// thresholds; nothing in it is air-specific or hotel-specific. Which kind of
+// spend a chain routes is decided where it is ASSIGNED, so one chain can serve
+// air, hotel and misc rather than being duplicated three times and drifting the
+// first time somebody edits one copy.
 export interface ApprovalTemplate {
   id: string
   name: string
   code: string | null
-  category: string
   mode: ChainMode
   quorum: ChainQuorum
   tiers: TemplateTier[]
@@ -50,14 +54,13 @@ export interface ResolvedTemplate {
   source: TemplateSource
 }
 
-const TEMPLATE_COLUMNS = 'id, name, code, category, mode, quorum, tiers'
+const TEMPLATE_COLUMNS = 'id, name, code, mode, quorum, tiers'
 
 function toTemplate(row: Record<string, unknown>): ApprovalTemplate {
   return {
     id: row.id as string,
     name: row.name as string,
     code: (row.code as string | null) ?? null,
-    category: row.category as string,
     mode: row.mode as ChainMode,
     quorum: row.quorum as ChainQuorum,
     tiers: (row.tiers as TemplateTier[] | null) ?? [],

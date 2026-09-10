@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
+import { APPROVAL_CATEGORIES } from '@/app/lib/approval-engine/resolveApprovalTier'
 import { NextRequest } from 'next/server'
 
 // ── GET /api/tmc/approval-templates?search=<text> ────────────────────────────
@@ -18,7 +19,9 @@ import { NextRequest } from 'next/server'
 // Approver types deliberately do not live here any more — they belong to a
 // binding, not a template. See app/api/tmc/approval-tier-approvers/route.ts.
 export const VERDICTS = ['green', 'amber', 'red'] as const
-export const CATEGORIES = ['flights_hotels', 'misc'] as const
+// Re-exported rather than redeclared: three files kept their own copy of this
+// list, which is how a fourth category would have been added to two of them.
+export const CATEGORIES: readonly string[] = APPROVAL_CATEGORIES
 export const MODES = ['sequential', 'parallel'] as const
 export const QUORUMS = ['any', 'all'] as const
 
@@ -35,7 +38,6 @@ interface CreateTemplateBody {
   name: string
   code?: string
   description?: string
-  category: string
   mode?: string
   quorum?: string
   tiers?: TemplateTierInput[]
@@ -99,7 +101,7 @@ export async function GET(req: NextRequest) {
 
   let query = service
     .from('approval_chain_templates')
-    .select('id, name, code, description, category, mode, quorum, tiers, version, created_at, client_id')
+    .select('id, name, code, description, mode, quorum, tiers, version, created_at, client_id')
     .eq('tmc_id', auth.tmcId)
     .order('name')
 
@@ -167,7 +169,7 @@ export async function POST(req: NextRequest) {
   }
 
   const body: CreateTemplateBody = await req.json()
-  const { name, code, description, category } = body
+  const { name, code, description } = body
   const mode = body.mode ?? 'sequential'
   const quorum = body.quorum ?? 'all'
   const tiers = body.tiers ?? []
@@ -175,9 +177,9 @@ export async function POST(req: NextRequest) {
   if (!name?.trim()) {
     return Response.json({ error: 'name is required' }, { status: 400 })
   }
-  if (!CATEGORIES.includes(category as typeof CATEGORIES[number])) {
-    return Response.json({ error: `Invalid category: ${category}` }, { status: 400 })
-  }
+  // A template no longer declares a category. It is a chain of steps; which kind
+  // of spend it routes is decided where it is assigned, so the same chain can
+  // serve flights, hotels and everything else.
   if (!MODES.includes(mode as typeof MODES[number])) {
     return Response.json({ error: `Invalid mode: ${mode}` }, { status: 400 })
   }
@@ -218,13 +220,12 @@ export async function POST(req: NextRequest) {
       name: name.trim(),
       code: code?.trim() || null,
       description: description?.trim() || null,
-      category,
       mode,
       quorum,
       tiers,
       updated_by: caller?.id ?? null,
     })
-    .select('id, name, code, description, category, mode, quorum, tiers, version, created_at, client_id')
+    .select('id, name, code, description, mode, quorum, tiers, version, created_at, client_id')
     .single()
 
   if (error) {

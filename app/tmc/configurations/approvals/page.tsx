@@ -19,7 +19,6 @@ interface Chain {
   id: string
   name: string
   code: string | null
-  category: string
   mode: ChainMode
   quorum: ChainQuorum
   tiers: TemplateStep[]
@@ -50,7 +49,8 @@ interface RosterBand {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const CATEGORIES: { value: string; label: string }[] = [
-  { value: 'flights_hotels', label: 'Flights & hotels' },
+  { value: 'air',   label: 'Flights' },
+  { value: 'hotel', label: 'Hotels' },
   { value: 'misc', label: 'Everything else' },
 ]
 
@@ -64,10 +64,6 @@ type Mode = 'direct' | 'template' | 'assign'
 
 function emptyStep(n: number): TemplateStep {
   return { tier: n, min_verdict: 'amber', label: '' }
-}
-
-function categoryLabel(v: string): string {
-  return CATEGORIES.find(c => c.value === v)?.label ?? v
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -178,7 +174,7 @@ function TemplateBuilder({ chains, onChanged, onError, onSuccess }: {
   onSuccess: (m: string) => void
 }) {
   const [selectedId, setSelectedId] = useState('')
-  const [form, setForm] = useState({ name: '', code: '', category: 'flights_hotels' })
+  const [form, setForm] = useState({ name: '', code: '' })
   const [creating, setCreating] = useState(false)
 
   const selected = chains.find(c => c.id === selectedId)
@@ -191,13 +187,12 @@ function TemplateBuilder({ chains, onChanged, onError, onSuccess }: {
         body: JSON.stringify({
           name: form.name,
           code: form.code || undefined,
-          category: form.category,
           mode: 'sequential',
           tiers: [emptyStep(1)],
         }),
       }).then(r => r.json())
       if (!d.ok) { onError(d.error || 'Could not create the template.'); return }
-      setForm({ name: '', code: '', category: 'flights_hotels' })
+      setForm({ name: '', code: '' })
       onChanged()
       setSelectedId(d.template.id)
       onSuccess('Template created.')
@@ -229,13 +224,11 @@ function TemplateBuilder({ chains, onChanged, onError, onSuccess }: {
             onChange={e => setForm(p => ({ ...p, code: e.target.value }))}
             style={{ ...s.input, width: 140 }}
           />
-          <select
-            value={form.category}
-            onChange={e => setForm(p => ({ ...p, category: e.target.value }))}
-            style={{ ...s.input, width: 180 }}
-          >
-            {CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-          </select>
+          {/* No category picker. A template is a sequence of steps and verdict
+              thresholds — nothing in it is flight-specific or hotel-specific.
+              Which kind of spend it routes is chosen when it is ASSIGNED, so one
+              template now serves flights, hotels and everything else instead of
+              being built three times over. */}
           <button type="submit" disabled={creating} style={s.primaryBtn}>
             {creating ? 'Creating…' : 'Create'}
           </button>
@@ -266,7 +259,6 @@ function TemplateBuilder({ chains, onChanged, onError, onSuccess }: {
                   >✕</button>
                 </div>
                 <div style={s.tagRow}>
-                  <span style={s.catBadge}>{categoryLabel(c.category)}</span>
                   <span style={s.stepBadge}>{c.tiers.length} step{c.tiers.length === 1 ? '' : 's'}</span>
                 </div>
                 <p style={s.cardMeta}>
@@ -437,6 +429,11 @@ function AssignTemplate({ clients, chains, onChanged, onError, onSuccess }: {
 }) {
   const [templateId, setTemplateId] = useState('')
   const [clientId, setClientId] = useState('')
+  // Chosen here rather than read off the template. A chain no longer belongs to
+  // one kind of spend, which is what lets the SAME template cover flights and
+  // hotels for one client and only flights for another — the arrangement that
+  // was impossible while air and hotel shared a category.
+  const [category, setCategory] = useState('air')
 
   const template = chains.find(c => c.id === templateId)
 
@@ -448,7 +445,7 @@ function AssignTemplate({ clients, chains, onChanged, onError, onSuccess }: {
           <select value={templateId} onChange={e => setTemplateId(e.target.value)} style={{ ...s.input, width: 260 }}>
             <option value="">Select a template…</option>
             {chains.map(c => (
-              <option key={c.id} value={c.id}>{c.name} · {categoryLabel(c.category)}</option>
+              <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
         </div>
@@ -457,6 +454,12 @@ function AssignTemplate({ clients, chains, onChanged, onError, onSuccess }: {
           <select value={clientId} onChange={e => setClientId(e.target.value)} style={{ ...s.input, width: 240 }}>
             <option value="">Select a client…</option>
             {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+        <div style={s.field}>
+          <label style={s.label}>For</label>
+          <select value={category} onChange={e => setCategory(e.target.value)} style={{ ...s.input, width: 180 }}>
+            {CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
           </select>
         </div>
       </div>
@@ -473,7 +476,7 @@ function AssignTemplate({ clients, chains, onChanged, onError, onSuccess }: {
           />
           <AppliesTo
             clientId={clientId}
-            category={template.category}
+            category={category}
             templateId={template.id}
             onError={onError}
             onSuccess={onSuccess}

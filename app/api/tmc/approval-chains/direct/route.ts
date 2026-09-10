@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
+import { APPROVAL_CATEGORIES } from '@/app/lib/approval-engine/resolveApprovalTier'
 import { NextRequest } from 'next/server'
 
 // ── /api/tmc/approval-chains/direct ──────────────────────────────────────────
@@ -20,7 +21,7 @@ import { NextRequest } from 'next/server'
 // than stacking up new ones, so the form can just save what it shows.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const CATEGORIES = ['flights_hotels', 'misc']
+const CATEGORIES = APPROVAL_CATEGORIES as readonly string[]
 const APPROVER_TYPES = [
   'manager', 'any_manager_at', 'finance_role', 'admin', 'self', 'specific_user',
 ]
@@ -110,7 +111,7 @@ export async function GET(req: NextRequest) {
   }
 
   const clientId = req.nextUrl.searchParams.get('clientId')
-  const category = req.nextUrl.searchParams.get('category') ?? 'flights_hotels'
+  const category = req.nextUrl.searchParams.get('category') ?? 'air'
   const employeeId = req.nextUrl.searchParams.get('employeeId') || null
 
   if (!clientId) {

@@ -5,6 +5,7 @@ import {
   getAssignmentsForClient,
   getBandAssignmentsForClient,
 } from '@/app/lib/approval-engine/linkedApprovalTemplates'
+import { APPROVAL_CATEGORIES } from '@/app/lib/approval-engine/resolveApprovalTier'
 import { NextRequest } from 'next/server'
 
 // ── GET /api/tmc/approval-assignments?clientId=<uuid> ───────────────────────
@@ -27,7 +28,7 @@ import { NextRequest } from 'next/server'
 // depending on which of employeeId / bandCode is supplied.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const CATEGORIES = ['flights_hotels', 'misc']
+const CATEGORIES = APPROVAL_CATEGORIES as readonly string[]
 
 interface AssignBody {
   clientId: string
@@ -170,23 +171,21 @@ export async function POST(req: NextRequest) {
 
   // A template from another TMC would route this client's bookings to
   // approvers who don't work there.
+  //
+  // The "that template routes X, not Y" check that used to sit here is gone
+  // along with approval_chain_templates.category. A chain is a sequence of steps
+  // and verdict thresholds — nothing in it is air-specific or hotel-specific, so
+  // one chain can now serve all three categories instead of being duplicated per
+  // category and drifting the first time somebody edits one copy.
   if (templateId) {
     const { data: template } = await service
       .from('approval_chain_templates')
-      .select('id, category, tmc_id')
+      .select('id, tmc_id')
       .eq('id', templateId)
       .maybeSingle()
 
     if (!template || template.tmc_id !== access.tmcId) {
       return Response.json({ error: 'Approval template not found for this TMC' }, { status: 404 })
-    }
-
-    // Assigning a flights template to the misc category would route bookings
-    // through a chain built for a different kind of spend.
-    if (template.category !== category) {
-      return Response.json({
-        error: `That template routes "${template.category}", not "${category}"`,
-      }, { status: 400 })
     }
   }
 

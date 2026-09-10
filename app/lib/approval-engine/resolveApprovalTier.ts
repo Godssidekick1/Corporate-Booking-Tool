@@ -14,11 +14,16 @@ type ServiceClient = ReturnType<typeof createServiceClient>
 // A chain is resolved for (employee, category) down a three-rung ladder —
 // employee, band, client default — where category collapses travelType's finer
 // granularity (flight_domestic, flight_international, hotel, ...) into
-// exactly two routing buckets:
-//   'flights_hotels' — flight_domestic, flight_international, hotel, etc.
-//   'misc'            — everything else (car rentals, expenses, ...)
+// three routing buckets:
+//   'air'   — flight_domestic, flight_international, ...
+//   'hotel' — hotel stays
+//   'misc'  — everything else (car rentals, expenses, ...)
 // Policy rules (the Rule Engine) still use the finer travelType split for
 // evaluating limits — this collapsing is ONLY for approval routing.
+//
+// Air and hotel were one bucket until Corporate Settings needed them apart: a
+// client routinely wants flights approved before booking and hotels not at all,
+// and that was inexpressible while both shared a category.
 //
 // approver_type: 'manager' resolves via manager_id, 'any_manager_at' resolves
 // via band rank among active managers/admins — who is ELIGIBLE to approve is a
@@ -30,17 +35,34 @@ type ServiceClient = ReturnType<typeof createServiceClient>
 //     min_band_rank?: number }        // only for 'any_manager_at'
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type ApprovalCategory = 'flights_hotels' | 'misc'
+export type ApprovalCategory = 'air' | 'hotel' | 'misc'
+
+// Every category, in the order screens should offer them. One definition, so a
+// fourth category is added here rather than in each of the four places that
+// previously kept their own copy.
+export const APPROVAL_CATEGORIES: ApprovalCategory[] = ['air', 'hotel', 'misc']
+
+export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
+  air: 'Flights',
+  hotel: 'Hotels',
+  misc: 'Everything else',
+}
 
 // ── categoryForTravelType ──────────────────────────────────────────────────
-// The only place travelType's finer granularity gets collapsed to a
-// routing category. Anything starting with 'flight' or 'hotel' is
-// flights_hotels; everything else (car_rental, misc expenses, and any
-// future travel type nobody's thought of yet) defaults to misc rather than
-// silently matching neither bucket.
+// The only place travelType's finer granularity gets collapsed to a routing
+// category. Anything starting with 'flight' is air, 'hotel' is hotel, and
+// everything else (car_rental, misc expenses, and any future travel type
+// nobody's thought of yet) defaults to misc rather than silently matching no
+// bucket at all — which would mean no approval on a booking type nobody
+// remembered to classify.
 export function categoryForTravelType(travelType: string): ApprovalCategory {
-  if (travelType.startsWith('flight') || travelType.startsWith('hotel')) return 'flights_hotels'
+  if (travelType.startsWith('flight')) return 'air'
+  if (travelType.startsWith('hotel')) return 'hotel'
   return 'misc'
+}
+
+export function isApprovalCategory(value: string): value is ApprovalCategory {
+  return (APPROVAL_CATEGORIES as string[]).includes(value)
 }
 
 // 'unbound' is not a choice anyone makes — it is what a step resolves to when
@@ -485,6 +507,28 @@ export async function startApprovalForBooking(
   }
 ): Promise<TierOutcome> {
   const { bookingId, clientId, employeeId, travelType, verdict, reason } = params
+
+  // Corporate Settings can switch approval off per product — a client commonly
+  // wants flights reviewed and hotels not. Checked before the chain is resolved
+  // rather than after: with the mode off there is nothing to route, and looking
+  // up a chain we would then discard is work for nobody.
+  //
+  // Deliberately NOT the same as having no template assigned. This keeps the
+  // configured chain intact while it is switched off, so turning approval back
+  // on does not mean rebuilding it.
+  const category = categoryForTravelType(travelType)
+  if (category === 'air' || category === 'hotel') {
+    const { data: client } = await service
+      .from('clients')
+      .select('air_approval_mode, hotel_approval_mode')
+      .eq('id', clientId)
+      .maybeSingle()
+
+    const mode = category === 'air' ? client?.air_approval_mode : client?.hotel_approval_mode
+    if (mode === 'not_required') {
+      return { requiresApproval: false }
+    }
+  }
 
   const chain = await resolveChainForEmployee(service, employeeId, clientId, travelType)
 

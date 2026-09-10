@@ -32,7 +32,8 @@ interface Approver {
 }
 
 const CATEGORIES = [
-  { value: 'flights_hotels', label: 'Flights & hotels' },
+  { value: 'air',   label: 'Flights' },
+  { value: 'hotel', label: 'Hotels' },
   { value: 'misc', label: 'Everything else' },
 ]
 
@@ -65,7 +66,7 @@ const employeeOption = (row: Record<string, unknown>) => ({
 
 export default function DirectChain({ clients }: { clients: Client[] }) {
   const [clientId, setClientId] = useState('')
-  const [category, setCategory] = useState('flights_hotels')
+  const [category, setCategory] = useState('air')
   const [employeeId, setEmployeeId] = useState('') // '' means everyone
 
   // `clients` still arrives as a prop and seeds the label cache on first paint,
