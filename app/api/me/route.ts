@@ -91,6 +91,20 @@ export async function GET() {
         .select('id', { count: 'exact', head: true })
         .eq('client_id', employee.client_id)
 
+  // Whether this client has any policy at all, for the setup checklist.
+  //
+  // The dashboard used to read `client.settings.approvalModel` for this — a
+  // jsonb key nothing has ever written, so the "Confirm your travel policy"
+  // item was permanently unticked for every client no matter how much policy
+  // they had configured. Policy lives in client_policy_groups now, so that is
+  // what gets counted.
+  const { count: policyGroupCount } = isTmcSide
+    ? { count: 0 }
+    : await service
+        .from('client_policy_groups')
+        .select('policy_group_id', { count: 'exact', head: true })
+        .eq('client_id', employee.client_id)
+
   // For TCs, load their granted permissions and client access so the
   // frontend can render a restricted view of the TMC dashboard/settings.
   // tmc_admin has full access implicitly and never needs these checked.
@@ -122,6 +136,7 @@ export async function GET() {
     client: client ?? null,
     employeeCount: employeeCount ?? 0,
     hasBookings: (bookingCount ?? 0) > 0,
+    hasPolicy: (policyGroupCount ?? 0) > 0,
     permissions,
     clientAccess,
   })

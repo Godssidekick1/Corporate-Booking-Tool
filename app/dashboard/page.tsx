@@ -26,9 +26,6 @@ interface Client {
   name: string
   status: string
   setup_completed: boolean
-  settings: {
-    approvalModel?: string
-  }
 }
 
 interface MeResponse {
@@ -37,6 +34,11 @@ interface MeResponse {
   client: Client | null
   employeeCount: number
   hasBookings: boolean
+  // Whether any policy group is linked to this client. Replaces a read of
+  // `client.settings.approvalModel` — a jsonb key nothing has ever written, so
+  // the "Confirm your travel policy" step below was permanently unticked no
+  // matter how much policy a client actually had.
+  hasPolicy: boolean
 }
 
 // ── Approval summary (manager/admin/finance) ────────────────────────────
@@ -96,8 +98,12 @@ const ACTIONABLE_META: Record<string, { label: string; cta: string }> = {
   approval_misconfigured: { label: 'Needs admin attention', cta: 'View →' },
 }
 
-function getChecklist(client: Client | null, employeeCount: number, hasBookings: boolean) {
-  const hasPolicy = !!(client?.settings?.approvalModel)
+function getChecklist(
+  client: Client | null,
+  employeeCount: number,
+  hasBookings: boolean,
+  hasPolicy: boolean
+) {
   return [
     {
       id: 'client',
@@ -240,7 +246,7 @@ export default function DashboardPage() {
   const { role, full_name, band_code } = employee
   const navItems = getNavItems(role)
   const firstName = full_name?.split(' ')[0] ?? 'there'
-  const checklist = getChecklist(client, me.employeeCount ?? 0, me.hasBookings ?? false)
+  const checklist = getChecklist(client, me.employeeCount ?? 0, me.hasBookings ?? false, me.hasPolicy ?? false)
   const completedCount = checklist.filter(i => i.done).length
   const showChecklist = role === 'admin' && !(client?.setup_completed ?? false)
   const isApproverRole = role === 'admin' || role === 'manager' || role === 'finance'
