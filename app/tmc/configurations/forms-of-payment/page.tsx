@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import SearchableSelect from '@/app/components/SearchableSelect'
+import Tabs, { useUrlTab } from '@/app/components/Tabs'
 import AirlineDropdown from '@/app/components/AirlineDropdown'
 import Pagination from '@/app/components/Pagination'
 import { SkeletonTable } from '@/app/components/Skeleton'
@@ -9,6 +10,9 @@ import { usePagedList } from '@/app/hooks/usePagedList'
 import { useLookup } from '@/app/hooks/useLookup'
 import { formatRbdSpec } from '@/app/lib/fop/rbdSpec'
 import { FOP_STATUS_LABELS, CARD_TYPE_LABELS, type FopStatus } from '@/app/lib/fop/fopStatus'
+
+const FOP_TABS = ['master', 'mapping'] as const
+type FopTab = typeof FOP_TABS[number]
 
 // ── /tmc/configurations/forms-of-payment ─────────────────────────────────────
 // How a ticket gets paid for at issuance.
@@ -113,7 +117,7 @@ export default function FormsOfPaymentPage() {
   // master answers "what payment methods exist"; the mapping answers "what is
   // attached to CBTGROUP", which you cannot get by opening methods one at a
   // time — and that second question is the one the old FOP Mapper existed for.
-  const [tab, setTab] = useState<'master' | 'mapping'>('master')
+  const [tab, setTab] = useUrlTab<FopTab>('tab', 'master', FOP_TABS)
 
   const [filterType, setFilterType] = useState('')
   const [filterPayer, setFilterPayer] = useState('')
@@ -338,14 +342,14 @@ export default function FormsOfPaymentPage() {
       {error && <div style={s.errorBanner}>{error}</div>}
       {success && <div style={s.successBanner}>{success}</div>}
 
-      <div style={s.tabs}>
-        <button onClick={() => setTab('master')} style={{ ...s.tab, ...(tab === 'master' ? s.tabOn : {}) }}>
-          Master {list.total > 0 && <span style={s.tabCount}>{list.total}</span>}
-        </button>
-        <button onClick={() => setTab('mapping')} style={{ ...s.tab, ...(tab === 'mapping' ? s.tabOn : {}) }}>
-          Mapping {mappings.total > 0 && <span style={s.tabCount}>{mappings.total}</span>}
-        </button>
-      </div>
+      <Tabs<FopTab>
+        active={tab}
+        onChange={setTab}
+        tabs={[
+          { id: 'master', label: 'Master', count: list.total || undefined },
+          { id: 'mapping', label: 'Mapping', count: mappings.total || undefined },
+        ]}
+      />
 
       {tab === 'master' && (
       <>
@@ -1002,10 +1006,7 @@ const s: Record<string, React.CSSProperties> = {
   title: { fontSize: 20, fontWeight: 600, color: 'var(--color-ink)', margin: '0 0 4px', letterSpacing: '-0.3px' },
   sub: { fontSize: 13, color: 'var(--color-secondary)', margin: 0, lineHeight: 1.6, maxWidth: 640 },
 
-  tabs: { display: 'flex', gap: 20, borderBottom: '1px solid var(--color-line)', marginBottom: 18 },
-  tab: { background: 'none', border: 'none', padding: '0 0 9px', fontSize: 13, color: 'var(--color-secondary)', cursor: 'pointer' },
-  tabOn: { color: 'var(--color-ink)', fontWeight: 600, boxShadow: 'inset 0 -2px 0 var(--color-rail)' },
-  tabCount: { marginLeft: 6, fontSize: 11, color: 'var(--color-secondary)', background: '#F3F4F6', borderRadius: 10, padding: '1px 7px' },
+  // The tab row is app/components/Tabs.tsx now — the count badge went with it.
   tabIntro: { fontSize: 12.5, color: 'var(--color-secondary)', lineHeight: 1.6, margin: '0 0 14px', maxWidth: 680 },
 
   filters: { display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' },

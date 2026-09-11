@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import Tabs, { useUrlTab } from '@/app/components/Tabs'
 import StepApprovers, { type TemplateStep } from './StepApprovers'
 import DirectChain from './DirectChain'
 
@@ -60,7 +61,8 @@ const VERDICTS: { value: string; label: string }[] = [
   { value: 'red',   label: 'Red only' },
 ]
 
-type Mode = 'direct' | 'template' | 'assign'
+const MODES = ['direct', 'template', 'assign'] as const
+type Mode = typeof MODES[number]
 
 function emptyStep(n: number): TemplateStep {
   return { tier: n, min_verdict: 'amber', label: '' }
@@ -69,7 +71,9 @@ function emptyStep(n: number): TemplateStep {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function TmcApprovalsPage() {
-  const [mode, setMode] = useState<Mode>('direct')
+  // Linkable, so "Assign chains →" on a client's settings can land on the right
+  // mode instead of the top of this page.
+  const [mode, setMode] = useUrlTab<Mode>('mode', 'direct', MODES)
 
   const [chains, setChains] = useState<Chain[]>([])
   const [clients, setClients] = useState<Client[]>([])
@@ -111,26 +115,30 @@ export default function TmcApprovalsPage() {
         </p>
       </div>
 
-      <div style={s.modeRow}>
-        <button onClick={() => setMode('direct')} style={{ ...s.modeBtn, ...(mode === 'direct' ? s.modeActive : {}) }}>
-          Direct mapping
-        </button>
-        <button onClick={() => setMode('template')} style={{ ...s.modeBtn, ...(mode === 'template' ? s.modeActive : {}) }}>
-          Make a template
-        </button>
-        {/* Only meaningful once something exists to assign. */}
-        {sharedChains.length > 0 && (
-          <button onClick={() => setMode('assign')} style={{ ...s.modeBtn, ...(mode === 'assign' ? s.modeActive : {}) }}>
-            Assign a template
-          </button>
-        )}
-      </div>
-
-      <p style={s.modeHint}>
-        {mode === 'direct' && 'Build an approval chain for one client and name who does each step. Nothing is shared with other clients.'}
-        {mode === 'template' && 'Define the shape of a chain — the steps and what triggers each. Who fills them is chosen per client when you assign it.'}
-        {mode === 'assign' && 'Put a template to work at a client: name who does each step, then choose who it applies to.'}
-      </p>
+      <Tabs<Mode>
+        active={mode}
+        onChange={setMode}
+        tabs={[
+          {
+            id: 'direct',
+            label: 'Direct mapping',
+            hint: 'Build an approval chain for one client and name who does each step. Nothing is shared with other clients.',
+          },
+          {
+            id: 'template',
+            label: 'Make a template',
+            hint: 'Define the shape of a chain — the steps and what triggers each. Who fills them is chosen per client when you assign it.',
+          },
+          // Only meaningful once something exists to assign.
+          ...(sharedChains.length > 0
+            ? [{
+                id: 'assign' as const,
+                label: 'Assign a template',
+                hint: 'Put a template to work at a client: name who does each step, then choose who it applies to.',
+              }]
+            : []),
+        ]}
+      />
 
       {error && (
         <div style={s.errorBanner}>
@@ -429,6 +437,19 @@ function AssignTemplate({ clients, chains, onChanged, onError, onSuccess }: {
 }) {
   const [templateId, setTemplateId] = useState('')
   const [clientId, setClientId] = useState('')
+
+  // Arriving from a client's Corporate Settings: start on that client. Read
+  // straight off the URL for the reasons given in Tabs.tsx — useSearchParams
+  // forces a Suspense boundary and can serve a stale value under Cache
+  // Components. Mount only.
+  useEffect(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get('clientId')
+    // Same trade as useUrlTab in app/components/Tabs.tsx: reading the URL during
+    // render would prerender a different selection than hydrates.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (fromUrl) setClientId(fromUrl)
+  }, [])
+
   // Chosen here rather than read off the template. A chain no longer belongs to
   // one kind of spend, which is what lets the SAME template cover flights and
   // hotels for one client and only flights for another — the arrangement that
@@ -693,10 +714,8 @@ const s: Record<string, React.CSSProperties> = {
   heading: { fontSize: 22, fontWeight: 700, color: '#0A0A14', margin: '0 0 4px', letterSpacing: '-0.4px' },
   sub: { fontSize: 13, color: '#6B7280', margin: 0 },
 
-  modeRow: { display: 'inline-flex', border: '1px solid #D1D5DB', borderRadius: 9, overflow: 'hidden', background: '#fff', marginBottom: 10 },
-  modeBtn: { padding: '9px 18px', background: 'transparent', border: 'none', fontSize: 13, color: '#6B7280', cursor: 'pointer' },
-  modeActive: { background: '#000835', color: '#fff', fontWeight: 600 },
-  modeHint: { fontSize: 12, color: '#9CA3AF', margin: '0 0 20px', lineHeight: 1.6 },
+  // The segmented mode row became the shared tab row — see app/components/Tabs.tsx.
+  // Its per-mode hint line survived as the `hint` prop.
 
   errorBanner: { display: 'flex', alignItems: 'center', gap: 8, background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#DC2626', marginBottom: 16 },
   successBanner: { display: 'flex', alignItems: 'center', gap: 8, background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#065F46', marginBottom: 16 },

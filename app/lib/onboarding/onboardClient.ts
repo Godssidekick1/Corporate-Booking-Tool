@@ -152,7 +152,6 @@ export async function onboardClient(
         status: 'active',
         setup_completed: false,
         registered_address: input.registeredAddress?.trim() || null,
-        gst_number: input.gstNumber?.trim() || null,
         industry: input.industry?.trim() || null,
         primary_contact_phone: input.primaryContactPhone?.trim() || null,
         size: input.size || null,
@@ -167,6 +166,26 @@ export async function onboardClient(
       throw new Error(clientError.message || clientError.details || clientError.hint || 'client insert failed')
     }
     clientId = client.id
+
+    // The GSTIN given at onboarding becomes the client's first — and, being the
+    // only one, primary — registration. It used to be a column on clients; a
+    // corporate bills through several, each with its own cost centre and
+    // validity window, so it is a table now.
+    if (input.gstNumber?.trim()) {
+      const { error: gstError } = await service
+        .from('client_gst_registrations')
+        .insert({
+          client_id: clientId,
+          gstin: input.gstNumber.trim().toUpperCase(),
+          gst_holder: corporateName.trim(),
+          is_primary: true,
+        })
+
+      if (gstError) {
+        console.error('onboardClient: GST registration insert failed. Raw error:', JSON.stringify(gstError, null, 2))
+        throw new Error(gstError.message || 'GST registration insert failed')
+      }
+    }
 
     const { data: bands, error: bandsError } = await service
       .from('bands')

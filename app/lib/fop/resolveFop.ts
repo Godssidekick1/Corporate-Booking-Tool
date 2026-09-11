@@ -1,5 +1,6 @@
 import { matchesAllLegs, rbdSpecBreadth } from './rbdSpec'
 import { isUsable, describeFop } from './fopStatus'
+import { DEFAULT_PAYMENT_PRIORITY, paymentTypeOfPayer, type PaymentType } from './paymentTypes'
 
 // ── Form of payment resolution ───────────────────────────────────────────────
 // Which payment method applies to one booking.
@@ -92,6 +93,13 @@ export interface ResolveFopInput {
   // (the same reason resolveDealCodes is). Omitted entirely means no filter,
   // which keeps every existing caller and every test working unchanged.
   allowedPayers?: Set<FopPayer>
+  // The client's preference order over the four payment types, most preferred
+  // first, from Corporate Settings. Whose money is a business decision, so it
+  // outranks every other test below — see compare().
+  //
+  // Optional for the same reason allowedPayers is: omitted means the default
+  // ordering, which keeps every existing caller and every test working.
+  paymentPriority?: PaymentType[]
   // The branch servicing this client. A branch-scoped FOP only applies here.
   branchId?: string | null
   airlineCode?: string | null
@@ -123,31 +131,51 @@ function describeVia(kind: FopAssignmentKind | 'default', viaName: string | null
   return 'Default'
 }
 
-// Negative => a wins. The order of these tests IS the precedence rule.
-function compare(a: Candidate, b: Candidate): number {
-  const byKind = KIND_RANK[a.kind] - KIND_RANK[b.kind]
-  if (byKind !== 0) return byKind
-
-  // A branch-specific rule beats a TMC-wide one: the card lodged at this office
-  // is the one that settles here.
-  const branchRank = (c: Candidate) => (c.fop.branch_id ? 0 : 1)
-  const byBranch = branchRank(a) - branchRank(b)
-  if (byBranch !== 0) return byBranch
-
-  // Filed against one airline over any airline.
-  const airlineRank = (c: Candidate) => (c.fop.airline_code ? 0 : 1)
-  const byAirline = airlineRank(a) - airlineRank(b)
-  if (byAirline !== 0) return byAirline
-
-  // Narrower class set wins; unrestricted reports Infinity so it sorts last.
-  const byRbd = rbdSpecBreadth(a.fop.rbd_spec) - rbdSpecBreadth(b.fop.rbd_spec)
-  if (byRbd !== 0) return byRbd
-
-  return b.fop.created_at.localeCompare(a.fop.created_at)
+// Where this candidate's payment type sits in the client's preference order.
+// Anything not in the order sorts last rather than first, so a payment type
+// nobody has ranked cannot win by default.
+function payerRank(order: PaymentType[], candidate: Candidate): number {
+  const index = order.indexOf(paymentTypeOfPayer(candidate.fop.payer))
+  return index === -1 ? order.length : index
 }
 
-function indistinguishable(a: Candidate, b: Candidate): boolean {
+// Negative => a wins. The order of these tests IS the precedence rule.
+function makeCompare(order: PaymentType[]) {
+  return function compare(a: Candidate, b: Candidate): number {
+    // WHOSE MONEY COMES FIRST, ahead of how specifically the card was assigned.
+    // "This client pays on their own card, falling back to agency BSP" is a
+    // commercial arrangement; whether the card was attached to the client or to
+    // a bucket is bookkeeping about how it got here. Before this test existed,
+    // a client permitting all three payers settled on whichever card happened to
+    // be assigned most specifically — which is to say, by accident.
+    const byPayer = payerRank(order, a) - payerRank(order, b)
+    if (byPayer !== 0) return byPayer
+
+    const byKind = KIND_RANK[a.kind] - KIND_RANK[b.kind]
+    if (byKind !== 0) return byKind
+
+    // A branch-specific rule beats a TMC-wide one: the card lodged at this
+    // office is the one that settles here.
+    const branchRank = (c: Candidate) => (c.fop.branch_id ? 0 : 1)
+    const byBranch = branchRank(a) - branchRank(b)
+    if (byBranch !== 0) return byBranch
+
+    // Filed against one airline over any airline.
+    const airlineRank = (c: Candidate) => (c.fop.airline_code ? 0 : 1)
+    const byAirline = airlineRank(a) - airlineRank(b)
+    if (byAirline !== 0) return byAirline
+
+    // Narrower class set wins; unrestricted reports Infinity so it sorts last.
+    const byRbd = rbdSpecBreadth(a.fop.rbd_spec) - rbdSpecBreadth(b.fop.rbd_spec)
+    if (byRbd !== 0) return byRbd
+
+    return b.fop.created_at.localeCompare(a.fop.created_at)
+  }
+}
+
+function indistinguishable(order: PaymentType[], a: Candidate, b: Candidate): boolean {
   return (
+    payerRank(order, a) === payerRank(order, b) &&
     KIND_RANK[a.kind] === KIND_RANK[b.kind] &&
     Boolean(a.fop.branch_id) === Boolean(b.fop.branch_id) &&
     Boolean(a.fop.airline_code) === Boolean(b.fop.airline_code) &&
@@ -161,6 +189,7 @@ export function resolveFop(input: ResolveFopInput): ResolvedFop | null {
     fops,
     assignments,
     allowedPayers,
+    paymentPriority = DEFAULT_PAYMENT_PRIORITY,
     branchId = null,
     airlineCode = null,
     legBookingCodes = [],
@@ -224,7 +253,7 @@ export function resolveFop(input: ResolveFopInput): ResolvedFop | null {
 
   if (eligible.length === 0) return null
 
-  const ranked = [...eligible].sort(compare)
+  const ranked = [...eligible].sort(makeCompare(paymentPriority))
   const winner = ranked[0]
   const losers = ranked.slice(1)
 
@@ -236,6 +265,6 @@ export function resolveFop(input: ResolveFopInput): ResolvedFop | null {
     payer: winner.fop.payer,
     via: describeVia(winner.kind, winner.viaName),
     beat: losers.map(l => ({ label: l.fop.label, via: describeVia(l.kind, l.viaName) })),
-    ambiguous: losers.some(l => indistinguishable(winner, l)),
+    ambiguous: losers.some(l => indistinguishable(paymentPriority, winner, l)),
   }
 }

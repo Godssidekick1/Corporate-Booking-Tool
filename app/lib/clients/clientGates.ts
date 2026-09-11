@@ -1,4 +1,8 @@
 import { createServiceClient } from '@/utils/supabase/service'
+import {
+  DEFAULT_PAYMENT_PRIORITY, PAYMENT_TYPES, normalisePriority,
+  type PaymentType,
+} from '@/app/lib/fop/paymentTypes'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
 
@@ -24,6 +28,11 @@ type ServiceClient = ReturnType<typeof createServiceClient>
 // stampFop (an error resolves to no payment method rather than blocking).
 // ─────────────────────────────────────────────────────────────────────────────
 
+// The four payment types, their labels and the default ordering live in
+// app/lib/fop/paymentTypes.ts — a module with no imports, because the Corporate
+// Settings screen needs the same vocabulary and importing it from here would
+// pull the service-role Supabase client into the browser bundle.
+
 export interface ClientGates {
   bookingActivation: boolean
   holdActivation: boolean
@@ -32,8 +41,17 @@ export interface ClientGates {
   policyControlling: boolean
   personalBookingsAllowed: boolean
   // Which payer types may reach a booking for this client. The per-client filter
-  // over the payer dimension noted when forms of payment were built.
+  // over the payer dimension noted when forms of payment were built. Derived
+  // from the four flags below — `traveller` is in the set when either BTA/CTA
+  // form is permitted, because both are the traveller paying.
   allowedPayers: Set<'agency' | 'corporate' | 'traveller'>
+  // Which of the four are permitted at all.
+  allowedPaymentTypes: Set<PaymentType>
+  // Preference order over all four, most preferred first — including the ones
+  // that are switched off. Holding all four is what keeps this from ever
+  // disagreeing with the flags: the order says what is preferred, the flags say
+  // what is available, and neither is trying to express the other.
+  paymentPriority: PaymentType[]
 }
 
 const PERMISSIVE: ClientGates = {
@@ -47,12 +65,15 @@ const PERMISSIVE: ClientGates = {
   // not a safe default.
   personalBookingsAllowed: false,
   allowedPayers: new Set(['agency', 'corporate', 'traveller'] as const),
+  allowedPaymentTypes: new Set(PAYMENT_TYPES),
+  paymentPriority: DEFAULT_PAYMENT_PRIORITY,
 }
 
 export const CLIENT_GATE_COLUMNS =
   'booking_activation, hold_activation, dom_ticketing, intl_ticketing, ' +
   'policy_controlling, personal_bookings_allowed, ' +
-  'agency_fop_allowed, corporate_fop_allowed, traveller_fop_allowed'
+  'agency_fop_allowed, corporate_fop_allowed, ' +
+  'bta_cta_allowed, bta_cta_manual_allowed, fop_priority'
 
 // Declared rather than inferred. Supabase derives a row type from a select
 // STRING LITERAL; the constant above is a concatenation, so inference gives up
@@ -67,7 +88,9 @@ interface ClientGateRow {
   personal_bookings_allowed?: boolean | null
   agency_fop_allowed?: boolean | null
   corporate_fop_allowed?: boolean | null
-  traveller_fop_allowed?: boolean | null
+  bta_cta_allowed?: boolean | null
+  bta_cta_manual_allowed?: boolean | null
+  fop_priority?: string[] | null
 }
 
 export async function loadClientGates(
@@ -86,10 +109,18 @@ export async function loadClientGates(
     const data = raw as ClientGateRow | null
     if (!data) return PERMISSIVE
 
+    const types = new Set<PaymentType>()
+    if (data.agency_fop_allowed !== false) types.add('agency')
+    if (data.corporate_fop_allowed !== false) types.add('corporate')
+    if (data.bta_cta_allowed !== false) types.add('bta_cta')
+    // The one payment type that is off unless switched on. Sending a traveller
+    // to a payment gateway that does not exist yet should never be a default.
+    if (data.bta_cta_manual_allowed === true) types.add('bta_cta_manual')
+
     const payers = new Set<'agency' | 'corporate' | 'traveller'>()
-    if (data.agency_fop_allowed !== false) payers.add('agency')
-    if (data.corporate_fop_allowed !== false) payers.add('corporate')
-    if (data.traveller_fop_allowed !== false) payers.add('traveller')
+    if (types.has('agency')) payers.add('agency')
+    if (types.has('corporate')) payers.add('corporate')
+    if (types.has('bta_cta') || types.has('bta_cta_manual')) payers.add('traveller')
 
     return {
       // `!== false` rather than a truthy test: a column that is missing because
@@ -102,6 +133,8 @@ export async function loadClientGates(
       policyControlling: data.policy_controlling !== false,
       personalBookingsAllowed: data.personal_bookings_allowed === true,
       allowedPayers: payers,
+      allowedPaymentTypes: types,
+      paymentPriority: normalisePriority(data.fop_priority),
     }
   } catch (error) {
     console.error('[clientGates] could not read settings, allowing through', { clientId, error })

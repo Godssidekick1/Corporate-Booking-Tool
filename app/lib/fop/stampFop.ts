@@ -121,6 +121,7 @@ export async function stampFop(
       fops,
       assignments,
       allowedPayers: gates.allowedPayers,
+      paymentPriority: gates.paymentPriority,
       branchId: client.branch_id,
       airlineCode,
       legBookingCodes,

@@ -2,12 +2,16 @@
 
 import { useEffect, useState } from 'react'
 import SearchableSelect from '@/app/components/SearchableSelect'
+import Tabs, { useUrlTab } from '@/app/components/Tabs'
 import AirlineDropdown from '@/app/components/AirlineDropdown'
 import Pagination from '@/app/components/Pagination'
 import { SkeletonTable } from '@/app/components/Skeleton'
 import { usePagedList } from '@/app/hooks/usePagedList'
 import { formatFlightSpec } from '@/app/lib/deal-codes/flightSpec'
 import { STATUS_LABELS, type DealCodeStatus } from '@/app/lib/deal-codes/dealCodeStatus'
+
+const DEAL_TABS = ['codes', 'coverage'] as const
+type DealTab = typeof DEAL_TABS[number]
 
 // ── /tmc/configurations/deal-codes ───────────────────────────────────────────
 // Negotiated airline codes: tour codes, private fares, deal, tracking and
@@ -84,7 +88,7 @@ const EMPTY_FORM = {
 }
 
 export default function DealCodesPage() {
-  const [tab, setTab] = useState<'codes' | 'coverage'>('codes')
+  const [tab, setTab] = useUrlTab<DealTab>('tab', 'codes', DEAL_TABS)
 
   const [categories, setCategories] = useState<Category[]>([])
 
@@ -327,14 +331,14 @@ export default function DealCodesPage() {
         </div>
       </div>
 
-      <div style={s.tabs}>
-        <button onClick={() => setTab('codes')} style={{ ...s.tab, ...(tab === 'codes' ? s.tabOn : {}) }}>
-          Deal codes {codes.total > 0 && <span style={s.tabCount}>{codes.total}</span>}
-        </button>
-        <button onClick={() => setTab('coverage')} style={{ ...s.tab, ...(tab === 'coverage' ? s.tabOn : {}) }}>
-          Coverage {coverage.total > 0 && <span style={s.tabCount}>{coverage.total}</span>}
-        </button>
-      </div>
+      <Tabs<DealTab>
+        active={tab}
+        onChange={setTab}
+        tabs={[
+          { id: 'codes', label: 'Deal codes', count: codes.total || undefined },
+          { id: 'coverage', label: 'Coverage', count: coverage.total || undefined },
+        ]}
+      />
 
       {error && <div style={s.errorBanner}>{error}</div>}
       {success && <div style={s.successBanner}>{success}</div>}
@@ -783,10 +787,7 @@ const s: Record<string, React.CSSProperties> = {
   sub: { fontSize: 13, color: 'var(--color-secondary)', margin: 0, lineHeight: 1.6, maxWidth: 620 },
   actions: { display: 'flex', gap: 8, flexWrap: 'wrap' },
 
-  tabs: { display: 'flex', gap: 20, borderBottom: '1px solid var(--color-line)', marginBottom: 18 },
-  tab: { background: 'none', border: 'none', padding: '0 0 9px', fontSize: 13, color: 'var(--color-secondary)', cursor: 'pointer' },
-  tabOn: { color: 'var(--color-ink)', fontWeight: 600, boxShadow: 'inset 0 -2px 0 var(--color-rail)' },
-  tabCount: { marginLeft: 6, fontSize: 11, color: 'var(--color-secondary)', background: '#F3F4F6', borderRadius: 10, padding: '1px 7px' },
+  // The tab row is app/components/Tabs.tsx now — the count badge went with it.
 
   filters: { display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' },
   tabIntro: { fontSize: 12.5, color: 'var(--color-secondary)', lineHeight: 1.6, margin: '0 0 14px', maxWidth: 680 },

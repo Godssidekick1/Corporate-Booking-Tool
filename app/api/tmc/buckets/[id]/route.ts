@@ -186,17 +186,35 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 
   const { service, bucket } = check
 
-  // deal_code_assignments.bucket_id cascades, so deleting would silently revoke
-  // every code this bucket hands out. Refused with the count instead.
-  const { count } = await service
-    .from('deal_code_assignments')
-    .select('id', { count: 'exact', head: true })
-    .eq('bucket_id', id)
+  // Both assignment tables cascade on bucket_id, so deleting would silently
+  // revoke everything this bucket hands out. Refused with the counts instead.
+  //
+  // Forms of payment were missing from this check until buckets became the only
+  // grouping mechanism: deal codes were guarded, FOP mappings were not, and
+  // deleting a bucket quietly changed how other clients' tickets got paid for.
+  const [{ count: dealCount }, { count: fopCount }] = await Promise.all([
+    service
+      .from('deal_code_assignments')
+      .select('id', { count: 'exact', head: true })
+      .eq('bucket_id', id),
+    service
+      .from('fop_assignments')
+      .select('id', { count: 'exact', head: true })
+      .eq('bucket_id', id),
+  ])
 
-  if (count && count > 0) {
+  const blockers: string[] = []
+  if (dealCount && dealCount > 0) {
+    blockers.push(`${dealCount} deal code${dealCount > 1 ? 's' : ''}`)
+  }
+  if (fopCount && fopCount > 0) {
+    blockers.push(`${fopCount} form${fopCount > 1 ? 's' : ''} of payment`)
+  }
+
+  if (blockers.length > 0) {
     return Response.json(
       {
-        error: `${count} deal code${count > 1 ? 's are' : ' is'} assigned to "${bucket.name}". Remove those assignments before deleting it.`,
+        error: `${blockers.join(' and ')} ${blockers.length === 1 && !blockers[0].includes('s') ? 'is' : 'are'} assigned to "${bucket.name}". Remove those assignments before deleting it.`,
       },
       { status: 409 }
     )

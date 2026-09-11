@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
+import { PAYMENT_TYPES, type PaymentType } from '@/app/lib/fop/paymentTypes'
 import { NextRequest } from 'next/server'
 
 // ── GET /api/tmc/clients/[id] ─────────────────────────────────────────────
@@ -41,15 +42,15 @@ const ALLOWED_APPROVAL_MODES = ['before_booking', 'not_required'] as const
 export const CLIENT_COLUMNS =
   'id, name, status, setup_completed, timezone, currency, country, booking_mode, created_at, ' +
   'client_group_id, managed_by, branch_id, ' +
-  'registered_address, gst_number, industry, primary_contact_phone, size, ' +
+  'registered_address, industry, primary_contact_phone, size, ' +
   'client_code, sap_customer_code, sap_group_code, email, phone, ' +
   'address_1, address_2, city, state, pincode, ' +
   'collections_name, collections_email, collections_mobile, ' +
   'booking_activation, hold_activation, dom_ticketing, intl_ticketing, ' +
   'hold_auto_issue, sbt_ticketing, policy_controlling, personal_bookings_allowed, ' +
-  'agency_fop_allowed, corporate_fop_allowed, traveller_fop_allowed, ' +
+  'agency_fop_allowed, corporate_fop_allowed, ' +
+  'bta_cta_allowed, bta_cta_manual_allowed, fop_priority, ' +
   'discount_active, processing_fee_active, ' +
-  'fop_bucket_id, discount_bucket_id, processing_fee_bucket_id, ' +
   'air_approval_mode, hotel_approval_mode'
 
 // Free text: trimmed, empty becomes NULL. A blank contact should read as "not
@@ -61,9 +62,11 @@ const TEXT_FIELDS = [
   'collections_name', 'collections_email', 'collections_mobile',
 ] as const
 
-// Uppercased on write. GSTINs and client codes are canonically uppercase, and a
-// lowercase copy would not match anything searched for later.
-const UPPERCASE_FIELDS = new Set<string>(['gst_number', 'client_code'])
+// Uppercased on write. A client code is canonically uppercase, and a lowercase
+// copy would not match anything searched for later. GSTINs used to be here too;
+// they live on client_gst_registrations now, because a corporate bills through
+// several of them and one column could hold one.
+const UPPERCASE_FIELDS = new Set<string>(['client_code'])
 
 // The Corporate Settings toggles. Booleans only — anything not a boolean is
 // ignored rather than coerced, so a stray "false" string cannot switch booking
@@ -71,11 +74,14 @@ const UPPERCASE_FIELDS = new Set<string>(['gst_number', 'client_code'])
 const BOOLEAN_FIELDS = [
   'booking_activation', 'hold_activation', 'dom_ticketing', 'intl_ticketing',
   'hold_auto_issue', 'sbt_ticketing', 'policy_controlling', 'personal_bookings_allowed',
-  'agency_fop_allowed', 'corporate_fop_allowed', 'traveller_fop_allowed',
+  'agency_fop_allowed', 'corporate_fop_allowed',
+  // "Traveller pays" splits in two: bta_cta is their card already stored here,
+  // bta_cta_manual is them typing it at the gateway. See app/lib/fop/paymentTypes.ts
+  // — in this product those letters mean the traveller's card, not a corporate
+  // lodged account.
+  'bta_cta_allowed', 'bta_cta_manual_allowed',
   'discount_active', 'processing_fee_active',
 ] as const
-
-const BUCKET_FIELDS = ['fop_bucket_id', 'discount_bucket_id', 'processing_fee_bucket_id'] as const
 
 type UpdateClientBody = {
   name?: string
@@ -84,8 +90,10 @@ type UpdateClientBody = {
   country?: string
   booking_mode?: string
   client_group_id?: string | null
-  gst_number?: string | null
   size?: string | null
+  // Preference order over the four payment types. Always all four — the
+  // booleans above say which are in play, this says which wins when several are.
+  fop_priority?: string[]
   status?: string
   // Which of the TMC's own staff owns this client — the KAM on the old screen.
   managed_by?: string | null
@@ -97,7 +105,6 @@ type UpdateClientBody = {
   hotel_approval_mode?: string
 } & Partial<Record<typeof TEXT_FIELDS[number], string | null>>
   & Partial<Record<typeof BOOLEAN_FIELDS[number], boolean>>
-  & Partial<Record<typeof BUCKET_FIELDS[number], string | null>>
 
 export async function GET(
   req: NextRequest,
@@ -184,7 +191,8 @@ export async function PATCH(
   const body: UpdateClientBody = await req.json()
   const { name, timezone, currency, country, booking_mode, client_group_id} = body
 
-  const update: Record<string, string | boolean | null> = {}
+  // string[] is here for fop_priority, the one column that is not a scalar.
+  const update: Record<string, string | boolean | string[] | null> = {}
 
   // Free text, uniformly. Empty clears rather than storing '' — a blank GST
   // field should read as "not recorded", and every consumer already handles
@@ -265,25 +273,28 @@ export async function PATCH(
     update.status = body.status
   }
 
-  // Every bucket verified against this TMC, for the same reason branch_id is
-  // below: these are plain FKs, so another tenant's bucket would satisfy the
-  // constraint and quietly attach their curated client set to this client's
-  // commercial arrangement.
-  for (const field of BUCKET_FIELDS) {
-    if (body[field] === undefined) continue
-    if (!body[field]) { update[field] = null; continue }
+  // The same four values, each exactly once. Validated here as well as by the
+  // CHECK constraint so a bad payload reads as a 400 explaining itself rather
+  // than a 500 quoting a constraint name.
+  //
+  // Buckets used to be set from this route — three columns naming one bucket
+  // each. They are gone: bucket membership is the mechanism the resolvers
+  // actually read, and it is edited at PUT /api/tmc/clients/[id]/buckets.
+  if (body.fop_priority !== undefined) {
+    const order = body.fop_priority
+    const valid =
+      Array.isArray(order) &&
+      order.length === PAYMENT_TYPES.length &&
+      new Set(order).size === PAYMENT_TYPES.length &&
+      order.every(t => PAYMENT_TYPES.includes(t as PaymentType))
 
-    const { data: bucket } = await service
-      .from('buckets')
-      .select('id')
-      .eq('id', body[field])
-      .eq('tmc_id', tmcId)
-      .maybeSingle()
-
-    if (!bucket) {
-      return Response.json({ error: 'Bucket not found for this TMC' }, { status: 422 })
+    if (!valid) {
+      return Response.json(
+        { error: `fop_priority must list each of ${PAYMENT_TYPES.join(', ')} exactly once` },
+        { status: 400 }
+      )
     }
-    update[field] = body[field]
+    update.fop_priority = order
   }
 
   if (body.managed_by !== undefined) {
@@ -371,6 +382,10 @@ export async function PATCH(
     .from('clients')
     .update(update)
     .eq('id', id)
+    // Scoped again here, not only by the existence check above. That check and
+    // this write are separate statements, so the tenancy guarantee currently
+    // depends on nobody reordering the function — which is not a guarantee.
+    .eq('tmc_id', tmcId)
     .select(CLIENT_COLUMNS)
     .single()
 

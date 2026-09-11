@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import SearchableSelect from '@/app/components/SearchableSelect'
+import Tabs, { useUrlTab } from '@/app/components/Tabs'
 import {
   CATEGORIES,
   ALL_FIELDS,
@@ -10,6 +11,9 @@ import {
 } from '@/app/lib/policy/fields'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
+
+const POLICY_TABS = ['groups', 'clients'] as const
+type PolicyTab = typeof POLICY_TABS[number]
 
 interface Client { id: string; name: string }
 
@@ -170,7 +174,9 @@ function groupIndicatorStyle(active: boolean): React.CSSProperties {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function TmcPolicyPage() {
-  const [tab, setTab] = useState<'groups' | 'clients'>('groups')
+  // Linkable, so Corporate Settings can send you straight to a client's
+  // assignments or to one group's rules rather than to the top of this page.
+  const [tab, setTab] = useUrlTab<PolicyTab>('tab', 'groups', POLICY_TABS)
 
   const [groups, setGroups] = useState<PolicyGroup[]>([])
   const [search, setSearch] = useState('')
@@ -201,6 +207,23 @@ export default function TmcPolicyPage() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [dirty, setDirty] = useState(false)
+
+  // Arriving from Corporate Settings: open the group or client that link named.
+  // Read from the URL directly rather than through useSearchParams — that hook
+  // forces a Suspense boundary and, under Next 16's Cache Components, can hand
+  // back a stale value right after a client-side navigation. This only needs the
+  // URL once, on mount.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const groupId = params.get('groupId')
+    const clientId = params.get('clientId')
+    // Same trade as useUrlTab in app/components/Tabs.tsx: reading the URL during
+    // render would prerender a different selection than hydrates.
+    /* eslint-disable react-hooks/set-state-in-effect */
+    if (groupId) setSelectedGroupId(groupId)
+    if (clientId) setSelectedClientId(clientId)
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [])
 
   const successTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -432,14 +455,14 @@ export default function TmcPolicyPage() {
       </div>
 
       {/* ── Tabs ─────────────────────────────────────────────────── */}
-      <div style={s.tabRow}>
-        <button onClick={() => setTab('groups')} style={{ ...s.tabBtn, ...(tab === 'groups' ? s.tabActive : {}) }}>
-          Policy groups
-        </button>
-        <button onClick={() => setTab('clients')} style={{ ...s.tabBtn, ...(tab === 'clients' ? s.tabActive : {}) }}>
-          Client assignments
-        </button>
-      </div>
+      <Tabs<PolicyTab>
+        active={tab}
+        onChange={setTab}
+        tabs={[
+          { id: 'groups', label: 'Policy groups' },
+          { id: 'clients', label: 'Client assignments' },
+        ]}
+      />
 
       {/* ── Banners ──────────────────────────────────────────────── */}
       {error && (
@@ -899,9 +922,8 @@ const s: Record<string, React.CSSProperties> = {
   select: { height: 40, padding: '0 12px', fontSize: 13, color: '#111827', background: '#fff', border: '1px solid #D1D5DB', borderRadius: 8, outline: 'none' },
   input: { height: 38, padding: '0 10px', fontSize: 13, color: '#111827', background: '#fff', border: '1px solid #D1D5DB', borderRadius: 7, outline: 'none' },
 
-  tabRow: { display: 'flex', gap: 0, marginBottom: 20, borderBottom: '1px solid #E5E7EB' },
-  tabBtn: { padding: '9px 16px', background: 'transparent', border: 'none', borderBottom: '2px solid transparent', fontSize: 13, color: '#6B7280', cursor: 'pointer', marginBottom: -1 },
-  tabActive: { color: '#000835', fontWeight: 600, borderBottomColor: '#000835' },
+  // The tab row moved to app/components/Tabs.tsx — this page's styling is the
+  // one the whole app now uses.
 
   errorBanner: { display: 'flex', alignItems: 'center', gap: 8, background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#DC2626', marginBottom: 16 },
   successBanner: { display: 'flex', alignItems: 'center', gap: 8, background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#065F46', marginBottom: 16 },
