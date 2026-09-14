@@ -103,14 +103,25 @@ export async function GET(req: Request) {
 
   const { data: bookings, error: bookingsError } = await service
     .from('bookings')
-    .select('id, employee_id, booking_type, total_cost, itinerary, policy_verdict, status')
+    .select('id, employee_id, booking_type, total_cost, sell_total, itinerary, policy_verdict, status')
     .in('id', bookingIds)
 
   if (bookingsError) {
     return Response.json({ error: bookingsError.message }, { status: 500 })
   }
 
-  const bookingById = new Map<string, BookingSummary>((bookings ?? []).map(b => [b.id, b as BookingSummary]))
+  // An approver signs off what the COMPANY spends, which is the sell total —
+  // and it is the figure policy was evaluated against, so showing the airline
+  // figure here would put a number next to a verdict that was not computed from
+  // it. The airline figure is dropped rather than sent alongside: an approver is
+  // an ordinary employee, and a markup they could read out of a network response
+  // is not hidden.
+  const bookingById = new Map<string, BookingSummary>(
+    (bookings ?? []).map(b => {
+      const { sell_total, ...rest } = b as BookingSummary & { sell_total: number | null }
+      return [b.id, { ...rest, total_cost: sell_total ?? b.total_cost } as BookingSummary]
+    })
+  )
 
   const employeeIds = Array.from(new Set((bookings ?? []).map(b => b.employee_id)))
   const { data: travelers } = await service

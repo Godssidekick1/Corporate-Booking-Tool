@@ -44,6 +44,18 @@ interface CardRow {
   id: string; label: string; card_type: string | null; last4: string | null; description: string
 }
 
+interface EffectiveCommercial {
+  kind: 'markup' | 'discount' | 'processing_fee'
+  label: string
+  ruleId: string
+  summary: string
+  via: string
+  source: 'client' | 'bucket' | 'client_group'
+  sourceName: string | null
+  ambiguous: boolean
+  beat: { ruleId: string; via: string }[]
+}
+
 const CARD_TYPES = [
   { value: 'VI', label: 'Visa' },
   { value: 'CA', label: 'Mastercard' },
@@ -63,6 +75,8 @@ export default function AllocationsTab({ clientId, form, set }: {
   const [fops, setFops] = useState<Allocation[]>([])
   const [bucketSizes, setBucketSizes] = useState<Record<string, number>>({})
   const [cards, setCards] = useState<CardRow[]>([])
+  const [commercials, setCommercials] = useState<EffectiveCommercial[]>([])
+  const [commercialsEnabled, setCommercialsEnabled] = useState<Record<string, boolean>>({})
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -114,7 +128,20 @@ export default function AllocationsTab({ clientId, form, set }: {
       .catch(() => {})
   }, [clientId])
 
-  useEffect(() => { loadBuckets(); loadAllocations(); loadCards() }, [loadBuckets, loadAllocations, loadCards])
+  const loadCommercials = useCallback(() => {
+    fetch(`/api/tmc/clients/${clientId}/commercials`)
+      .then(r => r.json())
+      .then(d => {
+        if (!d.ok) return
+        setCommercials(d.effective)
+        setCommercialsEnabled(d.enabled ?? {})
+      })
+      .catch(() => {})
+  }, [clientId])
+
+  useEffect(() => {
+    loadBuckets(); loadAllocations(); loadCards(); loadCommercials()
+  }, [loadBuckets, loadAllocations, loadCards, loadCommercials])
 
   // ── Buckets ────────────────────────────────────────────────────────────────
   // The whole list goes up, not a delta. Two screens doing read-modify-write on
@@ -132,8 +159,10 @@ export default function AllocationsTab({ clientId, form, set }: {
       if (!res.ok) { setError(d.error || 'Could not save buckets.'); return }
       setBuckets(d.buckets)
       // Membership changes what reaches this client through a bucket, so the
-      // effective lists below are now stale.
+      // effective lists below are now stale — commercial rules included, since
+      // they are assigned the same three ways.
       loadAllocations()
+      loadCommercials()
     } finally { setBusy(false) }
   }
 
@@ -469,6 +498,51 @@ export default function AllocationsTab({ clientId, form, set }: {
           simply resolve to no stored payment method until that flow is built.
         </p>
       )}
+
+      {/* ── Commercials ──────────────────────────────────────────────────── */}
+      <p style={s.subLabel}>What this client is charged</p>
+      <p style={s.blockDesc}>
+        The markup, discount and processing fee in force, after everything reaching this client has
+        been ranked. Rules are built on the Commercials screens and reach a client the same three
+        ways everything else does — directly, through a bucket, or through their client group.
+      </p>
+
+      {commercials.length === 0 ? (
+        <p style={s.hint}>
+          No commercial rule reaches this client. They are charged the airline fare, with no markup,
+          no discount and no processing fee.
+        </p>
+      ) : (
+        <ul style={s.linkList}>
+          {commercials.map(c => {
+            // A rule can reach a client and still not apply, because the client
+            // has that kind switched off on the Controls tab. Saying so is more
+            // useful than hiding the row — "you have a markup, it is not being
+            // applied" is the answer to a question somebody is about to ask.
+            const off = commercialsEnabled[c.kind] === false
+            return (
+              <li key={c.kind} style={{ ...s.linkItem, opacity: off ? 0.55 : 1 }}>
+                <span style={s.linkName}>{c.label}</span>
+                <span style={s.muted}>{c.summary}</span>
+                <span style={s.muted}>{c.via}</span>
+                {off && <span style={s.pill}>switched off</span>}
+                {c.ambiguous && <span style={s.warnBadge}>ambiguous</span>}
+                {c.beat.length > 0 && (
+                  <span style={s.muted}>beat {c.beat.length} other{c.beat.length > 1 ? 's' : ''}</span>
+                )}
+              </li>
+            )
+          })}
+        </ul>
+      )}
+
+      <p style={s.hint}>
+        <Link href="/tmc/configurations/markup" style={s.inlineLink}>Markup</Link>
+        {' · '}
+        <Link href="/tmc/configurations/discounts" style={s.inlineLink}>Discounts</Link>
+        {' · '}
+        <Link href="/tmc/configurations/processing-fees" style={s.inlineLink}>Processing fees</Link>
+      </p>
     </>
   )
 }

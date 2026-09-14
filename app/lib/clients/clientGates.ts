@@ -3,6 +3,7 @@ import {
   DEFAULT_PAYMENT_PRIORITY, PAYMENT_TYPES, normalisePriority,
   type PaymentType,
 } from '@/app/lib/fop/paymentTypes'
+import type { CommercialKind } from '@/app/lib/commercials/calcOnByKind'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
 
@@ -52,6 +53,17 @@ export interface ClientGates {
   // disagreeing with the flags: the order says what is preferred, the flags say
   // what is available, and neither is trying to express the other.
   paymentPriority: PaymentType[]
+  // Which commercial rules may be applied to this client's fares.
+  //
+  // Two of these existed before the engine did — 20260915000000 added
+  // discount_active and processing_fee_active as RECORDED ONLY, with a comment
+  // saying so. They stop being inert here. markup_active joined them with the
+  // commercial rules migration.
+  //
+  // A kind switched off resolves to no rule at all, which is deliberately
+  // different from having no rule configured: the arrangement survives being
+  // switched off, so turning it back on does not mean rebuilding it.
+  enabledCommercialKinds: Set<CommercialKind>
 }
 
 const PERMISSIVE: ClientGates = {
@@ -67,13 +79,25 @@ const PERMISSIVE: ClientGates = {
   allowedPayers: new Set(['agency', 'corporate', 'traveller'] as const),
   allowedPaymentTypes: new Set(PAYMENT_TYPES),
   paymentPriority: DEFAULT_PAYMENT_PRIORITY,
+  // THE SECOND EXCEPTION TO FAILING OPEN, alongside personal bookings above,
+  // and for the same kind of reason: permissive is the surprising answer here.
+  //
+  // Every other gate in this file fails open because blocking travel over a
+  // database blip is worse than letting it through. But these decide what a
+  // corporate is CHARGED. If this read fails while the rules themselves load
+  // fine — a real possibility, they are separate queries — an open default
+  // applies a markup to a client who switched it off, and bills them for it.
+  // Empty means we charge the airline fare and nothing more. An unexpected
+  // discount is a conversation; an unexpected charge is a dispute.
+  enabledCommercialKinds: new Set<CommercialKind>(),
 }
 
 export const CLIENT_GATE_COLUMNS =
   'booking_activation, hold_activation, dom_ticketing, intl_ticketing, ' +
   'policy_controlling, personal_bookings_allowed, ' +
   'agency_fop_allowed, corporate_fop_allowed, ' +
-  'bta_cta_allowed, bta_cta_manual_allowed, fop_priority'
+  'bta_cta_allowed, bta_cta_manual_allowed, fop_priority, ' +
+  'markup_active, discount_active, processing_fee_active'
 
 // Declared rather than inferred. Supabase derives a row type from a select
 // STRING LITERAL; the constant above is a concatenation, so inference gives up
@@ -91,6 +115,9 @@ interface ClientGateRow {
   bta_cta_allowed?: boolean | null
   bta_cta_manual_allowed?: boolean | null
   fop_priority?: string[] | null
+  markup_active?: boolean | null
+  discount_active?: boolean | null
+  processing_fee_active?: boolean | null
 }
 
 export async function loadClientGates(
@@ -122,6 +149,20 @@ export async function loadClientGates(
     if (types.has('corporate')) payers.add('corporate')
     if (types.has('bta_cta') || types.has('bta_cta_manual')) payers.add('traveller')
 
+    // Each test matches its column's OWN default, which is not the same for all
+    // three. markup_active defaults true, so `!== false` reads an undefined
+    // column the way the database would. discount_active and
+    // processing_fee_active default FALSE — they were added recorded-only by
+    // 20260915000000 — so they use `=== true`, the same treatment
+    // personal_bookings_allowed and bta_cta_manual_allowed already get above.
+    //
+    // Getting this backwards would bill a client for an arrangement nobody
+    // switched on.
+    const commercialKinds = new Set<CommercialKind>()
+    if (data.markup_active !== false) commercialKinds.add('markup')
+    if (data.discount_active === true) commercialKinds.add('discount')
+    if (data.processing_fee_active === true) commercialKinds.add('processing_fee')
+
     return {
       // `!== false` rather than a truthy test: a column that is missing because
       // the migration has not run yet reads as undefined, and undefined must
@@ -135,6 +176,7 @@ export async function loadClientGates(
       allowedPayers: payers,
       allowedPaymentTypes: types,
       paymentPriority: normalisePriority(data.fop_priority),
+      enabledCommercialKinds: commercialKinds,
     }
   } catch (error) {
     console.error('[clientGates] could not read settings, allowing through', { clientId, error })

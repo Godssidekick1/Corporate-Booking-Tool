@@ -9,7 +9,15 @@ interface Booking {
   status: string
   provider: string
   provider_order_id: string
+  // What the AIRLINE charges. Kept for reference; the traveller is shown
+  // sell_total.
   total_cost: number
+  // What the corporate is invoiced. Undefined on bookings made before
+  // commercial rules existed, hence the fallback at every read site.
+  sell_total?: number
+  // Discount and processing fee only — the server never sends a markup, so
+  // there is nothing here to accidentally render.
+  commercial_lines?: { source: string; label: string; sign: -1 | 1; amount: number }[]
   policy_verdict: 'green' | 'amber' | 'red' | null
   policy_verdict_detail: {
     breaches?: { limit_key: string; kind: string; policyValue: unknown; actualValue: unknown }[]
@@ -382,12 +390,32 @@ export default function ConfirmBookingPage() {
             </div>
           )}
 
+          {/* The fare line. Derived from sell_total minus everything itemised
+              below it, so it reconciles whatever combination applies — and so a
+              markup, which is never itemised, stays inside it. */}
           <div style={s.fareRow}>
             <span style={s.fareLabel}>Fare</span>
             <span style={s.fareValue}>
-              {booking.fare_breakdown?.currency ?? ''} {((booking.total_cost ?? 0) - (booking.fare_breakdown?.seatFees ?? 0)).toLocaleString('en-IN')}
+              {booking.fare_breakdown?.currency ?? ''} {(
+                (booking.sell_total ?? booking.total_cost ?? 0)
+                - (booking.fare_breakdown?.seatFees ?? 0)
+                - (booking.commercial_lines ?? []).reduce((sum, l) => sum + l.sign * l.amount, 0)
+              ).toLocaleString('en-IN')}
             </span>
           </div>
+
+          {/* Discount and processing fee. The server sends only the lines a
+              traveller may see. */}
+          {(booking.commercial_lines ?? []).map(line => (
+            <div key={line.source} style={s.fareRow}>
+              <span style={s.fareLabel}>{line.label}</span>
+              <span style={{ ...s.fareValue, ...(line.sign === -1 ? s.fareCredit : {}) }}>
+                {line.sign === -1 ? '− ' : '+ '}
+                {booking.fare_breakdown?.currency ?? ''} {line.amount.toLocaleString('en-IN')}
+              </span>
+            </div>
+          ))}
+
           {!!booking.fare_breakdown?.seatFees && (
             <div style={s.fareRow}>
               <span style={s.fareLabel}>Seat selection</span>
@@ -399,7 +427,7 @@ export default function ConfirmBookingPage() {
           <div style={s.fareRow}>
             <span style={s.fareLabel}>Total</span>
             <span style={s.fareValue}>
-              {booking.fare_breakdown?.currency ?? ''} {booking.total_cost?.toLocaleString('en-IN')}
+              {booking.fare_breakdown?.currency ?? ''} {(booking.sell_total ?? booking.total_cost)?.toLocaleString('en-IN')}
             </span>
           </div>
           {booking.fare_breakdown && (
@@ -569,6 +597,9 @@ const s: Record<string, React.CSSProperties> = {
   fareRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' },
   fareLabel: { fontSize: '13px', color: '#6B7280' },
   fareValue: { fontSize: '16px', fontWeight: 700, color: '#0A0A14' },
+  // A reduction reads green, so a discount is legible as a benefit rather than
+  // as one more number in a column.
+  fareCredit: { color: '#166534' },
   metaTags: { display: 'flex', gap: '6px' },
   tag: { fontSize: '10px', color: '#6B7280', background: '#F3F4F6', padding: '3px 9px', borderRadius: '5px', fontWeight: 500 },
 

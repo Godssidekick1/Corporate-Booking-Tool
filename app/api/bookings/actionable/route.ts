@@ -35,7 +35,7 @@ export async function GET() {
 
   const { data: bookings, error } = await service
     .from('bookings')
-    .select('id, status, total_cost, itinerary, updated_at')
+    .select('id, status, total_cost, sell_total, itinerary, updated_at')
     .eq('employee_id', employee.id)
     .in('status', ACTIONABLE_STATUSES)
     .order('updated_at', { ascending: false })
@@ -49,7 +49,8 @@ export async function GET() {
     bookings: (bookings ?? []).map(b => ({
       id: b.id,
       status: b.status,
-      totalCost: b.total_cost,
+      // The sell figure, never the airline one — see /api/bookings for why.
+      totalCost: b.sell_total ?? b.total_cost,
       itinerary: b.itinerary,
       updatedAt: b.updated_at,
     })),

@@ -50,6 +50,12 @@ interface PriceApiResult {
     Tax: number
     TotalFare: number
   }[]
+  // Commercial lines the traveller is allowed to see — a discount and a
+  // processing fee, each already signed. Markup is NEVER among them: it is
+  // folded into totalFare above and the server does not send it at all.
+  lines?: { source: string; label: string; sign: -1 | 1; amount: number }[]
+  // totalFare plus those lines. What they actually pay, before seat fees.
+  sellTotal?: number
 }
 
 interface PolicyPreview {
@@ -185,6 +191,12 @@ export default function SelectFarePage() {
           pricingKey,
           provider: flightResult.provider,
           resultIndex: flightResult.itemNo,
+          // The selected itinerary. Commercial rules match on category
+          // (domestic/international × BSP/LCC), airline, cabin and booking
+          // class — none of which can be read from a pricing key. Only the
+          // ROUTE shape is taken from this; every figure is re-derived server
+          // side from Amadeus's own response.
+          itinerary: flightResult,
         }),
       })
       const data: PriceApiResult = await res.json()
@@ -209,6 +221,10 @@ export default function SelectFarePage() {
         totalFare: data.totalFare!,
         baseFare: data.baseFare!,
         tax: data.tax!,
+        lines: data.lines,
+        // Falls back to totalFare when no commercial rule applies, so every
+        // downstream reader can treat sellTotal as "the price" unconditionally.
+        sellTotal: data.sellTotal ?? data.totalFare!,
         currency: data.currency!,
         isRefundable: data.isRefundable!,
         fareType: data.fareType!,
@@ -438,9 +454,26 @@ export default function SelectFarePage() {
                 <span style={s.fareLabel}>Taxes & fees</span>
                 <span style={s.fareValue}>{pricing.currency} {pricing.tax?.toLocaleString('en-IN')}</span>
               </div>
+
+              {/* Discount and processing fee, each on its own line. The server
+                  sends only the lines a traveller is allowed to see — a markup
+                  is folded into the fare above and is not in this array,
+                  because anything sent is visible in devtools. */}
+              {(pricing.lines ?? []).map(line => (
+                <div key={line.source} style={s.fareRow}>
+                  <span style={s.fareLabel}>{line.label}</span>
+                  <span style={{ ...s.fareValue, ...(line.sign === -1 ? s.fareCredit : {}) }}>
+                    {line.sign === -1 ? '− ' : '+ '}
+                    {pricing.currency} {line.amount.toLocaleString('en-IN')}
+                  </span>
+                </div>
+              ))}
+
               <div style={{ ...s.fareRow, ...s.fareRowTotal }}>
                 <span style={s.fareTotalLabel}>Total fare</span>
-                <span style={s.fareTotalValue}>{pricing.currency} {pricing.totalFare?.toLocaleString('en-IN')}</span>
+                <span style={s.fareTotalValue}>
+                  {pricing.currency} {(pricing.sellTotal ?? pricing.totalFare)?.toLocaleString('en-IN')}
+                </span>
               </div>
 
               {pricing.passengerBreakup && pricing.passengerBreakup.length > 1 && (
@@ -571,6 +604,9 @@ const s: Record<string, React.CSSProperties> = {
   fareRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0' },
   fareLabel: { fontSize: '13px', color: '#6B7280' },
   fareValue: { fontSize: '13px', color: '#111827', fontWeight: 500 },
+  // A reduction reads green, so a discount is legible as a benefit rather than
+  // as one more number in a column.
+  fareCredit: { color: '#166534' },
   fareRowTotal: { borderTop: '1px solid #F3F4F6', marginTop: '4px', paddingTop: '12px' },
   fareTotalLabel: { fontSize: '14px', fontWeight: 700, color: '#111827' },
   fareTotalValue: { fontSize: '18px', fontWeight: 700, color: '#0A0A14' },

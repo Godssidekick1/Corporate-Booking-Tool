@@ -39,7 +39,9 @@ export async function GET(req: NextRequest) {
 
   const { data: bookings, error } = await service
     .from('bookings')
-    .select('id, status, pnr, total_cost, itinerary, traveler_snapshot, fare_breakdown, trip_id, created_at')
+    // sell_total alongside total_cost: the traveller is shown what the company
+    // is invoiced, never the airline figure. See the mapping below.
+    .select('id, status, pnr, total_cost, sell_total, itinerary, traveler_snapshot, fare_breakdown, trip_id, created_at')
     .eq('employee_id', employee.id)
     .order('created_at', { ascending: false })
     .limit(limit)
@@ -62,11 +64,25 @@ export async function GET(req: NextRequest) {
     status: string
     pnr: string | null
     total_cost: number | null
+    sell_total: number | null
     itinerary: unknown
     traveler_snapshot: unknown
     fare_breakdown: unknown
     trip_id: string | null
     created_at: string
+  }
+
+  // ── The one number a traveller sees ────────────────────────────────────────
+  // total_cost is what the AIRLINE charges and sell_total is what the company is
+  // invoiced. A traveller is shown the latter, and the former is dropped here
+  // rather than sent and ignored — a markup discoverable in a network response
+  // is not hidden, whatever the UI renders.
+  //
+  // Mapped onto `total_cost` so nothing downstream changes; the fallback covers
+  // bookings made before commercial rules existed.
+  function sellSide<T extends { total_cost: number | null; sell_total: number | null }>(row: T) {
+    const { sell_total, ...rest } = row
+    return { ...rest, total_cost: sell_total ?? row.total_cost }
   }
 
   // Every trip that owns at least one of these bookings, plus any trip the
@@ -86,10 +102,12 @@ export async function GET(req: NextRequest) {
   // Bookings without a trip_id (booked before trip-linking existed, or any
   // future path that still allows it) are grouped under a null "trip" —
   // the frontend renders these as a flat "Other flights" section.
-  const grouped = new Map<string, { trip: TripRow; bookings: BookingRow[] }>()
-  const ungrouped: BookingRow[] = []
+  type SafeBooking = ReturnType<typeof sellSide<BookingRow>>
+  const grouped = new Map<string, { trip: TripRow; bookings: SafeBooking[] }>()
+  const ungrouped: SafeBooking[] = []
 
-  for (const booking of (bookings ?? []) as BookingRow[]) {
+  for (const row of (bookings ?? []) as BookingRow[]) {
+    const booking = sellSide(row)
     if (booking.trip_id && tripById.has(booking.trip_id)) {
       const trip = tripById.get(booking.trip_id)!
       if (!grouped.has(trip.id)) grouped.set(trip.id, { trip, bookings: [] })

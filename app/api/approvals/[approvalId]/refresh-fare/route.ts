@@ -6,6 +6,10 @@ import { extractPricingDetails } from '@/app/api/book/price/route'
 import { checkBookingAgainstPolicy } from '@/app/lib/rule-engine/checkBookingAgainstPolicy'
 import { buildPolicyInputsFromFlight } from '@/app/lib/rule-engine/buildPolicyInputs'
 import { buildReason } from '@/app/lib/approval-engine/resolveApprovalTier'
+import { stampCommercials } from '@/app/lib/commercials/stampCommercials'
+import { emptyCommercials } from '@/app/lib/commercials/composeSellPrice'
+import type { FareComponents } from '@/app/lib/commercials/fareComponents'
+import type { FlatFlightResult } from '@/app/lib/book/types'
 
 // ── POST /api/approvals/[approvalId]/refresh-fare ────────────────────────
 // A pending approval can sit for hours (see the 10-hour "urgent" badge) —
@@ -68,7 +72,7 @@ export async function POST(
 
   const { data: booking } = await service
     .from('bookings')
-    .select('id, employee_id, status, provider, search_key, pricing_key, result_index, itinerary, fare_breakdown')
+    .select('id, employee_id, client_id, status, provider, search_key, pricing_key, result_index, itinerary, fare_breakdown')
     .eq('id', approval.booking_id)
     .maybeSingle()
 
@@ -105,18 +109,50 @@ export async function POST(
     // itself, so carry the existing seat fee total forward into the new
     // grand total rather than dropping it.
     const existingSeatFees = (booking.fare_breakdown as { seatFees?: number } | null)?.seatFees ?? 0
-    const newTotalFare = (details.totalFare ?? 0) + existingSeatFees
 
     const flight = booking.itinerary as Parameters<typeof buildPolicyInputsFromFlight>[0]['flight'] | null
+
+    // ── Re-run the commercials too ───────────────────────────────────────────
+    // A refresh "becomes the new official price/key for this booking", so the
+    // sell price has to be recomputed with it. Without this the booking would
+    // carry a fresh airline fare against a stale markup and an approver would be
+    // signing off a number that no longer reconciles.
+    //
+    // Rules are re-resolved rather than reused from the original quote, on
+    // purpose: they are date-windowed, and a rule that lapsed between booking
+    // and approval should stop applying.
+    const components: FareComponents = {
+      base: details.baseFare ?? 0,
+      otherTax: details.tax ?? 0,
+      fuelSurcharge: details.fuelSurcharge ?? 0,
+      taxLines: details.taxLines ?? [],
+      total: details.totalFare ?? 0,
+    }
+
+    const { record } = booking.client_id
+      ? await stampCommercials(service, {
+          clientId: booking.client_id,
+          flight: (flight as FlatFlightResult | null) ?? null,
+          components,
+          pax: Math.max(1, details.passengerBreakup?.length ?? 1),
+        })
+      : { record: emptyCommercials(components) }
+
+    // The airline side keeps total_cost; the client side gets sell_total. Seat
+    // fees are an airline charge and land on both, unmarked-up.
+    const newTotalFare = (details.totalFare ?? 0) + existingSeatFees
+    const newSellTotal = record.sellTotal + existingSeatFees
 
     let policyVerdict: string | null = null
     let policyVerdictDetail: unknown = null
     let reason = 'Policy could not be re-evaluated for this booking.'
 
     if (flight) {
+      // Against the SELL total, matching add-passenger: a markup the traveller
+      // cannot see is still money the company spends.
       const inputs = buildPolicyInputsFromFlight({
         flight,
-        totalFare: newTotalFare,
+        totalFare: newSellTotal,
         isRefundable: details.isRefundable ?? false,
         selectedSeatFees: existingSeatFees ? [String(existingSeatFees)] : [],
       })
@@ -133,7 +169,7 @@ export async function POST(
       if (ruleResult.ok) {
         policyVerdict = ruleResult.verdict
         policyVerdictDetail = { breaches: ruleResult.breaches, costTier: ruleResult.costTier }
-        reason = buildReason(ruleResult.breaches, ruleResult.costTier, newTotalFare)
+        reason = buildReason(ruleResult.breaches, ruleResult.costTier, newSellTotal)
       } else {
         reason = ruleResult.message
       }
@@ -143,6 +179,8 @@ export async function POST(
       .from('bookings')
       .update({
         total_cost: newTotalFare,
+        sell_total: newSellTotal,
+        commercials: record,
         amadeus_key: details.key,
         policy_verdict: policyVerdict,
         policy_verdict_detail: policyVerdictDetail,

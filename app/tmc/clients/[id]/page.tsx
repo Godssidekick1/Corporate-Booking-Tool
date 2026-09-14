@@ -448,19 +448,27 @@ export default function CorporateSettingsPage() {
             />
           </div>
 
-          <p style={s.subLabel}>Commercial flags</p>
+          <p style={s.subLabel}>Commercials</p>
+          <p style={s.blockDesc}>
+            Whether each kind of commercial rule is applied to this client&rsquo;s fares. Switching
+            one off leaves the rules assigned to them intact — turning it back on does not mean
+            rebuilding anything. Which rules actually reach them is on the Allocations tab.
+          </p>
           <div style={s.toggles}>
+            <Toggle
+              label="Markup" checked={form.markup_active !== false}
+              onChange={v => set('markup_active', v)}
+              effect="Off: this client sees the airline fare. On: markup is added to it and never shown as a separate line."
+            />
             <Toggle
               label="Discount" checked={form.discount_active === true}
               onChange={v => set('discount_active', v)}
-              effect="Recorded only — no discount is calculated yet. The Discounts master is still to come."
-              reserved
+              effect="On: any discount reaching them is taken off the total as its own line. The airline does not fund it — it comes out of your margin."
             />
             <Toggle
               label="Processing fee" checked={form.processing_fee_active === true}
               onChange={v => set('processing_fee_active', v)}
-              effect="Recorded only — no fee is calculated yet."
-              reserved
+              effect="On: a service charge is added as its own line, multiplied by passengers and, if charged per sector, by sectors."
             />
           </div>
         </>

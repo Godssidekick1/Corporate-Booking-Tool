@@ -120,14 +120,60 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ── The quote ──────────────────────────────────────────────────────────────
+  // The browser is no longer the source of truth for price, and cannot be: with
+  // markup embedded in the fare it holds an inflated figure, and sending that to
+  // the airline would quote our own markup to them. The server persisted the
+  // airline-side numbers at /api/book/price; this recovers them.
+  //
+  // `totalFare` still arrives in the body and is deliberately IGNORED for money.
+  // It is left in the payload rather than removed so an older client does not
+  // 400 mid-deploy, and so the log below can show when the two disagree — which
+  // is exactly the signal that markup is working.
+  const { data: quote } = await service
+    .from('price_quotes')
+    .select('airline_components, commercials, sell_total, employee_id')
+    .eq('amadeus_key', key)
+    .eq('reference_no', referenceNo)
+    .maybeSingle()
+
+  if (!quote || quote.employee_id !== employee.id) {
+    // Refused rather than falling back to the browser's number. The fallback is
+    // the bug: it would send a marked-up fare to the airline. Re-pricing is one
+    // click and always correct.
+    return Response.json({
+      error: 'This price is no longer held. Please go back and price this flight again.',
+      code: 'QUOTE_EXPIRED',
+    }, { status: 409 })
+  }
+
+  const airlineComponents = quote.airline_components as { total?: number } | null
+  const airlineTotal = Number(airlineComponents?.total ?? 0)
+  const seatFeeTotal = Number(seatFees ?? 0)
+
+  // What the airline is owed, and what the corporate is invoiced. Seat fees are
+  // an airline charge, so they land on both sides unmarked-up.
+  const airlineGrandTotal = airlineTotal + seatFeeTotal
+  const sellGrandTotal = Number(quote.sell_total ?? airlineTotal) + seatFeeTotal
+
+  if (Math.abs(Number(totalFare) - sellGrandTotal) > 1) {
+    // Not an error — a search can be minutes old and rules are date-windowed.
+    // Logged because a persistent gap means the two are computing differently.
+    console.info('[add-passenger] browser total differs from the held quote', {
+      browser: totalFare, quoted: sellGrandTotal,
+    })
+  }
+
   try {
     const result = await amadeus.addPassenger(
       key,
       referenceNo,
       customerInfo,
-      String(totalFare),
-      String(totalFare),
-      String(seatFees ?? 0)
+      // THE AIRLINE FIGURE, never the sell price. This is the line the whole
+      // price_quotes table exists to make correct.
+      String(airlineGrandTotal),
+      String(airlineGrandTotal),
+      String(seatFeeTotal)
     )
 
     // Run the Rule Engine BEFORE inserting, so the verdict can be written in
@@ -159,7 +205,13 @@ export async function POST(req: NextRequest) {
         .flatMap(p => p.SeatListDetails ?? [])
         .map(seat => seat.SeatFee)
 
-      const inputs = buildPolicyInputsFromFlight({ flight, totalFare, isRefundable, selectedSeatFees })
+      // Policy is checked against the SELL total — what the company actually
+      // spends — not the airline figure. A markup the traveller cannot see is
+      // still money leaving the corporate's budget, and a limit that ignored it
+      // would approve trips the company never agreed to fund.
+      const inputs = buildPolicyInputsFromFlight({
+        flight, totalFare: sellGrandTotal, isRefundable, selectedSeatFees,
+      })
       travelTypeForApproval = inputs.travelType
       const ruleResult = await checkBookingAgainstPolicy(service, {
         employeeId: employee.id,
@@ -174,7 +226,7 @@ export async function POST(req: NextRequest) {
         policyStatus = 'evaluated'
         policyVerdict = ruleResult.verdict
         policyVerdictDetail = { breaches: ruleResult.breaches, costTier: ruleResult.costTier }
-        reason = buildReason(ruleResult.breaches, ruleResult.costTier, totalFare)
+        reason = buildReason(ruleResult.breaches, ruleResult.costTier, sellGrandTotal)
       } else {
         // no_band / no_policy_group / overlapping_policy_groups /
         // no_policy_rules — leave policyStatus as 'not_evaluated', but
@@ -213,7 +265,12 @@ export async function POST(req: NextRequest) {
         requested_for: employee.id,
         booking_type: 'flight',
         status: 'pending_approval',
-        total_cost: totalFare,
+        // total_cost keeps its existing meaning — what the AIRLINE charges — so
+        // /api/tmc/stats and every other reader of it stay correct. sell_total
+        // is the new number: what the corporate is invoiced.
+        total_cost: airlineGrandTotal,
+        sell_total: sellGrandTotal,
+        commercials: quote.commercials,
         provider,
         provider_order_id: referenceNo,
         amadeus_key: key,

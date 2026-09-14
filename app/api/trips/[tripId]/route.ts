@@ -47,7 +47,7 @@ export async function GET(
 
   const { data: bookings } = await service
     .from('bookings')
-    .select('id, booking_type, status, total_cost, provider_order_id, pnr, itinerary, created_at')
+    .select('id, booking_type, status, total_cost, sell_total, provider_order_id, pnr, itinerary, created_at')
     .eq('trip_id', tripId)
     .order('created_at', { ascending: true })
 
@@ -60,7 +60,12 @@ export async function GET(
   return Response.json({
     ok: true,
     trip,
-    bookings: bookings ?? [],
+    // The sell figure, never the airline one — see /api/bookings for why the
+    // airline total is dropped rather than sent alongside.
+    bookings: (bookings ?? []).map(b => {
+      const { sell_total, ...rest } = b
+      return { ...rest, total_cost: sell_total ?? b.total_cost }
+    }),
     expenses: expenses ?? [],
   })
 }

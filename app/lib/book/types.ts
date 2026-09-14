@@ -46,6 +46,20 @@ export interface PenaltyLine {
   text: string   // free-text as Amadeus sends it, e.g. "INR3000" or "0" — never parsed, just trimmed
 }
 
+// One filed tax, by code. YQ is conventionally the fuel/insurance surcharge and
+// YR the carrier-imposed misc fee — both are surcharges filed in the TAX box
+// rather than in the fare, and airlines use them somewhat interchangeably.
+// That is exactly why a commercial rule calculating on "BF+YQ" and one
+// calculating on "BF+YQ+YR" are different arrangements worth different money.
+//
+// These arrive from Amadeus on every response (FareBreakDown.Taxes.Tax[]) and
+// were discarded at the search/price mapping boundary until commercial rules
+// needed them.
+export interface TaxLine {
+  code: string
+  amount: number
+}
+
 // One fare option for this flight. Real responses seen so far only ever
 // contain one of these per flight, but Amadeus's own shape
 // (PricingInfos.PricingInfo) is an array, and production may return more
@@ -55,7 +69,16 @@ export interface FareOption {
   currency?: string
   totalFare?: number
   baseFare?: number
+  // The aggregate, from Total.OtherTax. NOT guaranteed to equal
+  // totalFare - baseFare: Total.FuelSurcharge is a SIBLING field, so YQ may or
+  // may not be counted inside OtherTax. Use taxLines when a rule needs a
+  // specific code, never arithmetic on this.
   tax?: number
+  // Per-code detail and the fuel surcharge, carried for commercial rules whose
+  // CalcOn names a component (bf_yq, bf_yq_yr, yq, yr, other_tax). Optional
+  // because not every provider response itemises taxes.
+  taxLines?: TaxLine[]
+  fuelSurcharge?: number
   isNdc?: boolean
   refundable?: boolean
   fareType?: string

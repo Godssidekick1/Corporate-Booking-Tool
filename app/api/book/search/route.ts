@@ -2,6 +2,10 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic } from '@/app/lib/amadeus/client'
 import { harvestAirlines } from '@/app/lib/reference/harvestAirlines'
+import {
+  loadCommercialContext, priceWithContext, type CommercialContext,
+} from '@/app/lib/commercials/stampCommercials'
+import { round2 } from '@/app/lib/commercials/fareComponents'
 import { NextRequest, after } from 'next/server'
 
 // ── POST /api/book/search ────────────────────────────────────────────
@@ -35,6 +39,14 @@ export interface PenaltyLine {
   text: string   // free-text as Amadeus sends it, e.g. "INR3000" or "0" — never parsed, just trimmed
 }
 
+// See the same type in app/lib/book/types.ts. YQ/YR are surcharges filed in the
+// tax box rather than the fare, and a commercial rule calculating on BF+YQ
+// needs them itemised.
+export interface TaxLine {
+  code: string
+  amount: number
+}
+
 // One fare option for this flight. Today's real responses only ever contain
 // one of these per flight (confirmed against UAT), but the underlying
 // Amadeus shape (PricingInfos.PricingInfo is an array) supports more than
@@ -45,7 +57,12 @@ export interface FareOption {
   currency: string | undefined
   totalFare: number | undefined
   baseFare: number | undefined
+  // Total.OtherTax. Not guaranteed to equal totalFare - baseFare, because
+  // Total.FuelSurcharge is a sibling field — use taxLines for anything that
+  // needs a specific code.
   tax: number | undefined
+  taxLines: TaxLine[] | undefined
+  fuelSurcharge: number | undefined
   isNdc: boolean | undefined
   refundable: boolean | undefined
   fareType: string | undefined
@@ -84,6 +101,67 @@ export interface FlatFlightResult {
   baseFare: number | undefined
   isNdc: boolean | undefined
   refundable: boolean | undefined
+}
+
+// ── applyMarkup ──────────────────────────────────────────────────────────────
+// Inflate one search result by whatever markup reaches this client, and strip
+// every trace of the airline's own figures from it.
+//
+// THE MARKUP GOES ON THE BASE FARE AS WELL AS THE TOTAL, deliberately. Adding it
+// to the total alone would leave base + tax ≠ total, and a traveller who adds up
+// the fare breakdown would find an unexplained difference — which is exactly the
+// thing that must not be discoverable. Moving base and total together reads as a
+// pricier fare, which is what it is meant to look like.
+//
+// taxLines and fuelSurcharge are REMOVED on the way out. They are airline data
+// the browser has no use for, and anything sent is visible in devtools.
+function applyMarkup(
+  context: CommercialContext,
+  result: FlatFlightResult,
+  pax: number
+): FlatFlightResult {
+  function markupFor(option: { baseFare?: number; totalFare?: number; tax?: number; taxLines?: { code: string; amount: number }[]; fuelSurcharge?: number }): number {
+    if (context.rules.length === 0) return 0
+    if (option.totalFare === undefined || option.baseFare === undefined) return 0
+
+    const { record } = priceWithContext(context, {
+      flight: result,
+      components: {
+        base: option.baseFare,
+        otherTax: option.tax ?? 0,
+        fuelSurcharge: option.fuelSurcharge ?? 0,
+        taxLines: option.taxLines ?? [],
+        total: option.totalFare,
+      },
+      pax,
+    })
+
+    // Only the embedded adjustment. Discount and fee are resolved by the same
+    // call — they have to be, since markup is calculated on the discounted
+    // amount — but neither is applied to a search row.
+    return record.adjustments.find(a => a.source === 'markup')?.amount ?? 0
+  }
+
+  const fareOptions = result.fareOptions.map(option => {
+    const markup = markupFor(option)
+    return {
+      ...option,
+      baseFare: option.baseFare !== undefined ? round2(option.baseFare + markup) : undefined,
+      totalFare: option.totalFare !== undefined ? round2(option.totalFare + markup) : undefined,
+      taxLines: undefined,
+      fuelSurcharge: undefined,
+    }
+  })
+
+  // The top-level fare fields mirror fareOptions[0], as they already did.
+  const primary = fareOptions[0]
+
+  return {
+    ...result,
+    fareOptions,
+    baseFare: primary?.baseFare,
+    totalFare: primary?.totalFare,
+  }
 }
 
 function isValidTravelDate(value: string): boolean {
@@ -199,6 +277,19 @@ export async function POST(req: NextRequest) {
       totalFare: pricingInfo.Total?.Fare ? Number(pricingInfo.Total.Fare) : undefined,
       baseFare: pricingInfo.Total?.BaseFare ? Number(pricingInfo.Total.BaseFare) : undefined,
       tax: pricingInfo.Total?.OtherTax ? Number(pricingInfo.Total.OtherTax) : undefined,
+      // Taxes by code, read from the FIRST fare breakdown — the adult entry.
+      // Per-pax tax detail is not carried: a commercial rule calculates on the
+      // itinerary's components, and the per-passenger split is in
+      // passengerBreakup on the price step for anyone who needs it.
+      //
+      // Amounts arrive as strings, like every other money field from this
+      // provider. Coerced exactly once, here.
+      taxLines: fareBreakdown?.Taxes?.Tax
+        ? fareBreakdown.Taxes.Tax.map(t => ({ code: t.TaxCode, amount: Number(t.Amount) || 0 }))
+        : undefined,
+      fuelSurcharge: pricingInfo.Total?.FuelSurcharge
+        ? Number(pricingInfo.Total.FuelSurcharge)
+        : undefined,
       isNdc: pricingInfo.IsNDC,
       refundable: fareBreakdown?.Refundable === 'Refundable',
       fareType: pricingInfo.FareType,
@@ -286,9 +377,27 @@ export async function POST(req: NextRequest) {
   }
 })
 
+    // ── Markup ───────────────────────────────────────────────────────────────
+    // Applied HERE, not at booking, because it must reach the traveller as a
+    // more expensive flight rather than as a line item they could identify.
+    //
+    // The context is loaded ONCE and applied in memory. Resolving per result
+    // would be four queries plus a category lookup times thirty results, on the
+    // most latency-sensitive request in the product.
+    //
+    // Discount and processing fee are deliberately NOT applied here. Both depend
+    // on passenger and sector counts that belong to a priced itinerary, not to a
+    // search row — they appear at /api/book/price, as their own visible lines.
+    // applyMarkup runs even when no rule exists, because it also STRIPS the
+    // airline tax detail on the way out. Conditioning it on rules would leak
+    // taxLines and fuelSurcharge to any client that happens to have no markup —
+    // inconsistent, and the browser has no use for either.
+    const context = await loadCommercialContext(service, employee.client_id)
+    const priced = results.map(result => applyMarkup(context, result, adult + child))
+
     return Response.json({
   ok: true,
-  results,
+  results: priced,
   availabilityKey: availability.Key,
 })
 

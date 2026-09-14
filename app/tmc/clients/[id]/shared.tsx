@@ -54,6 +54,8 @@ export interface Client {
   bta_cta_manual_allowed: boolean
   // Preference order over all four payment types, most preferred first.
   fop_priority: string[]
+  // Whether a commercial rule of each kind is applied to this client's fares.
+  markup_active: boolean
   discount_active: boolean
   processing_fee_active: boolean
   air_approval_mode: string

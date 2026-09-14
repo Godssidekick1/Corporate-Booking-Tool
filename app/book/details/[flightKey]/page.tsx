@@ -554,7 +554,16 @@ export default function BookingDetailsPage() {
     const totalSeatFees = Object.values(seatsByPassenger)
       .flat()
       .reduce((sum, seat) => sum + (Number(seat.SeatFee) || 0), 0)
-    const grandTotalFare = priced.totalFare + totalSeatFees
+    // sellTotal already carries any discount and processing fee; totalFare is
+    // the fare line alone. Falls back to totalFare so a quote saved before
+    // commercial rules existed still works.
+    //
+    // THIS NUMBER IS NO LONGER AUTHORITATIVE. The server recovers the airline
+    // figure from the held quote and ignores what we send — it has to, because
+    // a markup is embedded in these numbers and sending them onward would quote
+    // our own markup to the airline. It is still sent so the server can log when
+    // the two disagree, which is the signal that markup is working.
+    const grandTotalFare = (priced.sellTotal ?? priced.totalFare) + totalSeatFees
 
     try {
       const res = await fetch('/api/book/add-passenger', {

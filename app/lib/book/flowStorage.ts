@@ -34,9 +34,17 @@ export interface PricedFare {
   provider: string
   resultIndex: string
   referenceNo: string
+  // The FARE line. Any markup reaching this client is already folded into it
+  // and cannot be separated out — deliberately. The airline's own figure never
+  // reaches the browser at all, so nothing here can be used to derive it.
   totalFare: number
   baseFare: number
   tax: number
+  // The commercial lines the traveller sees — discount, processing fee. Signed,
+  // so a breakdown renders them without needing to know which are reductions.
+  lines?: { source: string; label: string; sign: -1 | 1; amount: number }[]
+  // totalFare plus those lines: what they pay before seat fees.
+  sellTotal?: number
   currency: string
   isRefundable: boolean
   fareType: string

@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic, CustomerInfo } from '@/app/lib/amadeus/client'
+import { visibleLines, ADJUSTMENT_LABELS, type Adjustment } from '@/app/lib/commercials/adjustment'
 import { NextRequest } from 'next/server'
 
 // ── GET /api/book/[bookingId] ─────────────────────────────────────────────────
@@ -96,7 +97,38 @@ export async function GET(
     }
   }
 
-  return Response.json({ ok: true, booking, latestApproval })
+  // ── Strip the commercial detail ────────────────────────────────────────────
+  // The select above is `*`, which now picks up `commercials` — and that object
+  // carries the markup amount, the airline's own total and every rule id behind
+  // them. None of it may reach a traveller: a markup that is discoverable in a
+  // network response is not hidden, whatever the UI renders.
+  //
+  // Removed and replaced with the lines they ARE allowed to see. Sending the
+  // whole object and hiding it in the UI is not the same thing and is not good
+  // enough.
+  const { commercials, ...safeBooking } = booking as typeof booking & {
+    commercials: { adjustments?: Adjustment[] } | null
+  }
+
+  return Response.json({
+    ok: true,
+    booking: {
+      ...safeBooking,
+      // What the corporate is invoiced. Falls back to total_cost for bookings
+      // made before commercial rules existed.
+      sell_total: booking.sell_total ?? booking.total_cost,
+      // Discount and processing fee only. visibleLines() is what keeps the
+      // embedded markup out — the filter lives there rather than here so the
+      // rule is written once.
+      commercial_lines: visibleLines(commercials?.adjustments ?? []).map(a => ({
+        source: a.source,
+        label: ADJUSTMENT_LABELS[a.source],
+        sign: a.sign,
+        amount: a.amount,
+      })),
+    },
+    latestApproval,
+  })
 }
 
 interface PatchBody {

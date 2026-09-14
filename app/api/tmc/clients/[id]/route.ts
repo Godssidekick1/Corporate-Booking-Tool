@@ -50,7 +50,7 @@ export const CLIENT_COLUMNS =
   'hold_auto_issue, sbt_ticketing, policy_controlling, personal_bookings_allowed, ' +
   'agency_fop_allowed, corporate_fop_allowed, ' +
   'bta_cta_allowed, bta_cta_manual_allowed, fop_priority, ' +
-  'discount_active, processing_fee_active, ' +
+  'markup_active, discount_active, processing_fee_active, ' +
   'air_approval_mode, hotel_approval_mode'
 
 // Free text: trimmed, empty becomes NULL. A blank contact should read as "not
@@ -80,7 +80,10 @@ const BOOLEAN_FIELDS = [
   // — in this product those letters mean the traveller's card, not a corporate
   // lodged account.
   'bta_cta_allowed', 'bta_cta_manual_allowed',
-  'discount_active', 'processing_fee_active',
+  // The commercial switches. discount_active and processing_fee_active were
+  // recorded-only until the commercial rules engine landed; all three now decide
+  // whether a rule of that kind is applied to this client's fares.
+  'markup_active', 'discount_active', 'processing_fee_active',
 ] as const
 
 type UpdateClientBody = {

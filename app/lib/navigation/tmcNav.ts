@@ -71,9 +71,14 @@ export const CONFIG_GROUPS: NavGroup[] = [
       // IS the client detail page — two screens storing one fact is how they
       // drift, and this section had already been through that with policy.
       { label: 'Corporate settings', href: '/tmc/configurations/corporate-settings', permission: 'manage_clients' },
-      { label: 'Markup',          href: '#', soon: true },
-      { label: 'Discounts',       href: '#', soon: true },
-      { label: 'Processing fees', href: '#', soon: true },
+      // Three entries, one screen. They are three different jobs to a desk —
+      // "what do we add", "what do we give back", "what do we charge for
+      // handling" — so they stay separate here, but all three render
+      // CommercialRulesPage with a different `kind`. They share a table because
+      // they must compose, in a fixed order, into one sell price.
+      { label: 'Markup',          href: '/tmc/configurations/markup',          permission: 'manage_commercials' },
+      { label: 'Discounts',       href: '/tmc/configurations/discounts',       permission: 'manage_commercials' },
+      { label: 'Processing fees', href: '/tmc/configurations/processing-fees', permission: 'manage_commercials' },
     ],
   },
   {

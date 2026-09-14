@@ -1,5 +1,11 @@
 import { createClient } from '@/utils/supabase/server'
+import { createServiceClient } from '@/utils/supabase/service'
 import { amadeus, type PricingResponse } from '@/app/lib/amadeus/client'
+import { stampCommercials } from '@/app/lib/commercials/stampCommercials'
+import { emptyCommercials } from '@/app/lib/commercials/composeSellPrice'
+import { round2, type FareComponents } from '@/app/lib/commercials/fareComponents'
+import { visibleLines, ADJUSTMENT_LABELS } from '@/app/lib/commercials/adjustment'
+import type { FlatFlightResult } from '@/app/lib/book/types'
 import { NextRequest } from 'next/server'
 
 // POST /api/book/price
@@ -33,6 +39,19 @@ export function extractPricingDetails(pricing: PricingResponse) {
     totalFare: pricingInfo.Total?.Fare ? Number(pricingInfo.Total.Fare) : undefined,
     baseFare: pricingInfo.Total?.BaseFare ? Number(pricingInfo.Total.BaseFare) : undefined,
     tax: pricingInfo.Total?.OtherTax ? Number(pricingInfo.Total.OtherTax) : undefined,
+    // Itemised taxes and the fuel surcharge, for commercial rules that
+    // calculate on a named component (BF+YQ, BF+YQ+YR, other_tax). Both arrive
+    // on every response and were simply never read before this.
+    //
+    // NOTE for anyone reconciling these: `tax` is Total.OtherTax while
+    // FuelSurcharge is a SIBLING field, so totalFare - baseFare does not
+    // reliably equal tax. Use taxLines when a specific code matters.
+    taxLines: fareBreakdown[0]?.Taxes?.Tax
+      ? fareBreakdown[0].Taxes.Tax.map(t => ({ code: t.TaxCode, amount: Number(t.Amount) || 0 }))
+      : undefined,
+    fuelSurcharge: pricingInfo.Total?.FuelSurcharge
+      ? Number(pricingInfo.Total.FuelSurcharge)
+      : undefined,
     currency: pricingInfo.Currency,
     isRefundable: fareBreakdown[0]?.Refundable === 'Refundable',
     fareType: pricingInfo.FareType,
@@ -63,7 +82,13 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const { key, pricingKey, provider, resultIndex } = await req.json()
+  // `itinerary` is the FlatFlightResult the traveller selected. New here, and
+  // needed because a commercial rule matches on category (domestic/international
+  // × BSP/LCC), airline, cabin and booking class — none of which can be read
+  // from a pricing key. It is the same object search already returned to them,
+  // so nothing new is being trusted: every figure on it is re-derived here from
+  // Amadeus's own response, and only the ROUTE shape is taken from the client.
+  const { key, pricingKey, provider, resultIndex, itinerary } = await req.json()
 
 if (!key || !pricingKey || !provider || !resultIndex) {
   return Response.json(
@@ -73,7 +98,7 @@ if (!key || !pricingKey || !provider || !resultIndex) {
 }
 
   try {
-    
+
     const pricing = await amadeus.pricing(key, pricingKey, provider, resultIndex)
     const details = extractPricingDetails(pricing)
 
@@ -84,7 +109,101 @@ if (!key || !pricingKey || !provider || !resultIndex) {
       }, { status: 200 })
     }
 
-    return Response.json({ ok: true, ...details })
+    // ── Commercials ──────────────────────────────────────────────────────────
+    // The full pipeline runs here, not at search: discount and processing fee
+    // depend on passenger and sector counts, which only exist once an itinerary
+    // is priced.
+    //
+    // This route used to do auth.getUser() and nothing else. It needs the
+    // employee's client now, because a price is a price FOR SOMEBODY.
+    const service = createServiceClient()
+    const { data: employee } = await service
+      .from('employees')
+      .select('id, client_id')
+      .eq('id', user.id)
+      .maybeSingle()
+
+    const components: FareComponents = {
+      base: details.baseFare ?? 0,
+      otherTax: details.tax ?? 0,
+      fuelSurcharge: details.fuelSurcharge ?? 0,
+      taxLines: details.taxLines ?? [],
+      total: details.totalFare ?? 0,
+    }
+
+    const pax = Math.max(1, details.passengerBreakup?.length ?? 1)
+
+    const { record } = employee?.client_id
+      ? await stampCommercials(service, {
+          clientId: employee.client_id,
+          flight: (itinerary as FlatFlightResult | null) ?? null,
+          components,
+          pax,
+        })
+      : { record: emptyCommercials(components) }
+
+    // ── Persist the quote ────────────────────────────────────────────────────
+    // This is what takes price authority away from the browser. The browser is
+    // never told the airline figure — that is the whole point of an embedded
+    // markup — so the server has to be able to recover it at booking time, or we
+    // would end up quoting our own markup to the airline.
+    //
+    // Upserted on (amadeus_key, reference_no): re-pricing the same itinerary is
+    // a normal thing to do, and the newest quote is the one that counts.
+    if (employee?.client_id) {
+      const { error: quoteError } = await service.from('price_quotes').upsert({
+        client_id: employee.client_id,
+        employee_id: employee.id,
+        amadeus_key: details.key,
+        reference_no: details.referenceNo,
+        pricing_key: pricingKey,
+        provider,
+        result_index: resultIndex,
+        airline_components: components,
+        commercials: record,
+        sell_total: record.sellTotal,
+        // Comfortably longer than a booking flow and shorter than a fare's own
+        // life. A missing quote is recoverable — add-passenger falls back to
+        // re-pricing — so an aggressive TTL costs latency, not correctness.
+        expires_at: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
+      }, { onConflict: 'amadeus_key,reference_no' })
+
+      if (quoteError) {
+        // Not fatal. The traveller can still be quoted; add-passenger will
+        // re-price rather than trust the browser.
+        console.error('[price] could not persist the quote', quoteError)
+      }
+    }
+
+    // ── What the browser is allowed to see ───────────────────────────────────
+    // Sell-side only. taxLines, fuelSurcharge, the airline total and every
+    // markup figure are removed — not hidden in the payload, removed, because
+    // anything sent is visible in devtools.
+    //
+    // Built by deleting from a copy rather than by destructuring the two keys
+    // into throwaway variables: this config has no varsIgnorePattern, so the
+    // `_unused` convention is a lint warning here.
+    const safe: Partial<typeof details> = { ...details }
+    delete safe.taxLines
+    delete safe.fuelSurcharge
+
+    return Response.json({
+      ok: true,
+      ...safe,
+      // The "Fare" line: the airline fare with markup folded in, indistinguishable.
+      totalFare: record.displayedFare,
+      baseFare: round2(components.base + (record.displayedFare - components.total)),
+      // Discount and processing fee, each as its own labelled line. Never the
+      // embedded one — visibleLines() is what enforces that.
+      lines: visibleLines(record.adjustments).map(a => ({
+        source: a.source,
+        label: ADJUSTMENT_LABELS[a.source],
+        sign: a.sign,
+        amount: a.amount,
+      })),
+      // What they pay, before seat fees.
+      sellTotal: record.sellTotal,
+    })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Pricing failed'
 

@@ -17,6 +17,7 @@ export const PERMISSION_KEYS = [
   'manage_deal_codes',
   'manage_branches',
   'manage_fops',
+  'manage_commercials',
   'view_reports',
   'book_on_behalf',
 ] as const
@@ -75,6 +76,15 @@ export const PERMISSIONS: PermissionDef[] = [
     key: 'manage_fops',
     label: 'Manage forms of payment',
     desc: 'Agency, corporate and traveller payment methods, and which clients they apply to',
+  },
+  {
+    key: 'manage_commercials',
+    label: 'Manage commercials',
+    // Separate from manage_deal_codes and manage_fops deliberately: those decide
+    // which negotiated codes and payment methods a client gets, and neither
+    // changes a number. This one sets what the client is CHARGED, which is a
+    // different thing to trust somebody with.
+    desc: 'Markup, discounts and processing fees — what a client is charged above the airline fare',
   },
   {
     key: 'view_reports',

@@ -64,7 +64,7 @@ export async function GET(req: NextRequest) {
 
   const { data: bookings, error } = await service
     .from('bookings')
-    .select('id, employee_id, status, pnr, total_cost, itinerary, fare_breakdown, created_at')
+    .select('id, employee_id, status, pnr, total_cost, sell_total, itinerary, fare_breakdown, created_at')
     .in('employee_id', employeeIds)
     .order('created_at', { ascending: false })
     .limit(limit)
@@ -89,7 +89,10 @@ export async function GET(req: NextRequest) {
     id: b.id,
     status: b.status,
     pnr: b.pnr,
-    totalCost: b.total_cost,
+    // What the company is invoiced, not what the airline charges. The airline
+    // figure is dropped here rather than sent and ignored — a markup visible in
+    // a network response is not hidden. Falls back for pre-commercials bookings.
+    totalCost: b.sell_total ?? b.total_cost,
     itinerary: b.itinerary,
     fareBreakdown: b.fare_breakdown,
     createdAt: b.created_at,
