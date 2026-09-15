@@ -76,6 +76,16 @@ export async function POST(req: NextRequest) {
   )
 
   if (!clientResult.ok || !clientResult.clientId) {
+    // 409 and the existing rows, not a flat 400: the caller is meant to show
+    // these, ask, and retry with client.confirmDuplicateName — a plain error
+    // string would leave the screen saying "already have a client named Acme"
+    // with no way to proceed, which is a block rather than the warning intended.
+    if (clientResult.duplicates) {
+      return Response.json(
+        { error: clientResult.error, duplicates: clientResult.duplicates },
+        { status: 409 }
+      )
+    }
     return Response.json({ error: clientResult.error }, { status: 400 })
   }
 

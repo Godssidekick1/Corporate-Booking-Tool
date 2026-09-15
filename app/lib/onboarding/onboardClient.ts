@@ -30,12 +30,30 @@ export interface OnboardClientInput {
   // be policy-covered from day one instead of silently unprotected until
   // someone remembers to link one.
   policyGroupId?: string | null
+  // Set by the caller only after a human has seen the duplicate warning below
+  // and said go ahead. Absent means "I have not been asked yet", which is why
+  // the check refuses rather than proceeding by default.
+  confirmDuplicateName?: boolean
+}
+
+// What an existing same-named client looks like when we refuse to create a
+// second one silently. Enough to tell them apart without leaving the screen —
+// which is the whole point, since a name alone is exactly what is ambiguous.
+export interface DuplicateClient {
+  id: string
+  name: string
+  client_code: string | null
+  city: string | null
+  created_at: string
 }
 
 export interface OnboardClientResult {
   ok: boolean
   clientId?: string
   error?: string
+  // Present only on the duplicate-name refusal. The caller shows these, asks,
+  // and retries with confirmDuplicateName: true.
+  duplicates?: DuplicateClient[]
 }
 
 const VALID_SIZES = ['1-50', '51-200', '201-1000', '1001+']
@@ -108,6 +126,36 @@ export async function onboardClient(
   const bandError = validateBands(input.bands)
   if (bandError) {
     return { ok: false, error: bandError }
+  }
+
+  // ── Duplicate name ─────────────────────────────────────────────────────────
+  // A WARNING, NOT A RULE. Nothing constrains clients.name and nothing should:
+  // subsidiaries, regional arms and renamed entities legitimately share a name,
+  // and the only uniqueness the schema asserts is (tmc_id, client_code) — which
+  // is nullable, so two codeless "Acme"s were both accepted in silence.
+  //
+  // That silence is what costs money later. The two rows are indistinguishable
+  // in every picker in the app, so a deal code, a commercial rule or a policy
+  // gets attached to the wrong Acme and nobody finds out until a fare is wrong.
+  //
+  // Refusing ONCE and returning the existing rows turns an invisible collision
+  // into a decision. ilike, not eq: "acme" and "Acme" are the same collision,
+  // and a case-sensitive check would miss the most common way it happens.
+  if (!input.confirmDuplicateName) {
+    const { data: sameName } = await service
+      .from('clients')
+      .select('id, name, client_code, city, created_at')
+      .eq('tmc_id', tmcId)
+      .ilike('name', corporateName.trim())
+      .limit(5)
+
+    if (sameName && sameName.length > 0) {
+      return {
+        ok: false,
+        error: `You already have a client named "${corporateName.trim()}".`,
+        duplicates: sameName,
+      }
+    }
   }
 
   // Confirm the policy group belongs to this TMC before the client exists, so

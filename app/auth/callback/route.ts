@@ -6,9 +6,28 @@ import { NextRequest, NextResponse } from 'next/server'
 //
 // 1. token_hash + type (invite, recovery, email confirmation) — these are
 //    admin-issued or server-issued links (inviteUserByEmail,
-//    resetPasswordForEmail), verified with verifyOtp(). This is the shape
-//    Supabase's actual default email templates send via {{ .ConfirmationURL }}
-//    for these flows — NOT a `code` param. Using exchangeCodeForSession()
+//    resetPasswordForEmail), verified with verifyOtp().
+//
+//    THE DEFAULT EMAIL TEMPLATE DOES NOT SEND THIS SHAPE, and an earlier
+//    version of this comment claimed it did. `{{ .ConfirmationURL }}` expands
+//    to Supabase's OWN endpoint —
+//      https://<ref>.supabase.co/auth/v1/verify?token=…&type=invite&redirect_to=…
+//    — which consumes the token server-side and then redirects to redirect_to
+//    with the session in a URL HASH FRAGMENT (`#access_token=…`). A fragment is
+//    never transmitted to a server, so with the default template this route
+//    receives no token_hash, no type and no code, falls through to the bottom,
+//    and the recipient reads "Link not recognized" on a link that was perfectly
+//    valid. It also means a corporate link scanner burns the one-time token at
+//    Supabase's verify endpoint before the human ever clicks.
+//
+//    Both problems have the same fix, and it lives in the Supabase dashboard,
+//    not here: Authentication → Email Templates → Invite user must link to this
+//    route directly, carrying the hash rather than the ConfirmationURL:
+//      <a href="{{ .RedirectTo }}&token_hash={{ .TokenHash }}&type=invite">
+//    Same change for Reset Password (type=recovery) and Confirm signup
+//    (type=signup). Until that is done, invites cannot work.
+//
+//    Using exchangeCodeForSession()
 //    here was the original bug: that method is for PKCE, which requires a
 //    code_verifier stored in the SAME browser that started the flow. Invite
 //    and reset links are issued server-side by an admin/TMC action, so the

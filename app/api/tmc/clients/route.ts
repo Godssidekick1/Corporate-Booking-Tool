@@ -40,6 +40,7 @@ export async function GET(req: NextRequest) {
   const accessibleIds = await getAccessibleClientIds(service, user.id, caller.role)
   const params = parsePageParams(req.nextUrl.searchParams)
   const ids = req.nextUrl.searchParams.get('ids')?.split(',').filter(Boolean) ?? []
+  const includeInactive = req.nextUrl.searchParams.get('includeInactive') === '1'
 
   // Wider than it was, because the list is a table now rather than a grid of
   // name-only cards — you could not see a single fact about a client without
@@ -68,8 +69,19 @@ export async function GET(req: NextRequest) {
   if (ids.length > 0) {
     // Resolving specific rows for a picker's label — not a page of results, so
     // the range below is skipped and the caller gets exactly what it asked for.
+    //
+    // NOT filtered by status, deliberately. A deactivated client can still be
+    // named on an old booking or a still-open assignment, and a picker that
+    // cannot resolve the id it was given renders a blank where a name should be
+    // — which reads as data loss rather than as "this client is gone".
     query = query.in('id', ids)
   } else {
+    // Deactivated clients are hidden by default. Deactivation is this product's
+    // delete (see DELETE /api/tmc/clients/[id]), so a removed client staying in
+    // the list would make the action look like it had not worked. The list
+    // offers a Show deactivated toggle rather than dropping them for good.
+    if (!includeInactive) query = query.neq('status', 'inactive')
+
     // client_code and city included: the code is what a desk quotes on an
     // invoice, and searching by city is how you find "the Mumbai one".
     const filter = ilikeAcross(['name', 'client_code', 'city'], params.search)

@@ -230,26 +230,59 @@ export default function TmcDashboardPage() {
         band: r.band, department: r.department || undefined, cost_centre: r.cost_centre || undefined,
       }))
 
-      const res = await fetch('/api/tmc/create-corporate/bulk', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          client: {
-            ...form,
-            client_groupId: form.client_groupId || null,
-            policyGroupId: form.policyGroupId || null,
-            // Label falls back to the code so a ladder built by holding Tab is
-            // submittable without typing a description for every rung.
-            bands: bands.map(b => ({
-              code: b.code.trim(),
-              label: b.label.trim() || b.code.trim(),
-              rank: Number(b.rank),
-            })),
-          },
-          employees: employeesPayload,
-        }),
-      })
-      const data = await res.json()
+      function post(confirmDuplicateName: boolean) {
+        return fetch('/api/tmc/create-corporate/bulk', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            client: {
+              ...form,
+              client_groupId: form.client_groupId || null,
+              policyGroupId: form.policyGroupId || null,
+              confirmDuplicateName,
+              // Label falls back to the code so a ladder built by holding Tab is
+              // submittable without typing a description for every rung.
+              bands: bands.map(b => ({
+                code: b.code.trim(),
+                label: b.label.trim() || b.code.trim(),
+                rank: Number(b.rank),
+              })),
+            },
+            employees: employeesPayload,
+          }),
+        })
+      }
+
+      let res = await post(false)
+      let data = await res.json()
+
+      // 409 means a client of this name already exists. It is a warning, not a
+      // rule — real subsidiaries share names — so the existing rows are shown
+      // with the facts that tell them apart, and the same submit is repeated
+      // with the confirmation attached. Declining leaves the form as typed,
+      // which is what someone who just realised they were duplicating wants.
+      if (res.status === 409 && Array.isArray(data.duplicates)) {
+        const listed = (data.duplicates as Array<{ name: string; client_code: string | null; city: string | null; created_at: string }>)
+          .map(d => `  • ${d.name}${d.client_code ? ` (${d.client_code})` : ''}` +
+                    `${d.city ? ` — ${d.city}` : ''}` +
+                    ` — added ${new Date(d.created_at).toLocaleDateString()}`)
+          .join('\n')
+
+        const proceed = window.confirm(
+          `${data.error}\n\n${listed}\n\n` +
+          `Create a second client with this name anyway?\n\n` +
+          `They will look identical in every picker, so give the new one a ` +
+          `client code if you continue.`
+        )
+
+        if (!proceed) {
+          setFormError('Not created — a client with this name already exists.')
+          return
+        }
+
+        res = await post(true)
+        data = await res.json()
+      }
 
       if (!res.ok) {
         setFormError(data.error || 'Something went wrong.')

@@ -406,3 +406,83 @@ export async function PATCH(
 
   return Response.json({ ok: true, client: updated })
 }
+// ── DELETE /api/tmc/clients/[id] ─────────────────────────────────────────────
+// Deactivates a client. It does NOT remove the row, and the method name is the
+// only thing about this that says "delete".
+//
+// A client owns bookings with real PNRs, tickets that have been paid for, GST
+// registrations a finance team reconciles against, and commercial assignments
+// that explain what past bookings were charged. Hard-deleting cascades through
+// all of it — `bookings` alone would either be orphaned or destroyed — so what a
+// TMC means by "remove this client" is: their people stop getting in, they stop
+// appearing in the lists, and the history stays. That is a status change.
+//
+// Same reasoning, and the same shape, as DELETE /api/trips/[tripId], which
+// soft-deletes for exactly this reason: "a trip can have real bookings (PNRs,
+// money already spent with an airline)".
+//
+// Reversible by design: PATCH { status: 'active' } puts them back, and nothing
+// about the client was altered in the meantime. The clients list offers that as
+// Reactivate.
+//
+// WHAT ACTUALLY ENFORCES IT lives in two places, because the status column had
+// never been read by anything before this:
+//   • app/api/auth/signin — their people can no longer sign in
+//   • app/lib/clients/clientGates — booking, hold and ticketing all close, which
+//     covers any session still open when the switch was thrown
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params
+  const supabase = await createClient()
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+  if (authError || !user) {
+    return Response.json({ error: 'Not authenticated' }, { status: 401 })
+  }
+
+  const service = createServiceClient()
+
+  // manage_clients, matching PATCH. Deactivating a client is a bigger act than
+  // editing one, so anything narrower would be wrong.
+  const auth = await requireTmcPermission(service, user.id, 'manage_clients', id)
+  if (!auth.authorized) {
+    return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
+  }
+  const tmcId = auth.tmcId!
+
+  const { data: existing } = await service
+    .from('clients')
+    .select('id, name, status')
+    .eq('id', id)
+    .eq('tmc_id', tmcId)
+    .maybeSingle()
+
+  if (!existing) {
+    return Response.json({ error: 'Client not found' }, { status: 404 })
+  }
+
+  // Idempotent. Deactivating an already-inactive client is not an error — it is
+  // someone clicking twice, or two people clicking at once.
+  if (existing.status === 'inactive') {
+    return Response.json({ ok: true, client: { id: existing.id, status: 'inactive' } })
+  }
+
+  const { data: updated, error: updateError } = await service
+    .from('clients')
+    .update({ status: 'inactive' })
+    .eq('id', id)
+    .eq('tmc_id', tmcId)
+    .select('id, name, status')
+    .single()
+
+  if (updateError || !updated) {
+    console.error('Failed to deactivate client', updateError, { clientId: id })
+    return Response.json({ error: 'Could not deactivate this client.' }, { status: 500 })
+  }
+
+  return Response.json({ ok: true, client: updated })
+}

@@ -62,15 +62,72 @@ function dash(value: string | null | undefined) {
 
 export default function TmcClientsPage() {
   const [showSuggestions, setShowSuggestions] = useState(false)
+  const [showInactive, setShowInactive] = useState(false)
+  const [busyId, setBusyId] = useState('')
+  const [actionError, setActionError] = useState('')
   const searchRef = useRef<HTMLDivElement>(null)
 
   // Server-paged and server-searched. The suggestion box below is built from
   // whatever the SERVER matched rather than from a locally held array — with a
   // paged list, filtering in the browser would quietly search ten rows and
   // present the result as if it had searched everything.
-  const list = usePagedList<Client>('/api/tmc/clients')
+  //
+  // includeInactive is a server param rather than a filter applied to the rows
+  // we already have, for the same reason search is: the list is paged, so
+  // hiding rows in the browser would show "10 clients" while the count says 14.
+  const list = usePagedList<Client>('/api/tmc/clients', {
+    params: { includeInactive: showInactive ? '1' : '' },
+  })
   const clients = list.items
   const query = list.search
+
+  // Deactivate IS delete here — see DELETE /api/tmc/clients/[id]. The confirm
+  // names the headcount because that is the consequence a TC has to weigh: the
+  // client's row survives and their bookings survive, but every one of these
+  // people is locked out on their next sign-in.
+  async function deactivate(c: Client) {
+    const people = c.employeeCount === 1 ? '1 person' : `${c.employeeCount} people`
+    if (!window.confirm(
+      `Deactivate ${c.name}?\n\n` +
+      `${people} will no longer be able to sign in, and no new bookings can be ` +
+      `made for them.\n\nTheir existing bookings, tickets and history are kept, ` +
+      `and you can reactivate them at any time.`
+    )) return
+
+    setBusyId(c.id)
+    setActionError('')
+    try {
+      const res = await fetch(`/api/tmc/clients/${c.id}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (!data.ok) { setActionError(data.error || 'Could not deactivate this client.'); return }
+      list.refetch()
+    } catch {
+      setActionError('Could not deactivate this client. Please check your connection.')
+    } finally {
+      setBusyId('')
+    }
+  }
+
+  // No confirm: putting a client back is the harmless direction, and PATCH
+  // already accepts status, so this needs no endpoint of its own.
+  async function reactivate(c: Client) {
+    setBusyId(c.id)
+    setActionError('')
+    try {
+      const res = await fetch(`/api/tmc/clients/${c.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'active' }),
+      })
+      const data = await res.json()
+      if (!data.ok) { setActionError(data.error || 'Could not reactivate this client.'); return }
+      list.refetch()
+    } catch {
+      setActionError('Could not reactivate this client. Please check your connection.')
+    } finally {
+      setBusyId('')
+    }
+  }
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -185,6 +242,21 @@ export default function TmcClientsPage() {
         )}
       </div>
 
+      <div style={s.filterRow}>
+        <label style={s.checkboxLabel}>
+          <input
+            type="checkbox"
+            checked={showInactive}
+            onChange={e => { setShowInactive(e.target.checked); list.setPage(1) }}
+          />
+          Show deactivated
+        </label>
+      </div>
+
+      {actionError && (
+        <div style={s.errorBanner}>{actionError}</div>
+      )}
+
       {/* A failed request must not render as an empty list. Without this the
           screen says "No clients found" whether the TMC genuinely has none or
           the query 500'd — which is exactly the wrong thing to show someone
@@ -261,6 +333,25 @@ export default function TmcClientsPage() {
                       </td>
                       <td style={{ ...s.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
                         <Link href={`/tmc/clients/${c.id}`} style={s.settingsLink}>Settings</Link>
+                        {c.status === 'inactive' ? (
+                          <button
+                            type="button"
+                            onClick={() => reactivate(c)}
+                            disabled={busyId === c.id}
+                            style={s.rowBtn}
+                          >
+                            {busyId === c.id ? '…' : 'Reactivate'}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => deactivate(c)}
+                            disabled={busyId === c.id}
+                            style={{ ...s.rowBtn, ...s.rowBtnDanger }}
+                          >
+                            {busyId === c.id ? '…' : 'Deactivate'}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -322,6 +413,10 @@ const s: Record<string, React.CSSProperties> = {
 
   clientLink: { color: '#111827', fontWeight: 600, textDecoration: 'none' },
   settingsLink: { fontSize: 11.5, color: '#374151', background: '#fff', border: '1px solid #D1D5DB', borderRadius: 6, padding: '4px 10px', textDecoration: 'none' },
+  filterRow: { display: 'flex', alignItems: 'center', gap: 16, marginBottom: 14 },
+  checkboxLabel: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: '#4B5563', cursor: 'pointer' },
+  rowBtn: { marginLeft: 6, fontSize: 11.5, color: '#374151', background: '#fff', border: '1px solid #D1D5DB', borderRadius: 6, padding: '4px 10px', cursor: 'pointer' },
+  rowBtnDanger: { color: '#B91C1C', borderColor: '#FECACA' },
   modeBadge: { fontSize: '10px', fontWeight: 700, color: '#3730A3', background: '#EEF2FF', borderRadius: '4px', padding: '2px 6px' },
   statusBadge: { fontSize: '11px', fontWeight: 500, borderRadius: '4px', padding: '2px 8px' },
   setupPill: { marginLeft: 6, fontSize: 10, color: '#92400E', background: '#FEF3C7', borderRadius: 4, padding: '2px 6px' },

@@ -35,6 +35,19 @@ type ServiceClient = ReturnType<typeof createServiceClient>
 // pull the service-role Supabase client into the browser bundle.
 
 export interface ClientGates {
+  // Whether the client company itself is still in service.
+  //
+  // clients.status has been writable since the column existed and NOTHING has
+  // ever read it — it rendered as a badge on the clients list and gated nothing,
+  // so a TC could mark a client inactive and watch them carry on booking. It is
+  // read here because this is the one module the booking route, the ticket
+  // route, the policy engine and the FOP resolver all consult, which makes it
+  // the only place a single flag can stop all four.
+  //
+  // Deactivating is how a client is REMOVED in this product — there is no
+  // delete. Their bookings are financial records and their PNRs are real, so
+  // the row survives and the access stops. See DELETE /api/tmc/clients/[id].
+  active: boolean
   bookingActivation: boolean
   holdActivation: boolean
   domTicketing: boolean
@@ -67,6 +80,9 @@ export interface ClientGates {
 }
 
 const PERMISSIVE: ClientGates = {
+  // Fails open with everything else: an unreadable row must not read as
+  // "this company has been shut off". Only an explicit 'inactive' does that.
+  active: true,
   bookingActivation: true,
   holdActivation: true,
   domTicketing: true,
@@ -93,6 +109,7 @@ const PERMISSIVE: ClientGates = {
 }
 
 export const CLIENT_GATE_COLUMNS =
+  'status, ' +
   'booking_activation, hold_activation, dom_ticketing, intl_ticketing, ' +
   'policy_controlling, personal_bookings_allowed, ' +
   'agency_fop_allowed, corporate_fop_allowed, ' +
@@ -104,6 +121,7 @@ export const CLIENT_GATE_COLUMNS =
 // and hands back an error type. Stating the shape is more honest anyway — these
 // columns are read by four call sites and the compiler should know them.
 interface ClientGateRow {
+  status?: string | null
   booking_activation?: boolean | null
   hold_activation?: boolean | null
   dom_ticketing?: boolean | null
@@ -163,14 +181,25 @@ export async function loadClientGates(
     if (data.discount_active !== false) commercialKinds.add('discount')
     if (data.processing_fee_active !== false) commercialKinds.add('processing_fee')
 
+    // An inactive client is off entirely, and that OVERRIDES the individual
+    // switches rather than sitting beside them. Deactivation is this product's
+    // delete, so it has to behave like one: leaving booking_activation true on a
+    // removed client would let their people keep spending money, and a TC who
+    // clicked Deactivate has every right to read that as "they are done".
+    //
+    // Only an explicit 'inactive' closes the gates. An unexpected status value
+    // falls through as active, for the same reason the whole module fails open.
+    const active = data.status !== 'inactive'
+
     return {
+      active,
       // `!== false` rather than a truthy test: a column that is missing because
       // the migration has not run yet reads as undefined, and undefined must
       // mean "allowed" here, not "blocked".
-      bookingActivation: data.booking_activation !== false,
-      holdActivation: data.hold_activation !== false,
-      domTicketing: data.dom_ticketing !== false,
-      intlTicketing: data.intl_ticketing !== false,
+      bookingActivation: active && data.booking_activation !== false,
+      holdActivation: active && data.hold_activation !== false,
+      domTicketing: active && data.dom_ticketing !== false,
+      intlTicketing: active && data.intl_ticketing !== false,
       policyControlling: data.policy_controlling !== false,
       personalBookingsAllowed: data.personal_bookings_allowed === true,
       allowedPayers: payers,
