@@ -149,19 +149,19 @@ export async function loadClientGates(
     if (types.has('corporate')) payers.add('corporate')
     if (types.has('bta_cta') || types.has('bta_cta_manual')) payers.add('traveller')
 
-    // Each test matches its column's OWN default, which is not the same for all
-    // three. markup_active defaults true, so `!== false` reads an undefined
-    // column the way the database would. discount_active and
-    // processing_fee_active default FALSE — they were added recorded-only by
-    // 20260915000000 — so they use `=== true`, the same treatment
-    // personal_bookings_allowed and bta_cta_manual_allowed already get above.
+    // All three default TRUE and all three therefore read the same way. They
+    // did not always: discount_active and processing_fee_active were added
+    // recorded-only by 20260915000000 with `default false`, which made every
+    // assigned discount and fee a silent no-op until somebody also found the
+    // Controls tab. 20260919000000 flipped both defaults and backfilled.
     //
-    // Getting this backwards would bill a client for an arrangement nobody
-    // switched on.
+    // The switch is an opt-OUT. A rule reaches a client only because a TC
+    // assigned it there, so nothing is billed that nobody configured — `!== false`
+    // here cannot charge a client who has no rule.
     const commercialKinds = new Set<CommercialKind>()
     if (data.markup_active !== false) commercialKinds.add('markup')
-    if (data.discount_active === true) commercialKinds.add('discount')
-    if (data.processing_fee_active === true) commercialKinds.add('processing_fee')
+    if (data.discount_active !== false) commercialKinds.add('discount')
+    if (data.processing_fee_active !== false) commercialKinds.add('processing_fee')
 
     return {
       // `!== false` rather than a truthy test: a column that is missing because

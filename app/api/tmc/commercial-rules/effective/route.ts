@@ -151,8 +151,8 @@ export async function GET(req: NextRequest) {
     // ends up debugging a fare that was never going to move.
     const enabledKinds = new Set<CommercialKind>()
     if (client.markup_active !== false) enabledKinds.add('markup')
-    if (client.discount_active === true) enabledKinds.add('discount')
-    if (client.processing_fee_active === true) enabledKinds.add('processing_fee')
+    if (client.discount_active !== false) enabledKinds.add('discount')
+    if (client.processing_fee_active !== false) enabledKinds.add('processing_fee')
 
     // No itinerary here, deliberately — this is the "what could this client get"
     // view, so every dimension a booking would narrow on is left unset and a

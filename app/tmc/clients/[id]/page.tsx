@@ -461,14 +461,14 @@ export default function CorporateSettingsPage() {
               effect="Off: this client sees the airline fare. On: markup is added to it and never shown as a separate line."
             />
             <Toggle
-              label="Discount" checked={form.discount_active === true}
+              label="Discount" checked={form.discount_active !== false}
               onChange={v => set('discount_active', v)}
-              effect="On: any discount reaching them is taken off the total as its own line. The airline does not fund it — it comes out of your margin."
+              effect="Off: no discount is applied even where one reaches them. On, the airline does not fund it — it comes out of your margin."
             />
             <Toggle
-              label="Processing fee" checked={form.processing_fee_active === true}
+              label="Processing fee" checked={form.processing_fee_active !== false}
               onChange={v => set('processing_fee_active', v)}
-              effect="On: a service charge is added as its own line, multiplied by passengers and, if charged per sector, by sectors."
+              effect="Off: no fee is charged even where one reaches them. On, it is its own line, multiplied by passengers and, if charged per sector, by sectors."
             />
           </div>
         </>

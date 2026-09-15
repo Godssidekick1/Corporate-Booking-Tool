@@ -135,8 +135,8 @@ export async function GET(
 
   const enabled: Record<CommercialKind, boolean> = {
     markup: client.markup_active !== false,
-    discount: client.discount_active === true,
-    processing_fee: client.processing_fee_active === true,
+    discount: client.discount_active !== false,
+    processing_fee: client.processing_fee_active !== false,
   }
 
   const effective: EffectiveRule[] = (['markup', 'discount', 'processing_fee'] as CommercialKind[])
