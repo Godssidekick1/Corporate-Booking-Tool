@@ -84,6 +84,12 @@ export interface FareOption {
   fareType?: string
   fareBasis?: string
   mealIncluded?: boolean       // PricingInfo.Meal === "YES" — treated as chargeable/optional unless explicitly "YES"
+  // One fare basis per direction. FareInfos.FareInfo[] carries one entry per
+  // (journey × paxType); a round trip prices each direction under its own
+  // basis code — a real payload showed SK1YXYII outbound and TU1YXRII inbound.
+  // Reading FareInfo[0] alone, as this did, displayed the outbound code and
+  // silently hid the return's.
+  fareBases?: { journeyNo: number; code: string }[]
   changePenalties: PenaltyLine[]
   cancelPenalties: PenaltyLine[]
   // Branded fare tier — the airline's own named fare product for this
@@ -116,6 +122,71 @@ export interface FlightLeg {
   cabin?: string
 }
 
+// ── Journey ──────────────────────────────────────────────────────────────────
+// One direction of travel: the outbound, or the return. A journey holds one or
+// more flown legs — DEL→BOM is one leg, DEL→BOM→DXB is two.
+//
+// THE DISCRIMINATOR IS `ItineraryInfo.Flight`, NOT `ItineraryInfo.Leg`, and the
+// difference is easy to get backwards. Confirmed against a real round-trip UAT
+// payload: both itinerary entries carried `"leg": "1"` and differed by
+// `"flight": "1"` (DEL outbound) and `"flight": "2"` (BOM→DEL return).
+// `TotalDuration[]` is keyed the same way, by `flight`. So:
+//
+//   Flight = which direction        1 = outbound, 2 = return
+//   Leg    = which hop within it    a connecting outbound is flight 1, legs 1 and 2
+//
+// Reading `Leg` as the journey would merge a connection's two hops into two
+// separate "journeys" and collapse a round trip into one.
+export interface Journey {
+  journeyNo: number
+
+  origin?: {
+    code: string
+    name: string
+    city: string
+    dateTime: string
+    terminal?: string
+  }
+
+  destination?: {
+    code: string
+    name: string
+    city: string
+    dateTime: string
+    terminal?: string
+  }
+
+  airline?: {
+    code: string
+    name: string
+  }
+
+  // Intermediate points WITHIN this direction only. A round trip's turnaround
+  // is not a stop — it is where one journey ends and the next begins. Counting
+  // it as a connection is what made a non-stop return read as `stopCount: 1`,
+  // which the "Non-stop" filter excluded and the policy engine flagged as a
+  // connecting flight.
+  stops: StopInfo[]
+  stopCount: number
+
+  duration?: string
+  totalDuration?: string
+  legs: FlightLeg[]
+  availableSeats?: number
+
+  // Baggage is filed PER FLOWN SEGMENT in the provider's response
+  // (itineraries.itinerary[].baggage.allowance) — there is no baggage node
+  // inside pricingInfo, so it cannot vary by fare no matter how many fares a
+  // flight carries.
+  //
+  // Left undefined when a journey's own segments disagree, rather than picking
+  // one to show. We can state an allowance the whole direction is bound by, or
+  // we can state nothing; guessing which segment the traveller will be judged
+  // against is how someone gets charged at a gate.
+  checkInBaggageKg?: string
+  cabinBaggageKg?: string
+}
+
 export interface FlatFlightResult {
   flightKey: string
   provider: string
@@ -126,6 +197,16 @@ export interface FlatFlightResult {
   // `legs` is the complete picture and what the rule engines use.
   bookingCode?: string
   legs?: FlightLeg[]
+
+  // Every direction of this result, in order. One entry for a one-way, two for
+  // a round trip — the provider returns a round trip as ONE result with ONE
+  // combined price, not as a pair of results, so this is the only place the
+  // two directions are distinguishable.
+  //
+  // Everything below that describes a route — origin, destination, stops,
+  // stopCount, duration, baggage — is an alias for journeys[0], kept because a
+  // dozen screens already read them. New code should read `journeys`.
+  journeys: Journey[]
 
   origin?: {
     code: string
@@ -151,11 +232,11 @@ export interface FlatFlightResult {
   stopCount: number
   stops: StopInfo[]
 
-  // Overall itinerary duration currently used elsewhere.
+  // Alias for journeys[0]. The comment here used to promise an array of
+  // per-direction durations while the field was a single string — describing
+  // the round-trip shape that did not exist yet. Per-direction durations now
+  // live on Journey, where they can actually be held.
   duration?: string
-
-  // Total duration for each journey/direction, including connection time.
-  // e.g. ['12:30'] for one-way or ['12:30', '13:10'] for round-trip.
   totalDuration?: string
 
   availableSeats?: number
@@ -240,6 +321,42 @@ export interface SelectedSeat {
   Carrier: string
   Paid: boolean
   SegmentRef: string
+}
+
+// ── journeysOf ───────────────────────────────────────────────────────────────
+// A result's directions, with a fallback for results stored before `journeys`
+// existed.
+//
+// sessionStorage outlives a deploy: someone mid-flow when this ships has a
+// FlatFlightResult in their tab with no journeys array, and the price and
+// details pages read it back by flightKey. Rebuilding one journey from the
+// top-level aliases keeps that session working instead of blanking the page —
+// and it is exactly right for a one-way, which is all those stored results can
+// be, since round trip did not exist when they were written.
+export function journeysOf(flight: FlatFlightResult): Journey[] {
+  if (flight.journeys?.length) return flight.journeys
+  return [{
+    journeyNo: 1,
+    origin: flight.origin,
+    destination: flight.destination,
+    airline: flight.airline,
+    stops: flight.stops ?? [],
+    stopCount: flight.stopCount ?? 0,
+    duration: flight.duration,
+    totalDuration: flight.totalDuration,
+    legs: flight.legs ?? [],
+    availableSeats: flight.availableSeats,
+    checkInBaggageKg: flight.checkInBaggageKg,
+    cabinBaggageKg: flight.cabinBaggageKg,
+  }]
+}
+
+// "Outbound" / "Return" / "Leg 3". Only worth showing when a result actually
+// has more than one direction — a one-way needs no label.
+export function journeyLabel(journeyNo: number): string {
+  if (journeyNo === 1) return 'Outbound'
+  if (journeyNo === 2) return 'Return'
+  return `Leg ${journeyNo}`
 }
 
 export function formatTime(iso: string | undefined) {

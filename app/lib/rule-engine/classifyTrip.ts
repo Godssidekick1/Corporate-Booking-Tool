@@ -42,7 +42,31 @@ export function classifyFlight(flight: {
   origin?: { code: string }
   destination?: { code: string }
   stops?: { code: string }[]
+  journeys?: { origin?: { code: string }; destination?: { code: string }; stops?: { code: string }[] }[]
 }): 'domestic' | 'international' {
+  // Prefer the journeys, which state the route rather than implying it.
+  //
+  // The reassembly below was accidentally robust: for DEL→DXB→DEL it built a
+  // bogus DEL→DEL leg alongside a real one, and `every()` still caught DXB, so
+  // the ANSWER came out right for the wrong reason. It stops being robust the
+  // moment `stops` stops meaning "every intermediate point in order" — which is
+  // exactly what per-journey stops did, since a round trip's turnaround is no
+  // longer in there. Read the legs where they are actually recorded.
+  const journeys = flight.journeys ?? []
+  if (journeys.length > 0) {
+    const legs = journeys.flatMap(journey => {
+      const points = [
+        journey.origin?.code,
+        ...(journey.stops ?? []).map(s => s.code),
+        journey.destination?.code,
+      ].filter((code): code is string => Boolean(code))
+
+      return points.slice(0, -1).map((origin, i) => ({ origin, destination: points[i + 1] }))
+    })
+
+    if (legs.length > 0) return classifyTrip(legs)
+  }
+
   const originCode = flight.origin?.code ?? ''
   const destinationCode = flight.destination?.code ?? ''
   const stops = flight.stops ?? []

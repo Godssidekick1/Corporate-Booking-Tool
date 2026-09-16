@@ -22,6 +22,12 @@ export interface SearchMeta {
   origin: string
   destination: string
   departDate: string   // display-formatted, whatever the search page had
+  // Present only for a round trip. Carried so an error exit can rebuild the
+  // search the traveller actually ran — sending them back to a one-way form
+  // after a round-trip search is the kind of small loss that makes people
+  // start over in a new tab.
+  returnDate?: string
+  tripType?: 'oneway' | 'return'
   adult: number
   child: number
   infant: number

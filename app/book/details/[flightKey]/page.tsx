@@ -6,7 +6,7 @@ import Link from 'next/link'
 import { flowStorage, PricedFare } from '@/app/lib/book/flowStorage'
 import {
   FlatFlightResult, formatTime, formatDayLabel, SelectedSeat, TravelerProfile,
-  LegSeatMap, SeatCell,
+  LegSeatMap, SeatCell, journeysOf, journeyLabel,
 } from '@/app/lib/book/types'
 import { countryNameFromCode } from '@/app/lib/data/countryCodes'
 import { classifyTrip } from '@/app/lib/rule-engine/classifyTrip'
@@ -172,12 +172,39 @@ interface LegInfo {
   legIndex: number
   origin: string
   destination: string
+  // Which direction this leg belongs to, so the tabs can say "Return · BOM → DEL"
+  // rather than presenting four hops as one undifferentiated row.
+  journeyNo: number
 }
 
+// Seat-map legs, walked out of the journeys rather than reassembled.
+//
+// This used to rebuild the route from origin + stops + destination and slice it
+// into pairs. That happened to work for a one-way, but it only ever worked
+// because `stops` listed every intermediate point in order — and on a round trip
+// the turnaround is NOT a stop, so the reconstruction would have produced
+// DEL→DEL and lost the return entirely. Journeys carry their own legs, so this
+// reads them instead of inferring them.
+//
+// legIndex stays a flat counter across every direction, because that is what
+// /api/book/seatmap takes and what AddPassenger's SeatListDetails are grouped by.
 function buildLegs(flight: FlatFlightResult): LegInfo[] {
-  if (!flight.origin?.code || !flight.destination?.code) return []
-  const points = [flight.origin.code, ...flight.stops.map(s => s.code), flight.destination.code]
-  return points.slice(0, -1).map((origin, i) => ({ legIndex: i, origin, destination: points[i + 1] }))
+  const legs: LegInfo[] = []
+  let legIndex = 0
+
+  for (const journey of journeysOf(flight)) {
+    const points = [
+      journey.origin?.code,
+      ...journey.stops.map(s => s.code),
+      journey.destination?.code,
+    ].filter((code): code is string => Boolean(code))
+
+    for (let i = 0; i < points.length - 1; i++) {
+      legs.push({ legIndex: legIndex++, origin: points[i], destination: points[i + 1], journeyNo: journey.journeyNo })
+    }
+  }
+
+  return legs
 }
 
 function groupByRow(seats: SeatCell[]): Map<number, SeatCell[]> {
@@ -902,6 +929,11 @@ export default function BookingDetailsPage() {
                     onClick={() => setActiveLegIndex(leg.legIndex)}
                     style={{ ...s.legTab, ...(activeLegIndex === leg.legIndex ? s.legTabActive : {}) }}
                   >
+                    {/* Labelled by direction only when there is more than one,
+                        so a connecting one-way reads exactly as it did. */}
+                    {legs.some(l => l.journeyNo !== leg.journeyNo) && (
+                      <span style={s.legTabJourney}>{journeyLabel(leg.journeyNo)} · </span>
+                    )}
                     {leg.origin} → {leg.destination}
                   </button>
                 ))}
@@ -1109,6 +1141,7 @@ const s: Record<string, React.CSSProperties> = {
     borderRadius: '8px', padding: '8px 12px', cursor: 'pointer',
   },
   legTabActive: { color: '#000835', borderColor: '#000835', background: '#EEF2FF' },
+  legTabJourney: { color: '#9CA3AF', fontWeight: 500 },
 
   selectionBar: {
     display: 'flex', justifyContent: 'space-between', alignItems: 'center',

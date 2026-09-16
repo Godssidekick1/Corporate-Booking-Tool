@@ -6,6 +6,10 @@ import {
   loadCommercialContext, priceWithContext, type CommercialContext,
 } from '@/app/lib/commercials/stampCommercials'
 import { round2 } from '@/app/lib/commercials/fareComponents'
+import type {
+  FlatFlightResult, FareOption, Journey, StopInfo, PenaltyLine,
+} from '@/app/lib/book/types'
+import type { ItineraryInfo } from '@/app/lib/amadeus/client'
 import { NextRequest, after } from 'next/server'
 
 // ── POST /api/book/search ────────────────────────────────────────────
@@ -18,89 +22,62 @@ interface SearchBody {
   origin: string
   destination: string
   departDate: string // DD/MM/YYYY, matching Amadeus's expected format
+  // Present only for a return trip. The provider has no `returnDate` field —
+  // a round trip is expressed as a SECOND SEGMENT whose DepartDate is the
+  // return, plus RTF: true. See the searchFlights call below.
+  returnDate?: string
+  tripType?: 'oneway' | 'return'
   adult?: number
   child?: number
   infant?: number
 }
 
-// Flattened, frontend-friendly shape — the raw Amadeus nesting
-// (Availibilities -> Availibility -> Itineraries.Itinerary -> FlightSegments)
-// is real but awkward to consume directly in React; this route flattens it
-// once, server-side, so the page doesn't have to know about that structure.
-export interface StopInfo {
-  code: string
-  city: string
-  arrivalDateTime: string
-  departureDateTime: string | undefined
+// FlatFlightResult, FareOption, Journey, StopInfo, PenaltyLine and TaxLine used
+// to be declared here AND in app/lib/book/types.ts, and the two copies had
+// already drifted — this one omitted `legs`, which every page reading the lib
+// type believed it had. They are imported now, so there is one definition of
+// what a search result is. Nothing outside this file ever imported the copies.
+
+// ── groupIntoJourneys ────────────────────────────────────────────────────────
+// Split the provider's flat itinerary list into directions.
+//
+// `Itineraries.Itinerary[]` is one entry per FLOWN SEGMENT across the whole
+// result, with two different index fields on each, and reading the wrong one
+// quietly produces nonsense:
+//
+//   Flight  which direction   "1" = outbound, "2" = return
+//   Leg     which hop within  a connecting outbound is Flight 1, Legs 1 and 2
+//
+// Confirmed against a real round-trip payload: both entries carried
+// `"leg": "1"` and differed only by `"flight"`. TotalDuration[] is keyed by
+// `flight` for the same reason.
+//
+// Segments with no Flight value fall into journey 1, which is what a one-way
+// response looks like and keeps this total.
+function groupIntoJourneys(itineraries: ItineraryInfo[]): Map<number, ItineraryInfo[]> {
+  const byJourney = new Map<number, ItineraryInfo[]>()
+
+  for (const segment of itineraries) {
+    const journeyNo = Number(segment.Flight) || 1
+    const existing = byJourney.get(journeyNo)
+    if (existing) existing.push(segment)
+    else byJourney.set(journeyNo, [segment])
+  }
+
+  return new Map([...byJourney.entries()].sort((a, b) => a[0] - b[0]))
 }
 
-export interface PenaltyLine {
-  paxType: string
-  text: string   // free-text as Amadeus sends it, e.g. "INR3000" or "0" — never parsed, just trimmed
-}
-
-// See the same type in app/lib/book/types.ts. YQ/YR are surcharges filed in the
-// tax box rather than the fare, and a commercial rule calculating on BF+YQ
-// needs them itemised.
-export interface TaxLine {
-  code: string
-  amount: number
-}
-
-// One fare option for this flight. Today's real responses only ever contain
-// one of these per flight (confirmed against UAT), but the underlying
-// Amadeus shape (PricingInfos.PricingInfo is an array) supports more than
-// one, and production may behave differently — so this is plural and the
-// frontend renders however many actually come back, rather than assuming 1.
-export interface FareOption {
-  pricingKey: string
-  currency: string | undefined
-  totalFare: number | undefined
-  baseFare: number | undefined
-  // Total.OtherTax. Not guaranteed to equal totalFare - baseFare, because
-  // Total.FuelSurcharge is a sibling field — use taxLines for anything that
-  // needs a specific code.
-  tax: number | undefined
-  taxLines: TaxLine[] | undefined
-  fuelSurcharge: number | undefined
-  isNdc: boolean | undefined
-  refundable: boolean | undefined
-  fareType: string | undefined
-  fareBasis: string | undefined       // FareInfo.PaxFareBasis for the first (adult) pax entry
-  mealIncluded: boolean | undefined   // PricingInfo.Meal === "YES" — treated as chargeable/optional unless explicitly "YES"
-  changePenalties: PenaltyLine[]
-  cancelPenalties: PenaltyLine[]
-  brandedFareName: string | undefined
-  brandedFareDescription: string | undefined
-  brandedServices: string[] | undefined
-}
-
-export interface FlatFlightResult {
-  flightKey: string
-  provider: string
-  isLcc: boolean
-  itemNo: string
-  cabin: string | undefined
-  bookingCode: string | undefined
-  origin: { code: string; name: string; city: string; dateTime: string; terminal: string | undefined } | undefined
-  destination: { code: string; name: string; city: string; dateTime: string; terminal: string | undefined } | undefined
-  airline: { code: string; name: string } | undefined
-  stopCount: number           // 0, 1, 2 — number of stops
-  stops: StopInfo[]           // intermediate stop details
-  duration: string | undefined
-  totalDuration: string | undefined // whole-journey duration including layover/ground time between connecting flights, straight from Amadeus's TotalDuration[{flight:"1",text:"HH:MM"}]. Distinct from `duration`, which is only the first leg. Per explicit product guidance, layover time counts toward "how long is this trip" for policy purposes (e.g. long-haul/short-haul cabin checks) — not just airborne time.
-  availableSeats: number | undefined
-  checkInBaggageKg: string | undefined
-  cabinBaggageKg: string | undefined
-  fareOptions: FareOption[]
-  // Kept for backward compatibility with existing pages/flowStorage that
-  // read these directly off the top level — mirrors fareOptions[0].
-  pricingKey: string | undefined
-  currency: string | undefined
-  totalFare: number | undefined
-  baseFare: number | undefined
-  isNdc: boolean | undefined
-  refundable: boolean | undefined
+// One allowance for a whole direction, or none.
+//
+// Baggage is filed per flown segment. When a connection's segments disagree —
+// 15kg on the first hop, 20kg on the second — there is no single true answer,
+// and picking one to display is how a traveller gets surprised at a gate. We
+// state the allowance only when the direction speaks with one voice.
+function sharedAllowance(segments: ItineraryInfo[], pick: 'CheckIn' | 'Cabin'): string | undefined {
+  const values = segments.map(s => s.Baggage?.Allowance?.[pick] || undefined)
+  const first = values[0]
+  if (!first) return undefined
+  return values.every(v => v === first) ? first : undefined
 }
 
 // ── applyMarkup ──────────────────────────────────────────────────────────────
@@ -164,6 +141,13 @@ function applyMarkup(
   }
 }
 
+// "26/09/2026" -> "20260926". Lets two DD/MM/YYYY dates be compared with a
+// plain string comparison, with no Date parsing and so no timezone in play.
+function sortableDate(value: string): string {
+  const [day, month, year] = value.split('/')
+  return `${year}${month}${day}`
+}
+
 function isValidTravelDate(value: string): boolean {
   const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value)
   if (!match) return false
@@ -197,7 +181,10 @@ export async function POST(req: NextRequest) {
   }
 
   const body: SearchBody = await req.json()
-  const { origin, destination, departDate, adult = 1, child = 0, infant = 0 } = body
+  const { origin, destination, departDate, returnDate, tripType, adult = 1, child = 0, infant = 0 } = body
+  // A return date is what makes this a round trip, not the tripType label — the
+  // label is what the form last had selected and can disagree with the fields.
+  const isReturn = tripType === 'return' && Boolean(returnDate)
 
   if (!origin || !destination || !departDate) {
     return Response.json(
@@ -218,13 +205,41 @@ export async function POST(req: NextRequest) {
   if (!isValidTravelDate(departDate)) {
     return Response.json({ error: 'departDate must be today or a future date in DD/MM/YYYY format.' }, { status: 400 })
   }
+  if (tripType === 'return' && !returnDate) {
+    return Response.json({ error: 'A return date is required for a round trip.' }, { status: 400 })
+  }
+  if (returnDate) {
+    if (!isValidTravelDate(returnDate)) {
+      return Response.json({ error: 'returnDate must be today or a future date in DD/MM/YYYY format.' }, { status: 400 })
+    }
+    // Compared as sortable YYYYMMDD rather than as Date objects, for the same
+    // reason dealCodeStatus compares date STRINGS: parsing drags the server's
+    // timezone in, and "same day" is a legitimate same-day return.
+    if (sortableDate(returnDate) < sortableDate(departDate)) {
+      return Response.json({ error: 'The return date cannot be before the departure date.' }, { status: 400 })
+    }
+  }
   if (!passengerCounts.every(count => Number.isInteger(count) && count >= 0) || adult < 1 || adult + child + infant > 9) {
     return Response.json({ error: 'Passenger counts must be whole numbers with at least one adult and no more than nine travelers.' }, { status: 400 })
   }
 
   try {
+    // A round trip is a second segment flying the route back, plus RTF: true.
+    // Both have been supported by the client layer since it was written and
+    // never once exercised — no caller had ever set either.
+    //
+    // RTF asks for a combined return fare rather than two priced-apart
+    // one-ways, which is why the response comes back as ONE result carrying one
+    // pricingKey for both directions, and why the price and add-passenger
+    // routes need no changes to book one.
     const availability = await amadeus.searchFlights({
-      segments: [{ Origin: normalizedOrigin, Destination: normalizedDestination, DepartDate: departDate }],
+      segments: isReturn
+        ? [
+            { Origin: normalizedOrigin, Destination: normalizedDestination, DepartDate: departDate },
+            { Origin: normalizedDestination, Destination: normalizedOrigin, DepartDate: returnDate! },
+          ]
+        : [{ Origin: normalizedOrigin, Destination: normalizedDestination, DepartDate: departDate }],
+      rtf: isReturn,
       adult, child, infant,
     })
 
@@ -249,24 +264,100 @@ export async function POST(req: NextRequest) {
 
   const results: FlatFlightResult[] = allFlights.map(flight => {
   const itineraries = flight.Itineraries?.Itinerary ?? []
-  const firstLeg = itineraries[0]
-  const lastLeg = itineraries[itineraries.length - 1]
   const allPricingInfos = flight.PricingInfos?.PricingInfo ?? []
 
-  // Stops are intermediate points — all leg destinations except the final one
-  const stops = itineraries.slice(0, -1).map(leg => ({
-    code: leg.Destination.AirportCode,
-    city: leg.Destination.CityName,
-    arrivalDateTime: leg.Destination.DateTime,
-    departureDateTime: itineraries[itineraries.indexOf(leg) + 1]?.Origin.DateTime,
-  }))
+  // ── Journeys ──────────────────────────────────────────────────────────────
+  // Split by direction BEFORE anything is derived from the segment list, so
+  // that "stops", "duration" and "baggage" all mean the same thing they always
+  // did — they are just scoped to one direction now.
+  const journeyGroups = [...groupIntoJourneys(itineraries).entries()]
+
+  // Field casing isn't guaranteed consistent with the rest of the API's
+  // PascalCase, so both are read. Matched BY JOURNEY rather than taken from
+  // index 0 — TotalDuration is [{flight:"1",...},{flight:"2",...}] on a round
+  // trip, and taking [0] reported the outbound's duration for the whole trip.
+  const durationForJourney = (journeyNo: number): string | undefined => {
+    const entries = (flight.TotalDuration ?? []) as Record<string, unknown>[]
+    const match = entries.find(e => Number(e.flight ?? e.Flight) === journeyNo) ?? (entries.length === 1 ? entries[0] : undefined)
+    return (match?.text ?? match?.Text) as string | undefined
+  }
+
+  const journeys: Journey[] = journeyGroups.map(([journeyNo, segments]) => {
+    const first = segments[0]
+    const last = segments[segments.length - 1]
+
+    // Intermediate points within THIS direction. On a round trip the turnaround
+    // is not in here, because it is the boundary between two journeys rather
+    // than a connection inside one.
+    const stops: StopInfo[] = segments.slice(0, -1).map((segment, i) => ({
+      code: segment.Destination.AirportCode,
+      city: segment.Destination.CityName,
+      arrivalDateTime: segment.Destination.DateTime,
+      departureDateTime: segments[i + 1]?.Origin.DateTime,
+    }))
+
+    return {
+      journeyNo,
+      origin: first?.Origin ? {
+        code: first.Origin.AirportCode,
+        name: first.Origin.AirportName,
+        city: first.Origin.CityName,
+        dateTime: first.Origin.DateTime,
+        terminal: first.Origin.Terminal || undefined,
+      } : undefined,
+      destination: last?.Destination ? {
+        code: last.Destination.AirportCode,
+        name: last.Destination.AirportName,
+        city: last.Destination.CityName,
+        dateTime: last.Destination.DateTime,
+        terminal: last.Destination.Terminal || undefined,
+      } : undefined,
+      airline: first?.AirLine ? {
+        code: first.AirLine.OperatingCarrier || first.AirLine.Code,
+        name: first.AirLine.Name,
+      } : undefined,
+      stops,
+      stopCount: segments.length - 1,
+      duration: first?.Duration,
+      totalDuration: durationForJourney(journeyNo),
+      // flightNumber comes from AirLine.Identification ("9726"), NOT from
+      // ItineraryInfo.Flight. This read `leg.Flight` until the round-trip
+      // payload made the distinction visible, and `Flight` is the journey
+      // index — so every leg was carrying a flight number of "1", and a
+      // deal code restricted to a flight-number range was being matched
+      // against "1" instead of against the flight actually being flown.
+      legs: segments.map(segment => ({
+        airlineCode: segment.AirLine?.OperatingCarrier || segment.AirLine?.Code,
+        flightNumber: segment.AirLine?.Identification || undefined,
+        bookingCode: segment.BookingCode,
+        cabin: segment.Cabin,
+      })),
+      availableSeats: first?.AvailableSeats ? parseInt(first.AvailableSeats) || undefined : undefined,
+      checkInBaggageKg: sharedAllowance(segments, 'CheckIn'),
+      cabinBaggageKg: sharedAllowance(segments, 'Cabin'),
+    }
+  })
+
+  const outbound = journeys[0]
 
   const fareOptions: FareOption[] = allPricingInfos.map(pricingInfo => {
     const fareBreakdown = pricingInfo.FareBreakDowns?.FareBreakDown?.[0]
-    // FareInfo has one entry per (leg × paxType) — the fare basis code is the
-    // same across legs/pax types in every sample seen so far, so the first
-    // entry's PaxFareBasis is used as this fare option's basis code.
-    const fareBasis = pricingInfo.FareInfos?.FareInfo?.[0]?.PaxFareBasis
+
+    // One basis code per direction. FareInfo has an entry per (journey × pax
+    // type); a round trip prices each direction under its own code, and a real
+    // payload showed SK1YXYII outbound against TU1YXRII inbound. Reading
+    // FareInfo[0] alone showed the outbound and hid the return.
+    //
+    // Deduplicated by journey because the same code repeats across pax types.
+    const fareBases: { journeyNo: number; code: string }[] = []
+    for (const info of pricingInfo.FareInfos?.FareInfo ?? []) {
+      const code = info.PaxFareBasis
+      if (!code) continue
+      const journeyNo = Number(info.Flight) || 1
+      if (fareBases.some(f => f.journeyNo === journeyNo)) continue
+      fareBases.push({ journeyNo, code })
+    }
+    fareBases.sort((a, b) => a.journeyNo - b.journeyNo)
 
     const toPenaltyLines = (lines?: { PaxType: string; Type: string; Text: string }[]): PenaltyLine[] =>
       (lines ?? []).map(p => ({ paxType: p.PaxType, text: p.Text.trim() }))
@@ -293,7 +384,10 @@ export async function POST(req: NextRequest) {
       isNdc: pricingInfo.IsNDC,
       refundable: fareBreakdown?.Refundable === 'Refundable',
       fareType: pricingInfo.FareType,
-      fareBasis: fareBasis || undefined,  // seen as "" in real responses when not populated
+      // The outbound's code, kept because existing screens read it. fareBases
+      // is the complete answer and what a round trip needs.
+      fareBasis: fareBases[0]?.code,
+      fareBases: fareBases.length > 0 ? fareBases : undefined,
       mealIncluded: pricingInfo.Meal === 'YES',
       changePenalties: toPenaltyLines(pricingInfo.Penalties?.ChangePenalty),
       cancelPenalties: toPenaltyLines(pricingInfo.Penalties?.CancelPenalty),
@@ -310,64 +404,39 @@ export async function POST(req: NextRequest) {
 
   const primaryFare = fareOptions[0]
 
-  // TotalDuration is a sibling field on the raw FlightResult, distinct from
-  // any single leg's Duration — it's the whole journey including
-  // layover/ground time between connecting flights. Confirmed shape from a
-  // real UAT trace: [{ flight: "1", text: "07:30" }] for a one-way search
-  // (this route only ever sends a single segment, so "1" is always the one
-  // we want — no round-trip "2" to disambiguate here). Field casing isn't
-  // guaranteed consistent with the rest of the API's PascalCase
-  // conventions, so this reads defensively across both cases rather than
-  // assuming one.
-  const totalDurationEntry = flight.TotalDuration?.[0] as Record<string, unknown> | undefined
-  const totalDurationText = (totalDurationEntry?.text ?? totalDurationEntry?.Text) as string | undefined
-
   return {
     flightKey: flight.FlightKey,
     provider: flight.Provider,
     isLcc: String(flight.IsLCC) === 'true',
     itemNo: flight.ItemNo ?? '',
-    cabin: allPricingInfos[0]?.FareInfos?.FareInfo?.[0]?.PaxCabin ?? firstLeg?.Cabin,
-    bookingCode: firstLeg?.BookingCode,
-    // Every leg, not just the first. The FOP resolver needs each leg's RBD (a
-    // card the airline refuses in one class must not be applied because the
-    // first leg happened to be in another), and the deal-code resolver needs
-    // flight numbers, which it previously had no way to see.
-    legs: itineraries.map(leg => ({
-      airlineCode: leg.AirLine?.OperatingCarrier || leg.AirLine?.Code,
-      flightNumber: leg.Flight,
-      bookingCode: leg.BookingCode,
-      cabin: leg.Cabin,
-    })),
-    origin: firstLeg?.Origin ? {
-      code: firstLeg.Origin.AirportCode,
-      name: firstLeg.Origin.AirportName,
-      city: firstLeg.Origin.CityName,
-      dateTime: firstLeg.Origin.DateTime,
-      terminal: firstLeg.Origin.Terminal || undefined,
-    } : undefined,
-    destination: lastLeg?.Destination ? {
-      code: lastLeg.Destination.AirportCode,
-      name: lastLeg.Destination.AirportName,
-      city: lastLeg.Destination.CityName,
-      dateTime: lastLeg.Destination.DateTime,
-      terminal: lastLeg.Destination.Terminal || undefined,
-    } : undefined,
-    stops,
-    airline: firstLeg?.AirLine ? {
-      code: firstLeg.AirLine.OperatingCarrier || firstLeg.AirLine.Code,
-      name: firstLeg.AirLine.Name,
-    } : undefined,
-    stopCount: itineraries.length - 1,
-    duration: firstLeg?.Duration,
-    totalDuration: totalDurationText,
-    availableSeats: firstLeg?.AvailableSeats ? parseInt(firstLeg.AvailableSeats) || undefined : undefined,
-    checkInBaggageKg: firstLeg?.Baggage?.Allowance?.CheckIn,
-    cabinBaggageKg: firstLeg?.Baggage?.Allowance?.Cabin || undefined,
+    cabin: allPricingInfos[0]?.FareInfos?.FareInfo?.[0]?.PaxCabin ?? itineraries[0]?.Cabin,
+    bookingCode: itineraries[0]?.BookingCode,
+    journeys,
+    // Every flown segment across every direction, flat. The FOP resolver needs
+    // each leg's RBD (a card the airline refuses in one class must not be
+    // applied because the first leg happened to be in another), the deal-code
+    // resolver needs flight numbers, and the processing fee counts these as
+    // sectors — a round trip is genuinely two sectors, so this staying flat
+    // across journeys is what makes the per-sector fee come out right.
+    legs: journeys.flatMap(j => j.legs),
+    // ── Aliases over journeys[0] ────────────────────────────────────────────
+    // A dozen screens read these. They now describe the OUTBOUND rather than
+    // the whole result, which is a change in meaning for a round trip and the
+    // reason `journeys` exists: `destination` on a return used to resolve to
+    // the airport you started from.
+    origin: outbound?.origin,
+    destination: outbound?.destination,
+    airline: outbound?.airline,
+    stops: outbound?.stops ?? [],
+    stopCount: outbound?.stopCount ?? 0,
+    duration: outbound?.duration,
+    totalDuration: outbound?.totalDuration,
+    availableSeats: outbound?.availableSeats,
+    checkInBaggageKg: outbound?.checkInBaggageKg,
+    cabinBaggageKg: outbound?.cabinBaggageKg,
     fareOptions,
-    // Mirrors fareOptions[0] — kept so existing consumers (flowStorage,
-    // price page as it exists today) don't break while Step 2's rebuild
-    // is in progress.
+    // Mirrors fareOptions[0] — kept so existing consumers (flowStorage, the
+    // price page) don't break.
     pricingKey: primaryFare?.pricingKey,
     currency: primaryFare?.currency,
     totalFare: primaryFare?.totalFare,

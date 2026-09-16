@@ -109,15 +109,41 @@ export async function stampDealCodes(
     //
     // Resolved once per leg, because a connection can be flown by two carriers
     // and each may carry its own negotiated code.
-    const legs = flight?.legs ?? []
-    const departure = flight?.origin?.dateTime?.slice(0, 10) ?? null
     const bookingDate = new Date().toISOString().slice(0, 10)
 
-    // Falls back to the flight-level airline for a result whose legs were not
-    // mapped, so an unmapped payload still resolves on airline alone.
-    const runs = legs.length > 0
-      ? legs.map(l => ({ airline: l.airlineCode ?? null, flightNumber: l.flightNumber ?? null }))
-      : [{ airline: flight?.airline?.code ?? null, flightNumber: null }]
+    // Each direction is resolved against ITS OWN departure date.
+    //
+    // This used to take flight.origin.dateTime — the outbound departure — and
+    // apply it to every leg. On a round trip that is simply the wrong date for
+    // the return, and a deal code whose validity window closes between the two
+    // would be stamped on a return flight it does not actually cover.
+    const journeys = flight?.journeys ?? []
+    const runs: { airline: string | null; flightNumber: string | null; departure: string | null }[] =
+      journeys.length > 0
+        ? journeys.flatMap(journey => {
+            const departure = journey.origin?.dateTime?.slice(0, 10) ?? null
+            return journey.legs.length > 0
+              ? journey.legs.map(l => ({
+                  airline: l.airlineCode ?? null,
+                  flightNumber: l.flightNumber ?? null,
+                  departure,
+                }))
+              : [{ airline: journey.airline?.code ?? null, flightNumber: null, departure }]
+          })
+        // Falls back to the flat leg list, then to the flight-level airline, so
+        // a result mapped before journeys existed still resolves on airline
+        // alone rather than resolving nothing.
+        : (flight?.legs ?? []).length > 0
+          ? flight!.legs!.map(l => ({
+              airline: l.airlineCode ?? null,
+              flightNumber: l.flightNumber ?? null,
+              departure: flight?.origin?.dateTime?.slice(0, 10) ?? null,
+            }))
+          : [{
+              airline: flight?.airline?.code ?? null,
+              flightNumber: null,
+              departure: flight?.origin?.dateTime?.slice(0, 10) ?? null,
+            }]
 
     const stamped: StampedDealCode[] = []
     const seen = new Set<string>()
@@ -129,7 +155,7 @@ export async function stampDealCodes(
         airlineCode: run.airline,
         flightNumber: run.flightNumber,
         bookingDate,
-        departureDate: departure,
+        departureDate: run.departure,
       })
 
       for (const r of resolved) {

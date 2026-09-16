@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import AirportDropdown from '@/app/components/AirportDropdown'
 import { flowStorage } from '@/app/lib/book/flowStorage'
 import { searchPreferences } from '@/app/lib/book/searchPreferences'
-import { FlatFlightResult, formatTime, formatDayLabel } from '@/app/lib/book/types'
+import { FlatFlightResult, formatTime, formatDayLabel, journeysOf } from '@/app/lib/book/types'
 
 function toApiDate(input: string) {
   const [y, m, d] = input.split('-')
@@ -38,10 +38,24 @@ function departurePeriod(iso: string | undefined): DeparturePeriod | null {
   return 'night'
 }
 
+// Stops across EVERY direction, so a round trip is judged on the whole trip
+// rather than on its outbound alone. `stopCount` is now per journey — a
+// non-stop return is 0 and 0, and testing the flight-level alias would have
+// filtered on the outbound only.
+//
+// Before journeys existed this read the flat segment list, so a non-stop round
+// trip counted its own turnaround as a connection and reported `stopCount: 1` —
+// which meant "Non-stop" would have hidden exactly the flights it was meant to
+// show, the moment round trip shipped.
+function maxStops(f: FlatFlightResult): number {
+  if (!f.journeys?.length) return f.stopCount
+  return Math.max(...f.journeys.map(j => j.stopCount))
+}
+
 const STOP_FILTERS = [
-  { key: 'nonstop', label: 'Non-stop', test: (f: FlatFlightResult) => f.stopCount === 0 },
-  { key: '1stop', label: '1 stop', test: (f: FlatFlightResult) => f.stopCount === 1 },
-  { key: '2plusstop', label: '2+ stops', test: (f: FlatFlightResult) => f.stopCount >= 2 },
+  { key: 'nonstop', label: 'Non-stop', test: (f: FlatFlightResult) => maxStops(f) === 0 },
+  { key: '1stop', label: '1 stop', test: (f: FlatFlightResult) => maxStops(f) === 1 },
+  { key: '2plusstop', label: '2+ stops', test: (f: FlatFlightResult) => maxStops(f) >= 2 },
 ] as const
 
 const FARE_TYPE_FILTERS = [
@@ -72,6 +86,11 @@ export default function BookFlightsSearchPage() {
   const [origin, setOrigin] = useState('')
   const [destination, setDestination] = useState('')
   const [departDate, setDepartDate] = useState(() => new Date().toISOString().split('T')[0])
+  // The provider has no returnDate field — a round trip is a second segment
+  // flying the route back, plus RTF: true. The API route builds that; this
+  // form only has to collect the date.
+  const [tripType, setTripType] = useState<'oneway' | 'return'>('oneway')
+  const [returnDate, setReturnDate] = useState('')
   const [adult, setAdult] = useState(1)
   const [child, setChild] = useState(0)
   const [infant, setInfant] = useState(0)
@@ -186,6 +205,10 @@ export default function BookFlightsSearchPage() {
         body: JSON.stringify({
           origin, destination,
           departDate: toApiDate(departDate),
+          tripType,
+          // Sent only when it is actually a round trip, so switching back to
+          // one way can't leave a stale return date behind in the request.
+          returnDate: tripType === 'return' ? toApiDate(returnDate) : undefined,
           adult, child, infant,
         }),
       })
@@ -209,7 +232,13 @@ export default function BookFlightsSearchPage() {
       // so the "back to results" link on later pages has something to return to.
       flowStorage.saveSearchResults(
   foundResults,
-  { origin, destination, departDate: toDisplayDate(departDate), adult, child, infant },
+  {
+    origin, destination,
+    departDate: toDisplayDate(departDate),
+    tripType,
+    returnDate: tripType === 'return' ? toDisplayDate(returnDate) : undefined,
+    adult, child, infant,
+  },
   data.availabilityKey ?? null,
 )
     } catch {
@@ -255,8 +284,17 @@ export default function BookFlightsSearchPage() {
         {/* ── Search card ────────────────────────────────────────────── */}
         <form onSubmit={handleSearch} style={s.searchCard}>
           <div style={s.tripTypeRow}>
-            <span style={s.tripTypePill}>One way</span>
-            <span style={s.tripTypeMuted}>Round trip and multi-city coming soon</span>
+            {(['oneway', 'return'] as const).map(type => (
+              <button
+                key={type}
+                type="button"
+                onClick={() => setTripType(type)}
+                style={tripType === type ? s.tripTypePill : s.tripTypeOption}
+              >
+                {type === 'oneway' ? 'One way' : 'Round trip'}
+              </button>
+            ))}
+            <span style={s.tripTypeMuted}>Multi-city coming soon</span>
           </div>
 
           <label style={s.selfToggleRow}>
@@ -327,6 +365,21 @@ export default function BookFlightsSearchPage() {
                 />
                 {departDate && <span style={s.airportHint}>{toDisplayDate(departDate)}</span>}
               </div>
+
+              {tripType === 'return' && (
+                <div style={s.field}>
+                  <label style={s.label}>Return</label>
+                  <input
+                    type="date" required value={returnDate}
+                    onChange={e => setReturnDate(e.target.value)}
+                    // Can't return before you leave. Same-day is allowed — a
+                    // day trip out and back is an ordinary corporate booking.
+                    min={departDate}
+                    style={s.input}
+                  />
+                  {returnDate && <span style={s.airportHint}>{toDisplayDate(returnDate)}</span>}
+                </div>
+              )}
 
               <div style={{ ...s.field, position: 'relative' }}>
                 <label style={s.label}>Travelers</label>
@@ -542,44 +595,50 @@ export default function BookFlightsSearchPage() {
                         </div>
                       </div>
 
-                      {/* ── Route strip ──────────────────────────────── */}
-                      <div style={s.routeRow}>
-                        <div style={s.routePoint}>
-                          <span style={s.routeTime}>{formatTime(flight.origin?.dateTime)}</span>
-                          <span style={s.routeCode}>{flight.origin?.code ?? origin}</span>
-                          <span style={s.routeDay}>{formatDayLabel(flight.origin?.dateTime)}</span>
-                        </div>
-
-                        <div style={s.routeMiddle}>
-                          <span style={s.routeDuration}>{flight.duration ?? ''}</span>
-                          <div style={s.routeLineWrap}>
-                            <div style={s.routeDot} />
-                            {flight.stopCount === 0 ? (
-                              <div style={s.routeLine} />
-                            ) : (
-                              <>
-                                <div style={{ flex: 1, height: '1px', background: '#D1D5DB' }} />
-                                {flight.stops.map((stop, si) => (
-                                  <div key={si} style={s.routeStopDot} />
-                                ))}
-                                <div style={{ flex: 1, height: '1px', background: '#D1D5DB' }} />
-                              </>
-                            )}
-                            <div style={s.routeDot} />
+                      {/* ── Route strips, one per direction ──────────────
+                          A round trip comes back from the provider as ONE
+                          result with ONE combined price, so it is one card
+                          with the outbound above the return — not two cards
+                          the traveller could pick between. */}
+                      {journeysOf(flight).map(journey => (
+                        <div key={journey.journeyNo} style={s.routeRow}>
+                          <div style={s.routePoint}>
+                            <span style={s.routeTime}>{formatTime(journey.origin?.dateTime)}</span>
+                            <span style={s.routeCode}>{journey.origin?.code ?? origin}</span>
+                            <span style={s.routeDay}>{formatDayLabel(journey.origin?.dateTime)}</span>
                           </div>
-                          <span style={s.routeStops}>
-                            {flight.stopCount === 0
-                              ? 'Non-stop'
-                              : flight.stops.map(st => `via ${st.city}`).join(', ')}
-                          </span>
-                        </div>
 
-                        <div style={{ ...s.routePoint, alignItems: 'flex-end' as const }}>
-                          <span style={s.routeTime}>{formatTime(flight.destination?.dateTime)}</span>
-                          <span style={s.routeCode}>{flight.destination?.code ?? destination}</span>
-                          <span style={s.routeDay}>{formatDayLabel(flight.destination?.dateTime)}</span>
+                          <div style={s.routeMiddle}>
+                            <span style={s.routeDuration}>{journey.totalDuration ?? journey.duration ?? ''}</span>
+                            <div style={s.routeLineWrap}>
+                              <div style={s.routeDot} />
+                              {journey.stopCount === 0 ? (
+                                <div style={s.routeLine} />
+                              ) : (
+                                <>
+                                  <div style={{ flex: 1, height: '1px', background: '#D1D5DB' }} />
+                                  {journey.stops.map((stop, si) => (
+                                    <div key={si} style={s.routeStopDot} />
+                                  ))}
+                                  <div style={{ flex: 1, height: '1px', background: '#D1D5DB' }} />
+                                </>
+                              )}
+                              <div style={s.routeDot} />
+                            </div>
+                            <span style={s.routeStops}>
+                              {journey.stopCount === 0
+                                ? 'Non-stop'
+                                : journey.stops.map(st => `via ${st.city}`).join(', ')}
+                            </span>
+                          </div>
+
+                          <div style={{ ...s.routePoint, alignItems: 'flex-end' as const }}>
+                            <span style={s.routeTime}>{formatTime(journey.destination?.dateTime)}</span>
+                            <span style={s.routeCode}>{journey.destination?.code ?? destination}</span>
+                            <span style={s.routeDay}>{formatDayLabel(journey.destination?.dateTime)}</span>
+                          </div>
                         </div>
-                      </div>
+                      ))}
 
                       <div style={s.resultBottom}>
                         <div style={s.metaTags}>
@@ -628,7 +687,8 @@ const s: Record<string, React.CSSProperties> = {
 
   searchCard: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '16px', padding: '20px 20px 16px', marginBottom: '20px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' },
   tripTypeRow: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' },
-  tripTypePill: { fontSize: '12px', fontWeight: 600, color: '#fff', background: '#000835', padding: '5px 12px', borderRadius: '999px' },
+  tripTypePill: { fontSize: '12px', fontWeight: 600, color: '#fff', background: '#000835', padding: '5px 12px', borderRadius: '999px', border: '1px solid #000835', cursor: 'pointer' },
+  tripTypeOption: { fontSize: '12px', fontWeight: 600, color: '#4B5563', background: '#fff', padding: '5px 12px', borderRadius: '999px', border: '1px solid #D1D5DB', cursor: 'pointer' },
   tripTypeMuted: { fontSize: '11px', color: '#9CA3AF' },
 
   selfToggleRow: {

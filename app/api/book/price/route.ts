@@ -57,7 +57,17 @@ export function extractPricingDetails(pricing: PricingResponse) {
     fareType: pricingInfo.FareType,
     fareBasis: pricingInfo.FareInfos?.FareInfo?.[0]?.PaxFareBasis || undefined,
     mealIncluded: pricingInfo.Meal === 'YES',
-    cabinBaggageKg: flight?.Itineraries?.Itinerary?.[0]?.Baggage?.Allowance?.Cabin || undefined,
+    // Baggage is deliberately NOT returned here any more.
+    //
+    // It is filed per flown segment (Itineraries.Itinerary[].Baggage) and has
+    // no per-fare node at all, so a value taken from a pricing call for ONE
+    // fare is not a fact about that fare — it is the same itinerary-level
+    // allowance the search response already carried. Returning it caused the
+    // fare card being priced to source its baggage from here while its
+    // siblings sourced theirs from search, which is how one card in a list of
+    // six could show a different allowance for no real reason.
+    //
+    // The price page reads it off the journey instead, where it belongs.
     changePenalties: (pricingInfo.Penalties?.ChangePenalty ?? []).map(p => ({ paxType: p.PaxType, text: p.Text.trim() })),
     cancelPenalties: (pricingInfo.Penalties?.CancelPenalty ?? []).map(p => ({ paxType: p.PaxType, text: p.Text.trim() })),
     passengerBreakup: fareBreakdown.map(fb => ({

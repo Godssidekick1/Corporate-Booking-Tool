@@ -4,7 +4,9 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { flowStorage } from '@/app/lib/book/flowStorage'
-import { FlatFlightResult, FareOption, formatTime, formatDayLabel } from '@/app/lib/book/types'
+import {
+  FlatFlightResult, FareOption, formatTime, formatDayLabel, journeysOf, journeyLabel,
+} from '@/app/lib/book/types'
 
 // ── /book/price/[flightKey] — Step 2: Select fare ─────────────────────────────
 // Merges what used to be two separate concepts into one screen:
@@ -41,7 +43,9 @@ interface PriceApiResult {
   fareType?: string
   fareBasis?: string
   mealIncluded?: boolean
-  cabinBaggageKg?: string
+  // cabinBaggageKg is gone from this response on purpose — baggage is filed
+  // per flown segment, never per fare, so a value from a pricing call for one
+  // fare was not a fact about that fare. It is read off the journey instead.
   changePenalties?: { paxType: string; text: string }[]
   cancelPenalties?: { paxType: string; text: string }[]
   passengerBreakup?: {
@@ -98,7 +102,28 @@ function penaltySummary(lines: { paxType: string; text: string }[] | undefined):
   // search. If they DO differ, showing all of them would be the more
   // correct choice, but that's not been seen in any real response yet.
   const adult = lines.find(l => l.paxType === 'ADT')
-  return (adult ?? lines[0]).text || '—'
+  const text = (adult ?? lines[0]).text?.trim()
+
+  // Null, not a dash, and null for "Not Available" too.
+  //
+  // That string is the provider's own — it appears verbatim in real UAT
+  // penalty blocks, meaning the fare rules were not returned, not that the fee
+  // is zero or that cancellation is barred. Printing it fills a row with a
+  // non-answer, and printing "—" is worse because it looks like a value. The
+  // caller drops the row instead, and it reappears on its own the day the
+  // provider starts sending real rules.
+  if (!text || text.toLowerCase() === 'not available') return null
+  return text
+}
+
+// The provider sends branded perks in shouting caps — "FREE CHECKED BAGGAGE
+// ALLOWANCE", "PRE RESERVED SEAT ASSIGNMENT". Six of those stacked in a card
+// is a wall. Only the casing is changed; the airline's own wording is kept,
+// because this is a statement about what the ticket includes.
+function sentenceCase(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) return trimmed
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase()
 }
 
 export default function SelectFarePage() {
@@ -277,6 +302,20 @@ export default function SelectFarePage() {
   const hasMultipleFares = flight.fareOptions.length > 1
   const activeFare = flight.fareOptions[selectedFareIndex] as FareOption | undefined
 
+  const journeys = journeysOf(flight)
+  const hasReturn = journeys.length > 1
+
+  // Baggage sits on the flight, not the fare, so it is built once rather than
+  // per card. A row exists only where the provider gave an allowance — a
+  // direction whose segments disagreed carries none, and says nothing.
+  const baggageRows: string[] = journeys.flatMap(journey => {
+    const where = hasReturn ? ` · ${journeyLabel(journey.journeyNo)}` : ''
+    return [
+      journey.cabinBaggageKg ? `${journey.cabinBaggageKg}kg cabin baggage${where}` : null,
+      journey.checkInBaggageKg ? `${journey.checkInBaggageKg}kg check-in baggage${where}` : null,
+    ].filter((row): row is string => row !== null)
+  })
+
   return (
     <div style={s.page}>
       <div style={s.root}>
@@ -302,33 +341,37 @@ export default function SelectFarePage() {
             </div>
           </div>
 
-          <div style={s.routeRow}>
-            <div style={s.routePoint}>
-              <span style={s.routeTime}>{formatTime(flight.origin?.dateTime)}</span>
-              <span style={s.routeCode}>{flight.origin?.code}</span>
-              {flight.origin?.terminal && <span style={s.routeTerminal}>Terminal {flight.origin.terminal}</span>}
-              <span style={s.routeDay}>{formatDayLabel(flight.origin?.dateTime)}</span>
+          {journeys.map(journey => (
+            <div key={journey.journeyNo}>
+              {hasReturn && <span style={s.journeyLabel}>{journeyLabel(journey.journeyNo)}</span>}
+              <div style={s.routeRow}>
+                <div style={s.routePoint}>
+                  <span style={s.routeTime}>{formatTime(journey.origin?.dateTime)}</span>
+                  <span style={s.routeCode}>{journey.origin?.code}</span>
+                  {journey.origin?.terminal && <span style={s.routeTerminal}>Terminal {journey.origin.terminal}</span>}
+                  <span style={s.routeDay}>{formatDayLabel(journey.origin?.dateTime)}</span>
+                </div>
+                <div style={s.routeMiddle}>
+                  <span style={s.routeDuration}>{journey.totalDuration ?? journey.duration ?? ''}</span>
+                  <div style={s.routeLine} />
+                  <span style={s.routeStops}>
+                    {journey.stopCount === 0 ? 'Non-stop' : journey.stops.map(st => `via ${st.city}`).join(', ')}
+                  </span>
+                </div>
+                <div style={{ ...s.routePoint, alignItems: 'flex-end' as const }}>
+                  <span style={s.routeTime}>{formatTime(journey.destination?.dateTime)}</span>
+                  <span style={s.routeCode}>{journey.destination?.code}</span>
+                  {journey.destination?.terminal && <span style={s.routeTerminal}>Terminal {journey.destination.terminal}</span>}
+                  <span style={s.routeDay}>{formatDayLabel(journey.destination?.dateTime)}</span>
+                </div>
+              </div>
             </div>
-            <div style={s.routeMiddle}>
-              <span style={s.routeDuration}>{flight.duration ?? ''}</span>
-              <div style={s.routeLine} />
-              <span style={s.routeStops}>
-                {flight.stopCount === 0 ? 'Non-stop' : flight.stops.map(st => `via ${st.city}`).join(', ')}
-              </span>
-            </div>
-            <div style={{ ...s.routePoint, alignItems: 'flex-end' as const }}>
-              <span style={s.routeTime}>{formatTime(flight.destination?.dateTime)}</span>
-              <span style={s.routeCode}>{flight.destination?.code}</span>
-              {flight.destination?.terminal && <span style={s.routeTerminal}>Terminal {flight.destination.terminal}</span>}
-              <span style={s.routeDay}>{formatDayLabel(flight.destination?.dateTime)}</span>
-            </div>
-          </div>
+          ))}
 
           <div style={s.metaTags}>
             <span style={{ ...s.tag, ...(flight.isLcc ? s.tagBudget : s.tagFullService) }}>
               {flight.isLcc ? 'Budget carrier' : 'Full-service'}
             </span>
-            {flight.checkInBaggageKg && <span style={s.tag}>{flight.checkInBaggageKg}kg check-in baggage</span>}
             {flight.availableSeats != null && <span style={s.tag}>{flight.availableSeats} seats left</span>}
           </div>
         </div>
@@ -340,13 +383,23 @@ export default function SelectFarePage() {
         {/* confirmed real responses never show more than one), it still  */}
         {/* renders as a single full card, not a disabled picker.         */}
         <h2 style={s.cardTitle}>{hasMultipleFares ? 'Choose a fare' : 'Fare details'}</h2>
+        {/* Said once, here, rather than once per card. It was a hardcoded line
+            inside every fare card, identical on all of them, describing the
+            NEXT step rather than the fare it sat in — so on a six-fare flight
+            it was six copies of a sentence that distinguished nothing. */}
+        <p style={s.cardSub}>Seats are chargeable and selected on the next step.</p>
         <div style={hasMultipleFares ? s.fareOptionScroller : s.fareOptionList}>
             {flight.fareOptions.map((fare, i) => {
               const isActive = i === selectedFareIndex
               const changeText = penaltySummary(fare.changePenalties)
               const cancelText = penaltySummary(fare.cancelPenalties)
               const mealsIncluded = pricing && isActive ? pricing.mealIncluded : fare.mealIncluded
-              const cabinBag = pricing && isActive ? pricing.cabinBaggageKg : flight.cabinBaggageKg
+              // The airline's own name for this fare product — "ECO VALUE",
+              // "ECO FLEX". This is what actually distinguishes one fare from
+              // another on a flight that offers six of them; fareType (NRM/CRP)
+              // is a refundability class that repeats across tiers, so cards
+              // titled by it read as identical.
+              const fareTitle = fare.brandedFareDescription || fare.brandedFareName || fare.fareType || `Fare ${i + 1}`
               const fareVerdict = verdicts[i]
               const verdictColor = fareVerdict?.ok && fareVerdict.verdict ? VERDICT_META[fareVerdict.verdict] : null
 
@@ -364,7 +417,7 @@ export default function SelectFarePage() {
                 >
                   <div style={s.fareCardTopRow}>
                     <div>
-                      <span style={s.fareCardType}>{fare.fareType ?? `Fare ${i + 1}`}</span>
+                      <span style={s.fareCardType}>{fareTitle}</span>
                       <span style={{ ...s.fareOptionRefundTag, color: fare.refundable ? '#166534' : '#9CA3AF', background: fare.refundable ? '#F0FDF4' : '#F3F4F6' }}>
                         {fare.refundable ? 'Refundable' : 'Non-refundable'}
                       </span>
@@ -399,25 +452,66 @@ export default function SelectFarePage() {
                     <span style={s.fareCardPriceSub}>per adult</span>
                   </div>
 
-                  <div style={s.fareRuleSection}>
-                    <span style={s.fareRuleSectionTitle}>Baggage</span>
-                    <div style={s.fareRuleLine}><span style={s.fareRuleDot} />{cabinBag ? `${cabinBag}kg cabin baggage` : 'Cabin baggage as per airline policy'}</div>
-                    <div style={s.fareRuleLine}><span style={s.fareRuleDot} />{flight.checkInBaggageKg ? `${flight.checkInBaggageKg}kg check-in baggage` : 'Check-in baggage as per airline policy'}</div>
-                  </div>
+                  {/* What this fare includes, in the airline's own words.
+                      brandedServices arrives as a pipe-delimited string and is
+                      already split by the search route. It is the only
+                      genuinely per-fare descriptive content the provider
+                      sends, and it was being extracted and thrown away. */}
+                  {(fare.brandedServices?.length ?? 0) > 0 && (
+                    <div style={s.fareRuleSection}>
+                      <span style={s.fareRuleSectionTitle}>Included</span>
+                      {fare.brandedServices!.map((service, si) => (
+                        <div key={si} style={s.fareRuleLine}>
+                          <span style={s.fareRuleDot} />{sentenceCase(service)}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Baggage is per DIRECTION, not per fare — it is filed on
+                      the itinerary and has no per-fare node at all. Labelled
+                      by direction only when there is more than one, so a
+                      one-way reads exactly as it did before. */}
+                  {baggageRows.length > 0 && (
+                    <div style={s.fareRuleSection}>
+                      <span style={s.fareRuleSectionTitle}>Baggage</span>
+                      {baggageRows.map((row, bi) => (
+                        <div key={bi} style={s.fareRuleLine}><span style={s.fareRuleDot} />{row}</div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Every row here is conditional. The provider returns
+                      "Not Available" for penalties in UAT, which means the fare
+                      rules were not sent — not that the fee is zero. A row is
+                      shown when there is something true to put in it and is
+                      absent otherwise, so nothing on this card is a placeholder
+                      a traveller could mistake for a term of their ticket. */}
+                  {(cancelText || changeText || (fare.fareBases?.length ?? 0) > 0 || fare.fareBasis) && (
+                    <div style={s.fareRuleSection}>
+                      <span style={s.fareRuleSectionTitle}>Flexibility</span>
+                      {cancelText && (
+                        <div style={s.fareRuleLine}><span style={s.fareRuleDotAmber} />Cancellation fee {cancelText}</div>
+                      )}
+                      {changeText && (
+                        <div style={s.fareRuleLine}><span style={s.fareRuleDotAmber} />Date change fee {changeText}</div>
+                      )}
+                      {/* One code per direction. A round trip prices each way
+                          under its own basis, and showing only the first hid
+                          the return's. */}
+                      {(fare.fareBases ?? (fare.fareBasis ? [{ journeyNo: 1, code: fare.fareBasis }] : [])).map(fb => (
+                        <div key={fb.journeyNo} style={s.fareRuleLine}>
+                          <span style={s.fareRuleDot} />
+                          Fare basis {fb.code}
+                          {hasReturn && <span style={s.fareRuleAside}> · {journeyLabel(fb.journeyNo)}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
                   <div style={s.fareRuleSection}>
-                    <span style={s.fareRuleSectionTitle}>Flexibility</span>
-                    <div style={s.fareRuleLine}><span style={s.fareRuleDotAmber} />Cancellation fee {cancelText ?? 'as per airline policy'}</div>
-                    <div style={s.fareRuleLine}><span style={s.fareRuleDotAmber} />Date change fee {changeText ?? 'as per airline policy'}</div>
-                    {fare.fareBasis && (
-                      <div style={s.fareRuleLine}><span style={s.fareRuleDot} />Fare basis {fare.fareBasis}</div>
-                    )}
-                  </div>
-
-                  <div style={s.fareRuleSection}>
-                    <span style={s.fareRuleSectionTitle}>Seats, meals & more</span>
-                    <div style={s.fareRuleLine}><span style={s.fareRuleDotAmber} />Seats — chargeable, select on the next step</div>
-                    <div style={mealsIncluded ? s.fareRuleLine : { ...s.fareRuleLine }}>
+                    <span style={s.fareRuleSectionTitle}>Meals</span>
+                    <div style={s.fareRuleLine}>
                       <span style={mealsIncluded ? s.fareRuleDot : s.fareRuleDotAmber} />
                       {mealsIncluded ? 'Complimentary meal' : 'Meals — optional, at extra cost'}
                     </div>
@@ -546,6 +640,7 @@ const s: Record<string, React.CSSProperties> = {
   ndcTag: { fontSize: '9px', fontWeight: 700, color: '#3730A3', background: '#EEF2FF', padding: '1px 6px', borderRadius: '4px', letterSpacing: '0.3px' },
 
   routeRow: { display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '14px', padding: '14px 0', borderTop: '1px solid #F3F4F6', borderBottom: '1px solid #F3F4F6' },
+  journeyLabel: { display: 'block', fontSize: '11px', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.4px', marginTop: '10px' },
   routePoint: { display: 'flex', flexDirection: 'column', gap: '2px', flex: '0 0 auto', minWidth: '58px' },
   routeTime: { fontSize: '16px', fontWeight: 700, color: '#111827' },
   routeCode: { fontSize: '11px', fontWeight: 600, color: '#6B7280' },
@@ -599,6 +694,9 @@ const s: Record<string, React.CSSProperties> = {
   fareRuleSectionTitle: { display: 'block', fontSize: '11px', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.4px', marginBottom: '6px' },
   fareRuleLine: { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#374151', padding: '3px 0' },
   fareRuleDot: { width: '6px', height: '6px', borderRadius: '50%', background: '#22C55E', flexShrink: 0 },
+  // The direction a row belongs to, on a round trip only.
+  fareRuleAside: { color: '#9CA3AF' },
+  cardSub: { margin: '0 0 12px', fontSize: '12.5px', color: '#6B7280' },
   fareRuleDotAmber: { width: '6px', height: '6px', borderRadius: '50%', background: '#F59E0B', flexShrink: 0 },
 
   fareRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0' },

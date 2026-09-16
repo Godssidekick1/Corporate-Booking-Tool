@@ -70,11 +70,22 @@ export function categoryCodeForFlight(flight: FlatFlightResult): string {
 
 // How many sectors a processing fee charged per sector multiplies by. Legs, not
 // stops: a DEL-BOM-DXB itinerary is two sectors, and stopCount would say one.
+//
+// `legs` is flat across every direction, which is what makes this come out
+// right for a round trip: DEL-BOM plus BOM-DEL is two flown sectors, and a
+// per-sector fee should charge for both.
 export function sectorCount(flight: FlatFlightResult | null): number {
   if (!flight) return 1
   if (flight.legs && flight.legs.length > 0) return flight.legs.length
-  // No leg detail — fall back to stops + 1, which is the same number whenever
-  // stops were populated at all.
+
+  // Fall back by summing each direction's own stops. `stopCount` is per
+  // journey now, so the old flight-level `stopCount + 1` would count the
+  // outbound's hops alone and under-charge a round trip by half.
+  const journeys = flight.journeys ?? []
+  if (journeys.length > 0) {
+    return Math.max(1, journeys.reduce((total, j) => total + (j.stopCount ?? 0) + 1, 0))
+  }
+
   return Math.max(1, (flight.stopCount ?? 0) + 1)
 }
 

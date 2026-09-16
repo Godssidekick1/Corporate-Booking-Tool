@@ -87,7 +87,15 @@ export function buildPolicyInputsFromFlight(source: PolicyInputSource): BuiltPol
   // TotalDuration). That fallback under-counts layover time on connecting
   // itineraries, but a same-order-of-magnitude estimate beats treating the
   // trip as 0 hours and defaulting every connecting flight to short-haul.
-  const hours = journeyHours(flight.totalDuration ?? flight.duration)
+  //
+  // Measured per DIRECTION and the longest one wins. Long-haul cabin rules are
+  // about how long someone sits in a seat at a stretch, so a 10-hour outbound
+  // paired with a 3-hour return is a long-haul trip — not a 13-hour one, and
+  // not a 10-hour one only if the outbound happens to be listed first.
+  const journeyDurations = flight.journeys?.length
+    ? flight.journeys.map(j => journeyHours(j.totalDuration ?? j.duration))
+    : [journeyHours(flight.totalDuration ?? flight.duration)]
+  const hours = Math.max(...journeyDurations)
   const isLongHaul = hours > 8
   const cabinLimitKey = isLongHaul ? 'cabin_class_long_haul' : 'cabin_class_short_haul'
 
@@ -112,7 +120,14 @@ export function buildPolicyInputsFromFlight(source: PolicyInputSource): BuiltPol
       // allowed check, and tmc/settings/policy/page.tsx notes it isn't
       // reliably wired end-to-end yet. Revisit once that's confirmed rather
       // than risk false breaches here.
-      connecting_flights_allowed: flight.stopCount > 0,
+      // A connection is an intermediate stop WITHIN a direction. A round
+      // trip's turnaround is not one — it is where the outbound ends — and
+      // reading the flight-level stopCount would have counted it, flagging
+      // every non-stop return as a connecting flight and breaching a
+      // "no connections" policy that was never broken.
+      connecting_flights_allowed: flight.journeys?.length
+        ? flight.journeys.some(journey => journey.stopCount > 0)
+        : flight.stopCount > 0,
     },
     tierValues: {
       [cabinLimitKey]: cabinRank(flight.cabin),
