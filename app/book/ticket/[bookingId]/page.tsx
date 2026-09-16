@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { formatTime, formatDayLabel } from '@/app/lib/book/types'
+import { formatTime, formatDayLabel, journeyLabel } from '@/app/lib/book/types'
 
 // ── /book/ticket/[bookingId] ──────────────────────────────────────────────────
 // Displayed once a ticket is issued. Styled as an e-ticket / boarding-pass
@@ -31,6 +31,19 @@ interface StopInfo {
   departureDateTime: string | undefined
 }
 
+// One direction, as stored on the booking. A narrowed copy of Journey in
+// app/lib/book/types — this page reads a frozen bookings.itinerary rather than
+// a live search result, so it declares only what it renders.
+interface TicketJourney {
+  journeyNo: number
+  origin?: { code: string; name: string; city: string; dateTime: string }
+  destination?: { code: string; name: string; city: string; dateTime: string }
+  duration?: string
+  totalDuration?: string
+  stopCount: number
+  checkInBaggageKg?: string
+}
+
 interface FlightItinerary {
   airline?: { code: string; name: string }
   origin?: { code: string; name: string; city: string; dateTime: string }
@@ -40,6 +53,11 @@ interface FlightItinerary {
   stops?: StopInfo[]
   cabin?: string
   checkInBaggageKg?: string
+  // Optional because bookings written before round trip existed have no
+  // journeys on their frozen itinerary — an e-ticket is a permanent record and
+  // has to keep rendering. ticketJourneys rebuilds one direction from the flat
+  // fields for those, which is exactly right, since they can only be one-ways.
+  journeys?: TicketJourney[]
 }
 
 interface BookingPassenger {
@@ -257,6 +275,20 @@ export default function TicketPage() {
   const ticketNumbers = booking.ticket_numbers ?? []
   const isTicketed = booking.status === 'ticketed'
   const it = booking.itinerary
+  // The directions to print. Falls back to a single journey rebuilt from the
+  // flat fields for bookings frozen before journeys existed — an e-ticket is a
+  // permanent record, so it has to render every booking ever made, not just the
+  // ones written by the current code.
+  const ticketJourneys: TicketJourney[] = it?.journeys?.length
+    ? it.journeys
+    : [{
+        journeyNo: 1,
+        origin: it?.origin,
+        destination: it?.destination,
+        duration: it?.duration,
+        stopCount: it?.stopCount ?? 0,
+        checkInBaggageKg: it?.checkInBaggageKg,
+      }]
   const currency = booking.fare_breakdown?.currency ?? ''
   const legLabels = buildLegLabels(it)
 
@@ -286,53 +318,64 @@ export default function TicketPage() {
               </div>
 
               <div style={s.ticketBody}>
-                {/* Main coupon: route */}
+                {/* Main coupon: one route block per DIRECTION.
+                    This rendered a single strip from the flat origin/destination
+                    fields, which are aliases for the outbound — so on a round
+                    trip the return flight would not have appeared on the
+                    e-ticket at all. */}
                 <div style={s.coupon}>
-                  <div style={s.routeRow}>
-                    <div style={s.routePoint}>
-                      <span style={s.routeTime}>{formatTime(it?.origin?.dateTime)}</span>
-                      <span style={s.routeCode}>{it?.origin?.code}</span>
-                      <span style={s.routeCity}>{it?.origin?.city}</span>
-                    </div>
+                  {ticketJourneys.map((journey, ji) => (
+                    <div key={journey.journeyNo}>
+                      {ticketJourneys.length > 1 && (
+                        <span style={s.couponJourneyLabel}>{journeyLabel(journey.journeyNo)}</span>
+                      )}
+                      <div style={{ ...s.routeRow, ...(ji > 0 ? { marginTop: '4px' } : {}) }}>
+                        <div style={s.routePoint}>
+                          <span style={s.routeTime}>{formatTime(journey.origin?.dateTime)}</span>
+                          <span style={s.routeCode}>{journey.origin?.code}</span>
+                          <span style={s.routeCity}>{journey.origin?.city}</span>
+                        </div>
 
-                    <div style={s.routeMiddle}>
-                      <span style={s.routeDate}>{formatDayLabel(it?.origin?.dateTime)}</span>
-                      <div style={s.routeLineWrap}>
-                        <div style={s.routeDot} />
-                        <div style={s.routeLine} />
-                        <span style={s.routePlane}>✈</span>
-                        <div style={s.routeLine} />
-                        <div style={s.routeDot} />
+                        <div style={s.routeMiddle}>
+                          <span style={s.routeDate}>{formatDayLabel(journey.origin?.dateTime)}</span>
+                          <div style={s.routeLineWrap}>
+                            <div style={s.routeDot} />
+                            <div style={s.routeLine} />
+                            <span style={s.routePlane}>✈</span>
+                            <div style={s.routeLine} />
+                            <div style={s.routeDot} />
+                          </div>
+                          <span style={s.routeStops}>
+                            {journey.totalDuration ?? journey.duration ? `${journey.totalDuration ?? journey.duration} · ` : ''}
+                            {journey.stopCount === 0 ? 'Non-stop' : `${journey.stopCount} stop(s)`}
+                          </span>
+                        </div>
+
+                        <div style={{ ...s.routePoint, alignItems: 'flex-end' as const }}>
+                          <span style={s.routeTime}>{formatTime(journey.destination?.dateTime)}</span>
+                          <span style={s.routeCode}>{journey.destination?.code}</span>
+                          <span style={s.routeCity}>{journey.destination?.city}</span>
+                        </div>
                       </div>
-                      <span style={s.routeStops}>
-                        {it?.duration ? `${it.duration} · ` : ''}
-                        {(it?.stopCount ?? 0) === 0 ? 'Non-stop' : `${it?.stopCount} stop(s)`}
-                      </span>
-                    </div>
 
-                    <div style={{ ...s.routePoint, alignItems: 'flex-end' as const }}>
-                      <span style={s.routeTime}>{formatTime(it?.destination?.dateTime)}</span>
-                      <span style={s.routeCode}>{it?.destination?.code}</span>
-                      <span style={s.routeCity}>{it?.destination?.city}</span>
-                    </div>
-                  </div>
-
-                  {(it?.cabin || it?.checkInBaggageKg) && (
-                    <div style={s.metaRow}>
-                      {it?.cabin && (
-                        <div style={s.metaItem}>
-                          <span style={s.metaLabel}>Class</span>
-                          <span style={s.metaValue}>{it.cabin}</span>
-                        </div>
-                      )}
-                      {it?.checkInBaggageKg && (
-                        <div style={s.metaItem}>
-                          <span style={s.metaLabel}>Baggage</span>
-                          <span style={s.metaValue}>{it.checkInBaggageKg} kg</span>
+                      {(it?.cabin || journey.checkInBaggageKg) && (
+                        <div style={s.metaRow}>
+                          {it?.cabin && (
+                            <div style={s.metaItem}>
+                              <span style={s.metaLabel}>Class</span>
+                              <span style={s.metaValue}>{it.cabin}</span>
+                            </div>
+                          )}
+                          {journey.checkInBaggageKg && (
+                            <div style={s.metaItem}>
+                              <span style={s.metaLabel}>Baggage</span>
+                              <span style={s.metaValue}>{journey.checkInBaggageKg} kg</span>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
-                  )}
+                  ))}
                 </div>
 
                 {/* Perforated divider with cutout notches */}
@@ -494,6 +537,7 @@ const s: Record<string, React.CSSProperties> = {
 
   ticketBody: { position: 'relative' as const },
   coupon: { padding: '22px 20px 18px' },
+  couponJourneyLabel: { display: 'block', fontSize: '10px', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.5px' },
 
   routeRow: { display: 'flex', alignItems: 'flex-start', gap: '10px' },
   routePoint: { display: 'flex', flexDirection: 'column', gap: '2px', flex: '0 0 auto', minWidth: '70px' },

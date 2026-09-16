@@ -245,6 +245,10 @@ export default function BookingDetailsPage() {
   const [flight, setFlight] = useState<FlatFlightResult | null>(null)
   const [priced, setPriced] = useState<PricedFare | null>(null)
   const [loadError, setLoadError] = useState('')
+  // Set only when the airline accepted the passenger but we failed to save the
+  // booking. Its presence is what turns the error page from "try again" into
+  // "quote this to your travel desk".
+  const [orphanedReference, setOrphanedReference] = useState<string | null>(null)
 
   // ── Passenger state ─────────────────────────────────────────────────────
   const [passengers, setPassengers] = useState<PassengerForm[]>([])
@@ -650,6 +654,16 @@ export default function BookingDetailsPage() {
       const data = await res.json()
 
       if (!data.ok) {
+        // ORPHANED_PNR is not a retryable error and must not be presented as
+        // one. The airline already holds this passenger data; submitting again
+        // would send it twice. It gets a full-page state with the reference
+        // number, because "please try again" under a red banner is exactly the
+        // wrong instruction here.
+        if (data.code === 'ORPHANED_PNR') {
+          setLoadError(data.error)
+          setOrphanedReference(data.referenceNo ?? null)
+          return
+        }
         setError(data.error || 'Could not save passenger details. Please try again.')
         return
       }
@@ -677,10 +691,23 @@ export default function BookingDetailsPage() {
         <div style={s.root}>
           <div style={s.errorCard}>
             <p style={s.errorTitle}>⚠ {loadError}</p>
+            {orphanedReference && (
+              <p style={s.referenceBlock}>
+                Reference <strong>{orphanedReference}</strong>
+              </p>
+            )}
             {/* /book/flights, not /book — /book is the trips list, which has no
                 search box, so "Search again" landed on a page that could not
-                do the thing it offered. */}
-            <Link href="/book/flights" style={s.errorLink}>← Search again</Link>
+                do the thing it offered.
+                Not offered when the airline already holds the passenger data:
+                the right next action there is to talk to the travel desk, not
+                to start a second booking for the same trip. */}
+            {!orphanedReference && (
+              <Link href="/book/flights" style={s.errorLink}>← Search again</Link>
+            )}
+            {orphanedReference && (
+              <Link href="/dashboard" style={s.errorLink}>← Back to dashboard</Link>
+            )}
           </div>
         </div>
       </div>
@@ -1099,6 +1126,10 @@ const s: Record<string, React.CSSProperties> = {
   errorCard: { padding: '20px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '14px' },
   errorTitle: { fontSize: '13px', color: '#DC2626', margin: '0 0 10px', lineHeight: 1.5 },
   errorLink: { fontSize: '13px', color: '#DC2626', fontWeight: 600, textDecoration: 'underline' },
+  referenceBlock: {
+    fontSize: '13px', color: '#111827', background: '#fff', border: '1px solid #FECACA',
+    borderRadius: '8px', padding: '10px 14px', margin: '0 0 14px', letterSpacing: '0.3px',
+  },
 
   summaryCard: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', border: '1px solid #E5E7EB', borderRadius: '12px', padding: '14px 18px', marginBottom: '20px' },
   summaryRoute: { display: 'flex', alignItems: 'center', gap: '8px' },

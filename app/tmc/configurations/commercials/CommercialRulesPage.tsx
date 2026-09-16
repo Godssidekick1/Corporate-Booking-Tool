@@ -67,6 +67,22 @@ interface Coverage {
   netPercent: number | null
   lossMaking: boolean
   ambiguous: boolean
+  switchedOff: CommercialKind[]
+}
+
+// A cell says one of three things, and they are genuinely different:
+//   a rate        — a rule reaches them and is in force
+//   switched off  — a rule may well reach them, but the client has this kind
+//                   turned off on their Controls tab, so nothing is applied
+//   no rule       — nothing of this kind reaches this client at all
+//
+// It used to say "—" for both of the last two, which is how "why isn't my
+// discount applying?" becomes a search through the rules master for a rule that
+// was never the problem.
+function coverageCell(rate: string | null, off: boolean): { text: string; muted: boolean } {
+  if (off) return { text: 'switched off', muted: true }
+  if (!rate) return { text: 'no rule', muted: true }
+  return { text: rate, muted: false }
 }
 
 interface Category { id: string; code: string; label: string }
@@ -437,9 +453,24 @@ export default function CommercialRulesPage({ kind }: { kind: CommercialKind }) 
                           </Link>
                           {c.ambiguous && <span style={{ ...s.pill, ...s.ambiguous, marginLeft: 6 }}>ambiguous</span>}
                         </td>
-                        <td style={s.td}>{c.markup ?? '—'}{c.markupVia && <span style={s.via}>{c.markupVia}</span>}</td>
-                        <td style={s.td}>{c.discount ?? '—'}{c.discountVia && <span style={s.via}>{c.discountVia}</span>}</td>
-                        <td style={s.td}>{c.fee ?? '—'}{c.feeVia && <span style={s.via}>{c.feeVia}</span>}</td>
+                        {([
+                          ['markup', c.markup, c.markupVia],
+                          ['discount', c.discount, c.discountVia],
+                          ['processing_fee', c.fee, c.feeVia],
+                        ] as const).map(([kind, rate, via]) => {
+                          const off = (c.switchedOff ?? []).includes(kind)
+                          const cell = coverageCell(rate, off)
+                          return (
+                            <td key={kind} style={{ ...s.td, ...(cell.muted ? s.mutedCell : {}) }}>
+                              {cell.text}
+                              {/* The route it reaches by is still worth showing
+                                  when the kind is switched off — it says the
+                                  arrangement survives the switch, so turning it
+                                  back on does not mean rebuilding anything. */}
+                              {via && <span style={s.via}>{via}</span>}
+                            </td>
+                          )
+                        })}
                         <td style={{ ...s.td, ...s.mono, ...(c.lossMaking ? s.loss : {}) }}>
                           {c.netPercent === null ? '—' : `${c.netPercent > 0 ? '+' : ''}${c.netPercent}%`}
                         </td>
@@ -671,6 +702,7 @@ const s: Record<string, React.CSSProperties> = {
   row: { cursor: 'pointer' },
   via: { display: 'block', fontSize: 10.5, color: '#9CA3AF' },
   clientLink: { color: '#000835', fontWeight: 600, textDecoration: 'none' },
+  mutedCell: { color: '#9CA3AF' },
   loss: { color: '#DC2626', fontWeight: 600 },
 
   pill: { display: 'inline-block', fontSize: 10, fontWeight: 600, borderRadius: 4, padding: '1px 6px', border: '1px solid' },

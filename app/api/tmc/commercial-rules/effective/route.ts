@@ -48,6 +48,14 @@ interface CoverageRow {
   netPercent: number | null
   lossMaking: boolean
   ambiguous: boolean
+  // Which kinds this client has switched off on their Controls tab.
+  //
+  // Without this the screen shows a dash, which reads as "no rule configured"
+  // and sends a desk hunting through the rules master for something that is
+  // already there and already correct. A rule that resolves but is switched off
+  // is a different situation with a different fix, and it is one click away —
+  // so the row says which it is and the client name links to the switch.
+  switchedOff: CommercialKind[]
 }
 
 // "2% of base fare", "₹250 per sector" — enough to judge an arrangement without
@@ -186,6 +194,8 @@ export async function GET(req: NextRequest) {
         resolved.discount?.ambiguous ||
         resolved.processing_fee?.ambiguous
       ),
+      switchedOff: (['markup', 'discount', 'processing_fee'] as CommercialKind[])
+        .filter(kind => !enabledKinds.has(kind)),
     }
   })
 

@@ -290,10 +290,20 @@ export async function POST(req: NextRequest) {
       .single()
 
     if (insertError || !booking) {
-      console.error('Failed to persist booking after AddPassenger', insertError)
+      // The airline has the passenger data and we do not have a booking row.
+      // This is the only failure in the flow where the two sides disagree about
+      // whether something happened, and the reference number is the only thread
+      // back to it — so it is returned as its own field rather than buried in a
+      // sentence the UI renders as one line of red text, and the client gives
+      // it a screen of its own.
+      console.error('Failed to persist booking after AddPassenger', insertError, { referenceNo })
       return Response.json({
         ok: false,
-        error: 'Passenger details were accepted by the airline system, but we could not save this booking. Please contact support with reference ' + referenceNo,
+        code: 'ORPHANED_PNR',
+        referenceNo,
+        error:
+          'Your passenger details reached the airline, but we could not save the booking on our side. ' +
+          'Nothing has been ticketed and you have not been charged. Please quote the reference below to your travel desk.',
       }, { status: 500 })
     }
 
