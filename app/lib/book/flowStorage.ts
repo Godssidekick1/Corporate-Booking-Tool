@@ -162,4 +162,43 @@ export const flowStorage = {
       // no-op, matches safeSet's failure handling elsewhere in this file
     }
   },
+
+  // ── clearFlow ─────────────────────────────────────────────────────────────
+  // Forget the whole in-progress booking. Called when a traveller leaves the
+  // flow deliberately — starting a new search, or taking an exit out of an
+  // error — rather than when they complete it.
+  //
+  // NOTHING USED TO CLEAR ANY OF THIS ON ANY ERROR PATH, and two real faults
+  // came out of that:
+  //
+  //   1. tripId was cleared only on the SUCCESS path, immediately before the
+  //      push to /book/confirm. A booking that errored out at passenger details
+  //      left it behind, so the next, unrelated booking in the same tab
+  //      silently attached itself to the previous trip.
+  //
+  //   2. A stale priced:<flightKey> entry passes the details page's guard on a
+  //      fare the server has already expired — which is exactly how the
+  //      QUOTE_EXPIRED 409 from add-passenger is reached.
+  //
+  // Deliberately leaves the search RESULTS and meta alone: someone starting
+  // again usually wants the same search back, and those are re-written by the
+  // next search anyway. This clears the per-flight state that goes stale and
+  // the trip binding that leaks.
+  clearFlow() {
+    if (typeof window === 'undefined') return
+    try {
+      const store = window.sessionStorage
+      // Every priced fare and seat selection, whichever flights they were for —
+      // removing only the current flightKey would leave the others to be
+      // matched by a later visit to the same flight.
+      const stale = Object.keys(store).filter(
+        key => key.startsWith(PRICED_KEY_PREFIX) || key.startsWith(SEATS_KEY_PREFIX)
+      )
+      for (const key of stale) store.removeItem(key)
+      store.removeItem(TRIP_ID_KEY)
+      store.removeItem(GUEST_BOOKING_KEY)
+    } catch {
+      // no-op, matches safeSet's failure handling elsewhere in this file
+    }
+  },
 }

@@ -62,15 +62,25 @@ export const CONFIG_GROUPS: NavGroup[] = [
       { label: 'Users (TCs)',        href: '/tmc/configurations/users',              permission: 'manage_users' },
       { label: 'Client groups',      href: '/tmc/configurations/client-groups',      permission: 'manage_client_groups' },
       { label: 'Cost centres',       href: '/tmc/configurations/cost-centres',       permission: 'manage_users' },
+      // A door onto /tmc/clients/[id], not a second editor. Corporate Settings
+      // IS the client detail page — two screens storing one fact is how they
+      // drift, and this section had already been through that with policy.
+      //
+      // It sat under Commercials, on the reasoning that "somebody looking for
+      // the settings for a corporate reasonably looks under Commercials". It
+      // belongs here instead, by this file's own rule: Commercials is money,
+      // and four of Corporate Settings' six tabs — Identity, GST, Contacts,
+      // Policy & approvals — contain none. Profiles is "people and
+      // organisations", and a client IS the organisation. The same test that
+      // put Buckets under Master ("reference data reused across masters, not a
+      // description of who someone is") puts this here, since it is precisely a
+      // description of who someone is.
+      { label: 'Corporate settings', href: '/tmc/configurations/corporate-settings', permission: 'manage_clients' },
     ],
   },
   {
     label: 'Commercials',
     items: [
-      // A door onto /tmc/clients/[id], not a second editor. Corporate Settings
-      // IS the client detail page — two screens storing one fact is how they
-      // drift, and this section had already been through that with policy.
-      { label: 'Corporate settings', href: '/tmc/configurations/corporate-settings', permission: 'manage_clients' },
       // Three entries, one screen. They are three different jobs to a desk —
       // "what do we add", "what do we give back", "what do we charge for
       // handling" — so they stay separate here, but all three render

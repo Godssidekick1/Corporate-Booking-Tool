@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import SearchableSelect from '@/app/components/SearchableSelect'
 import AirlineDropdown from '@/app/components/AirlineDropdown'
 import Pagination from '@/app/components/Pagination'
@@ -421,8 +422,19 @@ export default function CommercialRulesPage({ kind }: { kind: CommercialKind }) 
                   <tbody>
                     {coverage.items.map(c => (
                       <tr key={c.clientId}>
+                        {/* Links to the client's Controls tab, not just to the
+                            client. A rule can resolve correctly and still not
+                            apply, because the kind is switched off for this
+                            client — and until now this screen had no way to
+                            reach that switch. AllocationsTab already links OUT
+                            to the Markup/Discount/Processing fee screens; this
+                            is the reverse of that link, which was missing, and
+                            its absence is what turns "my discount isn't
+                            applying" into a hunt. */}
                         <td style={s.td}>
-                          {c.clientName}
+                          <Link href={`/tmc/clients/${c.clientId}?tab=controls`} style={s.clientLink}>
+                            {c.clientName}
+                          </Link>
                           {c.ambiguous && <span style={{ ...s.pill, ...s.ambiguous, marginLeft: 6 }}>ambiguous</span>}
                         </td>
                         <td style={s.td}>{c.markup ?? '—'}{c.markupVia && <span style={s.via}>{c.markupVia}</span>}</td>
@@ -658,6 +670,7 @@ const s: Record<string, React.CSSProperties> = {
   td: { padding: '9px 10px', fontSize: 12, color: '#374151', borderBottom: '1px solid #F3F4F6', whiteSpace: 'nowrap' },
   row: { cursor: 'pointer' },
   via: { display: 'block', fontSize: 10.5, color: '#9CA3AF' },
+  clientLink: { color: '#000835', fontWeight: 600, textDecoration: 'none' },
   loss: { color: '#DC2626', fontWeight: 600 },
 
   pill: { display: 'inline-block', fontSize: 10, fontWeight: 600, borderRadius: 4, padding: '1px 6px', border: '1px solid' },

@@ -4,6 +4,19 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 
+// The exits every terminal state needs. A booking that is rejected, failed, or
+// stuck on broken approval routing is over — there is nothing to retry on this
+// page — so the only useful thing left is somewhere to go.
+function TerminalExits() {
+  return (
+    <div style={s.terminalExits}>
+      <Link href="/book/flights" style={s.terminalExitPrimary}>Start a new search →</Link>
+      <Link href="/bookings" style={s.terminalExit}>View my trips</Link>
+      <Link href="/dashboard" style={s.terminalExit}>Dashboard</Link>
+    </div>
+  )
+}
+
 interface Booking {
   id: string
   status: string
@@ -139,11 +152,18 @@ export default function ConfirmBookingPage() {
   // Reaching this page means passenger details are already submitted
   // (add-passenger already ran) — there's no valid "go back and redo
   // seatmap/pricing" state past this point, that would desync from the
-  // booking row that already exists server-side. Browser back should land
-  // on the dashboard, not on stale sessionStorage-driven booking steps.
+  // booking row that already exists server-side.
+  //
+  // So back does not go back. It goes to the dashboard, which is a reasonable
+  // destination — but it used to REPLACE, which destroyed forward history, and
+  // it happened with no warning on a page that offered no other exit. Silently
+  // doing something a traveller did not ask for is only tolerable while it is
+  // the single way out; now that the flow chrome carries a Dashboard link and
+  // a Start a new search link, this can push instead, leaving their history
+  // intact so forward still works.
   useEffect(() => {
     function handlePopState() {
-      router.replace('/dashboard')
+      router.push('/dashboard')
     }
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
@@ -238,7 +258,9 @@ export default function ConfirmBookingPage() {
         <div style={s.root}>
           <div style={s.errorCard}>
             <p style={s.errorTitle}>⚠ {loadError || 'Booking not found.'}</p>
-            <Link href="/book" style={s.errorLink}>← Start a new search</Link>
+            {/* /book/flights, not /book — /book is the trips list and has no
+                search form on it. */}
+            <Link href="/book/flights" style={s.errorLink}>← Start a new search</Link>
           </div>
         </div>
       </div>
@@ -256,7 +278,8 @@ export default function ConfirmBookingPage() {
     infantCount > 0 && `${infantCount} infant${infantCount > 1 ? 's' : ''}`,
   ].filter(Boolean)
 
-  const editableStatuses = ['pending_approval', 'approved', 'approval_misconfigured']
+  // editableStatuses lived here to gate an "Edit travelers" link. The link
+  // pointed at a route that was never built, so the list gated nothing.
 
   return (
     <div style={s.page}>
@@ -325,9 +348,16 @@ export default function ConfirmBookingPage() {
                   <span style={s.travelerCount}>({travelerCountParts.join(', ')})</span>
                 )}
               </h2>
-              {editableStatuses.includes(booking.status) && (
-                <Link href={`/book/passengers/edit/${bookingId}`} style={s.editLink}>Edit →</Link>
-              )}
+              {/* The Edit link pointed at /book/passengers/edit/[bookingId] —
+                  a route that has never existed. With no not-found.tsx under
+                  /book it 404'd into the bare root layout, which has no
+                  navigation at all, so clicking Edit on a booking awaiting
+                  approval stranded the traveller completely.
+                  Removed rather than stubbed: editing passenger details after
+                  add-passenger has run means changing data the airline already
+                  holds, which needs a provider call nobody has specified. A
+                  link that does nothing is better than one that breaks, and a
+                  link that is absent is better than both. */}
             </div>
 
             <div style={s.travelerList}>
@@ -489,6 +519,14 @@ export default function ConfirmBookingPage() {
             <p style={s.waitingSub}>
               Contact your manager or TMC if you have questions, or start a new search to try again.
             </p>
+            {/* Each of the three terminal cards below invited the traveller to
+                do something — "start a new search", "contact your TMC" — and
+                then offered no way to do it. All three were rendered with no
+                link and no button at all, so the only exit was a browser back
+                that is intercepted on this page and silently replaces to the
+                dashboard. Saying "start a new search" without a search link is
+                the part that made them dead ends. */}
+            <TerminalExits />
           </div>
         )}
 
@@ -498,6 +536,7 @@ export default function ConfirmBookingPage() {
             <p style={s.waitingSub}>
               This booking needs approval but we couldn't find who should approve it (e.g. no manager is assigned to you yet). Contact your TMC or corporate admin.
             </p>
+            <TerminalExits />
           </div>
         )}
 
@@ -507,6 +546,7 @@ export default function ConfirmBookingPage() {
             <p style={s.waitingSub}>
               Something went wrong confirming this with the airline. Contact your TMC or corporate admin if this keeps happening.
             </p>
+            <TerminalExits />
           </div>
         )}
 
@@ -618,6 +658,9 @@ const s: Record<string, React.CSSProperties> = {
   spinnerSmall: { width: '18px', height: '18px', border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%', flexShrink: 0, marginTop: '2px', animation: 'spin 0.7s linear infinite' },
 
   rejectedCard: { background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '14px', padding: '16px', marginBottom: '16px' },
+  terminalExits: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px 16px', marginTop: '14px' },
+  terminalExitPrimary: { fontSize: '12.5px', fontWeight: 600, color: '#991B1B', textDecoration: 'none' },
+  terminalExit: { fontSize: '12.5px', color: '#6B7280', textDecoration: 'none' },
   rejectedTitle: { fontSize: '14px', fontWeight: 700, color: '#991B1B', margin: '0 0 6px' },
   rejectedNote: { fontSize: '12px', color: '#991B1B', margin: '0 0 8px', lineHeight: 1.5, fontStyle: 'italic' },
 

@@ -288,10 +288,17 @@ export default function BookingDetailsPage() {
     const meta = flowStorage.getSearchMeta()
 
     if (!storedFlight || !storedPriced) {
-      // No priced fare in sessionStorage → this step wasn't reached by
-      // actually going through search -> select -> price. Redirect
-      // immediately rather than showing an error page to click through.
-      router.replace('/book/flights')
+      // No priced fare in sessionStorage → this step wasn't reached by going
+      // through search → select → price, or the tab's session has since been
+      // cleared.
+      //
+      // This used to router.replace('/book/flights') silently, which is
+      // indistinguishable from the app throwing you out for no reason — and it
+      // left the error branch below unreachable, since setLoadError was never
+      // called from anywhere. Saying what happened costs one click and answers
+      // the question the traveller is about to ask.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setLoadError('This booking step has expired. Please search again and reselect your flight.')
       return
     }
 
@@ -670,7 +677,10 @@ export default function BookingDetailsPage() {
         <div style={s.root}>
           <div style={s.errorCard}>
             <p style={s.errorTitle}>⚠ {loadError}</p>
-            <Link href="/book" style={s.errorLink}>← Search again</Link>
+            {/* /book/flights, not /book — /book is the trips list, which has no
+                search box, so "Search again" landed on a page that could not
+                do the thing it offered. */}
+            <Link href="/book/flights" style={s.errorLink}>← Search again</Link>
           </div>
         </div>
       </div>

@@ -147,6 +147,12 @@ export default function TicketPage() {
   async function loadAndMaybeTicket() {
     setLoading(true)
     setError('')
+    // finally, not a setLoading(false) on each path. The !res.ok branch below
+    // returned early WITHOUT clearing `loading`, so any 401/403/404/500 from
+    // GET /api/book/[bookingId] left the spinner up forever — and because the
+    // spinner wins over the error card, the traveller got a blank page with no
+    // text and no links at all. The worst failure in the flow, and it was one
+    // missing line.
     try {
       const res = await fetch(`/api/book/${bookingId}`)
       const data = await res.json()
@@ -155,7 +161,6 @@ export default function TicketPage() {
         return
       }
       setBooking(data.booking)
-      setLoading(false)
 
       // A booking that reached this page at status 'held' hasn't been
       // ticketed yet — issue the ticket automatically rather than making
@@ -184,6 +189,7 @@ export default function TicketPage() {
       }
     } catch {
       setError('Something went wrong loading this booking.')
+    } finally {
       setLoading(false)
     }
   }
@@ -238,7 +244,9 @@ export default function TicketPage() {
         <div style={s.root}>
           <div style={s.errorCard}>
             <p style={s.errorTitle}>⚠ {error || 'Booking not found.'}</p>
-            <Link href="/book" style={s.errorLink}>← Start a new search</Link>
+            {/* /book/flights, not /book — the latter is the trips list, which
+                has no search box on it. */}
+            <Link href="/book/flights" style={s.errorLink}>← Start a new search</Link>
           </div>
         </div>
       </div>
@@ -436,8 +444,17 @@ export default function TicketPage() {
             <p style={s.errorTitle}>⚠ {error || 'Ticketing did not complete.'}</p>
             <p style={s.errorNote}>
               Your booking is confirmed with the airline — only ticket issuance needs to be retried.
+              It stays on your trips either way, so you can come back to it.
             </p>
             <button type="button" onClick={issueTicket} style={s.retryBtn}>Retry ticketing →</button>
+            {/* Retry was the only control here. The "View my tickets" and
+                "Back to dashboard" links live in the sibling isTicketed branch,
+                so on a ticketing failure — the one moment a traveller most
+                needs somewhere to go — neither of them rendered. */}
+            <div style={s.doneLinks}>
+              <Link href="/bookings" style={s.doneLinkSecondary}>View my trips →</Link>
+              <Link href="/dashboard" style={s.doneLinkSecondary}>← Back to dashboard</Link>
+            </div>
           </div>
         )}
       </div>
