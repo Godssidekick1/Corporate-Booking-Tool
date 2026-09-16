@@ -403,6 +403,28 @@ export default function SelectFarePage() {
               const fareVerdict = verdicts[i]
               const verdictColor = fareVerdict?.ok && fareVerdict.verdict ? VERDICT_META[fareVerdict.verdict] : null
 
+              // Full detail on the SELECTED card only, once there is more than
+              // one fare to choose between.
+              //
+              // Six fares each carrying a perk list, two baggage rows, fare
+              // bases and a meal line is several screens of near-identical text
+              // to scroll past before reaching the button. Comparing fares needs
+              // the name, the price and a one-line gist; the rest is what you
+              // read about the ONE you are considering. A single-fare flight is
+              // not a comparison at all, so it stays fully expanded.
+              const showDetail = !hasMultipleFares || isActive
+
+              // The gist, built only from what the provider actually sent — so
+              // it stays empty rather than inventing reassurance when a fare
+              // carries no branded data.
+              const summaryBits = [
+                journeys[0]?.checkInBaggageKg ? `${journeys[0].checkInBaggageKg}kg check-in` : null,
+                mealsIncluded ? 'Meal included' : null,
+                (fare.brandedServices?.length ?? 0) > 0
+                  ? `${fare.brandedServices!.length} inclusion${fare.brandedServices!.length === 1 ? '' : 's'}`
+                  : null,
+              ].filter(Boolean) as string[]
+
               return (
                 <button
                   key={i}
@@ -452,12 +474,19 @@ export default function SelectFarePage() {
                     <span style={s.fareCardPriceSub}>per adult</span>
                   </div>
 
+                  {!showDetail && summaryBits.length > 0 && (
+                    <p style={s.fareSummaryLine}>{summaryBits.join(' · ')}</p>
+                  )}
+                  {!showDetail && (
+                    <span style={s.fareExpandHint}>Select to see full fare rules</span>
+                  )}
+
                   {/* What this fare includes, in the airline's own words.
                       brandedServices arrives as a pipe-delimited string and is
                       already split by the search route. It is the only
                       genuinely per-fare descriptive content the provider
                       sends, and it was being extracted and thrown away. */}
-                  {(fare.brandedServices?.length ?? 0) > 0 && (
+                  {showDetail && (fare.brandedServices?.length ?? 0) > 0 && (
                     <div style={s.fareRuleSection}>
                       <span style={s.fareRuleSectionTitle}>Included</span>
                       {fare.brandedServices!.map((service, si) => (
@@ -472,7 +501,7 @@ export default function SelectFarePage() {
                       the itinerary and has no per-fare node at all. Labelled
                       by direction only when there is more than one, so a
                       one-way reads exactly as it did before. */}
-                  {baggageRows.length > 0 && (
+                  {showDetail && baggageRows.length > 0 && (
                     <div style={s.fareRuleSection}>
                       <span style={s.fareRuleSectionTitle}>Baggage</span>
                       {baggageRows.map((row, bi) => (
@@ -487,7 +516,7 @@ export default function SelectFarePage() {
                       shown when there is something true to put in it and is
                       absent otherwise, so nothing on this card is a placeholder
                       a traveller could mistake for a term of their ticket. */}
-                  {(cancelText || changeText || (fare.fareBases?.length ?? 0) > 0 || fare.fareBasis) && (
+                  {showDetail && (cancelText || changeText || (fare.fareBases?.length ?? 0) > 0 || fare.fareBasis) && (
                     <div style={s.fareRuleSection}>
                       <span style={s.fareRuleSectionTitle}>Flexibility</span>
                       {cancelText && (
@@ -509,13 +538,15 @@ export default function SelectFarePage() {
                     </div>
                   )}
 
-                  <div style={s.fareRuleSection}>
-                    <span style={s.fareRuleSectionTitle}>Meals</span>
-                    <div style={s.fareRuleLine}>
-                      <span style={mealsIncluded ? s.fareRuleDot : s.fareRuleDotAmber} />
-                      {mealsIncluded ? 'Complimentary meal' : 'Meals — optional, at extra cost'}
+                  {showDetail && (
+                    <div style={s.fareRuleSection}>
+                      <span style={s.fareRuleSectionTitle}>Meals</span>
+                      <div style={s.fareRuleLine}>
+                        <span style={mealsIncluded ? s.fareRuleDot : s.fareRuleDotAmber} />
+                        {mealsIncluded ? 'Complimentary meal' : 'Meals — optional, at extra cost'}
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </button>
               )
             })}
@@ -671,7 +702,12 @@ const s: Record<string, React.CSSProperties> = {
   },
   fareCardActive: { background: '#EEF2FF', borderColor: '#000835' },
   fareCardStatic: { cursor: 'default' },
-  fareCardScrollItem: { width: '300px', flexShrink: 0, scrollSnapAlign: 'start' as const },
+  // Narrower than before, and the cards are no longer tall enough to need it —
+  // only the selected one carries full detail, so the scroller shows three
+  // comparable cards at a glance instead of one very long one.
+  fareCardScrollItem: { width: '264px', flexShrink: 0, scrollSnapAlign: 'start' as const, alignSelf: 'flex-start' as const },
+  fareSummaryLine: { fontSize: '11.5px', color: '#6B7280', margin: '6px 0 0', lineHeight: 1.5 },
+  fareExpandHint: { fontSize: '10.5px', color: '#9CA3AF', marginTop: '6px' },
   fareCardTopRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' },
 
   fareVerdictBanner: { border: '1px solid', borderRadius: '10px', padding: '10px 12px', margin: '10px 0' },

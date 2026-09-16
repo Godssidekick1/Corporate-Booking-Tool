@@ -1,16 +1,27 @@
+import { AIRPORTS } from '@/app/lib/data/locations'
+
 // ── Trip classification for the rule engine ──────────────────────────────────
 // Amadeus airport objects only carry AirportCode/AirportName/CityName -- no
 // country code -- so domestic vs. international has to be inferred from the
-// airport codes themselves. This list is a real starting point covering every
-// Indian airport seen in testing so far, NOT an exhaustive IATA database.
-// Extend it directly as new airports show up in real search results, the
-// same way locations.ts was flagged as incomplete-by-design rather than
-// silently wrong.
-const INDIAN_AIRPORT_CODES = new Set([
-  'DEL', 'BOM', 'BLR', 'MAA', 'CCU', 'HYD', 'AMD', 'COK', 'TRV', 'GOI',
-  'PNQ', 'JAI', 'ATQ', 'IXC', 'LKO', 'PAT', 'GAU', 'IXR', 'VNS', 'IDR',
-  'NAG', 'RPR', 'BBI', 'IXB', 'SXR', 'IXJ', 'IXA', 'BHO', 'STV', 'UDR',
-])
+// airport codes themselves. AIRPORTS is curated rather than exhaustive, so an
+// airport it has never heard of reads as international — the safe direction to
+// be wrong in, since it asks for a passport that is not needed rather than
+// skipping one that is.
+//
+// DERIVED from AIRPORTS, not a second hand-maintained list.
+//
+// It used to be a literal set of 30 codes sitting beside a separate list of 30
+// in locations.ts, and the two had to be extended in step. They would not have
+// been: adding Coimbatore to the dropdown alone would have made every DEL-CJB
+// booking read as INTERNATIONAL — demanding passports, evaluating against
+// max_fare_intl instead of max_fare_domestic, gating on intl_ticketing, and
+// resolving deal codes and commercial rules against INTAIRBSP. All of that from
+// an airport being added to one file and not the other.
+//
+// One list, one truth. Adding an airport to AIRPORTS is now the whole job.
+const INDIAN_AIRPORT_CODES = new Set(
+  AIRPORTS.filter(a => a.country === 'India').map(a => a.code)
+)
 
 export function isIndianAirport(code: string): boolean {
   return INDIAN_AIRPORT_CODES.has(code.toUpperCase())

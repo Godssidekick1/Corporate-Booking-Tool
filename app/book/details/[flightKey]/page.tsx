@@ -207,6 +207,19 @@ function buildLegs(flight: FlatFlightResult): LegInfo[] {
   return legs
 }
 
+// Whether a traveller's form has everything it needs. Only used to label a
+// collapsed accordion row — validateAll() remains the authority on whether the
+// booking can proceed, and this deliberately does not duplicate its age and
+// format rules. It answers "have you filled this in", not "is it correct".
+function isPassengerComplete(
+  p: { firstName: string; lastName: string; dateOfBirth: string; passportNumber: string; expiryDate: string },
+  needsPassport: boolean
+): boolean {
+  if (!p.firstName.trim() || !p.lastName.trim() || !p.dateOfBirth) return false
+  if (needsPassport && (!p.passportNumber.trim() || !p.expiryDate)) return false
+  return true
+}
+
 function groupByRow(seats: SeatCell[]): Map<number, SeatCell[]> {
   const rows = new Map<number, SeatCell[]>()
   for (const seat of seats) {
@@ -263,6 +276,10 @@ export default function BookingDetailsPage() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+  // Which traveller's form is expanded. -1 means all collapsed, which is a
+  // legitimate state — someone who has filled everything in wants the page
+  // short, not one section forced open.
+  const [openPassenger, setOpenPassenger] = useState(0)
 
   // Booking-for-self (the default) locks slot-1 identity fields and contact
   // details to whatever's saved on the traveler's profile — that profile is
@@ -554,7 +571,10 @@ export default function BookingDetailsPage() {
     })
   }
 
-  function validateAll(): boolean {
+  // Returns the errors rather than a boolean, so the caller can act on WHICH
+  // fields failed. Reading `fieldErrors` straight after calling this would read
+  // the previous render's state — setFieldErrors has not been applied yet.
+  function validateAll(): Record<string, string> {
     const errors: Record<string, string> = {}
 
     passengers.forEach((p, i) => {
@@ -569,7 +589,7 @@ export default function BookingDetailsPage() {
     if (mobileError) errors['contact-mobile'] = mobileError
 
     setFieldErrors(errors)
-    return Object.keys(errors).length === 0
+    return errors
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -577,8 +597,16 @@ export default function BookingDetailsPage() {
     if (!priced) return
 
     setError('')
-    if (!validateAll()) {
+    const errors = validateAll()
+    if (Object.keys(errors).length > 0) {
       setError('Please fix the highlighted fields before continuing.')
+      // Open the first traveller with a problem. Without this, a collapsed
+      // accordion turns "please fix the highlighted fields" into a lie —
+      // there would be no highlighted field anywhere on screen.
+      const firstBadPassenger = passengers.findIndex((_, i) =>
+        Object.keys(errors).some(key => key.startsWith(`passenger-${i}-`))
+      )
+      if (firstBadPassenger >= 0) setOpenPassenger(firstBadPassenger)
       return
     }
 
@@ -791,12 +819,54 @@ export default function BookingDetailsPage() {
           {/* ── One card per passenger ──────────────────────────────── */}
           {passengers.map((passenger, i) => {
             const locked = i === 0 && isSelfBooking
+            const isAccordion = passengers.length > 1
+            const isOpen = !isAccordion || openPassenger === i
+            const paxName = [passenger.firstName, passenger.lastName].filter(Boolean).join(' ')
+            // "Needs attention" beats "Incomplete": a field that failed
+            // validation is a different problem from one not filled in yet, and
+            // after a failed submit it is the only thing that tells you which
+            // collapsed traveller to open.
+            const paxHasError = Object.keys(fieldErrors).some(key => key.startsWith(`passenger-${i}-`))
+            const paxComplete = isPassengerComplete(passenger, tripType === 'international')
             return (
             <div style={s.card} key={i}>
-              <h2 style={s.cardTitle}>
-                Traveler {passengers.length > 1 ? `${i + 1} of ${passengers.length}` : ''}
-                <span style={s.paxTypeBadge}>{PAX_TYPE_LABEL[passenger.paxType]}</span>
-              </h2>
+              {/* ── Accordion header ────────────────────────────────────────
+                  Every traveller's form used to be expanded at once. Three
+                  travellers on an international trip is nine text inputs plus
+                  three passport blocks — several screens to scroll past to
+                  reach a Continue button, with no sense of how far along you
+                  were. One open at a time turns that into a checklist.
+                  A single traveller has nothing to choose between, so their
+                  form stays open and the header is just a heading. */}
+              <button
+                type="button"
+                onClick={() => isAccordion && setOpenPassenger(isOpen ? -1 : i)}
+                aria-expanded={isOpen}
+                style={{ ...s.paxHeader, ...(isAccordion ? {} : s.paxHeaderStatic) }}
+              >
+                <span style={s.paxHeaderMain}>
+                  <span style={s.cardTitle}>
+                    Traveler {passengers.length > 1 ? `${i + 1} of ${passengers.length}` : ''}
+                  </span>
+                  <span style={s.paxTypeBadge}>{PAX_TYPE_LABEL[passenger.paxType]}</span>
+                  {/* The name once it exists, so a collapsed row still says
+                      whose it is rather than "Traveler 2". */}
+                  {!isOpen && paxName && <span style={s.paxHeaderName}>{paxName}</span>}
+                </span>
+                {isAccordion && (
+                  <span style={s.paxHeaderRight}>
+                    {paxHasError
+                      ? <span style={s.paxStatusError}>Needs attention</span>
+                      : paxComplete
+                        ? <span style={s.paxStatusDone}>Complete</span>
+                        : <span style={s.paxStatusTodo}>Incomplete</span>}
+                    <span style={s.paxChevron}>{isOpen ? '▴' : '▾'}</span>
+                  </span>
+                )}
+              </button>
+
+              {isOpen && (
+              <>
               {locked && (
                 <p style={s.lockedNote}>
                   These details come from your travel profile.{' '}
@@ -879,6 +949,17 @@ export default function BookingDetailsPage() {
                     <input type="date" required disabled={locked} value={passenger.expiryDate} onChange={e => updatePassenger(i, 'expiryDate', e.target.value)} style={{ ...s.input, ...(locked ? s.inputLocked : {}) }} />
                   </div>
                 </>
+              )}
+
+              {/* Moves to the next traveller rather than leaving them to find
+                  the next header themselves. Absent on the last one, where the
+                  next thing is seats and then Continue. */}
+              {isAccordion && i < passengers.length - 1 && (
+                <button type="button" onClick={() => setOpenPassenger(i + 1)} style={s.paxNextBtn}>
+                  Next traveller →
+                </button>
+              )}
+              </>
               )}
             </div>
             )
@@ -1183,6 +1264,27 @@ const s: Record<string, React.CSSProperties> = {
   },
   legTabActive: { color: '#000835', borderColor: '#000835', background: '#EEF2FF' },
   legTabJourney: { color: '#9CA3AF', fontWeight: 500 },
+
+  // ── Passenger accordion ────────────────────────────────────────────────────
+  paxHeader: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px',
+    width: '100%', background: 'none', border: 'none', padding: 0, margin: 0,
+    cursor: 'pointer', textAlign: 'left' as const,
+  },
+  // A single traveller has nothing to collapse, so the header is not a control.
+  paxHeaderStatic: { cursor: 'default' },
+  paxHeaderMain: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' as const, minWidth: 0 },
+  paxHeaderName: { fontSize: '13px', color: '#6B7280' },
+  paxHeaderRight: { display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 },
+  paxStatusDone: { fontSize: '11px', fontWeight: 600, color: '#166534', background: '#F0FDF4', borderRadius: '999px', padding: '2px 9px' },
+  paxStatusTodo: { fontSize: '11px', fontWeight: 600, color: '#92400E', background: '#FEF3C7', borderRadius: '999px', padding: '2px 9px' },
+  paxStatusError: { fontSize: '11px', fontWeight: 600, color: '#991B1B', background: '#FEF2F2', borderRadius: '999px', padding: '2px 9px' },
+  paxChevron: { fontSize: '11px', color: '#9CA3AF' },
+  paxNextBtn: {
+    marginTop: '14px', alignSelf: 'flex-start' as const, background: '#fff', color: '#000835',
+    border: '1px solid #D1D5DB', borderRadius: '8px', padding: '7px 14px',
+    fontSize: '12.5px', fontWeight: 600, cursor: 'pointer',
+  },
 
   selectionBar: {
     display: 'flex', justifyContent: 'space-between', alignItems: 'center',

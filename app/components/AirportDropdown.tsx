@@ -76,8 +76,18 @@ export default function AirportDropdown({
       .filter(a => a.code !== exclude)
       .map(a => ({ airport: a, rank: rankMatch(a, effectiveQuery) }))
       .filter(r => effectiveQuery === '' || r.rank >= 0)
-      .sort((x, y) => x.rank - y.rank)
-      .slice(0, 8)
+      // Ties broken by city name, which is what fixes the "random order"
+      // complaint. rankMatch returns 0 for EVERY airport when the query is
+      // empty, so the sort was a no-op and the list came back in whatever
+      // order the array happened to be written in — India by traffic, then
+      // international by region. Sensible to whoever wrote it, arbitrary to
+      // anyone reading it. Equal-ranked matches now sort alphabetically.
+      .sort((x, y) => x.rank - y.rank || x.airport.city.localeCompare(y.airport.city))
+      // Was 8. On a list this size that silently hid most matches — typing "ba"
+      // showed eight of them with no indication there were more, which is the
+      // "even fewer in the dropdown" half of the problem. The list scrolls, so
+      // the cap only exists to stop the DOM growing without bound.
+      .slice(0, 60)
       .map(r => r.airport)
   }, [query, isOpen, exclude, selected])
 

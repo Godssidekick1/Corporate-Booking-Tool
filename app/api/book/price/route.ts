@@ -108,6 +108,20 @@ if (!key || !pricingKey || !provider || !resultIndex) {
 }
 
   try {
+    // The employee lookup is started BEFORE the provider call and awaited after
+    // it. It does not depend on the pricing response — it only needs the user
+    // id we already have — so running it afterwards put a database round trip
+    // on the end of a call that already takes seconds.
+    //
+    // Deliberately not Promise.all: pricing is the one that can fail in an
+    // interesting way, and awaiting it first keeps the existing catch handling
+    // (fare_not_found, AmadeusError) exactly as it was.
+    const service = createServiceClient()
+    const employeePromise = service
+      .from('employees')
+      .select('id, client_id')
+      .eq('id', user.id)
+      .maybeSingle()
 
     const pricing = await amadeus.pricing(key, pricingKey, provider, resultIndex)
     const details = extractPricingDetails(pricing)
@@ -126,12 +140,7 @@ if (!key || !pricingKey || !provider || !resultIndex) {
     //
     // This route used to do auth.getUser() and nothing else. It needs the
     // employee's client now, because a price is a price FOR SOMEBODY.
-    const service = createServiceClient()
-    const { data: employee } = await service
-      .from('employees')
-      .select('id, client_id')
-      .eq('id', user.id)
-      .maybeSingle()
+    const { data: employee } = await employeePromise
 
     const components: FareComponents = {
       base: details.baseFare ?? 0,

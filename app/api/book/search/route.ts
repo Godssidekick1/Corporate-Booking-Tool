@@ -232,6 +232,22 @@ export async function POST(req: NextRequest) {
     // one-ways, which is why the response comes back as ONE result carrying one
     // pricingKey for both directions, and why the price and add-passenger
     // routes need no changes to book one.
+    // Started BEFORE the provider call and awaited after it, not called in
+    // sequence afterwards.
+    //
+    // Loading the commercial context is five queries, and it depends only on
+    // employee.client_id — nothing in the availability response. Running it
+    // after the search meant those five round trips were added to the wall
+    // clock of the most latency-sensitive request in the product, for no
+    // reason: they could have been in flight the whole time the provider was
+    // thinking. Overlapping them makes the slower of the two the cost instead
+    // of the sum.
+    //
+    // No floating-promise risk: it is awaited unconditionally below, inside the
+    // same try, so a rejection surfaces here like any other. loadCommercialContext
+    // does not throw in any case — it returns an empty context on failure.
+    const contextPromise = loadCommercialContext(service, employee.client_id)
+
     const availability = await amadeus.searchFlights({
       segments: isReturn
         ? [
@@ -461,7 +477,7 @@ export async function POST(req: NextRequest) {
     // airline tax detail on the way out. Conditioning it on rules would leak
     // taxLines and fuelSurcharge to any client that happens to have no markup —
     // inconsistent, and the browser has no use for either.
-    const context = await loadCommercialContext(service, employee.client_id)
+    const context = await contextPromise
     const priced = results.map(result => applyMarkup(context, result, adult + child))
 
     return Response.json({
