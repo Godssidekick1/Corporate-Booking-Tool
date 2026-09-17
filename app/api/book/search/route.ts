@@ -79,8 +79,21 @@ function groupIntoJourneys(itineraries: ItineraryInfo[]): Map<number, ItineraryI
 // 15kg on the first hop, 20kg on the second — there is no single true answer,
 // and picking one to display is how a traveller gets surprised at a gate. We
 // state the allowance only when the direction speaks with one voice.
-function sharedAllowance(segments: ItineraryInfo[], pick: 'CheckIn' | 'Cabin'): string | undefined {
-  const values = segments.map(s => s.Baggage?.Allowance?.[pick] || undefined)
+//
+// "0" IS NOT AN ALLOWANCE. It is the provider saying the value is not filed
+// under this concept, and it arrives as a non-empty string, so it sailed through
+// the old truthiness check and rendered as a confident "Baggage 0 kg" on a
+// ticket. A ticket claiming no checked bag is worse than one saying nothing —
+// the first is a fact a traveller will pack around.
+function sharedAllowance(
+  segments: ItineraryInfo[],
+  pick: 'CheckIn' | 'Cabin' | 'CheckInPiece' | 'CabinPiece'
+): string | undefined {
+  const values = segments.map(s => {
+    const raw = s.Baggage?.Allowance?.[pick]
+    if (!raw || Number(raw) === 0) return undefined
+    return raw
+  })
   const first = values[0]
   if (!first) return undefined
   return values.every(v => v === first) ? first : undefined
@@ -370,8 +383,20 @@ export async function POST(req: NextRequest) {
         cabin: segment.Cabin,
       })),
       availableSeats: first?.AvailableSeats ? parseInt(first.AvailableSeats) || undefined : undefined,
+      // ── Weight AND pieces ──────────────────────────────────────────────────
+      // Two different concepts the industry files baggage under, and only one of
+      // them was ever read. India's domestic market sells by WEIGHT ("15 kg");
+      // most international long-haul sells by PIECE ("2 pieces"), leaving
+      // CheckIn at "0" and putting the real allowance in CheckInPiece — a field
+      // that has been on BaggageAllowance since this client was typed and has
+      // never been read by anything.
+      //
+      // That is why a DEL→FCO ticket showed "Baggage 0 kg": the allowance was 2
+      // pieces the whole time, in the field next door.
       checkInBaggageKg: sharedAllowance(segments, 'CheckIn'),
       cabinBaggageKg: sharedAllowance(segments, 'Cabin'),
+      checkInBaggagePieces: sharedAllowance(segments, 'CheckInPiece'),
+      cabinBaggagePieces: sharedAllowance(segments, 'CabinPiece'),
     }
   })
 

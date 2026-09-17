@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { round2 } from '@/app/lib/commercials/fareComponents'
 import { mealLabel } from '@/app/lib/book/mealCodes'
 import { JUST_BOOKED_KEY } from '@/app/lib/book/flowStorage'
+import { ButtonBusy, BusyOverlay } from '@/app/components/FlowLoader'
 
 // Tax codes a traveller might reasonably want named. Anything not in here shows
 // its raw code, which is the honest fallback — inventing a description for a
@@ -698,11 +699,22 @@ export default function ConfirmBookingPage() {
               disabled={confirming}
               style={{ ...s.confirmBtn, opacity: confirming ? 0.7 : 1 }}
             >
-              {confirming ? 'Booking…' : 'Confirm booking →'}
+              {confirming ? <ButtonBusy label="Booking…" /> : 'Confirm booking →'}
             </button>
           </>
         )}
       </div>
+
+      {/* The heaviest wait in the flow and the only irreversible one: this call
+          creates the PNR with the airline, and there is no undo for it. A dimmed
+          button was the entire signal for several seconds of silence, which is
+          how someone concludes nothing happened and clicks again. */}
+      {confirming && (
+        <BusyOverlay
+          title="Confirming with the airline"
+          note="We're creating your booking. This usually takes a few seconds."
+        />
+      )}
     </div>
   )
 }

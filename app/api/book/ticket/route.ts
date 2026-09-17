@@ -128,6 +128,22 @@ export async function POST(req: NextRequest) {
 
     const flightResult = result.AirBookingResponse?.[0]
     const pnr = flightResult?.PNR ?? booking.pnr
+
+    // A ticket without a PNR is a ticket nobody can use at a desk, so this is
+    // worth one log line rather than a null quietly written to the row.
+    //
+    // It was null on every booking until the acronym fix in the key normaliser
+    // (see ACRONYM_KEYS in app/lib/amadeus/client.ts) — "PNR" is the one field
+    // shape that could not survive the lowerCamelCase round trip. If it is still
+    // empty after that, the keys printed here say where the provider actually
+    // put it.
+    if (!pnr) {
+      console.warn('[ticket] no PNR in the response', {
+        bookingId,
+        topLevelKeys: Object.keys(result ?? {}),
+        bookingKeys: flightResult ? Object.keys(flightResult) : null,
+      })
+    }
     // Keep position stable (don't .filter() out gaps) — the confirm/ticket
     // pages zip this against traveler_snapshot.PassengerDetails by index,
     // so a missing TicketNo for one passenger must not shift the ones after it.

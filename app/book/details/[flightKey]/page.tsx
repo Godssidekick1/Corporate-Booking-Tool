@@ -10,6 +10,7 @@ import {
 } from '@/app/lib/book/types'
 import { countryNameFromCode } from '@/app/lib/data/countryCodes'
 import { mealCodesFor, mealLabel, fromProfilePreference, NO_MEAL_PREFERENCE } from '@/app/lib/book/mealCodes'
+import { ButtonBusy, BusyOverlay } from '@/app/components/FlowLoader'
 import { classifyTrip } from '@/app/lib/rule-engine/classifyTrip'
 
 // ── /book/details/[flightKey] ─────────────────────────────────────────────────
@@ -1404,10 +1405,20 @@ export default function BookingDetailsPage() {
           )}
 
           <button type="submit" disabled={submitting} style={{ ...s.continueBtn, opacity: submitting ? 0.7 : 1 }}>
-            {submitting ? 'Saving…' : 'Continue to review →'}
+            {submitting ? <ButtonBusy label="Saving travellers…" /> : 'Continue to review →'}
           </button>
         </form>
       </div>
+
+      {/* AddPassengerDetails is a real provider call, and the one after it holds
+          the fare. Re-submitting because nothing appeared to happen is how a
+          traveller ends up with two half-made bookings for one trip. */}
+      {submitting && (
+        <BusyOverlay
+          title="Sending traveller details to the airline"
+          note="Names, seats and meal preferences are being registered against your fare."
+        />
+      )}
     </div>
   )
 }

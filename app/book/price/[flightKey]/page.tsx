@@ -4,8 +4,10 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { flowStorage } from '@/app/lib/book/flowStorage'
+import { ButtonBusy } from '@/app/components/FlowLoader'
 import {
   FlatFlightResult, FareOption, formatTime, formatDayLabel, journeysOf, journeyLabel,
+  baggageLabel,
 } from '@/app/lib/book/types'
 
 // ── /book/price/[flightKey] — Step 2: Select fare ─────────────────────────────
@@ -314,9 +316,13 @@ export default function SelectFarePage() {
   // direction whose segments disagreed carries none, and says nothing.
   const baggageRows: string[] = journeys.flatMap(journey => {
     const where = hasReturn ? ` · ${journeyLabel(journey.journeyNo)}` : ''
+    // Weight or pieces, whichever the fare filed. These hardcoded "kg", which
+    // turned a piece-based international allowance into "0kg check-in baggage".
+    const cabin = baggageLabel(journey.cabinBaggageKg, journey.cabinBaggagePieces)
+    const checkIn = baggageLabel(journey.checkInBaggageKg, journey.checkInBaggagePieces)
     return [
-      journey.cabinBaggageKg ? `${journey.cabinBaggageKg}kg cabin baggage${where}` : null,
-      journey.checkInBaggageKg ? `${journey.checkInBaggageKg}kg check-in baggage${where}` : null,
+      cabin ? `${cabin} cabin baggage${where}` : null,
+      checkIn ? `${checkIn} check-in baggage${where}` : null,
     ].filter((row): row is string => row !== null)
   })
 
@@ -683,7 +689,12 @@ export default function SelectFarePage() {
           disabled={continuing || pricingLoading || !pricing?.ok}
           style={{ ...s.continueBtn, opacity: (continuing || pricingLoading || !pricing?.ok) ? 0.6 : 1 }}
         >
-          {continuing ? 'Opening…' : 'Select this fare →'}
+          {/* Inline, not an overlay. This one only navigates — the passenger
+              page does its own loading on arrival, and taking the screen away
+              for a route change would be a heavier signal than the wait
+              deserves. The overlay is kept for the two steps that call the
+              airline. */}
+          {continuing ? <ButtonBusy label="Opening…" /> : 'Select this fare →'}
         </button>
       </div>
     </div>

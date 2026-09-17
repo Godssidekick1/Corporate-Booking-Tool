@@ -185,6 +185,13 @@ export interface Journey {
   // against is how someone gets charged at a gate.
   checkInBaggageKg?: string
   cabinBaggageKg?: string
+  // The same allowance expressed the OTHER way the industry files it. Domestic
+  // India sells baggage by weight; most international long-haul sells it by
+  // piece and leaves the weight field at "0". Both are carried because a result
+  // set can hold one of each, and `baggageLabel` below picks whichever the fare
+  // actually filed. See the note in the search route.
+  checkInBaggagePieces?: string
+  cabinBaggagePieces?: string
 }
 
 export interface FlatFlightResult {
@@ -242,6 +249,8 @@ export interface FlatFlightResult {
   availableSeats?: number
   checkInBaggageKg?: string
   cabinBaggageKg?: string
+  checkInBaggagePieces?: string
+  cabinBaggagePieces?: string
   fareOptions: FareOption[]
 
   pricingKey?: string
@@ -348,7 +357,35 @@ export function journeysOf(flight: FlatFlightResult): Journey[] {
     availableSeats: flight.availableSeats,
     checkInBaggageKg: flight.checkInBaggageKg,
     cabinBaggageKg: flight.cabinBaggageKg,
+    checkInBaggagePieces: flight.checkInBaggagePieces,
+    cabinBaggagePieces: flight.cabinBaggagePieces,
   }]
+}
+
+// ── baggageLabel ─────────────────────────────────────────────────────────────
+// "15 kg", "2 pieces", or null when the fare filed neither.
+//
+// One function because the price page, the ticket and the public e-ticket all
+// render this and every one of them used to hardcode the unit — `{value} kg` —
+// which is how a piece-based international allowance printed as "0 kg" on a
+// document a traveller packs against. Returning null rather than "0" or "—"
+// keeps the decision to SAY NOTHING with the data instead of with each page.
+//
+// Weight wins when a fare somehow files both, because that is the stricter of
+// the two to pack to.
+export function baggageLabel(
+  weight: string | null | undefined,
+  pieces: string | null | undefined
+): string | null {
+  const kg = Number(weight)
+  if (weight && Number.isFinite(kg) && kg > 0) return `${kg} kg`
+
+  const count = Number(pieces)
+  if (pieces && Number.isFinite(count) && count > 0) {
+    return `${count} ${count === 1 ? 'piece' : 'pieces'}`
+  }
+
+  return null
 }
 
 // "Outbound" / "Return" / "Leg 3". Only worth showing when a result actually

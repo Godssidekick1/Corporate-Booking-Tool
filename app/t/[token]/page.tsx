@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
-import { formatTime, formatDayLabel, journeyLabel } from '@/app/lib/book/types'
+import { formatTime, formatDayLabel, journeyLabel, baggageLabel } from '@/app/lib/book/types'
 import { mealLabel } from '@/app/lib/book/mealCodes'
 
 // ── /t/[token] — the public e-ticket ─────────────────────────────────────────
@@ -37,6 +37,11 @@ interface Journey {
   legs: { airlineCode?: string; flightNumber?: string; bookingCode?: string; cabin?: string }[]
   checkInBaggageKg?: string
   cabinBaggageKg?: string
+  // The piece-based form of the same allowance. See baggageLabel in
+  // app/lib/book/types.ts — a fare that sells baggage by the piece leaves the
+  // weight fields at "0".
+  checkInBaggagePieces?: string
+  cabinBaggagePieces?: string
 }
 
 interface PublicTicket {
@@ -203,11 +208,18 @@ export default function PublicTicketPage() {
                   {leg.bookingCode && <span style={s.legClass}> · class {leg.bookingCode}</span>}
                 </span>
               ))}
-              {journey.checkInBaggageKg && (
-                <span style={s.legChip}>{journey.checkInBaggageKg}kg check-in</span>
+              {/* Both units, via one formatter. These hardcoded "kg", so a
+                  piece-based international allowance rendered as "0kg check-in"
+                  on the page a traveller is most likely to read at an airport. */}
+              {baggageLabel(journey.checkInBaggageKg, journey.checkInBaggagePieces) && (
+                <span style={s.legChip}>
+                  {baggageLabel(journey.checkInBaggageKg, journey.checkInBaggagePieces)} check-in
+                </span>
               )}
-              {journey.cabinBaggageKg && (
-                <span style={s.legChip}>{journey.cabinBaggageKg}kg cabin</span>
+              {baggageLabel(journey.cabinBaggageKg, journey.cabinBaggagePieces) && (
+                <span style={s.legChip}>
+                  {baggageLabel(journey.cabinBaggageKg, journey.cabinBaggagePieces)} cabin
+                </span>
               )}
             </div>
           </section>

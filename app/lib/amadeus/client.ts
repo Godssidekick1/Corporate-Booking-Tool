@@ -39,8 +39,38 @@ const PASSWORD = (process.env.AMADEUS_PASSWORD ?? '').trim()
 // If the provider ever reverts to PascalCase, this becomes a no-op (every
 // key's first letter is already uppercase, so capitalizing it again changes
 // nothing) — safe to leave in place rather than needing to detect and toggle.
+// ── The exception the round-trip claim above does not cover: ACRONYMS ────────
+// Capitalising the first letter undoes lowerCamelCase for every ordinary field,
+// but NOT for an all-caps one. The usual camelCase policy lowercases a leading
+// uppercase RUN, so the provider's serialiser turns "PNR" into "pnr" — and
+// capitalising the first letter of that gives "Pnr", which is not what it
+// started as and not what this file's types declare.
+//
+// The consequence was live and silent: AirBookingResult.PNR was `undefined` on
+// every booking ever made here, so bookings.pnr was written null and the ticket
+// page rendered "PNR —". TicketNo in the SAME object came through fine, which
+// is what made it look like a provider problem rather than ours — "ticketNo"
+// has no leading run to lose.
+//
+// There is no general rule that recovers this: "pnr" could honestly be "Pnr" or
+// "PNR" and the function cannot know which. So the acronyms this client's types
+// actually declare are listed. Anything not listed keeps the old behaviour.
+// Keyed on the LOWERCASED name, so "pnr", "Pnr", "pNR" and "PNR" all resolve to
+// the one spelling the types use. Which of those the serialiser emits for a
+// leading run is a detail of its implementation, and guessing it correctly once
+// is not the same as depending on it.
+const ACRONYM_KEYS: Record<string, string> = {
+  pnr: 'PNR',
+  ssrinfo: 'SSRInfo',
+  ssramount: 'SSRAmount',
+  ssrdetails: 'SSRDetails',
+  gstrequest: 'GSTRequest',
+}
+
 function capitalizeFirstLetter(key: string): string {
   if (!key) return key
+  const acronym = ACRONYM_KEYS[key.toLowerCase()]
+  if (acronym) return acronym
   return key.charAt(0).toUpperCase() + key.slice(1)
 }
 

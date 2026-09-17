@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { formatTime, formatDayLabel, journeyLabel } from '@/app/lib/book/types'
+import { formatTime, formatDayLabel, journeyLabel, baggageLabel } from '@/app/lib/book/types'
 import { mealLabel } from '@/app/lib/book/mealCodes'
 import { JUST_BOOKED_KEY } from '@/app/lib/book/flowStorage'
 
@@ -51,6 +51,10 @@ interface TicketJourney {
   // than the journey index.
   legs?: { airlineCode?: string; flightNumber?: string; bookingCode?: string; cabin?: string }[]
   checkInBaggageKg?: string
+  // Optional on every booking frozen before the search route started reading
+  // CheckInPiece. Those keep rendering their weight, which is the correct
+  // allowance for the domestic fares they will almost all be.
+  checkInBaggagePieces?: string
 }
 
 interface FlightItinerary {
@@ -62,6 +66,7 @@ interface FlightItinerary {
   stops?: StopInfo[]
   cabin?: string
   checkInBaggageKg?: string
+  checkInBaggagePieces?: string
   // Optional because bookings written before round trip existed have no
   // journeys on their frozen itinerary — an e-ticket is a permanent record and
   // has to keep rendering. ticketJourneys rebuilds one direction from the flat
@@ -370,6 +375,7 @@ export default function TicketPage() {
         stopCount: it?.stopCount ?? 0,
         stops: it?.stops,
         checkInBaggageKg: it?.checkInBaggageKg,
+        checkInBaggagePieces: it?.checkInBaggagePieces,
       }]
   const currency = booking.fare_breakdown?.currency ?? ''
   const legLabels = buildLegLabels(it)
@@ -377,10 +383,15 @@ export default function TicketPage() {
   return (
     <div style={s.page}>
       <div style={s.root}>
+        {/* A full-page state rather than an overlay: there is nothing behind it
+            worth seeing yet, because the ticket is what this page is. */}
         {ticketing && (
           <div style={s.loadingCard}>
             <div style={s.spinner} />
             <p style={s.loadingText}>Issuing your ticket…</p>
+            <p style={s.loadingNote}>
+              The airline is confirming your ticket numbers. Please don&apos;t close or refresh this page.
+            </p>
           </div>
         )}
 
@@ -389,7 +400,14 @@ export default function TicketPage() {
             <div style={s.successHero}>
               <div style={s.successIcon}>✓</div>
               <h1 style={s.successHeading}>You're booked!</h1>
-              <p style={s.successSub}>Your e-ticket is below — a copy has also been sent to your email.</p>
+              {/* The claim that "a copy has also been sent to your email" was
+                  here and is not true — no booking email is sent anywhere in
+                  this app, the only mail being Supabase Auth invites. A
+                  traveller who believes it will not screenshot or download the
+                  ticket, which is exactly the person who then has nothing at a
+                  gate. Replaced with the two things that ARE true and are the
+                  actions we want them to take. */}
+              <p style={s.successSub}>Your e-ticket is below. Download it or save the share link — you&apos;ll need it at the airport.</p>
             </div>
 
             {/* ── E-ticket / boarding-pass style card ─────────────────── */}
@@ -489,22 +507,33 @@ export default function TicketPage() {
                         </div>
                       )}
 
-                      {(it?.cabin || journey.checkInBaggageKg) && (
-                        <div style={s.metaRow}>
-                          {it?.cabin && (
-                            <div style={s.metaItem}>
-                              <span style={s.metaLabel}>Class</span>
-                              <span style={s.metaValue}>{it.cabin}</span>
-                            </div>
-                          )}
-                          {journey.checkInBaggageKg && (
-                            <div style={s.metaItem}>
-                              <span style={s.metaLabel}>Baggage</span>
-                              <span style={s.metaValue}>{journey.checkInBaggageKg} kg</span>
-                            </div>
-                          )}
-                        </div>
-                      )}
+                      {/* Weight or pieces, whichever this fare actually filed —
+                          an international allowance sold by the piece leaves the
+                          weight at "0", which this printed as a confident
+                          "Baggage 0 kg" on the one document a traveller packs
+                          against. baggageLabel returns null when neither is
+                          filed and the row is then absent, which says nothing
+                          rather than saying something false. */}
+                      {(() => {
+                        const bag = baggageLabel(journey.checkInBaggageKg, journey.checkInBaggagePieces)
+                        if (!it?.cabin && !bag) return null
+                        return (
+                          <div style={s.metaRow}>
+                            {it?.cabin && (
+                              <div style={s.metaItem}>
+                                <span style={s.metaLabel}>Class</span>
+                                <span style={s.metaValue}>{it.cabin}</span>
+                              </div>
+                            )}
+                            {bag && (
+                              <div style={s.metaItem}>
+                                <span style={s.metaLabel}>Check-in baggage</span>
+                                <span style={s.metaValue}>{bag}</span>
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })()}
                     </div>
                   ))}
                 </div>
@@ -688,7 +717,8 @@ const s: Record<string, React.CSSProperties> = {
 
   loadingCard: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px', padding: '80px 0' },
   spinner: { width: '22px', height: '22px', border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%', animation: 'spin 0.7s linear infinite' },
-  loadingText: { fontSize: '13px', color: '#6B7280', margin: 0 },
+  loadingText: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: 0 },
+  loadingNote: { fontSize: '12.5px', color: '#9CA3AF', margin: 0, maxWidth: '320px', textAlign: 'center', lineHeight: 1.55 },
 
   errorCard: { padding: '20px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '14px' },
   errorTitle: { fontSize: '13px', color: '#DC2626', margin: '0 0 8px', lineHeight: 1.5 },
