@@ -230,6 +230,55 @@ function isPassengerComplete(
   return true
 }
 
+// ── Step ─────────────────────────────────────────────────────────────────────
+// One collapsible section of this page.
+//
+// The page used to stack every section at full height — traveller forms, contact
+// details, the seat map — so three travellers on an international trip was
+// several screens of scrolling with no sense of how far along you were. The
+// per-traveller accordion helped and did not go far enough: the sections
+// themselves are the long part.
+//
+// A collapsed step still has to say something useful, which is what `summary`
+// is for. "Seats" tells you nothing; "2 selected · ₹1,400" tells you whether to
+// open it.
+function Step({
+  title, summary, status, open, optional, onToggle, children,
+}: {
+  title: string
+  summary: string
+  // 'done' | 'todo' | 'error'. Optional steps never show 'todo' — see below.
+  status: 'done' | 'todo' | 'error'
+  open: boolean
+  optional?: boolean
+  onToggle: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <div style={s.card}>
+      <button type="button" onClick={onToggle} aria-expanded={open} style={s.stepHeader}>
+        <span style={s.stepHeaderMain}>
+          <span style={s.cardTitle}>{title}</span>
+          {/* An optional step is labelled as such rather than marked
+              incomplete. A step that looks unfinished when it is merely unused
+              sends people hunting for a requirement that does not exist. */}
+          {optional && <span style={s.stepOptional}>Optional</span>}
+          <span style={s.stepSummary}>{summary}</span>
+        </span>
+        <span style={s.stepHeaderRight}>
+          {status === 'error'
+            ? <span style={s.paxStatusError}>Needs attention</span>
+            : status === 'done'
+              ? <span style={s.paxStatusDone}>Complete</span>
+              : !optional && <span style={s.paxStatusTodo}>Incomplete</span>}
+          <span style={s.paxChevron}>{open ? '▴' : '▾'}</span>
+        </span>
+      </button>
+      {open && <div style={s.stepBody}>{children}</div>}
+    </div>
+  )
+}
+
 function groupByRow(seats: SeatCell[]): Map<number, SeatCell[]> {
   const rows = new Map<number, SeatCell[]>()
   for (const seat of seats) {
@@ -295,6 +344,16 @@ export default function BookingDetailsPage() {
   // legitimate state — someone who has filled everything in wants the page
   // short, not one section forced open.
   const [openPassenger, setOpenPassenger] = useState(0)
+  // Which section of the page is expanded. Null means all collapsed, which is a
+  // legitimate state once everything is filled in.
+  //
+  // Opens on Travellers, which IS the first incomplete step every time: the
+  // passenger list is local state rebuilt from the search's passenger counts on
+  // every visit, never persisted, so the form is always arriving blank (bar the
+  // profile autofill). No "resume where you left off" logic, because there is
+  // no state for it to resume from — adding it would be machinery that could
+  // never fire.
+  const [openStep, setOpenStep] = useState<'travellers' | 'contact' | 'seats' | null>('travellers')
 
   // Booking-for-self (the default) locks slot-1 identity fields and contact
   // details to whatever's saved on the traveler's profile — that profile is
@@ -615,13 +674,18 @@ export default function BookingDetailsPage() {
     const errors = validateAll()
     if (Object.keys(errors).length > 0) {
       setError('Please fix the highlighted fields before continuing.')
-      // Open the first traveller with a problem. Without this, a collapsed
-      // accordion turns "please fix the highlighted fields" into a lie —
-      // there would be no highlighted field anywhere on screen.
+      // Open the step AND the traveller with the problem. Without both, a
+      // collapsed accordion turns "please fix the highlighted fields" into a
+      // lie — there would be no highlighted field anywhere on screen.
       const firstBadPassenger = passengers.findIndex((_, i) =>
         Object.keys(errors).some(key => key.startsWith(`passenger-${i}-`))
       )
-      if (firstBadPassenger >= 0) setOpenPassenger(firstBadPassenger)
+      if (firstBadPassenger >= 0) {
+        setOpenStep('travellers')
+        setOpenPassenger(firstBadPassenger)
+      } else if (errors['contact-email'] || errors['contact-mobile']) {
+        setOpenStep('contact')
+      }
       return
     }
 
@@ -726,6 +790,36 @@ export default function BookingDetailsPage() {
       setSubmitting(false)
     }
   }
+
+  // ── Step state ──────────────────────────────────────────────────────────
+  const needsPassport = tripType === 'international'
+  const completeTravellers = passengers.filter(p => isPassengerComplete(p, needsPassport)).length
+  const travellersHaveErrors = Object.keys(fieldErrors).some(k => k.startsWith('passenger-'))
+  const travellersStatus = travellersHaveErrors
+    ? 'error'
+    : completeTravellers === passengers.length ? 'done' : 'todo'
+
+  // Names once they exist, count until then. "Priya Sharma, Arjun Mehta" is a
+  // better collapsed summary than "2 of 2 complete", and falls back cleanly.
+  const namedTravellers = passengers
+    .map(p => [p.firstName, p.lastName].filter(Boolean).join(' '))
+    .filter(Boolean)
+  const travellersSummary = namedTravellers.length === passengers.length
+    ? namedTravellers.join(', ')
+    : `${completeTravellers} of ${passengers.length} complete`
+
+  const contactHasErrors = Boolean(fieldErrors['contact-email'] || fieldErrors['contact-mobile'])
+  const contactStatus = contactHasErrors ? 'error' : (email && mobile) ? 'done' : 'todo'
+
+  const totalSelectedSeats = Object.values(seatsByPassenger).flat().length
+  const selectedSeatFees = Object.values(seatsByPassenger)
+    .flat()
+    .reduce((sum, seat) => sum + (Number(seat.SeatFee) || 0), 0)
+  const seatsSummary = totalSelectedSeats === 0
+    ? 'None selected'
+    : selectedSeatFees > 0
+      ? `${totalSelectedSeats} selected · ₹${selectedSeatFees.toLocaleString('en-IN')}`
+      : `${totalSelectedSeats} selected`
 
   const activeLeg = legs[activeLegIndex]
   const activeSeatMap = activeLeg ? legSeatMaps[activeLeg.legIndex] : null
@@ -836,6 +930,13 @@ export default function BookingDetailsPage() {
         )}
 
         <form onSubmit={handleSubmit}>
+          <Step
+            title="Travellers"
+            summary={travellersSummary}
+            status={travellersStatus}
+            open={openStep === 'travellers'}
+            onToggle={() => setOpenStep(openStep === 'travellers' ? null : 'travellers')}
+          >
           {/* ── One card per passenger ──────────────────────────────── */}
           {passengers.map((passenger, i) => {
             const locked = i === 0 && isSelfBooking
@@ -1011,10 +1112,17 @@ export default function BookingDetailsPage() {
             )
           })}
 
+          </Step>
+
           {/* ── Contact details (shared, not per-passenger) ─────────── */}
-          <div style={s.card}>
-            <h2 style={s.cardTitle}>Contact details</h2>
-            <p style={s.cardSub}>We'll send booking confirmations and updates here.</p>
+          <Step
+            title="Contact details"
+            summary={email || 'Not set'}
+            status={contactStatus}
+            open={openStep === 'contact'}
+            onToggle={() => setOpenStep(openStep === 'contact' ? null : 'contact')}
+          >
+            <p style={s.cardSub}>We&apos;ll send booking confirmations and updates here.</p>
             {isSelfBooking && (
               <p style={s.lockedNote}>
                 These come from your travel profile.{' '}
@@ -1061,11 +1169,17 @@ export default function BookingDetailsPage() {
                 <input type="text" required disabled={isSelfBooking} value={zipCode} onChange={e => setZipCode(e.target.value)} style={{ ...s.input, ...(isSelfBooking ? s.inputLocked : {}) }} />
               </div>
             </div>
-          </div>
+          </Step>
 
           {/* ── Seat selection ───────────────────────────────────────── */}
-          <div style={s.card}>
-            <h2 style={s.cardTitle}>Choose your seats</h2>
+          <Step
+            title="Seats"
+            summary={seatsSummary}
+            status={totalSelectedSeats > 0 ? 'done' : 'todo'}
+            optional
+            open={openStep === 'seats'}
+            onToggle={() => setOpenStep(openStep === 'seats' ? null : 'seats')}
+          >
             <p style={s.cardSub}>Optional — you can skip this and get a seat at check-in instead.</p>
 
             {passengers.length > 1 && (
@@ -1178,7 +1292,7 @@ export default function BookingDetailsPage() {
               <div style={s.legendItem}><span style={{ ...s.legendSwatch, ...s.seatOccupied }}>✕</span> Occupied</div>
               <div style={s.legendItem}><span style={{ ...s.legendSwatch, ...s.seatSelected }} /> Selected</div>
             </div>
-          </div>
+          </Step>
 
           {error && (
             <div style={s.errorBanner}>
@@ -1311,6 +1425,26 @@ const s: Record<string, React.CSSProperties> = {
   legTabActive: { color: '#000835', borderColor: '#000835', background: '#EEF2FF' },
   legTabJourney: { color: '#9CA3AF', fontWeight: 500 },
   fieldHint: { display: 'block', fontSize: '11px', color: '#9CA3AF', marginTop: '4px', lineHeight: 1.4 },
+
+  // ── Step accordion ─────────────────────────────────────────────────────────
+  stepHeader: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px',
+    width: '100%', background: 'none', border: 'none', padding: 0, margin: 0,
+    cursor: 'pointer', textAlign: 'left' as const,
+  },
+  stepHeaderMain: { display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' as const, minWidth: 0 },
+  stepHeaderRight: { display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 },
+  // Truncated rather than wrapped: a collapsed row is a one-line glance, and a
+  // long passenger list pushing the status pill onto a second line defeats it.
+  stepSummary: {
+    fontSize: '12.5px', color: '#6B7280',
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, maxWidth: '260px',
+  },
+  stepOptional: {
+    fontSize: '10px', fontWeight: 700, color: '#6B7280', background: '#F3F4F6',
+    borderRadius: '999px', padding: '2px 8px', textTransform: 'uppercase' as const, letterSpacing: '0.3px',
+  },
+  stepBody: { marginTop: '16px' },
 
   // ── Passenger accordion ────────────────────────────────────────────────────
   paxHeader: {
