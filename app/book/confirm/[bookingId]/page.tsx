@@ -3,6 +3,20 @@
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { round2 } from '@/app/lib/commercials/fareComponents'
+
+// Tax codes a traveller might reasonably want named. Anything not in here shows
+// its raw code, which is the honest fallback — inventing a description for a
+// code we do not recognise would be worse than showing the code the airline used.
+const TAX_LABELS: Record<string, string> = {
+  YQ: 'Fuel surcharge (YQ)',
+  YR: 'Carrier-imposed fee (YR)',
+  K3: 'GST (K3)',
+  OT: 'Other taxes',
+  IN: 'Passenger service fee (IN)',
+  WO: 'User development fee (WO)',
+  P2: 'Aviation security fee (P2)',
+}
 
 // The exits every terminal state needs. A booking that is rejected, failed, or
 // stuck on broken approval routing is over — there is nothing to retry on this
@@ -31,6 +45,15 @@ interface Booking {
   // Discount and processing fee only — the server never sends a markup, so
   // there is nothing here to accidentally render.
   commercial_lines?: { source: string; label: string; sign: -1 | 1; amount: number }[]
+  // The sell-side fare: base with the markup already inside it, the tax total,
+  // and the airline's own tax codes. Absent on pre-commercial-rules bookings.
+  fare?: {
+    base: number
+    taxTotal: number | null
+    taxLines: { code: string; amount: number }[]
+    fare: number
+  } | null
+  seat_fees?: number
   policy_verdict: 'green' | 'amber' | 'red' | null
   policy_verdict_detail: {
     breaches?: { limit_key: string; kind: string; policyValue: unknown; actualValue: unknown }[]
@@ -143,6 +166,9 @@ export default function ConfirmBookingPage() {
   const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState('')
   const [errorCode, setErrorCode] = useState<string | null>(null)
+  // Collapsed by default: one tax number is what a traveller wants, the codes
+  // are what a finance team asks for afterwards.
+  const [taxesOpen, setTaxesOpen] = useState(false)
 
   useEffect(() => {
     loadBooking()
@@ -280,6 +306,25 @@ export default function ConfirmBookingPage() {
 
   // editableStatuses lived here to gate an "Edit travelers" link. The link
   // pointed at a route that was never built, so the list gated nothing.
+
+  // ── The fare card's numbers, derived once ────────────────────────────────
+  const currency = booking.fare_breakdown?.currency ?? ''
+  const sellTotal = booking.sell_total ?? 0
+  const seatFees = booking.seat_fees ?? booking.fare_breakdown?.seatFees ?? 0
+  const commercialDelta = (booking.commercial_lines ?? []).reduce((sum, l) => sum + l.sign * l.amount, 0)
+
+  // Prefer the server's displayedFare. Falls back to deriving it by subtraction
+  // for pre-commercials bookings, where there are no frozen components — on
+  // those the fallback is exact, because nothing was added to derive around.
+  const fareLine = booking.fare?.fare ?? round2(sellTotal - seatFees - commercialDelta)
+
+  // How many seats were actually chosen, so a free selection still shows a row.
+  const seatCount = (booking.traveler_snapshot?.PassengerDetails ?? [])
+    .reduce((n, p) => n + (p.SeatListDetails?.length ?? 0), 0)
+
+  // Base + taxes − discount + fee + seats must equal the total. Tolerance of a
+  // paisa absorbs the per-line rounding; anything larger is a real disagreement.
+  const reconciles = Math.abs((fareLine + commercialDelta + seatFees) - sellTotal) < 0.01
 
   return (
     <div style={s.page}>
@@ -420,46 +465,91 @@ export default function ConfirmBookingPage() {
             </div>
           )}
 
-          {/* The fare line. Derived from sell_total minus everything itemised
-              below it, so it reconciles whatever combination applies — and so a
-              markup, which is never itemised, stays inside it. */}
-          <div style={s.fareRow}>
+          {/* Base and taxes as the TRAVELLER's numbers. The markup rides inside
+              base, so base + taxes is exactly the Fare line below — and there is
+              no airline figure anywhere on this page to subtract it out of.
+              Absent on bookings made before commercial rules existed, which have
+              no frozen components to derive them from. */}
+          {booking.fare && (
+            <>
+              <div style={s.fareRow}>
+                <span style={s.fareLabel}>Base fare</span>
+                <span style={s.fareValue}>{currency} {booking.fare.base.toLocaleString('en-IN')}</span>
+              </div>
+              <div style={s.fareRow}>
+                <button
+                  type="button"
+                  onClick={() => setTaxesOpen(o => !o)}
+                  style={s.fareDisclosure}
+                  aria-expanded={taxesOpen}
+                >
+                  Taxes &amp; surcharges <span style={s.fareChevron}>{taxesOpen ? '▴' : '▾'}</span>
+                </button>
+                <span style={s.fareValue}>{currency} {(booking.fare.taxTotal ?? 0).toLocaleString('en-IN')}</span>
+              </div>
+              {/* Behind a disclosure: a traveller wants one tax number, a finance
+                  team wants the codes. The codes are the airline's own — YQ the
+                  fuel surcharge, K3 the Indian GST on air travel — and say
+                  nothing about what we added, because base already carries it. */}
+              {taxesOpen && (booking.fare.taxLines ?? []).map(tax => (
+                <div key={tax.code} style={s.fareSubRow}>
+                  <span style={s.fareSubLabel}>{TAX_LABELS[tax.code] ?? tax.code}</span>
+                  <span style={s.fareSubValue}>{currency} {tax.amount.toLocaleString('en-IN')}</span>
+                </div>
+              ))}
+            </>
+          )}
+
+          <div style={{ ...s.fareRow, ...s.fareRowSubtotal }}>
             <span style={s.fareLabel}>Fare</span>
-            <span style={s.fareValue}>
-              {booking.fare_breakdown?.currency ?? ''} {(
-                (booking.sell_total ?? booking.total_cost ?? 0)
-                - (booking.fare_breakdown?.seatFees ?? 0)
-                - (booking.commercial_lines ?? []).reduce((sum, l) => sum + l.sign * l.amount, 0)
-              ).toLocaleString('en-IN')}
-            </span>
+            <span style={s.fareValue}>{currency} {fareLine.toLocaleString('en-IN')}</span>
           </div>
 
           {/* Discount and processing fee. The server sends only the lines a
-              traveller may see. */}
+              traveller may see. Both appear here — this card is the complete
+              record of what was bought, and a breakdown missing a component
+              cannot be reconciled against the amount charged, which is the one
+              job it has. */}
           {(booking.commercial_lines ?? []).map(line => (
             <div key={line.source} style={s.fareRow}>
               <span style={s.fareLabel}>{line.label}</span>
               <span style={{ ...s.fareValue, ...(line.sign === -1 ? s.fareCredit : {}) }}>
                 {line.sign === -1 ? '− ' : '+ '}
-                {booking.fare_breakdown?.currency ?? ''} {line.amount.toLocaleString('en-IN')}
+                {currency} {line.amount.toLocaleString('en-IN')}
               </span>
             </div>
           ))}
 
-          {!!booking.fare_breakdown?.seatFees && (
+          {/* Rendered whenever seats were chosen, including when they were free.
+              This was `!!seatFees`, so a booking with free seat selections showed
+              no seat line at all — indistinguishable from having chosen none. */}
+          {seatCount > 0 && (
             <div style={s.fareRow}>
-              <span style={s.fareLabel}>Seat selection</span>
+              <span style={s.fareLabel}>
+                Seat selection
+                <span style={s.fareLabelAside}> · {seatCount} seat{seatCount === 1 ? '' : 's'}</span>
+              </span>
               <span style={s.fareValue}>
-                {booking.fare_breakdown?.currency ?? ''} {booking.fare_breakdown.seatFees.toLocaleString('en-IN')}
+                {seatFees > 0 ? `${currency} ${seatFees.toLocaleString('en-IN')}` : 'Included'}
               </span>
             </div>
           )}
-          <div style={s.fareRow}>
-            <span style={s.fareLabel}>Total</span>
-            <span style={s.fareValue}>
-              {booking.fare_breakdown?.currency ?? ''} {(booking.sell_total ?? booking.total_cost)?.toLocaleString('en-IN')}
-            </span>
+
+          <div style={{ ...s.fareRow, ...s.fareRowTotal }}>
+            <span style={s.fareTotalLabel}>Total</span>
+            <span style={s.fareTotalValue}>{currency} {sellTotal.toLocaleString('en-IN')}</span>
           </div>
+
+          {/* The parts are supposed to sum to the total. If they do not, say so
+              rather than printing a total that quietly disagrees with the
+              breakdown above it — a number nobody can reconcile is worse than a
+              visible discrepancy, because only one of the two gets questioned. */}
+          {!reconciles && (
+            <p style={s.fareMismatch}>
+              This breakdown does not add up to the total charged. Please contact your travel
+              desk before relying on it.
+            </p>
+          )}
           {booking.fare_breakdown && (
             <div style={s.metaTags}>
               <span style={{ ...s.tag, color: booking.fare_breakdown.isRefundable ? '#065F46' : '#9CA3AF', background: booking.fare_breakdown.isRefundable ? '#ECFDF5' : '#F3F4F6' }}>
@@ -640,6 +730,29 @@ const s: Record<string, React.CSSProperties> = {
   // A reduction reads green, so a discount is legible as a benefit rather than
   // as one more number in a column.
   fareCredit: { color: '#166534' },
+  // Base + taxes rule off into the Fare line; Fare ± adjustments rule off into
+  // the Total. Two weights of rule, so the two stages of the sum read as stages.
+  fareRowSubtotal: { borderTop: '1px solid #F3F4F6', paddingTop: '10px' },
+  fareRowTotal: { borderTop: '1.5px solid #111827', paddingTop: '10px', marginTop: '2px' },
+  fareTotalLabel: { fontSize: '13px', fontWeight: 600, color: '#111827' },
+  fareTotalValue: { fontSize: '18px', fontWeight: 700, color: '#0A0A14' },
+  fareLabelAside: { color: '#9CA3AF' },
+  fareDisclosure: {
+    fontSize: '13px', color: '#6B7280', background: 'none', border: 'none',
+    padding: 0, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px',
+  },
+  fareChevron: { fontSize: '9px', color: '#9CA3AF' },
+  fareSubRow: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    marginBottom: '6px', paddingLeft: '12px',
+  },
+  fareSubLabel: { fontSize: '11.5px', color: '#9CA3AF' },
+  fareSubValue: { fontSize: '11.5px', color: '#6B7280', fontVariantNumeric: 'tabular-nums' },
+  fareMismatch: {
+    fontSize: '12px', color: '#991B1B', background: '#FEF2F2',
+    border: '1px solid #FECACA', borderRadius: '8px', padding: '10px 12px', margin: '12px 0 0',
+    lineHeight: 1.5,
+  },
   metaTags: { display: 'flex', gap: '6px' },
   tag: { fontSize: '10px', color: '#6B7280', background: '#F3F4F6', padding: '3px 9px', borderRadius: '5px', fontWeight: 500 },
 

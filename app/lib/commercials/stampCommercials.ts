@@ -11,6 +11,7 @@ import { composeSellPrice, emptyCommercials, type CommercialsRecord } from './co
 import type { FareComponents } from './fareComponents'
 import type { FareType, CommercialKind } from './calcOnByKind'
 import type { FlatFlightResult } from '@/app/lib/book/types'
+import { cabinLetter } from '@/app/lib/book/cabin'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
 
@@ -244,7 +245,12 @@ export function priceWithContext(
     assignments: context.assignments,
     categoryId: flight ? context.categoryIdByCode.get(categoryCodeForFlight(flight)) ?? null : null,
     airlineCode: flight?.legs?.[0]?.airlineCode ?? flight?.airline?.code ?? null,
-    cabin: flight?.cabin ?? null,
+    // Converted to the letter our rules store. flight.cabin is the provider's
+    // PaxCabin — the WORD "Economy" — while commercial_rules.cabin is
+    // constrained to 'Y'|'W'|'C'|'F'. Passing it through raw compared 'Y'
+    // against 'ECONOMY', so every rule with a cabin restriction failed to match,
+    // always. See app/lib/book/cabin.ts.
+    cabin: cabinLetter(flight?.cabin),
     legBookingCodes: (flight?.legs ?? []).map(l => l.bookingCode),
     fareType,
     pricedOn,

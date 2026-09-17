@@ -1,8 +1,18 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic, CustomerInfo } from '@/app/lib/amadeus/client'
-import { visibleLines, ADJUSTMENT_LABELS, type Adjustment } from '@/app/lib/commercials/adjustment'
+import { visibleLines, ADJUSTMENT_LABELS } from '@/app/lib/commercials/adjustment'
+import { round2 } from '@/app/lib/commercials/fareComponents'
+import type { CommercialsRecord } from '@/app/lib/commercials/composeSellPrice'
 import { NextRequest } from 'next/server'
+
+// One passenger's fare, as frozen on bookings.fare_breakdown.
+interface PaxFare {
+  PaxType: string
+  BaseFare: number
+  Tax: number
+  TotalFare: number
+}
 
 // ── GET /api/book/[bookingId] ─────────────────────────────────────────────────
 // Fetches a single booking row. Added alongside the confirm/ticket pages,
@@ -45,9 +55,25 @@ export async function GET(
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
   }
 
+  // An explicit column list, not `*`.
+  //
+  // `*` shipped the whole row and stripped only `commercials`, which was not
+  // enough: `total_cost` is the AIRLINE's grand total, and with it in the
+  // response the markup is one subtraction away —
+  //   sell_total − total_cost − (processing fee − discount) = markup
+  // — with no need to look at anything else. Removing `commercials` while
+  // leaving `total_cost` beside it hid the label and published the number.
+  //
+  // The operational columns went the same way for the same reason: amadeus_key,
+  // pricing_key, result_index and search_key are provider session credentials,
+  // and client_id is tenancy. None of them has any business in a browser.
+  //
+  // Kept as a literal string so PostgREST's type inference survives — a
+  // concatenation collapses to `string` and every property access below
+  // becomes a GenericStringError.
   const { data: booking } = await service
     .from('bookings')
-    .select('*')
+    .select('id, status, booking_type, provider, provider_order_id, pnr, ticket_numbers, sell_total, total_cost, commercials, itinerary, traveler_snapshot, fare_breakdown, policy_status, policy_verdict, policy_verdict_detail, employee_id, trip_id, is_ndc, created_at, updated_at')
     .eq('id', bookingId)
     .maybeSingle()
 
@@ -106,17 +132,91 @@ export async function GET(
   // Removed and replaced with the lines they ARE allowed to see. Sending the
   // whole object and hiding it in the UI is not the same thing and is not good
   // enough.
-  const { commercials, ...safeBooking } = booking as typeof booking & {
-    commercials: { adjustments?: Adjustment[] } | null
+  // total_cost comes out with commercials. It is the airline's own grand total
+  // and it is the other half of the subtraction that reveals the markup.
+  const { commercials, total_cost, ...safeBooking } = booking as typeof booking & {
+    commercials: CommercialsRecord | null
   }
+
+  const sellTotal = booking.sell_total ?? total_cost ?? 0
+  const seatFees = (booking.fare_breakdown as { seatFees?: number } | null)?.seatFees ?? 0
+
+  // ── The sell-side fare breakdown ───────────────────────────────────────────
+  // Base and taxes as the TRAVELLER's numbers, so the confirm page can show a
+  // breakdown that adds up without ever holding an airline figure.
+  //
+  // The markup rides on the base, exactly as it does at search: base + taxes
+  // then equals displayedFare, and displayedFare − discount + fee + seat fees
+  // equals sell_total. Every line on the page comes from this object.
+  //
+  // Taxes are the SUM OF taxLines, which is also fuelSurcharge + otherTax —
+  // verified against a real payload where base 10314 + fuel 1098 + otherTax
+  // 2144 = fare 13556, and YQ 1098 + K3 588 + OT 1556 = 3242 = fuel + otherTax.
+  // `otherTax` alone is NOT the tax total; the fuel surcharge is a sibling field.
+  const airline = commercials?.airline
+  const markup = airline ? round2(commercials!.displayedFare - airline.total) : 0
+  const taxTotal = airline
+    ? round2(
+        (airline.taxLines ?? []).reduce((sum: number, t: { amount: number }) => sum + t.amount, 0)
+        || airline.otherTax + airline.fuelSurcharge
+      )
+    : null
+
+  const fare = commercials
+    ? {
+        base: round2(airline!.base + markup),
+        taxTotal,
+        // Codes and amounts only. A tax code is the airline's, not ours, and
+        // reveals nothing about what we added — provided base already carries
+        // the markup, which is the whole point of computing it above.
+        taxLines: airline!.taxLines,
+        // displayedFare: the "Fare" line. base + taxTotal by construction.
+        fare: commercials.displayedFare,
+      }
+    : null
+
+  // Per-pax rows, scaled onto the sell side.
+  //
+  // fare_breakdown.passengerBreakup holds the AIRLINE per-pax figures, written
+  // verbatim from the browser at add-passenger. Rendering those beneath a
+  // marked-up Fare line published the markup on screen — Fare − Σ(pax total) —
+  // and made the rows fail to sum to the total they sat above.
+  //
+  // Apportioned by each passenger's share of the airline fare, with the
+  // remainder pushed onto the last row so the parts sum EXACTLY to the whole.
+  // The per-pax split is presentational; apportioning it is honest, and a row
+  // that does not add up is not.
+  const rawBreakup = (booking.fare_breakdown as { passengerBreakup?: PaxFare[] } | null)?.passengerBreakup ?? []
+  const airlineFareTotal = rawBreakup.reduce((sum, p) => sum + (p.TotalFare ?? 0), 0)
+  const passengerBreakup = rawBreakup.map((pax, i) => {
+    if (!markup || airlineFareTotal <= 0) return pax
+    const isLast = i === rawBreakup.length - 1
+    const share = isLast
+      ? round2(markup - rawBreakup.slice(0, -1).reduce((sum, p) => sum + round2(markup * ((p.TotalFare ?? 0) / airlineFareTotal)), 0))
+      : round2(markup * ((pax.TotalFare ?? 0) / airlineFareTotal))
+    return {
+      ...pax,
+      BaseFare: round2((pax.BaseFare ?? 0) + share),
+      TotalFare: round2((pax.TotalFare ?? 0) + share),
+    }
+  })
 
   return Response.json({
     ok: true,
     booking: {
       ...safeBooking,
-      // What the corporate is invoiced. Falls back to total_cost for bookings
-      // made before commercial rules existed.
-      sell_total: booking.sell_total ?? booking.total_cost,
+      // What the corporate is invoiced. Falls back to the airline figure for
+      // bookings made before commercial rules existed — on those the two are
+      // the same number, so nothing is revealed by the fallback.
+      sell_total: sellTotal,
+      fare_breakdown: {
+        ...(booking.fare_breakdown as Record<string, unknown> | null),
+        passengerBreakup,
+      },
+      // Base, taxes and the itemised tax codes. Null on pre-commercials
+      // bookings, which have no frozen airline components to derive them from.
+      fare,
+      seat_fees: seatFees,
       // Discount and processing fee only. visibleLines() is what keeps the
       // embedded markup out — the filter lives there rather than here so the
       // rule is written once.

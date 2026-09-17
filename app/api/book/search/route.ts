@@ -10,6 +10,7 @@ import type {
   FlatFlightResult, FareOption, Journey, StopInfo, PenaltyLine,
 } from '@/app/lib/book/types'
 import type { ItineraryInfo } from '@/app/lib/amadeus/client'
+import { cabinLetter, CABIN_LABELS } from '@/app/lib/book/cabin'
 import { NextRequest, after } from 'next/server'
 
 // ── POST /api/book/search ────────────────────────────────────────────
@@ -27,6 +28,11 @@ interface SearchBody {
   // return, plus RTF: true. See the searchFlights call below.
   returnDate?: string
   tripType?: 'oneway' | 'return'
+  // The cabin the traveller asked for. The search form has had a selector for
+  // this since it was written and never sent the value — so every search went
+  // out as PreferredClass: '' and came back economy, while the results row
+  // printed the REQUESTED cabin as though it had been honoured.
+  cabin?: string
   adult?: number
   child?: number
   infant?: number
@@ -181,10 +187,13 @@ export async function POST(req: NextRequest) {
   }
 
   const body: SearchBody = await req.json()
-  const { origin, destination, departDate, returnDate, tripType, adult = 1, child = 0, infant = 0 } = body
+  const { origin, destination, departDate, returnDate, tripType, cabin, adult = 1, child = 0, infant = 0 } = body
   // A return date is what makes this a round trip, not the tripType label — the
   // label is what the form last had selected and can disagree with the fields.
   const isReturn = tripType === 'return' && Boolean(returnDate)
+  // Null when unrecognised, which falls through to economy rather than sending
+  // the provider a cabin nobody can interpret.
+  const requestedCabin = cabinLetter(cabin)
 
   if (!origin || !destination || !departDate) {
     return Response.json(
@@ -256,6 +265,18 @@ export async function POST(req: NextRequest) {
           ]
         : [{ Origin: normalizedOrigin, Destination: normalizedDestination, DepartDate: departDate }],
       rtf: isReturn,
+      // Sent as the provider's own word form ("Premium Economy"), normalised
+      // through cabinLetter so "premium economy" and 'W' both arrive the same
+      // way. Economy is sent as '' — the value every search has used until now
+      // and the only one proven to work — so the default path is unchanged and
+      // only a deliberate non-economy request carries something new.
+      //
+      // UNVERIFIED AGAINST UAT: PreferredClass may want the letter rather than
+      // the word. Read the `[amadeus] request` log on the first Business search
+      // and switch to cabinLetter() here if the provider ignores the word.
+      preferredClass: requestedCabin && requestedCabin !== 'Y'
+        ? CABIN_LABELS[requestedCabin]
+        : '',
       adult, child, infant,
     })
 

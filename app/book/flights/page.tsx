@@ -6,6 +6,7 @@ import AirportDropdown from '@/app/components/AirportDropdown'
 import { flowStorage } from '@/app/lib/book/flowStorage'
 import { searchPreferences } from '@/app/lib/book/searchPreferences'
 import { FlatFlightResult, formatTime, formatDayLabel, journeysOf } from '@/app/lib/book/types'
+import { cabinLabel } from '@/app/lib/book/cabin'
 
 function toApiDate(input: string) {
   const [y, m, d] = input.split('-')
@@ -260,6 +261,10 @@ export default function BookFlightsSearchPage() {
           // Sent only when it is actually a round trip, so switching back to
           // one way can't leave a stale return date behind in the request.
           returnDate: tripType === 'return' ? toApiDate(returnDate) : undefined,
+          // The selector has existed since this page was written and its value
+          // has never left the browser, which is why every search came back
+          // economy whatever was picked.
+          cabin: cabinPref,
           adult, child, infant,
         }),
       })
@@ -693,7 +698,12 @@ export default function BookFlightsSearchPage() {
                           <div>
                             <div style={s.airlineName}>{flight.airline?.name ?? 'Unknown airline'}</div>
                             <div style={s.airlineMeta}>
-                              {flight.airline?.code} · {flight.cabin ?? cabinPref}
+                              {/* The cabin the airline RETURNED, never the one
+                                  that was asked for. This fell back to
+                                  `cabinPref`, so a Business search rendered a
+                                  list of economy fares labelled Business — the
+                                  label came from the dropdown, not the fare. */}
+                              {flight.airline?.code} · {cabinLabel(flight.cabin) ?? '—'}
                               {flight.isNdc && <span style={s.ndcTag}>NDC fare</span>}
                             </div>
                           </div>
