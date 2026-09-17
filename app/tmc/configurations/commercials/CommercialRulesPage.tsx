@@ -68,6 +68,8 @@ interface Coverage {
   lossMaking: boolean
   ambiguous: boolean
   switchedOff: CommercialKind[]
+  // Optional so a cached response from before this existed still renders.
+  variesByCategory?: CommercialKind[]
 }
 
 // A cell says one of three things, and they are genuinely different:
@@ -478,6 +480,22 @@ export default function CommercialRulesPage({ kind }: { kind: CommercialKind }) 
                                   arrangement survives the switch, so turning it
                                   back on does not mean rebuilding anything. */}
                               {via && <span style={s.via}>{via}</span>}
+                              {/* More than one rule of this kind reaches the
+                                  client under different categories. Resolution
+                                  returns one winner per kind, and this view has
+                                  no flight to decide between them — so the rate
+                                  above is one of several, not the answer. Said
+                                  out loud, because printing one of two rules
+                                  with no qualifier is how a desk concludes the
+                                  other was never saved. */}
+                              {(c.variesByCategory ?? []).includes(kind) && (
+                                <span
+                                  style={s.varies}
+                                  title="More than one rule of this kind reaches this client, filed under different categories. Which applies depends on the flight — domestic or international, BSP or LCC."
+                                >
+                                  varies by category
+                                </span>
+                              )}
                             </td>
                           )
                         })}
@@ -731,6 +749,9 @@ const s: Record<string, React.CSSProperties> = {
   // Amber, not red: an unassigned rule is not broken, it is unfinished. Red is
   // reserved for the loss-making net, which is a live commercial problem.
   reachesNobody: { color: '#92400E', fontWeight: 600, cursor: 'help' },
+  // Sits under the `via` line, quieter than the rate but not hidden — it
+  // qualifies the number above it, so it has to be read with it.
+  varies: { display: 'block', fontSize: 10.5, color: '#92400E', cursor: 'help', marginTop: 1 },
 
   pill: { display: 'inline-block', fontSize: 10, fontWeight: 600, borderRadius: 4, padding: '1px 6px', border: '1px solid' },
   ambiguous: { background: '#FEF3C7', color: '#92400E', borderColor: '#FDE68A' },

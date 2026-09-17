@@ -48,6 +48,10 @@ interface CoverageRow {
   netPercent: number | null
   lossMaking: boolean
   ambiguous: boolean
+  // Kinds where more than one rule reaches this client under different
+  // categories, so which one applies is decided by the flight rather than by
+  // configuration. See variesByCategory below.
+  variesByCategory: CommercialKind[]
   // Which kinds this client has switched off on their Controls tab.
   //
   // Without this the screen shows a dash, which reads as "no rule configured"
@@ -133,6 +137,34 @@ export async function GET(req: NextRequest) {
     else bucketsByClient.set(m.client_id, [m.bucket_id])
   }
 
+  const ruleById = new Map(rules.map(r => [r.id, r]))
+
+  // ── "It depends on the flight" ─────────────────────────────────────────────
+  // This view deliberately resolves with NO itinerary, so every dimension a real
+  // booking narrows on — category, airline, cabin, class — is left open and a
+  // restricted rule stays a candidate. That is right for "what could this client
+  // get", but resolution still returns ONE winner per kind, so a client with a
+  // domestic-BSP discount AND a domestic-LCC discount saw one of them printed as
+  // though it were the answer, with the other invisible.
+  //
+  // Both are genuinely in force. Which applies is decided by the flight, and no
+  // screen without a flight in front of it can say which. So rather than pick
+  // one and imply certainty, the cell says the answer varies.
+  //
+  // Only CATEGORY is treated this way, not every losing candidate. A broad rule
+  // beaten by a narrower one is a real precedence decision the ladder made and
+  // the winner is the answer; two rules under different categories are not
+  // competing at all, they are covering different journeys.
+  function variesByCategory(resolved: ResolvedRule | null): boolean {
+    if (!resolved || resolved.beat.length === 0) return false
+    const categories = new Set<string>([resolved.rule.category_id])
+    for (const loser of resolved.beat) {
+      const category = ruleById.get(loser.ruleId)?.category_id
+      if (category) categories.add(category)
+    }
+    return categories.size > 1
+  }
+
   const rows: CoverageRow[] = (clients ?? []).map(client => {
     const bucketIds = bucketsByClient.get(client.id) ?? []
 
@@ -188,8 +220,28 @@ export async function GET(req: NextRequest) {
     // −5%. It is only a fixed AMOUNT that makes the comparison unanswerable.
     const markupBlocks = resolved.markup != null && resolved.markup.rule.calc_type !== 'percent'
     const discountBlocks = resolved.discount != null && resolved.discount.rule.calc_type !== 'percent'
+
+    // ── And they must be percentages OF THE SAME THING ───────────────────────
+    // calc_on is the component the rate is charged against, and "20% of BF"
+    // against "10% of TF" are not two numbers that can be subtracted. On a fare
+    // with base 12,000 and total 15,000 that is a 2,400 markup against a 1,500
+    // discount — a real net of 900, or 6% of the total. The column said +10%.
+    //
+    // Always an OVERSTATEMENT in the common direction, too: a markup is usually
+    // filed on the base and a discount on the total, and the base is the smaller
+    // number — so the markup's percentage buys less than the discount's gives
+    // away, and the one screen that exists to show margin flattered it.
+    //
+    // Same failure as netting a fixed amount against a percentage, one level
+    // down: two quantities that look comparable because they share a unit.
+    const differentBasis =
+      resolved.markup != null &&
+      resolved.discount != null &&
+      resolved.markup.rule.calc_on !== resolved.discount.rule.calc_on
+
     const comparable =
-      !markupBlocks && !discountBlocks && (resolved.markup != null || resolved.discount != null)
+      !markupBlocks && !discountBlocks && !differentBasis &&
+      (resolved.markup != null || resolved.discount != null)
 
     const netPercent = comparable
       ? Number(((markupRate ?? 0) - (discountRate ?? 0)).toFixed(4))
@@ -215,6 +267,13 @@ export async function GET(req: NextRequest) {
         resolved.discount?.ambiguous ||
         resolved.processing_fee?.ambiguous
       ),
+      variesByCategory: ([
+        ['markup', resolved.markup],
+        ['discount', resolved.discount],
+        ['processing_fee', resolved.processing_fee],
+      ] as [CommercialKind, ResolvedRule | null][])
+        .filter(([, r]) => variesByCategory(r))
+        .map(([kind]) => kind),
       switchedOff: (['markup', 'discount', 'processing_fee'] as CommercialKind[])
         .filter(kind => !enabledKinds.has(kind)),
     }
