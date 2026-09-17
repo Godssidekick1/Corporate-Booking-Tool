@@ -253,6 +253,10 @@ export default function SelectFarePage() {
         currency: data.currency!,
         isRefundable: data.isRefundable!,
         fareType: data.fareType!,
+        // Prefer the live Pricing answer over the search row's — this is the
+        // fare that was actually locked. The passengers page needs it to know
+        // whether a special-meal request is one the airline will honour.
+        mealIncluded: data.mealIncluded ?? fareOption?.mealIncluded,
         passengerBreakup: data.passengerBreakup,
         isNdc: fareOption?.isNdc ?? flightResult.isNdc,
         searchKey: searchData.availabilityKey ?? undefined,
@@ -697,15 +701,19 @@ const s: Record<string, React.CSSProperties> = {
   },
   fareCard: {
     display: 'flex', flexDirection: 'column' as const, width: '100%',
-    padding: '18px', background: '#F9FAFB', border: '1.5px solid #E5E7EB', borderRadius: '14px',
+    padding: '13px 14px', background: '#F9FAFB', border: '1.5px solid #E5E7EB', borderRadius: '12px',
     cursor: 'pointer', textAlign: 'left' as const,
   },
   fareCardActive: { background: '#EEF2FF', borderColor: '#000835' },
   fareCardStatic: { cursor: 'default' },
-  // Narrower than before, and the cards are no longer tall enough to need it —
-  // only the selected one carries full detail, so the scroller shows three
-  // comparable cards at a glance instead of one very long one.
-  fareCardScrollItem: { width: '264px', flexShrink: 0, scrollSnapAlign: 'start' as const, alignSelf: 'flex-start' as const },
+  // Sized so several fares are comparable without scrolling past them.
+  //
+  // Two things make that possible rather than merely cramped: only the SELECTED
+  // card carries its full rule detail, and `alignSelf: flex-start` stops the
+  // unselected cards stretching to match the tall one beside them — a flex row
+  // gives every child the height of its largest sibling by default, which was
+  // padding five short cards out to the height of the one open card.
+  fareCardScrollItem: { width: '232px', flexShrink: 0, scrollSnapAlign: 'start' as const, alignSelf: 'flex-start' as const },
   fareSummaryLine: { fontSize: '11.5px', color: '#6B7280', margin: '6px 0 0', lineHeight: 1.5 },
   fareExpandHint: { fontSize: '10.5px', color: '#9CA3AF', marginTop: '6px' },
   fareCardTopRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' },
@@ -716,19 +724,19 @@ const s: Record<string, React.CSSProperties> = {
   fareVerdictLabel: { fontSize: '12px', fontWeight: 700 },
   fareVerdictList: { margin: '6px 0 0', paddingLeft: '16px', display: 'flex', flexDirection: 'column' as const, gap: '3px' },
   fareVerdictListItem: { fontSize: '11px', lineHeight: 1.5, textAlign: 'left' as const },
-  fareCardType: { fontSize: '14px', fontWeight: 700, color: '#111827', marginRight: '8px' },
+  fareCardType: { fontSize: '13px', fontWeight: 700, color: '#111827', marginRight: '6px' },
   fareOptionRefundTag: { fontSize: '10px', fontWeight: 700, padding: '3px 9px', borderRadius: '6px' },
   fareOptionRadio: { width: '18px', height: '18px', borderRadius: '50%', border: '2px solid #D1D5DB', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   fareOptionRadioDot: { width: '8px', height: '8px', borderRadius: '50%', background: 'transparent' },
   fareOptionRadioDotActive: { background: '#000835' },
 
-  fareCardPriceRow: { display: 'flex', alignItems: 'baseline', gap: '6px', marginBottom: '14px', paddingBottom: '14px', borderBottom: '1px dashed #E5E7EB' },
-  fareCardPrice: { fontSize: '20px', fontWeight: 700, color: '#0A0A14' },
-  fareCardPriceSub: { fontSize: '11px', color: '#9CA3AF' },
+  fareCardPriceRow: { display: 'flex', alignItems: 'baseline', gap: '5px', marginBottom: '9px', paddingBottom: '9px', borderBottom: '1px dashed #E5E7EB' },
+  fareCardPrice: { fontSize: '17px', fontWeight: 700, color: '#0A0A14' },
+  fareCardPriceSub: { fontSize: '10.5px', color: '#9CA3AF' },
 
-  fareRuleSection: { marginBottom: '12px' },
-  fareRuleSectionTitle: { display: 'block', fontSize: '11px', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.4px', marginBottom: '6px' },
-  fareRuleLine: { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#374151', padding: '3px 0' },
+  fareRuleSection: { marginBottom: '9px' },
+  fareRuleSectionTitle: { display: 'block', fontSize: '10px', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.4px', marginBottom: '4px' },
+  fareRuleLine: { display: 'flex', alignItems: 'center', gap: '7px', fontSize: '11.5px', color: '#374151', padding: '2px 0' },
   fareRuleDot: { width: '6px', height: '6px', borderRadius: '50%', background: '#22C55E', flexShrink: 0 },
   // The direction a row belongs to, on a round trip only.
   fareRuleAside: { color: '#9CA3AF' },

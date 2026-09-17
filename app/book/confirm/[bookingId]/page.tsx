@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { round2 } from '@/app/lib/commercials/fareComponents'
+import { mealLabel } from '@/app/lib/book/mealCodes'
 
 // Tax codes a traveller might reasonably want named. Anything not in here shows
 // its raw code, which is the honest fallback — inventing a description for a
@@ -75,6 +76,9 @@ interface Booking {
       LastName: string
       Title: string
       PaxType: 'ADT' | 'CHD' | 'INF' | string
+      // The IATA special-meal code sent to the airline, '' for the standard
+      // tray. Optional because bookings made before meals were wired carry none.
+      MealCode?: string
       SeatListDetails?: {
         SeatDesignator: string
         SeatFee: string
@@ -412,13 +416,25 @@ export default function ConfirmBookingPage() {
                   <div key={i} style={s.travelerRow}>
                     <div>
                       <p style={s.travelerName}>{t.Title} {t.FirstName} {t.LastName}</p>
-                      <p style={s.mutedLine}>{PAX_TYPE_LABEL[t.PaxType] ?? t.PaxType}</p>
+                      <p style={s.mutedLine}>
+                        {PAX_TYPE_LABEL[t.PaxType] ?? t.PaxType}
+                        {/* The meal they asked for, checkable before the
+                            booking is confirmed rather than discovered in the
+                            air. */}
+                        {mealLabel(t.MealCode) && <> · {mealLabel(t.MealCode)}</>}
+                      </p>
                     </div>
                     {orderedSeats.length > 0 && (
                       <div style={s.seatTags}>
                         {orderedSeats.map((seat, si) => (
                           <span key={si} style={s.seatTag}>
                             {legLabels[si] ? `${legLabels[si].origin}→${legLabels[si].destination} ${seat.SeatDesignator}` : seat.SeatDesignator}
+                            {/* The fee was already in the payload and dropped,
+                                so "Seat selection ₹1,400" had nothing to
+                                itemise it against. */}
+                            {Number(seat.SeatFee) > 0 && (
+                              <span style={s.seatTagFee}> · {currency} {Number(seat.SeatFee).toLocaleString('en-IN')}</span>
+                            )}
                           </span>
                         ))}
                       </div>
@@ -737,6 +753,7 @@ const s: Record<string, React.CSSProperties> = {
   fareTotalLabel: { fontSize: '13px', fontWeight: 600, color: '#111827' },
   fareTotalValue: { fontSize: '18px', fontWeight: 700, color: '#0A0A14' },
   fareLabelAside: { color: '#9CA3AF' },
+  seatTagFee: { color: '#6B7280', fontWeight: 400 },
   fareDisclosure: {
     fontSize: '13px', color: '#6B7280', background: 'none', border: 'none',
     padding: 0, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px',

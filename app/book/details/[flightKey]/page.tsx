@@ -9,6 +9,7 @@ import {
   LegSeatMap, SeatCell, journeysOf, journeyLabel,
 } from '@/app/lib/book/types'
 import { countryNameFromCode } from '@/app/lib/data/countryCodes'
+import { mealCodesFor, fromProfilePreference, NO_MEAL_PREFERENCE } from '@/app/lib/book/mealCodes'
 import { classifyTrip } from '@/app/lib/rule-engine/classifyTrip'
 
 // ── /book/details/[flightKey] ─────────────────────────────────────────────────
@@ -35,6 +36,10 @@ interface PassengerForm {
   issuingCountry: string
   nationality: string
   expiryDate: string    // <input type="date"> value, YYYY-MM-DD — converted on submit
+  // IATA special-meal code, or '' for the standard tray. Sent as
+  // PassengerDetail.MealCode, which was hardcoded to '' for every booking until
+  // this existed. See app/lib/book/mealCodes.ts.
+  mealCode: string
 }
 
 // ── Live policy preview ─────────────────────────────────────────────────────
@@ -79,6 +84,7 @@ function emptyPassenger(paxType: PassengerForm['paxType']): PassengerForm {
     gender: 'Male',
     firstName: '', middleName: '', lastName: '',
     dateOfBirth: '', passportNumber: '', issuingCountry: 'IN', nationality: 'IN', expiryDate: '',
+    mealCode: NO_MEAL_PREFERENCE,
   }
 }
 
@@ -112,6 +118,10 @@ function applyTravelerProfile(passenger: PassengerForm, profile: TravelerProfile
     issuingCountry: profile.issuingCountry ?? passenger.issuingCountry,
     nationality: profile.nationality ?? passenger.nationality,
     expiryDate: fromAmadeusDate(profile.passportExpiryDate) || passenger.expiryDate,
+    // The profile's vocabulary is coarser than a meal code — 'Veg', 'Vegan' —
+    // so it is translated rather than assigned. It is the PREFILL; the selector
+    // on the form is the finer control and overrides it freely.
+    mealCode: fromProfilePreference(profile.mealPreference) || passenger.mealCode,
   }
 }
 
@@ -262,6 +272,11 @@ export default function BookingDetailsPage() {
   // booking. Its presence is what turns the error page from "try again" into
   // "quote this to your travel desk".
   const [orphanedReference, setOrphanedReference] = useState<string | null>(null)
+  // Whether the priced fare includes a meal. Defaults true for fares stored
+  // before this field existed — the provider has returned Meal: YES on every
+  // sample seen, so the permissive default matches reality and the worst case
+  // is an honoured request on a fare that would not have carried one.
+  const mealIncluded = priced?.mealIncluded !== false
 
   // ── Passenger state ─────────────────────────────────────────────────────
   const [passengers, setPassengers] = useState<PassengerForm[]>([])
@@ -672,7 +687,12 @@ export default function BookingDetailsPage() {
               IssuingCountry: p.issuingCountry,
               Nationality: p.nationality,
               ExpiryDate: toAmadeusDate(p.expiryDate),
-              MealCode: '',
+              // Was hardcoded to ''. A fare that does not include a meal sends
+              // '' regardless of what is on the form — there is no ancillary
+              // purchase flow (SSRInfo and SSRAmount are both sent empty), so a
+              // special meal on a meal-less fare is a request the airline has
+              // no reason to honour and we have no way to pay for.
+              MealCode: mealIncluded ? p.mealCode : '',
               SeatListDetails: toSeatListDetails(seatsByPassenger[i]),
             })),
           },
@@ -950,6 +970,32 @@ export default function BookingDetailsPage() {
                   </div>
                 </>
               )}
+
+              {/* ── Meal ─────────────────────────────────────────────────────
+                  Not locked when booking for yourself, unlike the identity
+                  fields above: a meal is a per-trip choice, not a corporate
+                  record. The profile value is the prefill, not the answer. */}
+              <div style={s.field}>
+                <label style={s.label}>Meal preference</label>
+                <select
+                  value={passenger.mealCode}
+                  disabled={!mealIncluded}
+                  onChange={e => updatePassenger(i, 'mealCode', e.target.value)}
+                  style={{ ...s.input, ...(mealIncluded ? {} : s.inputLocked) }}
+                >
+                  <option value={NO_MEAL_PREFERENCE}>No preference — standard meal</option>
+                  {mealCodesFor(passenger.paxType).map(meal => (
+                    <option key={meal.code} value={meal.code}>
+                      {meal.label}{meal.note ? ` — ${meal.note}` : ''}
+                    </option>
+                  ))}
+                </select>
+                <span style={s.fieldHint}>
+                  {mealIncluded
+                    ? 'Included with this fare, at no extra cost.'
+                    : 'This fare does not include a meal, so a preference cannot be requested.'}
+                </span>
+              </div>
 
               {/* Moves to the next traveller rather than leaving them to find
                   the next header themselves. Absent on the last one, where the
@@ -1264,6 +1310,7 @@ const s: Record<string, React.CSSProperties> = {
   },
   legTabActive: { color: '#000835', borderColor: '#000835', background: '#EEF2FF' },
   legTabJourney: { color: '#9CA3AF', fontWeight: 500 },
+  fieldHint: { display: 'block', fontSize: '11px', color: '#9CA3AF', marginTop: '4px', lineHeight: 1.4 },
 
   // ── Passenger accordion ────────────────────────────────────────────────────
   paxHeader: {

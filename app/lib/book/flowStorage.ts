@@ -54,6 +54,12 @@ export interface PricedFare {
   currency: string
   isRefundable: boolean
   fareType: string
+  // Whether this fare includes a meal (PricingInfo.Meal === 'YES'). Carried
+  // forward so the passengers page knows whether a special-meal request is
+  // something the airline will actually honour — there is no ancillary purchase
+  // flow, so on a meal-less fare the selector is disabled rather than sending a
+  // preference nobody will act on.
+  mealIncluded?: boolean
   passengerBreakup: unknown
   isNdc?: boolean
   searchKey?: string
