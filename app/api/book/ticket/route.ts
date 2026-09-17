@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
 
   const { data: booking } = await service
     .from('bookings')
-    .select('id, employee_id, status, provider, provider_order_id, amadeus_key, pricing_key, pnr, itinerary')
+    .select('id, employee_id, status, provider, provider_order_id, amadeus_key, pricing_key, pnr, itinerary, share_token')
     .eq('id', bookingId)
     .maybeSingle()
 
@@ -119,12 +119,25 @@ export async function POST(req: NextRequest) {
     // so a missing TicketNo for one passenger must not shift the ones after it.
     const ticketNumbers = (flightResult?.CustomerInfo?.PassengerDetails ?? []).map(p => p.TicketNo ?? null)
 
+    // The secret behind the public e-ticket at /t/[token].
+    //
+    // Issued here because a ticket is the only thing worth sharing — there is
+    // nothing to show at a gate before one exists. 32 hex characters from
+    // crypto.randomUUID(), which is a CSPRNG: 128 bits, so guessing one is not
+    // a thing that happens. Clearing the column later revokes the link without
+    // touching the booking.
+    //
+    // Only minted once. Re-ticketing a booking must not invalidate a link the
+    // traveller has already sent to someone.
+    const shareToken = booking.share_token ?? crypto.randomUUID().replace(/-/g, '')
+
     const { error: updateError } = await service
       .from('bookings')
       .update({
         status: 'ticketed',
         pnr,
         ticket_numbers: ticketNumbers,
+        share_token: shareToken,
         updated_at: new Date().toISOString(),
       })
       .eq('id', bookingId)

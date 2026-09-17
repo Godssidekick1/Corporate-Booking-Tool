@@ -126,3 +126,58 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ── Printing a ticket ──────────────────────────────────────────────────────
+   "Save as PDF" is the download. Every browser on every platform, including
+   phones, offers it from the print dialog — no library, no rasterised image,
+   and the text stays selectable in the resulting file.
+
+   These rules live in CSS rather than inline because @media has nothing to hook
+   onto in an inline style object, and the ticket pages style everything that
+   way. Two classes are all that is needed: .ticket-sheet on the thing to print
+   and .no-print on anything that should not follow it onto paper.
+   ────────────────────────────────────────────────────────────────────────── */
+@media print {
+  /* Buttons, the booking-flow chrome, retry links — none of it belongs on a
+     printed ticket, and a button rendered on paper reads as a thing that was
+     meant to be pressed. */
+  .no-print {
+    display: none !important;
+  }
+
+  /* Hide everything, then bring the ticket back. Cheaper and far more reliable
+     than enumerating every wrapper this page might sit inside. */
+  body * {
+    visibility: hidden;
+  }
+
+  .ticket-sheet,
+  .ticket-sheet * {
+    visibility: visible;
+  }
+
+  .ticket-sheet {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-width: none !important;
+    margin: 0 !important;
+    /* The screen card has a border, a radius and a shadow. On paper they are
+       an outline around content that already has the page edge for a boundary. */
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+  }
+
+  /* The page itself paints a grey ground and the ticket's own notches are
+     coloured to match it — both print as grey blocks on white paper. */
+  body {
+    background: #fff !important;
+  }
+
+  @page {
+    margin: 14mm;
+  }
+}

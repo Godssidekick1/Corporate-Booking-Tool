@@ -76,7 +76,16 @@ function resumeHref(booking: BookingSummary): string {
   if (booking.status === 'ticketed') return `/book/ticket/${booking.id}`
   if (booking.status === 'held') return `/book/ticket/${booking.id}`
   if (booking.status === 'pending_approval' || booking.status === 'approved') return `/book/confirm/${booking.id}`
-  return `/book/ticket/${booking.id}` // failed/cancelled/other: land on ticket page, which shows the right state/error
+
+  // Everything else — failed, cancelled, rejected, approval_misconfigured —
+  // goes to the CONFIRM page, which has a terminal card explaining each of
+  // those states and exits out of them.
+  //
+  // This used to send them to the ticket page "which shows the right
+  // state/error". It does not: that page redirects every one of these statuses
+  // straight to /dashboard, so clicking a failed booking in My Trips bounced
+  // silently with no explanation of why it failed or what to do next.
+  return `/book/confirm/${booking.id}`
 }
 
 function FlightCard({ booking }: { booking: BookingSummary }) {

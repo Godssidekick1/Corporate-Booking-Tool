@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { formatTime, formatDayLabel, journeyLabel } from '@/app/lib/book/types'
+import { mealLabel } from '@/app/lib/book/mealCodes'
 
 // ── /book/ticket/[bookingId] ──────────────────────────────────────────────────
 // Displayed once a ticket is issued. Styled as an e-ticket / boarding-pass
@@ -36,11 +37,18 @@ interface StopInfo {
 // a live search result, so it declares only what it renders.
 interface TicketJourney {
   journeyNo: number
-  origin?: { code: string; name: string; city: string; dateTime: string }
-  destination?: { code: string; name: string; city: string; dateTime: string }
+  origin?: { code: string; name: string; city: string; dateTime: string; terminal?: string }
+  destination?: { code: string; name: string; city: string; dateTime: string; terminal?: string }
   duration?: string
   totalDuration?: string
   stopCount: number
+  // Every intermediate point in this direction, with the times either side, so
+  // a connection can say where and for how long instead of just "1 stop(s)".
+  stops?: StopInfo[]
+  // Per-leg carrier and flight number. buildLegLabels notes it had no flight
+  // numbers to work with; it does now that legs carry the real number rather
+  // than the journey index.
+  legs?: { airlineCode?: string; flightNumber?: string; bookingCode?: string; cabin?: string }[]
   checkInBaggageKg?: string
 }
 
@@ -65,6 +73,9 @@ interface BookingPassenger {
   LastName: string
   Title: string
   PaxType: 'ADT' | 'CHD' | 'INF' | string
+  // The IATA special-meal code sent to the airline. Absent on bookings made
+  // before meals were wired through.
+  MealCode?: string
   SeatListDetails?: {
     SeatDesignator: string
     SeatFee: string
@@ -133,6 +144,17 @@ function BarcodeStrip({ seed }: { seed: string }) {
   )
 }
 
+// Layover between the arrival at a stop and the onward departure. Both times
+// are already on the stop; only the subtraction was missing.
+function layoverBetween(arrival: string | undefined, departure: string | undefined): string | null {
+  if (!arrival || !departure) return null
+  const minutes = Math.round((new Date(departure).getTime() - new Date(arrival).getTime()) / 60000)
+  if (!Number.isFinite(minutes) || minutes <= 0) return null
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  return h > 0 ? `${h}h ${m}m` : `${m}m`
+}
+
 export default function TicketPage() {
   const params = useParams<{ bookingId: string }>()
   const router = useRouter()
@@ -143,11 +165,34 @@ export default function TicketPage() {
   const [ticketing, setTicketing] = useState(false)
   const [error, setError] = useState('')
   const ticketingRef = useRef(false) // guards against duplicate concurrent issueTicket() calls
+  // The QR, as a data URI, plus the URL behind it so it can be copied as text.
+  // Generated server-side so the qrcode library never enters this bundle.
+  const [qr, setQr] = useState<{ qr: string | null; url: string | null }>({ qr: null, url: null })
+  const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     loadAndMaybeTicket()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookingId])
+
+  // Fetched only once the booking is ticketed, because the share token is
+  // minted at ticketing — asking earlier gets a null and would just have to ask
+  // again. Deliberately a second request rather than part of the booking load:
+  // the ticket renders without it, and a QR that fails should not delay the
+  // page or take it down.
+  useEffect(() => {
+    if (booking?.status !== 'ticketed') return
+    let cancelled = false
+
+    fetch(`/api/book/${bookingId}/qr`)
+      .then(res => res.json())
+      .then(data => {
+        if (!cancelled && data.ok) setQr({ qr: data.qr ?? null, url: data.url ?? null })
+      })
+      .catch(() => { /* a ticket without its QR is still a ticket */ })
+
+    return () => { cancelled = true }
+  }, [booking?.status, bookingId])
 
   // Once ticketed (or in the process of being ticketed), the PNR already
   // exists with the airline — there's no earlier booking step (seatmap,
@@ -287,6 +332,7 @@ export default function TicketPage() {
         destination: it?.destination,
         duration: it?.duration,
         stopCount: it?.stopCount ?? 0,
+        stops: it?.stops,
         checkInBaggageKg: it?.checkInBaggageKg,
       }]
   const currency = booking.fare_breakdown?.currency ?? ''
@@ -311,7 +357,11 @@ export default function TicketPage() {
             </div>
 
             {/* ── E-ticket / boarding-pass style card ─────────────────── */}
-            <div style={s.ticketCard}>
+            {/* ticket-sheet is what the print rules in globals.css key on —
+                everything else on the page is hidden when this is printed.
+                A class rather than an inline style because @media has nothing
+                to hook onto in an inline style object. */}
+            <div className="ticket-sheet" style={s.ticketCard}>
               <div style={s.ticketHeaderBand}>
                 <span style={s.airlineName}>{it?.airline?.name ?? 'Airline'}</span>
                 <span style={s.eTicketTag}>E-TICKET</span>
@@ -334,6 +384,15 @@ export default function TicketPage() {
                           <span style={s.routeTime}>{formatTime(journey.origin?.dateTime)}</span>
                           <span style={s.routeCode}>{journey.origin?.code}</span>
                           <span style={s.routeCity}>{journey.origin?.city}</span>
+                          {/* The airport's own name and terminal. Both are on
+                              the frozen itinerary and neither was rendered —
+                              on the one document actually read at an airport. */}
+                          {journey.origin?.name && journey.origin.name !== journey.origin.code && (
+                            <span style={s.routeAirport}>{journey.origin.name}</span>
+                          )}
+                          {journey.origin?.terminal && (
+                            <span style={s.routeTerminal}>Terminal {journey.origin.terminal}</span>
+                          )}
                         </div>
 
                         <div style={s.routeMiddle}>
@@ -355,8 +414,44 @@ export default function TicketPage() {
                           <span style={s.routeTime}>{formatTime(journey.destination?.dateTime)}</span>
                           <span style={s.routeCode}>{journey.destination?.code}</span>
                           <span style={s.routeCity}>{journey.destination?.city}</span>
+                          {journey.destination?.name && journey.destination.name !== journey.destination.code && (
+                            <span style={{ ...s.routeAirport, textAlign: 'right' as const }}>{journey.destination.name}</span>
+                          )}
+                          {journey.destination?.terminal && (
+                            <span style={s.routeTerminal}>Terminal {journey.destination.terminal}</span>
+                          )}
                         </div>
                       </div>
+
+                      {/* Connections, itemised. A connecting flight read as
+                          "1 stop(s)" and nothing more — where, when and for how
+                          long were all in the data and none of it was shown. */}
+                      {(journey.stops ?? []).length > 0 && (
+                        <div style={s.stopList}>
+                          {journey.stops!.map((stop, si) => {
+                            const wait = layoverBetween(stop.arrivalDateTime, stop.departureDateTime)
+                            return (
+                              <p key={si} style={s.stopLine}>
+                                Connection at <strong>{stop.city} ({stop.code})</strong>
+                                {' · arrives '}{formatTime(stop.arrivalDateTime)}
+                                {stop.departureDateTime && <>{', departs '}{formatTime(stop.departureDateTime)}</>}
+                                {wait && <>{' · '}{wait} layover</>}
+                              </p>
+                            )
+                          })}
+                        </div>
+                      )}
+
+                      {(journey.legs ?? []).length > 0 && (
+                        <div style={s.legChips}>
+                          {journey.legs!.map((leg, li) => (
+                            <span key={li} style={s.legChip}>
+                              {leg.airlineCode} {leg.flightNumber}
+                              {leg.bookingCode && <span style={s.legChipClass}> · class {leg.bookingCode}</span>}
+                            </span>
+                          ))}
+                        </div>
+                      )}
 
                       {(it?.cabin || journey.checkInBaggageKg) && (
                         <div style={s.metaRow}>
@@ -397,6 +492,15 @@ export default function TicketPage() {
                         <span style={s.stubLabel}>Passenger</span>
                         <span style={s.stubValue}>{t.Title} {t.FirstName} {t.LastName}</span>
                       </div>
+                      {/* The meal that was actually requested of the airline —
+                          worth printing, since this is the document someone has
+                          in hand if it turns out not to have been loaded. */}
+                      {mealLabel(t.MealCode) && (
+                        <div style={s.stubRow}>
+                          <span style={s.stubLabel}>Meal</span>
+                          <span style={s.stubValue}>{mealLabel(t.MealCode)}</span>
+                        </div>
+                      )}
                       <div style={s.stubRow}>
                         <span style={s.stubLabel}>PNR</span>
                         <span style={s.stubValue}>{booking.pnr || '—'}</span>
@@ -426,9 +530,21 @@ export default function TicketPage() {
                           })}
                         </div>
                       )}
+                      {/* A real, scannable QR pointing at the public ticket, so
+                          a phone that is not signed in can open it at a gate.
+                          What sat here before was BarcodeStrip: a hash-seeded
+                          row of divs encoding nothing, unscannable by anything.
+                          Looking like a boarding pass is worse than looking like
+                          nothing, because someone eventually tries it.
+                          It stays as the placeholder while the QR loads, and if
+                          generation fails the stub simply carries no code. */}
                       <div style={s.barcodeWrap}>
-                        <BarcodeStrip seed={(booking.pnr || bookingId) + ticketNumbers[i] + i} />
+                        {qr.qr
+                          // eslint-disable-next-line @next/next/no-img-element
+                          ? <img src={qr.qr} alt="Scan to open this ticket" style={s.qrImage} />
+                          : <BarcodeStrip seed={(booking.pnr || bookingId) + ticketNumbers[i] + i} />}
                       </div>
+                      {qr.qr && <p style={s.qrCaption}>Scan to open this ticket</p>}
                       {!isLast && <div style={s.stubDivider} />}
                     </div>
                   )
@@ -475,7 +591,32 @@ export default function TicketPage() {
               <span style={s.fareFooterValue}>{currency} {booking.total_cost?.toLocaleString('en-IN')}</span>
             </div>
 
-            <div style={s.doneLinks}>
+            <div className="no-print" style={s.ticketActions}>
+              <button type="button" onClick={() => window.print()} style={s.ticketActionPrimary}>
+                Download / print
+              </button>
+              {/* The same link the QR encodes, as text — for sending to someone
+                  who cannot scan a screen they are not standing in front of. */}
+              {qr.url && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(qr.url!)
+                      setCopied(true)
+                      setTimeout(() => setCopied(false), 2000)
+                    } catch {
+                      // Clipboard access can be refused; the QR is still there.
+                    }
+                  }}
+                  style={s.ticketAction}
+                >
+                  {copied ? 'Link copied' : 'Copy share link'}
+                </button>
+              )}
+            </div>
+
+            <div className="no-print" style={s.doneLinks}>
               <Link href="/bookings" style={s.doneLink}>View my tickets →</Link>
               <Link href="/dashboard" style={s.doneLinkSecondary}>← Back to dashboard</Link>
             </div>
@@ -570,6 +711,27 @@ const s: Record<string, React.CSSProperties> = {
   stubValue: { fontSize: '13px', color: '#0A0A14', fontWeight: 700, letterSpacing: '0.4px' },
   stubDivider: { height: '1px', background: '#E5E7EB', margin: '14px 0 -2px' },
   barcodeWrap: { marginTop: '12px', display: 'flex', justifyContent: 'center' },
+  // Fixed size so it prints at a scannable density rather than at whatever the
+  // container happens to be. 128px is comfortably above the ~2cm a phone camera
+  // needs for a URL of this length.
+  qrImage: { width: '128px', height: '128px', display: 'block' },
+  qrCaption: { fontSize: '10px', color: '#9CA3AF', textAlign: 'center' as const, margin: '6px 0 0' },
+  routeAirport: { fontSize: '10px', color: '#6B7280', lineHeight: 1.35 },
+  routeTerminal: { fontSize: '10px', color: '#9CA3AF' },
+  stopList: { marginTop: '12px', display: 'flex', flexDirection: 'column' as const, gap: '4px' },
+  stopLine: { fontSize: '11px', color: '#6B7280', margin: 0, lineHeight: 1.5 },
+  legChips: { marginTop: '10px', display: 'flex', flexWrap: 'wrap' as const, gap: '6px' },
+  legChip: { fontSize: '10.5px', color: '#374151', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '6px', padding: '3px 8px' },
+  legChipClass: { color: '#9CA3AF' },
+  ticketActions: { display: 'flex', gap: '10px', flexWrap: 'wrap' as const, marginTop: '16px' },
+  ticketActionPrimary: {
+    flex: 1, minWidth: '160px', padding: '12px', background: '#000835', color: '#fff',
+    border: 'none', borderRadius: '10px', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
+  },
+  ticketAction: {
+    flex: 1, minWidth: '160px', padding: '12px', background: '#fff', color: '#000835',
+    border: '1px solid #D1D5DB', borderRadius: '10px', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
+  },
 
   // ── Traveler / fare cards ────────────────────────────────────────────
   card: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '20px', marginBottom: '16px' },
