@@ -9,7 +9,7 @@ import {
   LegSeatMap, SeatCell, journeysOf, journeyLabel,
 } from '@/app/lib/book/types'
 import { countryNameFromCode } from '@/app/lib/data/countryCodes'
-import { mealCodesFor, fromProfilePreference, NO_MEAL_PREFERENCE } from '@/app/lib/book/mealCodes'
+import { mealCodesFor, mealLabel, fromProfilePreference, NO_MEAL_PREFERENCE } from '@/app/lib/book/mealCodes'
 import { classifyTrip } from '@/app/lib/rule-engine/classifyTrip'
 
 // ── /book/details/[flightKey] ─────────────────────────────────────────────────
@@ -230,6 +230,47 @@ function isPassengerComplete(
   return true
 }
 
+// ── Chevron ──────────────────────────────────────────────────────────────────
+// Drawn, not typed.
+//
+// This was the character "▾" set at 11px in #9CA3AF. Two things were wrong with
+// that beyond the size: a glyph's actual weight and height are decided by
+// whichever font resolves, so the one affordance telling you a section opens was
+// rendering at the mercy of the typeface — and grey-on-white at hairline weight
+// is close to invisible against a header that also carries a status pill.
+//
+// An SVG with an explicit strokeWidth is the same mark on every machine, sized
+// to be aimed at, and can ROTATE between states rather than swapping to a
+// different character — which also means the two states are visibly the same
+// object moving, instead of two symbols you have to learn.
+//
+// The transition is covered by the prefers-reduced-motion block in globals.css.
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      style={{
+        color: '#4B5563',
+        flexShrink: 0,
+        transform: open ? 'rotate(180deg)' : 'rotate(0deg)',
+        transition: 'transform 180ms cubic-bezier(0.4, 0, 0.2, 1)',
+      }}
+    >
+      <path
+        d="M6 9.5L12 15.5L18 9.5"
+        stroke="currentColor"
+        strokeWidth="2.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
 // ── Step ─────────────────────────────────────────────────────────────────────
 // One collapsible section of this page.
 //
@@ -271,7 +312,7 @@ function Step({
             : status === 'done'
               ? <span style={s.paxStatusDone}>Complete</span>
               : !optional && <span style={s.paxStatusTodo}>Incomplete</span>}
-          <span style={s.paxChevron}>{open ? '▴' : '▾'}</span>
+          <Chevron open={open} />
         </span>
       </button>
       {open && <div style={s.stepBody}>{children}</div>}
@@ -353,7 +394,7 @@ export default function BookingDetailsPage() {
   // profile autofill). No "resume where you left off" logic, because there is
   // no state for it to resume from — adding it would be machinery that could
   // never fire.
-  const [openStep, setOpenStep] = useState<'travellers' | 'contact' | 'seats' | null>('travellers')
+  const [openStep, setOpenStep] = useState<'travellers' | 'meals' | 'contact' | 'seats' | null>('travellers')
 
   // Booking-for-self (the default) locks slot-1 identity fields and contact
   // details to whatever's saved on the traveler's profile — that profile is
@@ -808,6 +849,21 @@ export default function BookingDetailsPage() {
     ? namedTravellers.join(', ')
     : `${completeTravellers} of ${passengers.length} complete`
 
+  // ── Meals ──────────────────────────────────────────────────────────────────
+  // The collapsed row has to distinguish three states that all mean "no meal
+  // line on the ticket": the fare has none to give, the traveller left it alone,
+  // and the traveller deliberately chose the standard tray. Only the first is
+  // worth a word of explanation.
+  const chosenMeals = passengers.map(p => mealLabel(p.mealCode)).filter(Boolean) as string[]
+  const mealsSummary = !mealIncluded
+    ? 'Not included with this fare'
+    : chosenMeals.length === 0
+      ? 'No preference'
+      // Names, not codes: "VGML, AVML" is a row only the person who wrote the
+      // mapping can read.
+      : chosenMeals.join(', ')
+  const mealsStatus: 'done' | 'todo' = mealIncluded && chosenMeals.length > 0 ? 'done' : 'todo'
+
   const contactHasErrors = Boolean(fieldErrors['contact-email'] || fieldErrors['contact-mobile'])
   const contactStatus = contactHasErrors ? 'error' : (email && mobile) ? 'done' : 'todo'
 
@@ -981,7 +1037,7 @@ export default function BookingDetailsPage() {
                       : paxComplete
                         ? <span style={s.paxStatusDone}>Complete</span>
                         : <span style={s.paxStatusTodo}>Incomplete</span>}
-                    <span style={s.paxChevron}>{isOpen ? '▴' : '▾'}</span>
+                    <Chevron open={isOpen} />
                   </span>
                 )}
               </button>
@@ -1072,31 +1128,12 @@ export default function BookingDetailsPage() {
                 </>
               )}
 
-              {/* ── Meal ─────────────────────────────────────────────────────
-                  Not locked when booking for yourself, unlike the identity
-                  fields above: a meal is a per-trip choice, not a corporate
-                  record. The profile value is the prefill, not the answer. */}
-              <div style={s.field}>
-                <label style={s.label}>Meal preference</label>
-                <select
-                  value={passenger.mealCode}
-                  disabled={!mealIncluded}
-                  onChange={e => updatePassenger(i, 'mealCode', e.target.value)}
-                  style={{ ...s.input, ...(mealIncluded ? {} : s.inputLocked) }}
-                >
-                  <option value={NO_MEAL_PREFERENCE}>No preference — standard meal</option>
-                  {mealCodesFor(passenger.paxType).map(meal => (
-                    <option key={meal.code} value={meal.code}>
-                      {meal.label}{meal.note ? ` — ${meal.note}` : ''}
-                    </option>
-                  ))}
-                </select>
-                <span style={s.fieldHint}>
-                  {mealIncluded
-                    ? 'Included with this fare, at no extra cost.'
-                    : 'This fare does not include a meal, so a preference cannot be requested.'}
-                </span>
-              </div>
+              {/* Meal used to sit here, at the bottom of each traveller's form.
+                  It is a different KIND of thing from the fields above — those
+                  are identity, copied off an ID and checked at a desk; a meal is
+                  a per-trip preference that can be changed on a whim — and
+                  burying it under a passport block meant nobody found it. It is
+                  its own step now. */}
 
               {/* Moves to the next traveller rather than leaving them to find
                   the next header themselves. Absent on the last one, where the
@@ -1112,6 +1149,72 @@ export default function BookingDetailsPage() {
             )
           })}
 
+          </Step>
+
+          {/* ── Meals ────────────────────────────────────────────────────────
+              Its own step, directly after the travellers it applies to.
+
+              Optional in the real sense: every booking this app has ever made
+              sent MealCode: '' and the airline accepted all of them, so leaving
+              this alone is a proven path rather than an unfinished one. The step
+              says so instead of showing "Incomplete". */}
+          <Step
+            title="Meals"
+            summary={mealsSummary}
+            status={mealsStatus}
+            optional
+            open={openStep === 'meals'}
+            onToggle={() => setOpenStep(openStep === 'meals' ? null : 'meals')}
+          >
+            {mealIncluded ? (
+              <>
+                <p style={s.stepIntro}>
+                  This fare includes a meal. One standard option per traveller, at no extra cost.
+                </p>
+                {passengers.map((passenger, i) => {
+                  const paxName = [passenger.firstName, passenger.lastName].filter(Boolean).join(' ')
+                  return (
+                    <div style={s.mealRow} key={i}>
+                      <div style={s.mealWho}>
+                        {/* The name once it exists — a row reading "Traveler 2"
+                            when the form above already knows who that is makes
+                            the reader do the join themselves. */}
+                        <span style={s.mealWhoName}>
+                          {paxName || `Traveler ${i + 1}`}
+                        </span>
+                        <span style={s.paxTypeBadge}>{PAX_TYPE_LABEL[passenger.paxType]}</span>
+                      </div>
+                      <select
+                        value={passenger.mealCode}
+                        onChange={e => updatePassenger(i, 'mealCode', e.target.value)}
+                        style={{ ...s.input, ...s.mealSelect }}
+                        aria-label={`Meal preference for ${paxName || `traveler ${i + 1}`}`}
+                      >
+                        <option value={NO_MEAL_PREFERENCE}>No preference — standard meal</option>
+                        {/* Filtered by passenger type: a baby meal is not an
+                            option for an adult, and offering it is how one gets
+                            requested by accident. */}
+                        {mealCodesFor(passenger.paxType).map(meal => (
+                          <option key={meal.code} value={meal.code}>
+                            {meal.label}{meal.note ? ` — ${meal.note}` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )
+                })}
+              </>
+            ) : (
+              /* Stated rather than shown as a row of disabled dropdowns. The
+                 provider's booking request carries SSRInfo and SSRAmount for a
+                 PAID meal and we populate neither, so a chargeable meal is
+                 genuinely not orderable here — a greyed-out control implies it
+                 might become available if you did something differently. */
+              <p style={s.stepIntro}>
+                This fare does not include a meal, so a preference cannot be requested.
+                Meals may be available to buy on board.
+              </p>
+            )}
           </Step>
 
           {/* ── Contact details (shared, not per-passenger) ─────────── */}
@@ -1400,11 +1503,25 @@ const s: Record<string, React.CSSProperties> = {
 
   paxTypeBadge: { fontSize: '10px', fontWeight: 700, color: '#3730A3', background: '#EEF2FF', padding: '2px 8px', borderRadius: '5px', letterSpacing: '0.3px' },
 
-  grid2: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' },
-  grid3: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '12px' },
-  field: { display: 'flex', flexDirection: 'column', gap: '5px', marginBottom: '12px' },
+  // ── minmax(0, 1fr), not 1fr ────────────────────────────────────────────────
+  // `1fr` means `minmax(auto, 1fr)`, and that `auto` floor stops a track ever
+  // shrinking below its content's min-content width. An <input> carries an
+  // intrinsic width of roughly 176px (the browser's default size="20"), so three
+  // of them plus gaps demanded ~552px and would not compress.
+  //
+  // That fit until the step accordion wrapped each traveller card inside another
+  // card, which took a further 40px of padding and left ~512px — so the row
+  // overflowed by about one column and the THIRD field in each grid escaped the
+  // box: date of birth, last name, nationality.
+  //
+  // minmax(0, …) removes the floor; `width: 100%` on the input below is the
+  // other half, because without it the input sits at its intrinsic size inside a
+  // track that is now allowed to be narrower than that.
+  grid2: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '12px', marginBottom: '12px' },
+  grid3: { display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '12px', marginBottom: '12px' },
+  field: { display: 'flex', flexDirection: 'column', gap: '5px', marginBottom: '12px', minWidth: 0 },
   label: { fontSize: '11px', fontWeight: 500, color: '#374151' },
-  input: { height: '38px', padding: '0 10px', fontSize: '13px', color: '#111827', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '7px', outline: 'none' },
+  input: { width: '100%', height: '38px', padding: '0 10px', fontSize: '13px', color: '#111827', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '7px', outline: 'none' },
   inputLocked: { background: '#F3F4F6', color: '#6B7280', cursor: 'not-allowed' },
   fieldError: { fontSize: '10.5px', color: '#DC2626', margin: '2px 0 0' },
 
@@ -1460,7 +1577,19 @@ const s: Record<string, React.CSSProperties> = {
   paxStatusDone: { fontSize: '11px', fontWeight: 600, color: '#166534', background: '#F0FDF4', borderRadius: '999px', padding: '2px 9px' },
   paxStatusTodo: { fontSize: '11px', fontWeight: 600, color: '#92400E', background: '#FEF3C7', borderRadius: '999px', padding: '2px 9px' },
   paxStatusError: { fontSize: '11px', fontWeight: 600, color: '#991B1B', background: '#FEF2F2', borderRadius: '999px', padding: '2px 9px' },
-  paxChevron: { fontSize: '11px', color: '#9CA3AF' },
+  // ── Meals ──────────────────────────────────────────────────────────────────
+  stepIntro: { margin: '0 0 14px', fontSize: '12.5px', color: '#6B7280', lineHeight: 1.5 },
+  // Name and selector side by side on a wide card, stacked when there is no room
+  // — auto-fit rather than a breakpoint, since every style in this file is an
+  // inline object and @media has nothing to attach to.
+  mealRow: {
+    display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.4fr)',
+    gap: '10px 14px', alignItems: 'center', padding: '10px 0',
+    borderTop: '1px solid #F3F4F6',
+  },
+  mealWho: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' as const, minWidth: 0 },
+  mealWhoName: { fontSize: '13px', fontWeight: 600, color: '#111827' },
+  mealSelect: { marginBottom: 0 },
   paxNextBtn: {
     marginTop: '14px', alignSelf: 'flex-start' as const, background: '#fff', color: '#000835',
     border: '1px solid #D1D5DB', borderRadius: '8px', padding: '7px 14px',
