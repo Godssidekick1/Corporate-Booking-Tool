@@ -276,12 +276,32 @@ if (!key || !pricingKey || !provider || !resultIndex) {
     delete safe.taxLines
     delete safe.fuelSurcharge
 
+    const sellBase = round2(components.base + (record.displayedFare - components.total))
+
     return Response.json({
       ok: true,
       ...safe,
       // The "Fare" line: the airline fare with markup folded in, indistinguishable.
       totalFare: record.displayedFare,
-      baseFare: round2(components.base + (record.displayedFare - components.total)),
+      baseFare: sellBase,
+      // ── Taxes: EVERY tax, not just OtherTax ────────────────────────────────
+      // `details.tax` is Total.OtherTax, and FuelSurcharge is a SIBLING field —
+      // the trap this file already warns about in extractPricingDetails, which
+      // the response then walked straight into by shipping OtherTax as "tax".
+      //
+      // The price page renders base, tax and total as a breakdown, so a
+      // traveller reading a real DEL→BOM quote saw 12,358 + 2,246 against a
+      // total of 15,702 and was short by the 1,098 of fuel surcharge. That is
+      // precisely the "adds up the breakdown and finds an unexplained
+      // difference" that the whole embedded-markup design exists to prevent —
+      // an unexplained gap in a fare breakdown invites exactly one guess.
+      //
+      // Derived as total − base rather than by adding the two components back
+      // together, so it reconciles by construction and cannot drift again if
+      // the provider adds a third sibling. Both figures here are sell-side and
+      // carry the same markup, so their difference is the airline's tax exactly
+      // and this leaks nothing the total did not already imply.
+      tax: round2(record.displayedFare - sellBase),
       // Discount and processing fee, each as its own labelled line. Never the
       // embedded one — visibleLines() is what enforces that.
       lines: visibleLines(record.adjustments).map(a => ({

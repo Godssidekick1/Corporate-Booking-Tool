@@ -626,8 +626,11 @@ export default function SelectFarePage() {
                 <span style={s.fareLabel}>Base fare</span>
                 <span style={s.fareValue}>{pricing.currency} {pricing.baseFare?.toLocaleString('en-IN')}</span>
               </div>
+              {/* "Taxes & surcharges", because it now includes the fuel
+                  surcharge. It previously showed OtherTax alone, which left the
+                  three rows on this card visibly failing to add up. */}
               <div style={s.fareRow}>
-                <span style={s.fareLabel}>Taxes & fees</span>
+                <span style={s.fareLabel}>Taxes & surcharges</span>
                 <span style={s.fareValue}>{pricing.currency} {pricing.tax?.toLocaleString('en-IN')}</span>
               </div>
 
