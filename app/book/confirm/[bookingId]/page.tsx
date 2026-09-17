@@ -469,7 +469,17 @@ export default function ConfirmBookingPage() {
         <div style={s.card}>
           <h2 style={s.cardTitle}>Fare</h2>
 
-          {booking.fare_breakdown?.passengerBreakup && booking.fare_breakdown.passengerBreakup.length > 0 && (
+          {/* ── Only when there is a split worth showing ──────────────────────
+              `> 1`, not `> 0`. The per-passenger list exists to show how a total
+              divides between travellers and pax types. With ONE passenger there
+              is no division: the row reads "Adult · Base 21,255 + Tax 10,095 ·
+              31,350" directly above a breakdown reading "Base fare 21,255 /
+              Taxes & surcharges 10,095 / Fare 31,350" — the same three numbers
+              twice, which makes a reader hunt for the difference between them
+              before concluding there isn't one.
+
+              The price page already guards this correctly; this page did not. */}
+          {booking.fare_breakdown?.passengerBreakup && booking.fare_breakdown.passengerBreakup.length > 1 && (
             <div style={s.paxFareList}>
               {booking.fare_breakdown.passengerBreakup.map((pax, i) => (
                 <div key={i} style={s.paxFareRow}>

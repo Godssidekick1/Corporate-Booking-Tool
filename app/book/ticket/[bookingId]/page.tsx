@@ -787,7 +787,13 @@ const s: Record<string, React.CSSProperties> = {
   fareFooter: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 4px 20px', fontSize: '12px', color: '#9CA3AF' },
   fareFooterValue: { fontSize: '13px', fontWeight: 600, color: '#6B7280' },
 
-  doneLinks: { display: 'flex', flexDirection: 'column' as const, gap: '10px' },
+  // The 16px matches the gap above the action row, so the three groups down the
+  // end of the ticket — fare, ticket actions, navigation away — are evenly
+  // spaced. This had no top margin at all while the block above it did, which
+  // left "View my tickets" welded to the Download button while the two links
+  // inside this group kept their own 10px gap. One flush boundary next to a
+  // spaced one reads as a bug even when nobody can say which edge is wrong.
+  doneLinks: { display: 'flex', flexDirection: 'column' as const, gap: '10px', marginTop: '16px' },
   doneLink: {
     display: 'block', textAlign: 'center' as const, height: '48px', lineHeight: '48px', width: '100%',
     background: '#000835', color: '#fff', fontSize: '14px', fontWeight: 700, borderRadius: '10px',

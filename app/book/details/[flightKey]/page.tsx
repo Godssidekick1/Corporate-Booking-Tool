@@ -1043,7 +1043,7 @@ export default function BookingDetailsPage() {
               </button>
 
               {isOpen && (
-              <>
+              <div style={s.paxBody}>
               {locked && (
                 <p style={s.lockedNote}>
                   These details come from your travel profile.{' '}
@@ -1143,7 +1143,7 @@ export default function BookingDetailsPage() {
                   Next traveller →
                 </button>
               )}
-              </>
+              </div>
               )}
             </div>
             )
@@ -1498,7 +1498,16 @@ const s: Record<string, React.CSSProperties> = {
   cardTitle: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: '8px' },
   cardSub: { fontSize: '12px', color: '#9CA3AF', margin: '0 0 16px' },
 
-  lockedNote: { fontSize: '11.5px', color: '#6B7280', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '8px', padding: '8px 12px', margin: '-4px 0 16px' },
+  // The -4px top margin this used to carry was cancelling cardTitle's 4px
+  // bottom margin, back when the note followed the title directly. Once the
+  // accordion put the title inside a zero-padding header button, that
+  // compensation over-corrected to a gap of exactly nothing and the note sat
+  // welded to "Traveler · Adult".
+  //
+  // The spacing belongs to paxBody now — one gap below the header, the same for
+  // a locked traveller's note and an unlocked one's first row of fields, which
+  // were also flush and for the same reason.
+  lockedNote: { fontSize: '11.5px', color: '#6B7280', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '8px', padding: '8px 12px', margin: '0 0 16px' },
   lockedLink: { color: '#000835', fontWeight: 600, textDecoration: 'none' },
 
   paxTypeBadge: { fontSize: '10px', fontWeight: 700, color: '#3730A3', background: '#EEF2FF', padding: '2px 8px', borderRadius: '5px', letterSpacing: '0.3px' },
@@ -1571,6 +1580,9 @@ const s: Record<string, React.CSSProperties> = {
   },
   // A single traveller has nothing to collapse, so the header is not a control.
   paxHeaderStatic: { cursor: 'default' },
+  // Matches stepBody, so a traveller's form sits the same distance below its
+  // header as a step's contents do below theirs.
+  paxBody: { marginTop: '16px' },
   paxHeaderMain: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' as const, minWidth: 0 },
   paxHeaderName: { fontSize: '13px', color: '#6B7280' },
   paxHeaderRight: { display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 },
