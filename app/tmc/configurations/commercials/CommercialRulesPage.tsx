@@ -383,7 +383,17 @@ export default function CommercialRulesPage({ kind }: { kind: CommercialKind }) 
                           {COMMERCIAL_STATUS_LABELS[r.status]}
                         </span>
                       </td>
-                      <td style={s.td}>{r.targetCount || '—'}</td>
+                      {/* Zero reaches is a STATE TO FIX, not an absence. It
+                          rendered as a dash, which reads like every other dash
+                          in this table — "nothing to say here" — when it
+                          actually means this rule is configured, active, valid,
+                          and charging nobody anything. That is the single most
+                          confusing thing a rules list can be silent about. */}
+                      <td style={s.td}>
+                        {r.targetCount
+                          ? r.targetCount
+                          : <span style={s.reachesNobody} title="This rule is not assigned to any client, bucket or client group, so it applies to nothing.">Nobody</span>}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -718,6 +728,9 @@ const s: Record<string, React.CSSProperties> = {
   // Quieter than a rate, because it is the absence of an answer rather than an
   // answer. Carries a title so the reason is one hover away instead of a guess.
   netMixed: { color: '#9CA3AF', fontStyle: 'italic', cursor: 'help' },
+  // Amber, not red: an unassigned rule is not broken, it is unfinished. Red is
+  // reserved for the loss-making net, which is a live commercial problem.
+  reachesNobody: { color: '#92400E', fontWeight: 600, cursor: 'help' },
 
   pill: { display: 'inline-block', fontSize: 10, fontWeight: 600, borderRadius: 4, padding: '1px 6px', border: '1px solid' },
   ambiguous: { background: '#FEF3C7', color: '#92400E', borderColor: '#FDE68A' },

@@ -64,6 +64,23 @@ export default function AirlineDropdown({
         // closed field, rather than blanking because it matched no row.
         selectedLabel={lookup.selectedLabel || value}
         allowFreeText
+        // ── There has to be a way back to "any airline" ─────────────────────
+        // Without this, an airline could be set once and never unset. Clearing
+        // the text does not do it: commitFreeText ignores an empty query on
+        // purpose (an empty box while typing means "I am searching", not "make
+        // this blank"), and the closed field then falls back to the stored value
+        // — so deleting the code and clicking away silently restored it.
+        //
+        // SearchableSelect has had the mechanism the whole time and this was the
+        // one caller not passing it. Its own comment says why it exists: a
+        // combobox has no gesture that means "go back to unset", and a field you
+        // can only ever set is a one-way door.
+        //
+        // Blank genuinely means EVERY airline here, on all three of a markup, a
+        // discount and a processing fee, so the row says that rather than "None"
+        // — which would read as "no airline", the opposite of what it does.
+        allowClear
+        clearLabel="Any airline"
         disabled={disabled}
         placeholder={placeholder}
         emptyMessage="No match — type the two-character code"
