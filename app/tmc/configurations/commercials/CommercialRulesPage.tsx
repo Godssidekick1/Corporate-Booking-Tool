@@ -471,8 +471,19 @@ export default function CommercialRulesPage({ kind }: { kind: CommercialKind }) 
                             </td>
                           )
                         })}
+                        {/* Three states here too, for the same reason the rate
+                            cells have three: a bare dash reads as "nothing is
+                            configured", and for this column that is usually
+                            wrong. A net percentage cannot be worked out when
+                            either side is a FIXED amount — ₹500 against 5% needs
+                            a fare — so those rows say "mixed" rather than
+                            implying there is nothing to see. */}
                         <td style={{ ...s.td, ...s.mono, ...(c.lossMaking ? s.loss : {}) }}>
-                          {c.netPercent === null ? '—' : `${c.netPercent > 0 ? '+' : ''}${c.netPercent}%`}
+                          {c.netPercent !== null
+                            ? `${c.netPercent > 0 ? '+' : ''}${c.netPercent}%`
+                            : (c.markup || c.discount)
+                              ? <span style={s.netMixed} title="One of these rules is a fixed amount, so the net depends on the fare and cannot be shown here.">mixed</span>
+                              : '—'}
                         </td>
                       </tr>
                     ))}
@@ -704,6 +715,9 @@ const s: Record<string, React.CSSProperties> = {
   clientLink: { color: '#000835', fontWeight: 600, textDecoration: 'none' },
   mutedCell: { color: '#9CA3AF' },
   loss: { color: '#DC2626', fontWeight: 600 },
+  // Quieter than a rate, because it is the absence of an answer rather than an
+  // answer. Carries a title so the reason is one hover away instead of a guess.
+  netMixed: { color: '#9CA3AF', fontStyle: 'italic', cursor: 'help' },
 
   pill: { display: 'inline-block', fontSize: 10, fontWeight: 600, borderRadius: 4, padding: '1px 6px', border: '1px solid' },
   ambiguous: { background: '#FEF3C7', color: '#92400E', borderColor: '#FDE68A' },

@@ -169,10 +169,31 @@ export async function GET(req: NextRequest) {
 
     const markupRate = resolved.markup?.rule.calc_type === 'percent' ? resolved.markup.rule.rate : null
     const discountRate = resolved.discount?.rule.calc_type === 'percent' ? resolved.discount.rule.rate : null
-    const netPercent =
-      markupRate !== null || discountRate !== null
-        ? Number(((markupRate ?? 0) - (discountRate ?? 0)).toFixed(4))
-        : null
+
+    // ── Only subtract rates that are actually comparable ──────────────────────
+    // A FIXED rule cannot be netted against a percentage without a fare, which
+    // this screen does not have — the netPercent field says so in its own
+    // comment, and the test here used to disagree with it. It was `||`: either
+    // rate being a percentage was enough, and the missing side was coerced to 0.
+    //
+    // That produced a confident FALSE loss warning for the commonest mixed
+    // arrangement there is — a fixed ₹500 markup against a 5% discount read as
+    // 0% − 5% = −5%, though it is profitable on any fare under ₹10,000. The
+    // mirror case was quieter and no better: a percentage markup against a fixed
+    // discount reported the markup as the net and ignored the discount entirely,
+    // overstating margin on the one screen that exists to show it.
+    //
+    // A rule that is ABSENT is genuinely 0 and stays comparable — a 4% markup
+    // with no discount nets 4%, and a 5% discount with no markup really does net
+    // −5%. It is only a fixed AMOUNT that makes the comparison unanswerable.
+    const markupBlocks = resolved.markup != null && resolved.markup.rule.calc_type !== 'percent'
+    const discountBlocks = resolved.discount != null && resolved.discount.rule.calc_type !== 'percent'
+    const comparable =
+      !markupBlocks && !discountBlocks && (resolved.markup != null || resolved.discount != null)
+
+    const netPercent = comparable
+      ? Number(((markupRate ?? 0) - (discountRate ?? 0)).toFixed(4))
+      : null
 
     return {
       clientId: client.id,
