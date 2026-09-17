@@ -1,5 +1,5 @@
 import { matchesAllLegs, rbdSpecBreadth } from '@/app/lib/fop/rbdSpec'
-import { isApplicable } from './commercialStatus'
+import { isApplicable, commercialStatus } from './commercialStatus'
 import type { CommercialKind, CalcOn, CalcType, FareType, CalcBasis } from './calcOnByKind'
 
 // ── Commercial rule resolution ───────────────────────────────────────────────
@@ -87,10 +87,48 @@ export interface ResolvedRule {
   ambiguous: boolean
 }
 
+// ── Why a rule did not apply ─────────────────────────────────────────────────
+// The eligibility test used to be a single anonymous filter with early returns:
+// it knew exactly why each rule failed and discarded that the moment it decided.
+//
+// That is the difference between "no discount appeared" and "your discount is
+// filed against classes Y, B, M and this flight books into S" — the first is
+// indistinguishable from a bug and sends people looking through code, the second
+// is a two-minute fix in the rule editor. A markup is worse still, because it is
+// deliberately invisible in the product: folded into the fare, absent from every
+// response, and therefore impossible to confirm from the traveller's side even
+// when it is working perfectly.
+//
+// So the reason is now a return value. Nothing here reaches the browser — it is
+// logged server-side by /api/book/price and read from the terminal.
+export type RejectReason =
+  | 'kind_switched_off'
+  | 'not_active'
+  | 'outside_validity'
+  | 'category'
+  | 'airline'
+  | 'cabin'
+  | 'booking_class'
+  | 'fare_type'
+
+export interface RuleTrace {
+  ruleId: string
+  kind: CommercialKind
+  via: string
+  // null when the rule was eligible. Eligible rules can still lose the ranking,
+  // which `won` records separately — "it matched but something beat it" and "it
+  // never matched" are different problems with different fixes.
+  rejectedBy: RejectReason | null
+  detail: string
+  won: boolean
+}
+
 export interface ResolvedCommercials {
   markup: ResolvedRule | null
   discount: ResolvedRule | null
   processing_fee: ResolvedRule | null
+  // Every assigned rule and what happened to it.
+  trace: RuleTrace[]
 }
 
 // Explicitness of intent, lowest first. Identical to the ladder deal codes and
@@ -192,29 +230,77 @@ export function resolveCommercials(input: ResolveCommercialsInput): ResolvedComm
     }
   }
 
-  const eligible = [...strongest.values()].filter(({ rule }) => {
-    if (enabledKinds && !enabledKinds.has(rule.kind)) return false
-    if (!isApplicable(rule, pricedOn)) return false
+  // Returns why this rule cannot apply, or null if it can. Every branch carries
+  // the two values that disagreed, because "cabin" on its own does not tell
+  // anyone which cabin the rule wanted or which one the flight is in.
+  function rejectionFor(rule: ResolvableRule): { reason: RejectReason; detail: string } | null {
+    if (enabledKinds && !enabledKinds.has(rule.kind)) {
+      return {
+        reason: 'kind_switched_off',
+        detail: `${rule.kind} is switched off for this client in Corporate Settings`,
+      }
+    }
+
+    if (!rule.active) {
+      return { reason: 'not_active', detail: 'rule is not active' }
+    }
+
+    if (!isApplicable(rule, pricedOn)) {
+      // `scheduled` and `expired` are both "not now" but point at opposite
+      // fixes, so the status word is worth carrying rather than flattening.
+      return {
+        reason: 'outside_validity',
+        detail: `rule is ${commercialStatus(rule, pricedOn)} — valid ${rule.valid_from ?? 'always'} to ${rule.valid_to ?? 'always'}`,
+      }
+    }
 
     // Each dimension is tested only when the caller supplied it. With no
     // itinerary in hand this is the "what could this client get" view, where a
     // restricted rule is still potentially applicable and belongs in the answer.
-    if (categoryId && rule.category_id !== categoryId) return false
+    if (categoryId && rule.category_id !== categoryId) {
+      return { reason: 'category', detail: `rule is filed under a different category` }
+    }
 
     if (airlineCode && rule.airline_code &&
-        rule.airline_code.toUpperCase() !== airlineCode.toUpperCase()) return false
+        rule.airline_code.toUpperCase() !== airlineCode.toUpperCase()) {
+      return { reason: 'airline', detail: `rule wants ${rule.airline_code}, flight is ${airlineCode}` }
+    }
 
-    if (cabin && rule.cabin && rule.cabin.toUpperCase() !== cabin.toUpperCase()) return false
+    if (cabin && rule.cabin && rule.cabin.toUpperCase() !== cabin.toUpperCase()) {
+      return { reason: 'cabin', detail: `rule wants cabin ${rule.cabin}, fare is cabin ${cabin}` }
+    }
 
     // Fails closed, like the FOP resolver: matchesAllLegs requires EVERY leg to
     // be in the set, and a missing booking code cannot be shown to be. Charging
     // a class-restricted markup on a class it was never filed for is worse than
     // not charging it.
-    if (legBookingCodes.length > 0 && !matchesAllLegs(rule.rbd_spec, legBookingCodes)) return false
+    //
+    // This is the single most common reason a rule that looks right does
+    // nothing: Y is the full-fare economy bucket, not "economy", and real
+    // discounted fares sell in S, T, U, Q and friends.
+    if (legBookingCodes.length > 0 && !matchesAllLegs(rule.rbd_spec, legBookingCodes)) {
+      const flown = legBookingCodes.map(c => c || '?').join(', ')
+      return {
+        reason: 'booking_class',
+        detail: `rule wants class ${rule.rbd_spec}, flight books into ${flown} (every leg must match)`,
+      }
+    }
 
     // 'all' matches every fare type; a named one must match exactly.
-    if (fareType && rule.fare_type !== 'all' && rule.fare_type !== fareType) return false
+    if (fareType && rule.fare_type !== 'all' && rule.fare_type !== fareType) {
+      return { reason: 'fare_type', detail: `rule wants ${rule.fare_type} fares, this is ${fareType}` }
+    }
 
+    return null
+  }
+
+  const rejections = new Map<string, { reason: RejectReason; detail: string }>()
+  const eligible = [...strongest.values()].filter(candidate => {
+    const rejection = rejectionFor(candidate.rule)
+    if (rejection) {
+      rejections.set(candidate.rule.id, rejection)
+      return false
+    }
     return true
   })
 
@@ -236,9 +322,29 @@ export function resolveCommercials(input: ResolveCommercialsInput): ResolvedComm
     }
   }
 
-  return {
-    markup: winnerFor('markup'),
-    discount: winnerFor('discount'),
-    processing_fee: winnerFor('processing_fee'),
-  }
+  const markup = winnerFor('markup')
+  const discount = winnerFor('discount')
+  const processing_fee = winnerFor('processing_fee')
+
+  const winners = new Set(
+    [markup, discount, processing_fee].filter(Boolean).map(r => r!.rule.id)
+  )
+
+  // One entry per ASSIGNED rule, in the order they were assigned. A rule that is
+  // not in here was never assigned to this client at all, which is its own
+  // answer and the one thing the trace cannot say for itself.
+  const trace: RuleTrace[] = [...strongest.values()].map(candidate => {
+    const rejection = rejections.get(candidate.rule.id)
+    return {
+      ruleId: candidate.rule.id,
+      kind: candidate.rule.kind,
+      via: describeVia(candidate.kind, candidate.viaName),
+      rejectedBy: rejection?.reason ?? null,
+      detail: rejection?.detail
+        ?? (winners.has(candidate.rule.id) ? 'applied' : 'matched, but another rule of this kind outranked it'),
+      won: winners.has(candidate.rule.id),
+    }
+  })
+
+  return { markup, discount, processing_fee, trace }
 }

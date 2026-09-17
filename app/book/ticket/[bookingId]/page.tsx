@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { formatTime, formatDayLabel, journeyLabel } from '@/app/lib/book/types'
 import { mealLabel } from '@/app/lib/book/mealCodes'
+import { JUST_BOOKED_KEY } from '@/app/lib/book/flowStorage'
 
 // ── /book/ticket/[bookingId] ──────────────────────────────────────────────────
 // Displayed once a ticket is issued. Styled as an e-ticket / boarding-pass
@@ -210,6 +211,34 @@ export default function TicketPage() {
   async function loadAndMaybeTicket() {
     setLoading(true)
     setError('')
+
+    // ── The handoff from Confirm ─────────────────────────────────────────────
+    // Clicking "Confirm booking" used to cost FOUR sequential browser round
+    // trips before a ticket appeared: POST /booking, then this page's GET, then
+    // POST /ticket, then the QR. The GET is the one that earns nothing — it
+    // exists only to discover a status the /booking response has already
+    // reported, and each of these carries its own ~200ms auth check and ~200ms
+    // database read on the server before it does any work.
+    //
+    // So when Confirm hands over, ticketing starts IMMEDIATELY and in parallel
+    // with the load, rather than waiting for it to report a status we were just
+    // told. The flag is consumed on read, so a refresh or a back-button return
+    // falls through to the ordinary sequential path below.
+    //
+    // Safe against a stale flag from both sides: ticketingRef stops a second
+    // concurrent call here, and the server refuses anything that is not at
+    // status 'held' with a 409 — handled quietly in issueTicket rather than
+    // shown, because a booking that is already ticketed is not an error the
+    // traveller has any use for.
+    let handedOver = false
+    try {
+      handedOver = sessionStorage.getItem(JUST_BOOKED_KEY) === bookingId
+      if (handedOver) sessionStorage.removeItem(JUST_BOOKED_KEY)
+    } catch {
+      // Private mode, blocked storage — fall through to the sequential path.
+    }
+
+    const earlyTicket = handedOver ? issueTicket() : null
     // finally, not a setLoading(false) on each path. The !res.ok branch below
     // returned early WITHOUT clearing `loading`, so any 401/403/404/500 from
     // GET /api/book/[bookingId] left the spinner up forever — and because the
@@ -233,7 +262,9 @@ export default function TicketPage() {
       // guard existed, etc.) — redirect to wherever that status actually
       // belongs rather than rendering a ticket page with no PNR/ticket data.
       if (data.booking.status === 'held') {
-        await issueTicket()
+        // Already in flight when Confirm handed over — await that one rather
+        // than starting a second.
+        await (earlyTicket ?? issueTicket())
       } else if (data.booking.status === 'ticketed') {
         // Already done — nothing to do, page renders normally below.
       } else if (data.booking.status === 'pending_approval' || data.booking.status === 'approved') {
@@ -271,6 +302,11 @@ export default function TicketPage() {
       const data = await res.json()
 
       if (!data.ok) {
+        // A booking that is not at 'held' is not something the traveller can act
+        // on or needs to read. It means this call raced the page's own load and
+        // lost — the booking was already ticketed, or never reached the hold —
+        // and the load is about to render whichever of those it is.
+        if (data.code === 'NOT_HELD') return
         setError(data.error || 'Could not issue the ticket. You can try again below.')
         return
       }

@@ -2,9 +2,11 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { amadeus, type PricingResponse } from '@/app/lib/amadeus/client'
 import { stampCommercials } from '@/app/lib/commercials/stampCommercials'
-import { emptyCommercials } from '@/app/lib/commercials/composeSellPrice'
+import { emptyCommercials, type CommercialsRecord } from '@/app/lib/commercials/composeSellPrice'
 import { round2, type FareComponents } from '@/app/lib/commercials/fareComponents'
 import { visibleLines, ADJUSTMENT_LABELS } from '@/app/lib/commercials/adjustment'
+import type { ResolvedCommercials } from '@/app/lib/commercials/resolveCommercials'
+import { cabinLetter } from '@/app/lib/book/cabin'
 import type { FlatFlightResult } from '@/app/lib/book/types'
 import { NextRequest } from 'next/server'
 
@@ -84,6 +86,53 @@ export function extractPricingDetails(pricing: PricingResponse) {
   }
 }
 
+// ── logCommercialDecision ────────────────────────────────────────────────────
+// One block per priced itinerary, written to the server log and nowhere else.
+//
+// Formatted to be read by a person at 2am rather than parsed by a machine: the
+// dimensions the rules are matched on first, then one line per assigned rule
+// saying whether it applied and — when it did not — which two values disagreed.
+// A rejection reason with only the losing field name ("cabin") sends someone
+// back to the editor to guess; one that names both sides ends the question.
+function logCommercialDecision(
+  resolved: ResolvedCommercials | null,
+  record: CommercialsRecord,
+  flight: FlatFlightResult | null
+) {
+  const markup = round2(record.displayedFare - record.airline.total)
+  const amountFor = (source: string) =>
+    record.adjustments.find(a => a.source === source)?.amount ?? 0
+
+  const lines: string[] = []
+  lines.push(
+    `[commercials] ${flight?.origin?.code ?? '???'}→${flight?.destination?.code ?? '???'} ` +
+    `${flight?.airline?.code ?? '??'} · cabin ${cabinLetter(flight?.cabin) ?? '?'} (${flight?.cabin ?? 'unknown'}) · ` +
+    `classes ${(flight?.legs ?? []).map(l => l.bookingCode || '?').join(',') || 'none'} · ` +
+    `${flight?.isLcc ? 'LCC' : 'BSP'}`
+  )
+
+  if (!resolved) {
+    lines.push('  no client on this employee — priced at the airline fare')
+  } else if (resolved.trace.length === 0) {
+    lines.push('  no commercial rule is assigned to this client')
+  } else {
+    for (const t of resolved.trace) {
+      const mark = t.won ? '✓' : '✗'
+      const amount = t.won ? `  → ${amountFor(t.kind).toFixed(2)}` : ''
+      lines.push(`  ${mark} ${t.kind.padEnd(15)} ${t.via.padEnd(22)} ${t.detail}${amount}`)
+    }
+  }
+
+  lines.push(
+    `  airline ${record.airline.total.toFixed(2)} ` +
+    `→ fare ${record.displayedFare.toFixed(2)} (markup ${markup.toFixed(2)}) ` +
+    `→ sell ${record.sellTotal.toFixed(2)} ` +
+    `(discount ${amountFor('discount').toFixed(2)}, fee ${amountFor('processing_fee').toFixed(2)})`
+  )
+
+  console.info(lines.join('\n'))
+}
+
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -152,14 +201,35 @@ if (!key || !pricingKey || !provider || !resultIndex) {
 
     const pax = Math.max(1, details.passengerBreakup?.length ?? 1)
 
-    const { record } = employee?.client_id
+    const stamped = employee?.client_id
       ? await stampCommercials(service, {
           clientId: employee.client_id,
           flight: (itinerary as FlatFlightResult | null) ?? null,
           components,
           pax,
         })
-      : { record: emptyCommercials(components) }
+      : { record: emptyCommercials(components), resolved: null }
+
+    const { record } = stamped
+
+    // ── Why this price ───────────────────────────────────────────────────────
+    // The one place a markup can be confirmed at all.
+    //
+    // A markup is deliberately undiscoverable from the browser: folded into the
+    // base and total, stripped from every response, and indistinguishable from
+    // the airline simply charging more. That is the design working — but it also
+    // means nobody can tell a markup that applied from one that silently did not,
+    // and "is this even on?" is not a question that should require reading code.
+    //
+    // A discount or a fee that does not appear has the same problem from the
+    // other side: the line is absent either because no rule matched or because
+    // the rule that was supposed to match is filed against something this flight
+    // is not. Those look identical on screen and have completely different fixes.
+    //
+    // So the whole decision is logged SERVER-SIDE, where the airline figures
+    // already live and where the traveller cannot reach it. Read it in the
+    // terminal running `npm run dev`, or in the Vercel function logs.
+    logCommercialDecision(stamped.resolved, record, itinerary as FlatFlightResult | null)
 
     // ── Persist the quote ────────────────────────────────────────────────────
     // This is what takes price authority away from the browser. The browser is

@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { round2 } from '@/app/lib/commercials/fareComponents'
 import { mealLabel } from '@/app/lib/book/mealCodes'
+import { JUST_BOOKED_KEY } from '@/app/lib/book/flowStorage'
 
 // Tax codes a traveller might reasonably want named. Anything not in here shows
 // its raw code, which is the honest fallback — inventing a description for a
@@ -260,6 +261,15 @@ export default function ConfirmBookingPage() {
           loadBooking({ silent: true })
         }
         return
+      }
+
+      // Tell the ticket page it can skip asking what the status is — we know,
+      // the airline just told us. It starts issuing on arrival instead of after
+      // a round trip that can only confirm what this response already says.
+      try {
+        sessionStorage.setItem(JUST_BOOKED_KEY, bookingId)
+      } catch {
+        // Blocked storage just means the ticket page takes the ordinary path.
       }
 
       router.replace(`/book/ticket/${bookingId}`)

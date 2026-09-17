@@ -90,6 +90,18 @@ function safeSet(key: string, value: unknown): void {
   }
 }
 
+// ── The Confirm → Ticket hand-off ────────────────────────────────────────────
+// Set by the confirm page the moment the airline confirms, read and consumed
+// once by the ticket page so it can start issuing immediately instead of first
+// asking the server for a status it was just told. Deliberately a bare string
+// rather than a JSON blob: it is one booking id, and it is read on the critical
+// path of the slowest moment in the flow.
+//
+// Exported from here rather than declared in both pages so the two cannot
+// disagree about the key — the failure mode of that is silent and looks exactly
+// like the slowness it was meant to remove.
+export const JUST_BOOKED_KEY = 'cbt:justBooked'
+
 export const flowStorage = {
   saveSearchResults(results: FlatFlightResult[], meta: SearchMeta, availabilityKey: string | null) {
     safeSet(RESULTS_KEY, { results, availabilityKey })

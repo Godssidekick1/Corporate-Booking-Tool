@@ -234,9 +234,11 @@ export function priceWithContext(
   const { flight, components, pax, fareType = null, pricedOn } = input
 
   if (context.rules.length === 0) {
+    // An empty trace, not a missing one: no rule reaches this client, so there
+    // is nothing that could have matched and nothing to explain.
     return {
       record: emptyCommercials(components),
-      resolved: { markup: null, discount: null, processing_fee: null },
+      resolved: { markup: null, discount: null, processing_fee: null, trace: [] },
     }
   }
 

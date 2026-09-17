@@ -320,6 +320,95 @@ export default function SelectFarePage() {
     ].filter((row): row is string => row !== null)
   })
 
+  // ── The rule detail for ONE fare ───────────────────────────────────────────
+  // Rendered in exactly one place at a time: inside the card when this flight
+  // offers a single fare (there is nothing to compare, so the card IS the
+  // detail), and otherwise in the panel below the picker, for whichever fare is
+  // selected.
+  //
+  // It used to render inside the selected CARD, which made that card roughly
+  // three times the height of its neighbours and reflowed the whole row on
+  // every click — the thing `alignSelf: flex-start` was added to paper over.
+  // Choosing and reading are different jobs and now happen in different places.
+  function fareDetailSections(fare: FareOption, mealsIncluded: boolean | undefined) {
+    const changeText = penaltySummary(fare.changePenalties)
+    const cancelText = penaltySummary(fare.cancelPenalties)
+    const bases = fare.fareBases ?? (fare.fareBasis ? [{ journeyNo: 1, code: fare.fareBasis }] : [])
+
+    return (
+      <>
+        {/* What this fare includes, in the airline's own words.
+            brandedServices arrives as a pipe-delimited string and is already
+            split by the search route. It is the only genuinely per-fare
+            descriptive content the provider sends. */}
+        {(fare.brandedServices?.length ?? 0) > 0 && (
+          <div style={s.fareRuleSection}>
+            <span style={s.fareRuleSectionTitle}>Included</span>
+            {fare.brandedServices!.map((service, si) => (
+              <div key={si} style={s.fareRuleLine}>
+                <span style={s.fareRuleDot} />{sentenceCase(service)}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Baggage is per DIRECTION, not per fare — it is filed on the
+            itinerary and has no per-fare node at all. Labelled by direction
+            only when there is more than one. */}
+        {baggageRows.length > 0 && (
+          <div style={s.fareRuleSection}>
+            <span style={s.fareRuleSectionTitle}>Baggage</span>
+            {baggageRows.map((row, bi) => (
+              <div key={bi} style={s.fareRuleLine}><span style={s.fareRuleDot} />{row}</div>
+            ))}
+          </div>
+        )}
+
+        {/* Every row here is conditional. The provider returns "Not Available"
+            for penalties in UAT, which means the fare rules were not sent —
+            not that the fee is zero. A row exists when there is something true
+            to put in it, so nothing here is a placeholder a traveller could
+            mistake for a term of their ticket. */}
+        {(cancelText || changeText || bases.length > 0) && (
+          <div style={s.fareRuleSection}>
+            <span style={s.fareRuleSectionTitle}>Flexibility</span>
+            {cancelText && (
+              <div style={s.fareRuleLine}><span style={s.fareRuleDotAmber} />Cancellation fee {cancelText}</div>
+            )}
+            {changeText && (
+              <div style={s.fareRuleLine}><span style={s.fareRuleDotAmber} />Date change fee {changeText}</div>
+            )}
+            {/* One code per direction. A round trip prices each way under its
+                own basis, and showing only the first hid the return's. */}
+            {bases.map(fb => (
+              <div key={fb.journeyNo} style={s.fareRuleLine}>
+                <span style={s.fareRuleDot} />
+                Fare basis {fb.code}
+                {hasReturn && <span style={s.fareRuleAside}> · {journeyLabel(fb.journeyNo)}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={s.fareRuleSection}>
+          <span style={s.fareRuleSectionTitle}>Meals</span>
+          <div style={s.fareRuleLine}>
+            <span style={mealsIncluded ? s.fareRuleDot : s.fareRuleDotAmber} />
+            {mealsIncluded ? 'Complimentary meal' : 'Meals — optional, at extra cost'}
+          </div>
+        </div>
+      </>
+    )
+  }
+
+  // The fare the detail panel describes, and the policy verdict against it.
+  const selectedVerdict = verdicts[selectedFareIndex]
+  const selectedVerdictColor = selectedVerdict?.ok && selectedVerdict.verdict
+    ? VERDICT_META[selectedVerdict.verdict]
+    : null
+  // Once priced, the live response is the better answer than the search row.
+  const selectedMealsIncluded = pricing ? pricing.mealIncluded : activeFare?.mealIncluded
+
   return (
     <div style={s.page}>
       <div style={s.root}>
@@ -395,8 +484,6 @@ export default function SelectFarePage() {
         <div style={hasMultipleFares ? s.fareOptionScroller : s.fareOptionList}>
             {flight.fareOptions.map((fare, i) => {
               const isActive = i === selectedFareIndex
-              const changeText = penaltySummary(fare.changePenalties)
-              const cancelText = penaltySummary(fare.cancelPenalties)
               const mealsIncluded = pricing && isActive ? pricing.mealIncluded : fare.mealIncluded
               // The airline's own name for this fare product — "ECO VALUE",
               // "ECO FLEX". This is what actually distinguishes one fare from
@@ -407,16 +494,11 @@ export default function SelectFarePage() {
               const fareVerdict = verdicts[i]
               const verdictColor = fareVerdict?.ok && fareVerdict.verdict ? VERDICT_META[fareVerdict.verdict] : null
 
-              // Full detail on the SELECTED card only, once there is more than
-              // one fare to choose between.
-              //
-              // Six fares each carrying a perk list, two baggage rows, fare
-              // bases and a meal line is several screens of near-identical text
-              // to scroll past before reaching the button. Comparing fares needs
-              // the name, the price and a one-line gist; the rest is what you
-              // read about the ONE you are considering. A single-fare flight is
-              // not a comparison at all, so it stays fully expanded.
-              const showDetail = !hasMultipleFares || isActive
+              // A single-fare flight is not a comparison at all, so its one card
+              // carries the full detail. With several to choose between, every
+              // card stays the same compact size and the detail for the selected
+              // one renders in the panel below.
+              const showDetail = !hasMultipleFares
 
               // The gist, built only from what the provider actually sent — so
               // it stays empty rather than inventing reassurance when a fare
@@ -442,12 +524,11 @@ export default function SelectFarePage() {
                   }}
                 >
                   <div style={s.fareCardTopRow}>
-                    <div>
-                      <span style={s.fareCardType}>{fareTitle}</span>
-                      <span style={{ ...s.fareOptionRefundTag, color: fare.refundable ? '#166534' : '#9CA3AF', background: fare.refundable ? '#F0FDF4' : '#F3F4F6' }}>
-                        {fare.refundable ? 'Refundable' : 'Non-refundable'}
-                      </span>
-                    </div>
+                    {/* Title on its own line and allowed to truncate. It shared
+                        a line with the refundability pill at 232px wide, so
+                        "ECO CLASSIC" + "Non-refundable" wrapped mid-word and
+                        every card ended up a different height. */}
+                    <span style={s.fareCardType}>{fareTitle}</span>
                     {hasMultipleFares && (
                       <div style={s.fareOptionRadio}>
                         <div style={{ ...s.fareOptionRadioDot, ...(isActive ? s.fareOptionRadioDotActive : {}) }} />
@@ -455,106 +536,72 @@ export default function SelectFarePage() {
                     )}
                   </div>
 
-                  {verdictColor && (
-                    <div style={{ ...s.fareVerdictBanner, background: verdictColor.bg, borderColor: verdictColor.border }}>
-                      <div style={s.fareVerdictHeader}>
-                        <span style={{ ...s.fareVerdictDot, background: verdictColor.color }} />
-                        <span style={{ ...s.fareVerdictLabel, color: verdictColor.color }}>{verdictColor.label}</span>
-                      </div>
-                      {(fareVerdict!.breaches?.length ?? 0) > 0 && (
-                        <ul style={s.fareVerdictList}>
-                          {fareVerdict!.breaches!.map((b, bi) => (
-                            <li key={bi} style={{ ...s.fareVerdictListItem, color: verdictColor.color }}>
-                              {breachLine(b)}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  )}
-
                   <div style={s.fareCardPriceRow}>
                     <span style={s.fareCardPrice}>{fare.currency} {fare.totalFare?.toLocaleString('en-IN')}</span>
                     <span style={s.fareCardPriceSub}>per adult</span>
                   </div>
 
-                  {!showDetail && summaryBits.length > 0 && (
+                  <div style={s.fareCardTagRow}>
+                    <span style={{ ...s.fareOptionRefundTag, color: fare.refundable ? '#166534' : '#9CA3AF', background: fare.refundable ? '#F0FDF4' : '#F3F4F6' }}>
+                      {fare.refundable ? 'Refundable' : 'Non-refundable'}
+                    </span>
+                    {/* The policy verdict as a chip rather than a banner with a
+                        breach list. The list is genuinely useful and genuinely
+                        variable-length — it belongs in the panel below, where it
+                        cannot stretch one card past its neighbours. */}
+                    {verdictColor && (
+                      <span style={{ ...s.fareVerdictChip, color: verdictColor.color, background: verdictColor.bg, borderColor: verdictColor.border }}>
+                        <span style={{ ...s.fareVerdictDot, background: verdictColor.color }} />
+                        {verdictColor.label}
+                      </span>
+                    )}
+                  </div>
+
+                  {summaryBits.length > 0 && (
                     <p style={s.fareSummaryLine}>{summaryBits.join(' · ')}</p>
                   )}
-                  {!showDetail && (
-                    <span style={s.fareExpandHint}>Select to see full fare rules</span>
-                  )}
 
-                  {/* What this fare includes, in the airline's own words.
-                      brandedServices arrives as a pipe-delimited string and is
-                      already split by the search route. It is the only
-                      genuinely per-fare descriptive content the provider
-                      sends, and it was being extracted and thrown away. */}
-                  {showDetail && (fare.brandedServices?.length ?? 0) > 0 && (
-                    <div style={s.fareRuleSection}>
-                      <span style={s.fareRuleSectionTitle}>Included</span>
-                      {fare.brandedServices!.map((service, si) => (
-                        <div key={si} style={s.fareRuleLine}>
-                          <span style={s.fareRuleDot} />{sentenceCase(service)}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Baggage is per DIRECTION, not per fare — it is filed on
-                      the itinerary and has no per-fare node at all. Labelled
-                      by direction only when there is more than one, so a
-                      one-way reads exactly as it did before. */}
-                  {showDetail && baggageRows.length > 0 && (
-                    <div style={s.fareRuleSection}>
-                      <span style={s.fareRuleSectionTitle}>Baggage</span>
-                      {baggageRows.map((row, bi) => (
-                        <div key={bi} style={s.fareRuleLine}><span style={s.fareRuleDot} />{row}</div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Every row here is conditional. The provider returns
-                      "Not Available" for penalties in UAT, which means the fare
-                      rules were not sent — not that the fee is zero. A row is
-                      shown when there is something true to put in it and is
-                      absent otherwise, so nothing on this card is a placeholder
-                      a traveller could mistake for a term of their ticket. */}
-                  {showDetail && (cancelText || changeText || (fare.fareBases?.length ?? 0) > 0 || fare.fareBasis) && (
-                    <div style={s.fareRuleSection}>
-                      <span style={s.fareRuleSectionTitle}>Flexibility</span>
-                      {cancelText && (
-                        <div style={s.fareRuleLine}><span style={s.fareRuleDotAmber} />Cancellation fee {cancelText}</div>
-                      )}
-                      {changeText && (
-                        <div style={s.fareRuleLine}><span style={s.fareRuleDotAmber} />Date change fee {changeText}</div>
-                      )}
-                      {/* One code per direction. A round trip prices each way
-                          under its own basis, and showing only the first hid
-                          the return's. */}
-                      {(fare.fareBases ?? (fare.fareBasis ? [{ journeyNo: 1, code: fare.fareBasis }] : [])).map(fb => (
-                        <div key={fb.journeyNo} style={s.fareRuleLine}>
-                          <span style={s.fareRuleDot} />
-                          Fare basis {fb.code}
-                          {hasReturn && <span style={s.fareRuleAside}> · {journeyLabel(fb.journeyNo)}</span>}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {showDetail && (
-                    <div style={s.fareRuleSection}>
-                      <span style={s.fareRuleSectionTitle}>Meals</span>
-                      <div style={s.fareRuleLine}>
-                        <span style={mealsIncluded ? s.fareRuleDot : s.fareRuleDotAmber} />
-                        {mealsIncluded ? 'Complimentary meal' : 'Meals — optional, at extra cost'}
-                      </div>
-                    </div>
-                  )}
+                  {showDetail && fareDetailSections(fare, mealsIncluded)}
                 </button>
               )
             })}
         </div>
+
+        {/* ── The selected fare's rules, once, full width ─────────────────────
+            Laid out in columns so four short sections read as one block rather
+            than as a long scroll — the complaint that started this. */}
+        {hasMultipleFares && activeFare && (
+          <div style={s.fareDetailPanel}>
+            <div style={s.fareDetailHead}>
+              <span style={s.fareDetailTitle}>
+                {activeFare.brandedFareDescription || activeFare.brandedFareName || activeFare.fareType || `Fare ${selectedFareIndex + 1}`}
+              </span>
+              <span style={s.fareDetailSub}>What this fare includes</span>
+            </div>
+
+            {selectedVerdictColor && (
+              <div style={{ ...s.fareVerdictBanner, background: selectedVerdictColor.bg, borderColor: selectedVerdictColor.border }}>
+                <div style={s.fareVerdictHeader}>
+                  <span style={{ ...s.fareVerdictDot, background: selectedVerdictColor.color }} />
+                  <span style={{ ...s.fareVerdictLabel, color: selectedVerdictColor.color }}>{selectedVerdictColor.label}</span>
+                </div>
+                {(selectedVerdict!.breaches?.length ?? 0) > 0 && (
+                  <ul style={s.fareVerdictList}>
+                    {selectedVerdict!.breaches!.map((b, bi) => (
+                      <li key={bi} style={{ ...s.fareVerdictListItem, color: selectedVerdictColor.color }}>
+                        {breachLine(b)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+
+            <div style={s.fareDetailColumns}>
+              {fareDetailSections(activeFare, selectedMealsIncluded)}
+            </div>
+          </div>
+        )}
 
         {/* ── Fare breakdown — live from Pricing ──────────────────────── */}
         <div style={s.card}>
@@ -696,27 +743,46 @@ const s: Record<string, React.CSSProperties> = {
   // view per-card. Single fare falls back to fareOptionList above — one
   // full-width card, no scroller chrome for a one-option flight.
   fareOptionScroller: {
-    display: 'flex', flexDirection: 'row' as const, gap: '12px', overflowX: 'auto' as const,
-    padding: '4px 16px 12px 0', scrollSnapType: 'x proximity' as const, WebkitOverflowScrolling: 'touch' as const,
+    display: 'flex', flexDirection: 'row' as const, gap: '10px', overflowX: 'auto' as const,
+    // alignItems: stretch (the flex default, stated here because it is load-
+    // bearing) is what makes every card exactly the same height now that none
+    // of them can grow: the tallest content sets the height and the rest match.
+    alignItems: 'stretch' as const,
+    padding: '4px 16px 10px 0', scrollSnapType: 'x proximity' as const, WebkitOverflowScrolling: 'touch' as const,
   },
   fareCard: {
     display: 'flex', flexDirection: 'column' as const, width: '100%',
-    padding: '13px 14px', background: '#F9FAFB', border: '1.5px solid #E5E7EB', borderRadius: '12px',
+    padding: '11px 12px', background: '#F9FAFB', border: '1.5px solid #E5E7EB', borderRadius: '10px',
     cursor: 'pointer', textAlign: 'left' as const,
   },
   fareCardActive: { background: '#EEF2FF', borderColor: '#000835' },
   fareCardStatic: { cursor: 'default' },
-  // Sized so several fares are comparable without scrolling past them.
-  //
-  // Two things make that possible rather than merely cramped: only the SELECTED
-  // card carries its full rule detail, and `alignSelf: flex-start` stops the
-  // unselected cards stretching to match the tall one beside them — a flex row
-  // gives every child the height of its largest sibling by default, which was
-  // padding five short cards out to the height of the one open card.
-  fareCardScrollItem: { width: '232px', flexShrink: 0, scrollSnapAlign: 'start' as const, alignSelf: 'flex-start' as const },
-  fareSummaryLine: { fontSize: '11.5px', color: '#6B7280', margin: '6px 0 0', lineHeight: 1.5 },
-  fareExpandHint: { fontSize: '10.5px', color: '#9CA3AF', marginTop: '6px' },
-  fareCardTopRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' },
+  // Every card now holds the same four things — name, price, tags, one gist
+  // line — so they are the same size by construction rather than by being
+  // stopped from stretching. `alignSelf: flex-start` used to live here for that
+  // reason and is gone: it was the workaround for the selected card expanding
+  // inline, and with the detail moved to its own panel the row wants the
+  // opposite behaviour.
+  fareCardScrollItem: { width: '196px', flexShrink: 0, scrollSnapAlign: 'start' as const },
+  fareSummaryLine: { fontSize: '11px', color: '#6B7280', margin: '7px 0 0', lineHeight: 1.45 },
+  fareCardTopRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '6px', marginBottom: '5px' },
+  fareCardTagRow: { display: 'flex', flexWrap: 'wrap' as const, gap: '5px' },
+
+  // ── The selected fare's rules ──────────────────────────────────────────────
+  fareDetailPanel: {
+    marginTop: '-2px', marginBottom: '18px', padding: '14px 16px',
+    background: '#FFFFFF', border: '1.5px solid #E5E7EB', borderRadius: '12px',
+  },
+  fareDetailHead: { display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap' as const, marginBottom: '10px' },
+  fareDetailTitle: { fontSize: '13px', fontWeight: 700, color: '#111827' },
+  fareDetailSub: { fontSize: '11.5px', color: '#9CA3AF' },
+  // Four short sections side by side instead of stacked. auto-fit collapses to
+  // one column on a narrow screen without a media query, which this file cannot
+  // express anyway — every style here is an inline object.
+  fareDetailColumns: {
+    display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(184px, 1fr))',
+    gap: '4px 20px', alignItems: 'start' as const,
+  },
 
   fareVerdictBanner: { border: '1px solid', borderRadius: '10px', padding: '10px 12px', margin: '10px 0' },
   fareVerdictHeader: { display: 'flex', alignItems: 'center', gap: '7px' },
@@ -724,15 +790,26 @@ const s: Record<string, React.CSSProperties> = {
   fareVerdictLabel: { fontSize: '12px', fontWeight: 700 },
   fareVerdictList: { margin: '6px 0 0', paddingLeft: '16px', display: 'flex', flexDirection: 'column' as const, gap: '3px' },
   fareVerdictListItem: { fontSize: '11px', lineHeight: 1.5, textAlign: 'left' as const },
-  fareCardType: { fontSize: '13px', fontWeight: 700, color: '#111827', marginRight: '6px' },
-  fareOptionRefundTag: { fontSize: '10px', fontWeight: 700, padding: '3px 9px', borderRadius: '6px' },
+  // Truncates rather than wraps. A two-line title on one card and a one-line
+  // title on the next is the difference in height that made the row look ragged
+  // even before the selected card expanded.
+  fareCardType: {
+    fontSize: '12px', fontWeight: 700, color: '#111827', lineHeight: 1.3,
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, minWidth: 0,
+  },
+  fareOptionRefundTag: { fontSize: '9.5px', fontWeight: 700, padding: '3px 7px', borderRadius: '5px', whiteSpace: 'nowrap' as const },
+  fareVerdictChip: {
+    display: 'inline-flex', alignItems: 'center', gap: '5px',
+    fontSize: '9.5px', fontWeight: 700, padding: '3px 7px', borderRadius: '5px',
+    border: '1px solid', whiteSpace: 'nowrap' as const,
+  },
   fareOptionRadio: { width: '18px', height: '18px', borderRadius: '50%', border: '2px solid #D1D5DB', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   fareOptionRadioDot: { width: '8px', height: '8px', borderRadius: '50%', background: 'transparent' },
   fareOptionRadioDotActive: { background: '#000835' },
 
-  fareCardPriceRow: { display: 'flex', alignItems: 'baseline', gap: '5px', marginBottom: '9px', paddingBottom: '9px', borderBottom: '1px dashed #E5E7EB' },
-  fareCardPrice: { fontSize: '17px', fontWeight: 700, color: '#0A0A14' },
-  fareCardPriceSub: { fontSize: '10.5px', color: '#9CA3AF' },
+  fareCardPriceRow: { display: 'flex', alignItems: 'baseline', gap: '4px', marginBottom: '8px', paddingBottom: '8px', borderBottom: '1px dashed #E5E7EB' },
+  fareCardPrice: { fontSize: '15.5px', fontWeight: 700, color: '#0A0A14', whiteSpace: 'nowrap' as const },
+  fareCardPriceSub: { fontSize: '10px', color: '#9CA3AF' },
 
   fareRuleSection: { marginBottom: '9px' },
   fareRuleSectionTitle: { display: 'block', fontSize: '10px', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.4px', marginBottom: '4px' },

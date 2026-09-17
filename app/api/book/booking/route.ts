@@ -77,18 +77,34 @@ export async function POST(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const { data: employee } = await service
-    .from('employees')
-    .select('id, client_id')
-    .eq('id', user.id)
-    .maybeSingle()
+
+  // Body first, so the booking id is available to overlap its read with the
+  // employee lookup. The two are independent and cost ~200ms each against this
+  // Supabase project; running them back to back simply added the two together.
+  const { bookingId }: BookBody = await req.json()
+
+  if (!bookingId) {
+    return Response.json({ error: 'bookingId is required' }, { status: 400 })
+  }
+
+  const [{ data: employee }, { data: booking }] = await Promise.all([
+    service.from('employees').select('id, client_id').eq('id', user.id).maybeSingle(),
+    service
+      .from('bookings')
+      .select('id, employee_id, client_id, status, provider, provider_order_id, amadeus_key, pricing_key, search_key, result_index, total_cost, traveler_snapshot')
+      .eq('id', bookingId)
+      .maybeSingle(),
+  ])
 
   if (!employee) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
   }
 
-  // Corporate Settings gates. Checked before the booking row is even loaded —
-  // a client who cannot book should get a clear refusal, not a 404 chase.
+  // Corporate Settings gates. Still checked before anything is concluded about
+  // the booking row — a client who cannot book should get a clear refusal, not a
+  // 404 chase — even though the row is now fetched alongside the employee rather
+  // than after these checks. Fetching it earlier is not the same as acting on it
+  // earlier, and the refusal order a caller sees is unchanged.
   //
   // This route creates the PNR, which in this app IS the hold: booking and
   // ticketing are separate routes, so a confirmed-but-unticketed booking is
@@ -107,18 +123,6 @@ export async function POST(req: NextRequest) {
       { status: 403 }
     )
   }
-
-  const { bookingId }: BookBody = await req.json()
-
-  if (!bookingId) {
-    return Response.json({ error: 'bookingId is required' }, { status: 400 })
-  }
-
-  const { data: booking } = await service
-    .from('bookings')
-    .select('id, employee_id, client_id, status, provider, provider_order_id, amadeus_key, pricing_key, search_key, result_index, total_cost, traveler_snapshot')
-    .eq('id', bookingId)
-    .maybeSingle()
 
   if (!booking) {
     return Response.json({ error: 'Booking not found' }, { status: 404 })

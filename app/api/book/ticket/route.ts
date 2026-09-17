@@ -40,27 +40,33 @@ export async function POST(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const { data: employee } = await service
-    .from('employees')
-    .select('id, client_id')
-    .eq('id', user.id)
-    .maybeSingle()
 
-  if (!employee) {
-    return Response.json({ error: 'Employee record not found' }, { status: 404 })
-  }
-
+  // The body is read BEFORE the employee lookup so the booking id is in hand and
+  // the two reads can overlap. They are independent — one is keyed on the user,
+  // the other on the booking — and ran back to back for no reason other than the
+  // order they were written in.
+  //
+  // MEASURED: ~200ms per Supabase round trip from here. This route made four of
+  // them in a row before the provider was contacted at all, which is close to a
+  // second of a ticketing wait spent waiting on our own database.
   const { bookingId }: TicketBody = await req.json()
 
   if (!bookingId) {
     return Response.json({ error: 'bookingId is required' }, { status: 400 })
   }
 
-  const { data: booking } = await service
-    .from('bookings')
-    .select('id, employee_id, status, provider, provider_order_id, amadeus_key, pricing_key, pnr, itinerary, share_token')
-    .eq('id', bookingId)
-    .maybeSingle()
+  const [{ data: employee }, { data: booking }] = await Promise.all([
+    service.from('employees').select('id, client_id').eq('id', user.id).maybeSingle(),
+    service
+      .from('bookings')
+      .select('id, employee_id, status, provider, provider_order_id, amadeus_key, pricing_key, pnr, itinerary, share_token')
+      .eq('id', bookingId)
+      .maybeSingle(),
+  ])
+
+  if (!employee) {
+    return Response.json({ error: 'Employee record not found' }, { status: 404 })
+  }
 
   if (!booking) {
     return Response.json({ error: 'Booking not found' }, { status: 404 })
@@ -98,8 +104,16 @@ export async function POST(req: NextRequest) {
   }
 
   if (booking.status !== 'held') {
+    // Carries a code as well as a sentence. The ticket page can now start
+    // ticketing in parallel with its own booking load (see loadAndMaybeTicket),
+    // which means a stale hand-off can legitimately reach here on an
+    // already-ticketed booking — a case the page should absorb silently rather
+    // than show as a failure. String-matching the prose to tell those apart is
+    // how an error message becomes load-bearing.
     return Response.json({
       error: `This booking is at status "${booking.status}" — expected "held" before calling Ticket. Complete the Book step first.`,
+      code: 'NOT_HELD',
+      status: booking.status,
     }, { status: 409 })
   }
 
