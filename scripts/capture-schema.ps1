@@ -129,20 +129,29 @@ function Invoke-Dump {
   Write-Host "  $Label ..." -NoNewline
   $sw = [Diagnostics.Stopwatch]::StartNew()
 
-  # stderr is captured separately: pg_dump writes progress there, so merging it
-  # into the SQL file would corrupt the dump.
+  # ── pg_dump writes the file ITSELF, via --file ─────────────────────────────
+  # NOT `| Out-File`. Piping a native command's stdout through PowerShell
+  # decodes it using [Console]::OutputEncoding before re-encoding, so on a
+  # console that is not UTF-8 (the default on many Windows installs is an OEM
+  # code page) every multi-byte character is mangled in transit. This schema is
+  # full of em dashes in column comments, and they came back as "ΓÇö" --
+  # E2 80 94 read as DOS 437.
   #
-  # $ErrorActionPreference is dropped to Continue for exactly this call. In
-  # Windows PowerShell 5.1, redirecting a native command's stderr AT ALL --
-  # `2> file` just as much as `2>&1` -- wraps every stderr line in a
-  # NativeCommandError. Under "Stop" that is terminating even when pg_dump
-  # exits 0. pg_dump legitimately warns on stderr (circular foreign keys, for
-  # one), so under the old setting a successful dump could kill the script.
-  # $LASTEXITCODE below is the real verdict.
+  # The corruption is ENVIRONMENT-DEPENDENT, which is worse than consistently
+  # broken: the same command produced a clean dump in one shell and a corrupted
+  # one in another. Handing the path to pg_dump removes PowerShell from the
+  # data path entirely and makes the output identical everywhere.
+  #
+  # stderr still needs a file, and $ErrorActionPreference still has to drop to
+  # Continue around the call: in Windows PowerShell 5.1, redirecting a native
+  # command's stderr AT ALL -- `2> file` as much as `2>&1` -- wraps each line in
+  # a NativeCommandError, which is terminating under "Stop" even when pg_dump
+  # exits 0. pg_dump warns legitimately (circular foreign keys, for one).
+  # $LASTEXITCODE is the real verdict.
   $errFile = [IO.Path]::GetTempFileName()
   $prevEap = $ErrorActionPreference
   $ErrorActionPreference = "Continue"
-  & pg_dump $DbUrl @PgArgs 2> $errFile | Out-File -FilePath $OutFile -Encoding utf8
+  & pg_dump $DbUrl @PgArgs --file=$OutFile 2> $errFile
   $code = $LASTEXITCODE
   $ErrorActionPreference = $prevEap
   $stderr = Get-Content $errFile -Raw
@@ -198,6 +207,21 @@ Invoke-Dump "auth schema    " `
 Invoke-Dump "public data    " `
   @("--data-only", "--schema=public", "--no-owner", "--disable-triggers") `
   "$OutDir/seed.sql"
+
+# ── Sanity check: no mojibake ────────────────────────────────────────────────
+# The schema carries em dashes and arrows in its column comments. If the dump
+# ever routes through a non-UTF-8 console again, they arrive as "ΓÇö" / "ΓÇ"
+# and the file is quietly wrong. Cheaper to assert than to notice in a diff
+# three commits later.
+$mojibake = Select-String -LiteralPath "$OutDir/baseline.sql" -Pattern 'ÃÂ|ÃÂ|Ã¢â‚¬|ΓÇ' -SimpleMatch:$false -ErrorAction SilentlyContinue
+if ($mojibake) {
+  Write-Host ""
+  Write-Host "FAILED: the dump contains mis-encoded characters." -ForegroundColor Red
+  Write-Host "The file was written through a non-UTF-8 path." -ForegroundColor Red
+  $mojibake | Select-Object -First 3 | ForEach-Object { Write-Host "  line $($_.LineNumber): $($_.Line.Trim())" -ForegroundColor DarkYellow }
+  Write-Host ""
+  exit 1
+}
 
 # ── Sanity check: the three dumps must actually differ ──────────────────────
 # A schema-only public dump, a schema-only auth dump and a data-only public
