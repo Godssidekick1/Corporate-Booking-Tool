@@ -9,15 +9,21 @@
 # as needed while working out the restore errors.
 #
 # USAGE
-#   .\scripts\restore-local.ps1            # schema only
-#   .\scripts\restore-local.ps1 -WithData  # schema + local seed data
+#   .\scripts\restore-local.ps1 -LocalPassword "<your local postgres password>"
+#   .\scripts\restore-local.ps1 -LocalPassword "..." -WithData
+#
+# This is the LOCAL PostgreSQL 18 password -- set on THIS machine when it was
+# installed. It has nothing to do with Supabase; do not pass Supabase
+# credentials here. If PGPASSWORD is already set in the environment,
+# -LocalPassword can be omitted.
 # ─────────────────────────────────────────────────────────────────────────────
 
 param(
   [string]$Database = "cbt_local",
   [string]$SuperUser = "postgres",
   [string]$OutDir = "schema",
-  [switch]$WithData
+  [switch]$WithData,
+  [string]$LocalPassword
 )
 
 $ErrorActionPreference = "Stop"
@@ -30,13 +36,66 @@ if (-not (Test-Path "$OutDir/baseline.sql")) {
   exit 1
 }
 
-# The local superuser's password. Set PGPASSWORD before running, or rely on a
-# pgpass file / trust auth for localhost.
+if ($LocalPassword) { $env:PGPASSWORD = $LocalPassword }
+
 if (-not $env:PGPASSWORD -and -not $env:PGPASSFILE) {
-  Write-Host "note: PGPASSWORD is not set; relying on pgpass/trust for localhost" -ForegroundColor DarkYellow
+  Write-Host ""
+  Write-Host "No local PostgreSQL password supplied." -ForegroundColor Red
+  Write-Host "  .\scripts\restore-local.ps1 -LocalPassword `"<password you set when installing PG18>`""
+  Write-Host ""
+  exit 1
 }
 
-$psqlBase = @("-h", "localhost", "-U", $SuperUser, "-v", "ON_ERROR_STOP=0", "-q")
+# ── Native-command stderr, handled correctly ─────────────────────────────────
+# Every call below used `2>&1 | Out-Null`. Under Windows PowerShell 5.1, piping
+# a native executable's stderr through `2>&1` wraps EACH LINE in a
+# NativeCommandError -- and with $ErrorActionPreference = "Stop", that is a
+# TERMINATING error, even when the command's real exit code is 0. This is
+# exactly what killed the previous run: dropping a database that does not
+# exist yet makes psql print a harmless NOTICE to stderr, and that NOTICE alone
+# stopped the script before it reached the actual schema restore.
+#
+# The fix used throughout below: redirect stderr to a file with a bare `2>`,
+# never `2>&1`, and inspect $LASTEXITCODE explicitly. A NOTICE then stays a
+# NOTICE.
+function Invoke-Psql {
+  param([string]$Label, [string[]]$PsqlArgs, [string]$Sql, [switch]$AllowNotices)
+
+  Write-Host "  $Label ..." -NoNewline
+  $errFile = [IO.Path]::GetTempFileName()
+
+  # See the note in capture-schema.ps1: in PowerShell 5.1 ANY stderr
+  # redirection of a native command (`2> file` as much as `2>&1`) turns each
+  # stderr line into a NativeCommandError, which is terminating under "Stop".
+  # psql writes NOTICE and WARNING to stderr as a matter of course, so this has
+  # to be relaxed around the call. $LASTEXITCODE is what actually decides.
+  $prevEap = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  if ($Sql) {
+    $Sql | & psql @script:psqlBase @PsqlArgs 2> $errFile | Out-Null
+  } else {
+    & psql @script:psqlBase @PsqlArgs 2> $errFile | Out-Null
+  }
+  $code = $LASTEXITCODE
+  $ErrorActionPreference = $prevEap
+  $stderr = Get-Content $errFile -Raw -ErrorAction SilentlyContinue
+  Remove-Item $errFile -Force -ErrorAction SilentlyContinue
+
+  # psql's own exit code is the truth, not the presence of stderr output --
+  # NOTICE and WARNING lines are normal and expected here.
+  if ($code -ne 0) {
+    Write-Host " FAILED" -ForegroundColor Red
+    if ($stderr) { Write-Host $stderr -ForegroundColor Red }
+    exit 1
+  }
+
+  Write-Host " ok" -ForegroundColor Green
+  if ($stderr -and $AllowNotices) {
+    ($stderr.Trim() -split "`n") | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+  }
+}
+
+$script:psqlBase = @("-h", "localhost", "-U", $SuperUser, "-v", "ON_ERROR_STOP=1", "-q")
 
 Write-Host ""
 Write-Host "Rebuilding $Database on local PostgreSQL 18" -ForegroundColor Cyan
@@ -48,7 +107,6 @@ Write-Host ""
 # privileges, policy definitions, function owners). Creating them as no-login
 # stubs is far simpler than sed-ing the dump, and harmless: nothing can
 # authenticate as them.
-Write-Host "  creating Supabase role stubs ..." -NoNewline
 $roles = @(
   "anon", "authenticated", "service_role", "authenticator",
   "supabase_admin", "supabase_auth_admin", "supabase_storage_admin",
@@ -57,45 +115,51 @@ $roles = @(
 $roleSql = ($roles | ForEach-Object {
   "do `$`$ begin if not exists (select from pg_roles where rolname = '$_') then create role $_ nologin noinherit; end if; end `$`$;"
 }) -join "`n"
-$roleSql | & psql @psqlBase -d postgres 2>&1 | Out-Null
-Write-Host " ok" -ForegroundColor Green
+Invoke-Psql "creating Supabase role stubs" -PsqlArgs @("-d", "postgres") -Sql $roleSql
 
 # ── 2. Fresh database ────────────────────────────────────────────────────────
-Write-Host "  dropping and recreating $Database ..." -NoNewline
-& psql @psqlBase -d postgres -c "drop database if exists $Database with (force);" 2>&1 | Out-Null
-& psql @psqlBase -d postgres -c "create database $Database;" 2>&1 | Out-Null
-Write-Host " ok" -ForegroundColor Green
+# The drop legitimately prints a NOTICE the first time this ever runs ("database
+# does not exist, skipping") -- expected, not a failure. -AllowNotices shows it
+# rather than hiding it, so a genuinely unexpected notice is still visible.
+Invoke-Psql "dropping $Database if present" -AllowNotices `
+  -PsqlArgs @("-d", "postgres", "-c", "drop database if exists $Database with (force);")
+Invoke-Psql "creating $Database" `
+  -PsqlArgs @("-d", "postgres", "-c", "create database $Database;")
 
 # ── 3. Extensions ────────────────────────────────────────────────────────────
-# The schema uses gen_random_uuid() (pgcrypto/pgvector-era builtin in PG13+,
-# but explicit here) and an EXCLUDE ... USING gist constraint for GST period
-# overlap, which needs btree_gist.
-Write-Host "  installing extensions ..." -NoNewline
+# The schema uses an EXCLUDE ... USING gist constraint for GST period overlap,
+# which needs btree_gist. pgcrypto covers gen_random_uuid().
 $ext = @(
   "create extension if not exists pgcrypto;",
   "create extension if not exists btree_gist;",
   "create extension if not exists `"uuid-ossp`";"
 ) -join "`n"
-$ext | & psql @psqlBase -d $Database 2>&1 | Out-Null
-Write-Host " ok" -ForegroundColor Green
+Invoke-Psql "installing extensions" -PsqlArgs @("-d", $Database) -Sql $ext
 
 # ── 4. The schema ────────────────────────────────────────────────────────────
-# ON_ERROR_STOP=0 deliberately: we want the FULL list of what fails, not the
-# first failure. The errors are the working list for restore_notes.md.
+# ON_ERROR_STOP=0, overriding the base for this one call: we want the FULL list
+# of what fails, not the first failure -- the errors are the working list for
+# restore_notes.md. Everything else in this script keeps ON_ERROR_STOP=1.
 Write-Host "  restoring baseline.sql ..." -NoNewline
 $errFile = [IO.Path]::GetTempFileName()
-& psql @psqlBase -d $Database -f "$OutDir/baseline.sql" 2> $errFile | Out-Null
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+& psql -h localhost -U $SuperUser -v ON_ERROR_STOP=0 -q -d $Database -f "$OutDir/baseline.sql" 2> $errFile | Out-Null
+$restoreCode = $LASTEXITCODE
+$ErrorActionPreference = $prevEap
 $errors = Get-Content $errFile -ErrorAction SilentlyContinue
-Remove-Item $errFile -Force
+Remove-Item $errFile -Force -ErrorAction SilentlyContinue
 Write-Host " done" -ForegroundColor Green
 
 if ($errors) {
-  $real = $errors | Where-Object { $_ -match "^psql:.*ERROR" }
+  $real = $errors | Where-Object { $_ -match "ERROR:" }
   if ($real) {
     Write-Host ""
-    Write-Host "  $($real.Count) errors during restore:" -ForegroundColor Yellow
+    Write-Host "  $($real.Count) errors during restore (expected on the first run):" -ForegroundColor Yellow
     $real | Select-Object -First 25 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkYellow }
     if ($real.Count -gt 25) { Write-Host "    ... and $($real.Count - 25) more" -ForegroundColor DarkYellow }
+    Write-Host ""
+    Write-Host "  Record these in schema/restore_notes.md once triaged." -ForegroundColor DarkYellow
   }
 }
 
@@ -107,7 +171,6 @@ if ($errors) {
 # Dropping it is what lets the data move to local PostgreSQL while auth keeps
 # talking to Supabase, which is the whole reason this sprint does not have to
 # touch authentication. Recorded as a migration, not done by hand.
-Write-Host "  dropping platform_admins -> auth.users FK ..." -NoNewline
 $dropFk = @"
 do `$`$
 declare c text;
@@ -120,15 +183,12 @@ begin
 exception when undefined_table then null;
 end `$`$;
 "@
-$dropFk | & psql @psqlBase -d $Database 2>&1 | Out-Null
-Write-Host " ok" -ForegroundColor Green
+Invoke-Psql "dropping platform_admins -> auth.users FK" -PsqlArgs @("-d", $Database) -Sql $dropFk
 
 # ── 6. Data, optionally ──────────────────────────────────────────────────────
 if ($WithData) {
   if (Test-Path "$OutDir/seed.sql") {
-    Write-Host "  restoring seed.sql ..." -NoNewline
-    & psql @psqlBase -d $Database -f "$OutDir/seed.sql" 2>&1 | Out-Null
-    Write-Host " done" -ForegroundColor Green
+    Invoke-Psql "restoring seed.sql" -PsqlArgs @("-d", $Database, "-f", "$OutDir/seed.sql")
   } else {
     Write-Host "  seed.sql not present, skipping data" -ForegroundColor DarkYellow
   }
@@ -145,7 +205,7 @@ select
   (select count(*) from pg_policies where schemaname='public') as rls_policies;
 "@
 Write-Host "Result:" -ForegroundColor Cyan
-$summary | & psql @psqlBase -d $Database -P pager=off
+$summary | & psql -h localhost -U $SuperUser -d $Database -P pager=off
 
 Write-Host ""
 Write-Host "Point the app at it with:" -ForegroundColor Cyan

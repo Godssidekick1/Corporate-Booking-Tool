@@ -11,12 +11,22 @@
 # Everything else in the PostgreSQL migration depends on this file existing.
 #
 # USAGE
-#   $env:SUPABASE_DB_URL = "postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres"
-#   .\scripts\capture-schema.ps1
+#   Preferred -- pass the password separately so it never has to survive being
+#   hand-assembled into a URI (a `/` or `#` in the password otherwise breaks
+#   parsing before pg_dump ever sees it, since both are reserved URI
+#   characters -- confirmed live against this project):
+#     .\scripts\capture-schema.ps1 -PgHost "aws-1-ap-northeast-1.pooler.supabase.com" `
+#       -PgUser "postgres.<ref>" -PgPassword ".BBa78se/#sYPdn"
+#
+#   Or supply a pre-built URL if the password is already safe to embed:
+#     $env:SUPABASE_DB_URL = "postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres"
+#     .\scripts\capture-schema.ps1
 #
 # CONNECTION STRING: use the SESSION POOLER, not the "Direct connection" tab.
-#   Supabase dashboard -> Project Settings -> Database -> Connection string
+#   Supabase dashboard -> "Connect" button (top of the project page)
 #     -> URI tab -> "Session pooler"  (NOT "Direct connection")
+#   Confirmed against this project's actual dashboard -- it is not under
+#   Project Settings, despite that being the documented location historically.
 #
 # WHY: db.<ref>.supabase.co (the direct connection) resolves to IPv6 ONLY
 # unless the project has the paid IPv4 add-on -- confirmed against this
@@ -35,19 +45,43 @@
 
 param(
   [string]$DbUrl = $env:SUPABASE_DB_URL,
-  [string]$OutDir = "schema"
+  [string]$OutDir = "schema",
+  # Component form: safer than a hand-assembled URL because the password is
+  # percent-encoded with [uri]::EscapeDataString before it ever touches a URI
+  # parser. A raw password containing '/', '#', '?', '%', '@' or ':' breaks a
+  # naive postgresql://user:pass@host URL -- every one of those characters is a
+  # URI delimiter and an unencoded occurrence gets parsed as structure, not
+  # data. That is exactly what happened with a password containing '/' and '#':
+  # the parser found what it thought was a path boundary and a fragment marker
+  # inside the password and split the string there.
+  [string]$PgHost,
+  [string]$PgUser,
+  [string]$PgPassword,
+  [string]$PgDatabase = "postgres",
+  [int]$PgPort = 5432
 )
 
 $ErrorActionPreference = "Stop"
 
+if ($PgHost -and $PgUser -and $PgPassword) {
+  $encodedPassword = [uri]::EscapeDataString($PgPassword)
+  $encodedUser = [uri]::EscapeDataString($PgUser)
+  $DbUrl = "postgresql://${encodedUser}:${encodedPassword}@${PgHost}:${PgPort}/${PgDatabase}"
+}
+
 if (-not $DbUrl) {
   Write-Host ""
-  Write-Host "SUPABASE_DB_URL is not set." -ForegroundColor Red
+  Write-Host "No connection details supplied." -ForegroundColor Red
   Write-Host ""
-  Write-Host "  Supabase dashboard -> Project Settings -> Database"
-  Write-Host "    -> Connection string -> URI  (Direct connection, port 5432)"
+  Write-Host "  Supabase dashboard -> Connect (top of the project page)"
+  Write-Host "    -> URI tab -> Session pooler"
   Write-Host ""
-  Write-Host "  `$env:SUPABASE_DB_URL = `"postgresql://postgres:<password>@db.adotccgyeobowzgdqhmi.supabase.co:5432/postgres`""
+  Write-Host "Preferred (handles special characters in the password safely):"
+  Write-Host "  .\scripts\capture-schema.ps1 -PgHost `"aws-0-<region>.pooler.supabase.com`" \`"
+  Write-Host "    -PgUser `"postgres.<ref>`" -PgPassword `"<password>`""
+  Write-Host ""
+  Write-Host "Or, if the password has no /, #, ?, %, @ or : in it:"
+  Write-Host "  `$env:SUPABASE_DB_URL = `"postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres`""
   Write-Host ""
   exit 1
 }
@@ -71,7 +105,7 @@ if ($DbUrl -match "@db\.[\w-]+\.supabase\.co") {
   Write-Host "from an IPv4-only network." -ForegroundColor Red
   Write-Host ""
   Write-Host "Use the SESSION POOLER string instead:" -ForegroundColor Yellow
-  Write-Host "  dashboard -> Project Settings -> Database -> Connection string"
+  Write-Host "  dashboard -> 'Connect' button (top of the project page)"
   Write-Host "    -> URI tab -> 'Session pooler'"
   Write-Host ""
   Write-Host "It looks like:"
@@ -83,16 +117,34 @@ if ($DbUrl -match "@db\.[\w-]+\.supabase\.co") {
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
 function Invoke-Dump {
-  param([string]$Label, [string[]]$Args, [string]$OutFile)
+  # NOT $Args. `$Args` collides with PowerShell's AUTOMATIC $args variable
+  # (case-insensitive) -- naming a parameter that corrupts binding in ways that
+  # do not throw an error, so nothing here would have told you it happened. It
+  # is exactly what produced three identical 847,937-byte files from three
+  # pg_dump invocations with different flags: schema-only public, schema-only
+  # auth, and data-only never diverged because the flag array was not reaching
+  # pg_dump the way it looked like it would.
+  param([string]$Label, [string[]]$PgArgs, [string]$OutFile)
 
   Write-Host "  $Label ..." -NoNewline
   $sw = [Diagnostics.Stopwatch]::StartNew()
 
   # stderr is captured separately: pg_dump writes progress there, so merging it
   # into the SQL file would corrupt the dump.
+  #
+  # $ErrorActionPreference is dropped to Continue for exactly this call. In
+  # Windows PowerShell 5.1, redirecting a native command's stderr AT ALL --
+  # `2> file` just as much as `2>&1` -- wraps every stderr line in a
+  # NativeCommandError. Under "Stop" that is terminating even when pg_dump
+  # exits 0. pg_dump legitimately warns on stderr (circular foreign keys, for
+  # one), so under the old setting a successful dump could kill the script.
+  # $LASTEXITCODE below is the real verdict.
   $errFile = [IO.Path]::GetTempFileName()
-  & pg_dump $DbUrl @Args 2> $errFile | Out-File -FilePath $OutFile -Encoding utf8
+  $prevEap = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  & pg_dump $DbUrl @PgArgs 2> $errFile | Out-File -FilePath $OutFile -Encoding utf8
   $code = $LASTEXITCODE
+  $ErrorActionPreference = $prevEap
   $stderr = Get-Content $errFile -Raw
   Remove-Item $errFile -Force
 
@@ -134,6 +186,22 @@ Invoke-Dump "auth schema    " `
 Invoke-Dump "public data    " `
   @("--data-only", "--schema=public", "--no-owner", "--disable-triggers") `
   "$OutDir/seed.sql"
+
+# ── Sanity check: the three dumps must actually differ ──────────────────────
+# A schema-only public dump, a schema-only auth dump and a data-only public
+# dump can NEVER legitimately be byte-identical. This caught the $Args
+# collision above; it stays here so the same class of silent-binding bug can
+# never again produce three copies of one file without the script saying so.
+$hashes = @("$OutDir/baseline.sql", "$OutDir/auth_baseline.sql", "$OutDir/seed.sql") |
+  ForEach-Object { (Get-FileHash $_ -Algorithm SHA256).Hash }
+if (($hashes | Sort-Object -Unique).Count -ne 3) {
+  Write-Host ""
+  Write-Host "FAILED: two or more dumps are byte-identical. That is never" -ForegroundColor Red
+  Write-Host "correct for schema-only-public / schema-only-auth / data-only." -ForegroundColor Red
+  Write-Host "Something is wrong with how arguments are reaching pg_dump." -ForegroundColor Red
+  Write-Host ""
+  exit 1
+}
 
 # ── Inventory ────────────────────────────────────────────────────────────────
 $baseline = Get-Content "$OutDir/baseline.sql" -Raw
