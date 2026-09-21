@@ -156,7 +156,19 @@ function Invoke-Dump {
 
   $kb = [math]::Round((Get-Item $OutFile).Length / 1KB, 1)
   Write-Host (" ok  {0} KB  ({1:n1}s)" -f $kb, $sw.Elapsed.TotalSeconds) -ForegroundColor Green
-  if ($stderr) { Write-Host "    note: $($stderr.Trim())" -ForegroundColor DarkYellow }
+
+  # Show pg_dump's own words, not PowerShell's decoration of them. Even at
+  # "Continue", PS 5.1 still writes a formatted NativeCommandError block into
+  # the redirected stream -- the "At line:N char:M", the source echo, the
+  # CategoryInfo -- which buries the one line that matters.
+  if ($stderr) {
+    $clean = ($stderr -split "`r?`n") | Where-Object {
+      $_ -match '\S' -and
+      $_ -notmatch '^\s*(At |\+|\s+\+ (CategoryInfo|FullyQualifiedErrorId))' -and
+      $_ -notmatch '^\s*\+\s*~+\s*$'
+    } | ForEach-Object { $_ -replace '^\s*pg_dump\.exe\s*:\s*', '' }
+    $clean | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+  }
 }
 
 Write-Host ""

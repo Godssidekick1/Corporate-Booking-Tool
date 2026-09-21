@@ -91,7 +91,12 @@ function Invoke-Psql {
 
   Write-Host " ok" -ForegroundColor Green
   if ($stderr -and $AllowNotices) {
-    ($stderr.Trim() -split "`n") | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+    # psql's words only -- see the matching note in capture-schema.ps1.
+    ($stderr -split "`r?`n") | Where-Object {
+      $_ -match '\S' -and
+      $_ -notmatch '^\s*(At |\+|\s+\+ (CategoryInfo|FullyQualifiedErrorId))' -and
+      $_ -notmatch '^\s*\+\s*~+\s*$'
+    } | ForEach-Object { Write-Host ("    " + ($_ -replace '^\s*psql\.exe\s*:\s*', '')) -ForegroundColor DarkGray }
   }
 }
 
@@ -121,8 +126,12 @@ Invoke-Psql "creating Supabase role stubs" -PsqlArgs @("-d", "postgres") -Sql $r
 # The drop legitimately prints a NOTICE the first time this ever runs ("database
 # does not exist, skipping") -- expected, not a failure. -AllowNotices shows it
 # rather than hiding it, so a genuinely unexpected notice is still visible.
-Invoke-Psql "dropping $Database if present" -AllowNotices `
-  -PsqlArgs @("-d", "postgres", "-c", "drop database if exists $Database with (force);")
+# client_min_messages=warning silences the "database does not exist, skipping"
+# NOTICE that psql writes to stderr on a first run. Suppressed at the source
+# rather than filtered afterwards -- a NOTICE we chose not to raise is quieter
+# than one we raise and then hide, and anything above WARNING still surfaces.
+Invoke-Psql "dropping $Database if present" `
+  -PsqlArgs @("-d", "postgres", "-c", "set client_min_messages = warning; drop database if exists $Database with (force);")
 Invoke-Psql "creating $Database" `
   -PsqlArgs @("-d", "postgres", "-c", "create database $Database;")
 
@@ -135,6 +144,47 @@ $ext = @(
   "create extension if not exists `"uuid-ossp`";"
 ) -join "`n"
 Invoke-Psql "installing extensions" -PsqlArgs @("-d", $Database) -Sql $ext
+
+# ── 3b. A minimal `auth` schema ──────────────────────────────────────────────
+# Supabase provides schema `auth`, and the dump depends on it in two ways:
+#   - two RLS policies call auth.uid()
+#   - two foreign keys reference auth.users(id)
+#
+# Authentication is deliberately NOT moving in this sprint -- it keeps talking
+# to Supabase while the data lives here -- so `auth` does not exist locally and
+# both kinds of object failed to restore.
+#
+# We create the FUNCTION but NOT the users TABLE, and that asymmetry is the
+# whole point:
+#
+#   auth.uid()   -> created, so all 17 RLS policies restore exactly as in
+#                   production. Reads a GUC, so once the repository layer
+#                   starts issuing SET LOCAL it will return a real value and
+#                   the policies become testable locally.
+#
+#   auth.users   -> deliberately absent, so the two FKs keep failing. That is
+#                   the outcome we want: an empty local auth.users would make
+#                   every employee row with a non-null auth_user_id fail to
+#                   load, and copying real auth.users here would put password
+#                   hashes and emails on a dev machine for no benefit.
+#                   Supabase stays the source of truth for identity.
+$authStub = @"
+create schema if not exists auth;
+
+-- Mirrors Supabase's own definition closely enough for policy restore, and
+-- reads the same GUC the repository layer will set per transaction.
+create or replace function auth.uid() returns uuid
+  language sql stable
+as `$fn`$
+  select nullif(
+    coalesce(
+      current_setting('request.jwt.claim.sub', true),
+      current_setting('app.current_user_id', true)
+    ), ''
+  )::uuid
+`$fn`$;
+"@
+Invoke-Psql "creating auth.uid() stub" -PsqlArgs @("-d", $Database) -Sql $authStub
 
 # ── 4. The schema ────────────────────────────────────────────────────────────
 # ON_ERROR_STOP=0, overriding the base for this one call: we want the FULL list
@@ -163,27 +213,49 @@ if ($errors) {
   }
 }
 
-# ── 5. The one deliberate divergence from production ─────────────────────────
-# platform_admins.user_id references auth.users(id). That is the ONLY hard
-# foreign key from application data into Supabase's auth schema — employees.id
-# holds the same uuid but has no constraint on it.
+# ── 5. The deliberate divergence from production ─────────────────────────────
+# TWO foreign keys reach from application data into Supabase's auth schema:
 #
-# Dropping it is what lets the data move to local PostgreSQL while auth keeps
-# talking to Supabase, which is the whole reason this sprint does not have to
-# touch authentication. Recorded as a migration, not done by hand.
+#   employees.auth_user_id  -> auth.users(id)  ON DELETE SET NULL
+#   platform_admins.user_id -> auth.users(id)  ON DELETE CASCADE
+#
+# Neither appears in supabase/migrations -- employees.auth_user_id exists only
+# in the live database, and is written by application code in five places. It
+# was found by dumping the real schema, which is the argument for having done
+# that first.
+#
+# Both stay absent locally. They cannot restore (auth.users does not exist
+# here, by design -- see 3b) and they could not be enforced meaningfully anyway
+# while identity lives in Supabase. This is the one structural difference
+# between cbt_local and production, and it is deliberate.
+#
+# They come back when GoTrue is self-hosted, which is a separate scheduled task
+# before production.
 $dropFk = @"
 do `$`$
-declare c text;
+declare
+  t text;
+  c text;
 begin
-  select conname into c from pg_constraint
-   where conrelid = 'public.platform_admins'::regclass and contype = 'f';
-  if c is not null then
-    execute format('alter table public.platform_admins drop constraint %I', c);
-  end if;
-exception when undefined_table then null;
+  foreach t in array array['public.employees', 'public.platform_admins'] loop
+    begin
+      for c in
+        select con.conname
+          from pg_constraint con
+          join pg_class rel on rel.oid = con.conrelid
+          join pg_namespace ns on ns.oid = rel.relnamespace
+         where con.contype = 'f'
+           and format('%I.%I', ns.nspname, rel.relname) = t
+           and con.confrelid::regclass::text like 'auth.%'
+      loop
+        execute format('alter table %s drop constraint %I', t, c);
+      end loop;
+    exception when undefined_table then null;
+    end;
+  end loop;
 end `$`$;
 "@
-Invoke-Psql "dropping platform_admins -> auth.users FK" -PsqlArgs @("-d", $Database) -Sql $dropFk
+Invoke-Psql "ensuring auth.users FKs are absent" -PsqlArgs @("-d", $Database) -Sql $dropFk
 
 # ── 6. Data, optionally ──────────────────────────────────────────────────────
 if ($WithData) {
