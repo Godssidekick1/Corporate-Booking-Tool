@@ -166,8 +166,14 @@ function makeCompare(order: PaymentType[]) {
     if (byAirline !== 0) return byAirline
 
     // Narrower class set wins; unrestricted reports Infinity so it sorts last.
-    const byRbd = rbdSpecBreadth(a.fop.rbd_spec) - rbdSpecBreadth(b.fop.rbd_spec)
-    if (byRbd !== 0) return byRbd
+    //
+    // COMPARED, NOT SUBTRACTED. `Infinity - Infinity` is NaN and `NaN !== 0` is
+    // true, so subtracting returned NaN whenever both cards left booking class
+    // unrestricted -- the common case. A comparator returning NaN makes
+    // Array.sort behave arbitrarily, and the recency tie-break below never ran.
+    const aRbd = rbdSpecBreadth(a.fop.rbd_spec)
+    const bRbd = rbdSpecBreadth(b.fop.rbd_spec)
+    if (aRbd !== bRbd) return aRbd < bRbd ? -1 : 1
 
     return b.fop.created_at.localeCompare(a.fop.created_at)
   }

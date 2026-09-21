@@ -111,8 +111,14 @@ function compareCandidates(a: ResolutionCandidate, b: ResolutionCandidate): numb
   // airline, and between two restricted deals the tighter set wins.
   // flightSpecBreadth reports an unrestricted spec as Infinity, so this single
   // comparison covers both halves of that rule.
-  const byBreadth = flightSpecBreadth(a.deal.flight_spec) - flightSpecBreadth(b.deal.flight_spec)
-  if (byBreadth !== 0) return byBreadth
+  //
+  // COMPARED, NOT SUBTRACTED. `Infinity - Infinity` is NaN and `NaN !== 0` is
+  // true, so subtracting returned NaN whenever both deals were filed against
+  // the whole airline -- the common case. A comparator returning NaN makes
+  // Array.sort behave arbitrarily, and the recency tie-break below never ran.
+  const aBreadth = flightSpecBreadth(a.deal.flight_spec)
+  const bBreadth = flightSpecBreadth(b.deal.flight_spec)
+  if (aBreadth !== bBreadth) return aBreadth < bBreadth ? -1 : 1
 
   // Most recently negotiated. Deals get renegotiated annually and the new one
   // is nearly always the intended one.

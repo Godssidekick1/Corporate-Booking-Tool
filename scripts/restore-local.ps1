@@ -290,6 +290,34 @@ select
 Write-Host "Result:" -ForegroundColor Cyan
 $summary | & psql -h localhost -U $SuperUser -d $Database -P pager=off
 
+# ── Did the DATA actually land? ──────────────────────────────────────────────
+# "restoring seed.sql ... ok" only says psql exited 0. It does not say rows
+# arrived, and the circular foreign key between clients -> branches ->
+# employees is exactly the shape that produces a partial load. Counting the
+# rows is the only statement that settles it.
+if ($WithData) {
+  Write-Host ""
+  Write-Host "Rows loaded:" -ForegroundColor Cyan
+  $counts = @"
+select 'tmcs' as t, count(*) from tmcs
+union all select 'clients', count(*) from clients
+union all select 'employees', count(*) from employees
+union all select 'branches', count(*) from branches
+union all select 'bookings', count(*) from bookings
+union all select 'commercial_rules', count(*) from commercial_rules
+union all select 'approvals', count(*) from approvals
+order by 1;
+"@
+  $counts | & psql -h localhost -U $SuperUser -d $Database -P pager=off
+
+  $empty = & psql -h localhost -U $SuperUser -d $Database -t -A -c "select count(*) from employees;"
+  if ($empty -eq '0') {
+    Write-Host ""
+    Write-Host "WARNING: employees is empty. The data did not load." -ForegroundColor Red
+    Write-Host "Check that seed.sql exists and is non-empty." -ForegroundColor Red
+  }
+}
+
 Write-Host ""
 Write-Host "Point the app at it with:" -ForegroundColor Cyan
 Write-Host "  DATABASE_URL=postgresql://$SuperUser@localhost:5432/$Database"

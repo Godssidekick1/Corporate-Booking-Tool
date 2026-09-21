@@ -172,8 +172,16 @@ function compare(a: Candidate, b: Candidate): number {
   if (byCabin !== 0) return byCabin
 
   // Narrower class set wins; unrestricted reports Infinity so it sorts last.
-  const byRbd = rbdSpecBreadth(a.rule.rbd_spec) - rbdSpecBreadth(b.rule.rbd_spec)
-  if (byRbd !== 0) return byRbd
+  //
+  // COMPARED, NOT SUBTRACTED. `Infinity - Infinity` is NaN, and `NaN !== 0` is
+  // true -- so subtracting made this return NaN whenever BOTH rules left
+  // booking class unrestricted, which is the common case. A comparator that
+  // returns NaN makes Array.sort behave arbitrarily, and every tie-break below
+  // this line became unreachable: fare type and recency never ran, and two
+  // competing markups were separated by array order alone.
+  const aRbd = rbdSpecBreadth(a.rule.rbd_spec)
+  const bRbd = rbdSpecBreadth(b.rule.rbd_spec)
+  if (aRbd !== bRbd) return aRbd < bRbd ? -1 : 1
 
   // A rule naming one fare type beats one that applies to all of them.
   const fareRank = (c: Candidate) => (c.rule.fare_type === 'all' ? 1 : 0)
