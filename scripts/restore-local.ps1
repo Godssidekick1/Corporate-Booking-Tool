@@ -102,6 +102,16 @@ function Invoke-Psql {
 
 $script:psqlBase = @("-h", "localhost", "-U", $SuperUser, "-v", "ON_ERROR_STOP=1", "-q")
 
+# Set on the CONNECTION rather than as a statement. Two reasons this is not
+# just a style choice:
+#   - a `set` prepended to another statement inside one -c makes psql send both
+#     as a single query string, which it wraps in an implicit transaction --
+#     fatal for DROP DATABASE, which cannot run inside one;
+#   - it applies to every call below without each having to remember.
+# WARNING and above still surface; only NOTICE is quietened, and nothing here
+# reports on notices -- the restore is triaged by grepping for ERROR.
+$env:PGOPTIONS = "-c client_min_messages=warning"
+
 Write-Host ""
 Write-Host "Rebuilding $Database on local PostgreSQL 18" -ForegroundColor Cyan
 Write-Host ""
@@ -126,12 +136,13 @@ Invoke-Psql "creating Supabase role stubs" -PsqlArgs @("-d", "postgres") -Sql $r
 # The drop legitimately prints a NOTICE the first time this ever runs ("database
 # does not exist, skipping") -- expected, not a failure. -AllowNotices shows it
 # rather than hiding it, so a genuinely unexpected notice is still visible.
-# client_min_messages=warning silences the "database does not exist, skipping"
-# NOTICE that psql writes to stderr on a first run. Suppressed at the source
-# rather than filtered afterwards -- a NOTICE we chose not to raise is quieter
-# than one we raise and then hide, and anything above WARNING still surfaces.
+# A single statement, deliberately. Putting `set client_min_messages = warning;`
+# in front of this inside one -c makes psql send both as ONE query string, which
+# it wraps in an implicit transaction -- and DROP DATABASE cannot run inside a
+# transaction block. The message level is set per-connection via PGOPTIONS
+# above instead, which has no such constraint.
 Invoke-Psql "dropping $Database if present" `
-  -PsqlArgs @("-d", "postgres", "-c", "set client_min_messages = warning; drop database if exists $Database with (force);")
+  -PsqlArgs @("-d", "postgres", "-c", "drop database if exists $Database with (force);")
 Invoke-Psql "creating $Database" `
   -PsqlArgs @("-d", "postgres", "-c", "create database $Database;")
 
