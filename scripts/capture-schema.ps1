@@ -11,13 +11,26 @@
 # Everything else in the PostgreSQL migration depends on this file existing.
 #
 # USAGE
-#   $env:SUPABASE_DB_URL = "postgresql://postgres:<password>@db.<ref>.supabase.co:5432/postgres"
+#   $env:SUPABASE_DB_URL = "postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres"
 #   .\scripts\capture-schema.ps1
 #
-# The URL is the DIRECT connection (port 5432) from
-#   Supabase dashboard -> Project Settings -> Database -> Connection string -> URI
-# NOT the pooler (port 6543): pg_dump needs a session connection and the
-# transaction pooler will refuse it.
+# CONNECTION STRING: use the SESSION POOLER, not the "Direct connection" tab.
+#   Supabase dashboard -> Project Settings -> Database -> Connection string
+#     -> URI tab -> "Session pooler"  (NOT "Direct connection")
+#
+# WHY: db.<ref>.supabase.co (the direct connection) resolves to IPv6 ONLY
+# unless the project has the paid IPv4 add-on -- confirmed against this
+# project's own DNS, which returns an AAAA record and no A record. On an
+# IPv4-only network pg_dump fails with "could not translate host name", which
+# reads like a typo but is actually a routing problem with no fix on our side.
+#
+# The session pooler (aws-0-<region>.pooler.supabase.com) is IPv4-reachable and
+# is still a full session connection -- pg_dump works against it exactly like
+# the direct one. Its username is shaped differently: postgres.<project-ref>,
+# not a bare postgres.
+#
+# Do NOT use the "Transaction pooler" (port 6543) here: pg_dump needs a session
+# connection and the transaction pooler will refuse it with a protocol error.
 # ─────────────────────────────────────────────────────────────────────────────
 
 param(
@@ -45,6 +58,25 @@ if (Test-Path $pgbin) { $env:Path = "$env:Path;$pgbin" }
 
 if (-not (Get-Command pg_dump -ErrorAction SilentlyContinue)) {
   Write-Host "pg_dump not found. Expected it at $pgbin" -ForegroundColor Red
+  exit 1
+}
+
+# Catch the IPv6-only direct-connection trap before pg_dump does, with a
+# message that actually says what's wrong instead of "Name or service not
+# known" -- which is what a routing failure looks like, not what it is.
+if ($DbUrl -match "@db\.[\w-]+\.supabase\.co") {
+  Write-Host ""
+  Write-Host "This looks like a DIRECT connection string (db.<ref>.supabase.co)." -ForegroundColor Red
+  Write-Host "That host is IPv6-only on most projects and will fail to resolve" -ForegroundColor Red
+  Write-Host "from an IPv4-only network." -ForegroundColor Red
+  Write-Host ""
+  Write-Host "Use the SESSION POOLER string instead:" -ForegroundColor Yellow
+  Write-Host "  dashboard -> Project Settings -> Database -> Connection string"
+  Write-Host "    -> URI tab -> 'Session pooler'"
+  Write-Host ""
+  Write-Host "It looks like:"
+  Write-Host "  postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres"
+  Write-Host ""
   exit 1
 }
 
