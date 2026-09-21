@@ -42,3 +42,18 @@ next-env.d.ts
 
 .vercel
 .env*
+
+# ── Database dumps ───────────────────────────────────────────────────────────
+# schema/baseline.sql and schema/auth_baseline.sql ARE committed — they are the
+# only complete description of 14 tables that have no CREATE TABLE in
+# supabase/migrations, so losing them loses the schema.
+#
+# Everything holding ROWS is excluded. seed.sql carries live passenger detail:
+# bookings.traveler_snapshot freezes full CustomerInfo including passport
+# numbers, and that must not reach a git history that outlives any retention
+# policy we later write.
+schema/seed.sql
+schema/*_data.sql
+schema/*.dump
+schema/restore_*.log
+*.backup
