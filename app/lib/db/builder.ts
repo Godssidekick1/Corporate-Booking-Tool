@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from 'pg'
 import { getPool } from './pool'
 import { toDbError, notASingleRow, DbConfigurationError, type DbError } from './errors'
-import { assertTable, assertColumn, quoteIdent, TABLE_COLUMNS } from './schemaAllowList'
+import { assertTable, assertColumn, quoteIdent, coerceForColumn, TABLE_COLUMNS } from './schemaAllowList'
 import { findRelationship } from './relationships'
 
 // Splits a comma-separated column list, dropping blanks. Only ever called on a
@@ -436,7 +436,7 @@ export class QueryBuilder<T = unknown[]> implements PromiseLike<DbResult<T>> {
     const values: unknown[] = []
     const tuples = this.payload.map(row => {
       const placeholders = columns.map(c => {
-        values.push(row[c] ?? null)
+        values.push(coerceForColumn(this.table, c, row[c] ?? null))
         return `$${values.length}`
       })
       return `(${placeholders.join(', ')})`
@@ -483,7 +483,7 @@ export class QueryBuilder<T = unknown[]> implements PromiseLike<DbResult<T>> {
 
     const values: unknown[] = []
     const sets = columns.map(c => {
-      values.push(row[c])
+      values.push(coerceForColumn(this.table, c, row[c]))
       return `${quoteIdent(c)} = $${values.length}`
     })
 

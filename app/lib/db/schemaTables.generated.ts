@@ -4,6 +4,7 @@
 // Re-run it after capture-schema.ps1 rather than editing this.
 //
 // 41 tables, 445 columns.
+// 14 json/jsonb columns, 3 PostgreSQL array columns.
 
 export const TABLE_COLUMNS: Record<string, string[]> = {
   airlines: ['code', 'name', 'first_seen_at', 'last_seen_at'],
@@ -47,4 +48,54 @@ export const TABLE_COLUMNS: Record<string, string[]> = {
   tmcs: ['id', 'name', 'status', 'settings', 'created_at'],
   trip_expenses: ['id', 'trip_id', 'client_id', 'created_by', 'expense_type', 'amount', 'currency', 'description', 'receipt_url', 'expense_date', 'created_at', 'updated_at'],
   trips: ['id', 'client_id', 'created_by', 'name', 'description', 'travel_date', 'status', 'created_at', 'updated_at'],
+}
+
+// The category the shim branches on when binding a value. See normaliseType in
+// the generator, and coerceForColumn in builder.ts.
+export type ColumnKind =
+  | 'json' | 'array' | 'numeric' | 'integer' | 'boolean'
+  | 'timestamptz' | 'date' | 'uuid' | 'text'
+
+export const COLUMN_TYPES: Record<string, Record<string, ColumnKind>> = {
+  airlines: { code: 'text', name: 'text', first_seen_at: 'timestamptz', last_seen_at: 'timestamptz' },
+  amadeus_session: { id: 'integer', session_id: 'text', expires_at: 'timestamptz', updated_at: 'timestamptz' },
+  approval_chain_templates: { id: 'uuid', tmc_id: 'uuid', name: 'text', code: 'text', description: 'text', mode: 'text', quorum: 'text', tiers: 'json', version: 'integer', updated_by: 'uuid', created_at: 'timestamptz', client_id: 'uuid' },
+  approval_tier_approvers: { client_id: 'uuid', template_id: 'uuid', tier: 'integer', approver_type: 'text', approver_user_id: 'uuid', min_band_rank: 'integer', assigned_by: 'uuid', assigned_at: 'timestamptz' },
+  approvals: { id: 'uuid', client_id: 'uuid', booking_id: 'uuid', approver_id: 'uuid', tier: 'integer', status: 'text', reason: 'text', actioned_at: 'timestamptz', escalates_at: 'timestamptz', created_at: 'timestamptz', verdict: 'text', decision_note: 'text', chain_template_id: 'uuid' },
+  audit_log: { id: 'uuid', client_id: 'uuid', tmc_id: 'uuid', user_id: 'uuid', action: 'text', entity_type: 'text', entity_id: 'uuid', metadata: 'json', created_at: 'timestamptz' },
+  band_approval_templates: { client_id: 'uuid', band_code: 'text', category: 'text', template_id: 'uuid', assigned_at: 'timestamptz', assigned_by: 'uuid' },
+  bands: { id: 'uuid', client_id: 'uuid', code: 'text', label: 'text', rank: 'integer', created_at: 'timestamptz' },
+  bookings: { id: 'uuid', client_id: 'uuid', employee_id: 'uuid', booking_type: 'text', status: 'text', policy_status: 'text', total_cost: 'numeric', provider_order_id: 'text', pnr: 'text', itinerary: 'json', traveler_snapshot: 'json', created_at: 'timestamptz', updated_at: 'timestamptz', requested_for: 'uuid', trip_id: 'uuid', provider: 'text', session_id: 'text', search_key: 'text', amadeus_key: 'text', pricing_key: 'text', is_ndc: 'boolean', ticket_numbers: 'array', fare_breakdown: 'json', policy_verdict: 'text', policy_verdict_detail: 'json', result_index: 'text', resolved_deal_codes: 'json', resolved_fop: 'json', sell_total: 'numeric', commercials: 'json', share_token: 'text' },
+  branches: { id: 'uuid', tmc_id: 'uuid', name: 'text', branch_no: 'text', profit_centre_code: 'text', gst_number: 'text', gst_name: 'text', gst_email: 'text', gst_contact: 'text', gst_address_1: 'text', gst_address_2: 'text', country: 'text', gst_state: 'text', gst_city: 'text', gst_zip: 'text', iata_number: 'text', office_id: 'text', is_head_office: 'boolean', status: 'text', created_by: 'uuid', created_at: 'timestamptz', updated_at: 'timestamptz' },
+  bucket_clients: { bucket_id: 'uuid', client_id: 'uuid', created_at: 'timestamptz' },
+  buckets: { id: 'uuid', tmc_id: 'uuid', name: 'text', code: 'text', description: 'text', created_by: 'uuid', created_at: 'timestamptz' },
+  client_default_approval_templates: { client_id: 'uuid', category: 'text', template_id: 'uuid', assigned_at: 'timestamptz', assigned_by: 'uuid' },
+  client_groups: { id: 'uuid', tmc_id: 'uuid', name: 'text', city: 'text', country: 'text', created_at: 'timestamptz', group_code: 'text', contact_first_name: 'text', contact_last_name: 'text', contact_email: 'text', contact_mobile: 'text', bill_to_address_1: 'text', bill_to_address_2: 'text', bill_to_state: 'text', bill_to_pincode: 'text' },
+  client_gst_registrations: { id: 'uuid', client_id: 'uuid', gstin: 'text', gst_holder: 'text', email: 'text', contact: 'text', address_1: 'text', address_2: 'text', city: 'text', state: 'text', country: 'text', zip: 'text', registration_date: 'date', valid_from: 'date', valid_to: 'date', cost_centre_id: 'uuid', is_primary: 'boolean', created_at: 'timestamptz' },
+  client_mandatory_info: { id: 'uuid', client_id: 'uuid', code: 'text', description: 'text', type: 'text', gds_entry: 'text', value_prefix: 'text', is_mandatory: 'boolean', created_at: 'timestamptz' },
+  client_policy_groups: { client_id: 'uuid', policy_group_id: 'uuid', assigned_at: 'timestamptz', assigned_by: 'uuid' },
+  clients: { id: 'uuid', tmc_id: 'uuid', name: 'text', status: 'text', settings: 'json', created_at: 'timestamptz', setup_completed: 'boolean', setup_completed_at: 'timestamptz', size: 'text', currency: 'text', country: 'text', timezone: 'text', booking_mode: 'text', client_group_id: 'uuid', managed_by: 'uuid', registered_address: 'text', industry: 'text', primary_contact_phone: 'text', branch_id: 'uuid', client_code: 'text', sap_customer_code: 'text', sap_group_code: 'text', email: 'text', phone: 'text', address_1: 'text', address_2: 'text', city: 'text', state: 'text', pincode: 'text', collections_name: 'text', collections_email: 'text', collections_mobile: 'text', booking_activation: 'boolean', hold_activation: 'boolean', dom_ticketing: 'boolean', intl_ticketing: 'boolean', hold_auto_issue: 'boolean', sbt_ticketing: 'boolean', policy_controlling: 'boolean', personal_bookings_allowed: 'boolean', agency_fop_allowed: 'boolean', corporate_fop_allowed: 'boolean', discount_active: 'boolean', processing_fee_active: 'boolean', air_approval_mode: 'text', hotel_approval_mode: 'text', bta_cta_allowed: 'boolean', bta_cta_manual_allowed: 'boolean', fop_priority: 'array', markup_active: 'boolean' },
+  commercial_rule_assignments: { id: 'uuid', tmc_id: 'uuid', rule_id: 'uuid', kind: 'text', client_id: 'uuid', client_group_id: 'uuid', bucket_id: 'uuid', created_by: 'uuid', created_at: 'timestamptz' },
+  commercial_rules: { id: 'uuid', tmc_id: 'uuid', kind: 'text', category_id: 'uuid', airline_code: 'text', cabin: 'text', rbd_spec: 'text', fare_type: 'text', calc_type: 'text', calc_on: 'text', rate: 'numeric', calc_basis: 'text', exclude_tax_codes: 'array', include_ssr: 'boolean', valid_from: 'date', valid_to: 'date', active: 'boolean', notes: 'text', created_by: 'uuid', created_at: 'timestamptz', updated_at: 'timestamptz' },
+  cost_centres: { id: 'uuid', client_id: 'uuid', code: 'text', name: 'text', created_at: 'timestamptz' },
+  deal_code_assignments: { id: 'uuid', tmc_id: 'uuid', deal_code_id: 'uuid', kind: 'text', client_id: 'uuid', client_group_id: 'uuid', bucket_id: 'uuid', created_by: 'uuid', created_at: 'timestamptz' },
+  deal_code_categories: { id: 'uuid', tmc_id: 'uuid', code: 'text', label: 'text', active: 'boolean', created_at: 'timestamptz' },
+  deal_code_category_types: { category_id: 'uuid', code_type: 'text', allowed: 'boolean' },
+  deal_codes: { id: 'uuid', tmc_id: 'uuid', category_id: 'uuid', airline_code: 'text', code: 'text', code_type: 'text', flight_spec: 'text', sales_from: 'date', sales_to: 'date', travel_from: 'date', travel_to: 'date', active: 'boolean', notes: 'text', created_by: 'uuid', created_at: 'timestamptz', updated_at: 'timestamptz' },
+  employee_approval_templates: { employee_id: 'uuid', category: 'text', template_id: 'uuid', assigned_at: 'timestamptz', assigned_by: 'uuid' },
+  employee_client_access: { employee_id: 'uuid', client_id: 'uuid', granted_by: 'uuid', granted_at: 'timestamptz' },
+  employee_permissions: { employee_id: 'uuid', permission_key: 'text', granted_by: 'uuid', granted_at: 'timestamptz' },
+  employees: { id: 'uuid', client_id: 'uuid', tmc_id: 'uuid', band_id: 'uuid', manager_id: 'uuid', full_name: 'text', email: 'text', role: 'text', department: 'text', cost_centre: 'text', band_code: 'text', band_rank: 'integer', traveler_profile: 'json', status: 'text', created_at: 'timestamptz', invited_by: 'uuid', invited_at: 'timestamptz', onboarding_method: 'text', first_login_completed: 'boolean', client_group_id: 'uuid', auth_user_id: 'uuid', top_of_hierarchy: 'boolean', designation: 'text', branch_id: 'uuid' },
+  fop_assignments: { id: 'uuid', tmc_id: 'uuid', fop_id: 'uuid', kind: 'text', client_id: 'uuid', client_group_id: 'uuid', bucket_id: 'uuid', created_by: 'uuid', created_at: 'timestamptz', is_active: 'boolean' },
+  fop_gds_entries: { id: 'uuid', tmc_id: 'uuid', code: 'text', label: 'text', active: 'boolean', created_at: 'timestamptz' },
+  fop_payment_types: { id: 'uuid', tmc_id: 'uuid', code: 'text', label: 'text', requires_card: 'boolean', active: 'boolean', created_at: 'timestamptz' },
+  forms_of_payment: { id: 'uuid', tmc_id: 'uuid', label: 'text', fop_type: 'text', payer: 'text', card_type: 'text', last4: 'text', expiry_month: 'integer', expiry_year: 'integer', gds_alias: 'text', branch_id: 'uuid', owner_client_id: 'uuid', owner_employee_id: 'uuid', airline_code: 'text', rbd_spec: 'text', active: 'boolean', notes: 'text', created_by: 'uuid', created_at: 'timestamptz', updated_at: 'timestamptz', fop_code: 'text', gds_entry_id: 'uuid', payment_type_id: 'uuid', is_default: 'boolean' },
+  platform_admins: { user_id: 'uuid', email: 'text', note: 'text', created_at: 'timestamptz' },
+  policy_group_band_ranks: { policy_group_id: 'uuid', band_rank: 'integer' },
+  policy_groups: { id: 'uuid', name: 'text', description: 'text', created_at: 'timestamptz', tmc_id: 'uuid', code: 'text' },
+  policy_rules: { id: 'uuid', client_id: 'uuid', tmc_id: 'uuid', band_id: 'uuid', travel_type: 'text', limit_key: 'text', limit_value: 'numeric', locked: 'boolean', version: 'integer', updated_by: 'uuid', created_at: 'timestamptz', policy_group_id: 'uuid', deleted_at: 'timestamptz', band_code: 'text', limit_bool: 'boolean' },
+  price_quotes: { id: 'uuid', client_id: 'uuid', employee_id: 'uuid', amadeus_key: 'text', reference_no: 'text', pricing_key: 'text', provider: 'text', result_index: 'text', airline_components: 'json', commercials: 'json', sell_total: 'numeric', created_at: 'timestamptz', expires_at: 'timestamptz' },
+  tmcs: { id: 'uuid', name: 'text', status: 'text', settings: 'json', created_at: 'timestamptz' },
+  trip_expenses: { id: 'uuid', trip_id: 'uuid', client_id: 'uuid', created_by: 'uuid', expense_type: 'text', amount: 'numeric', currency: 'text', description: 'text', receipt_url: 'text', expense_date: 'date', created_at: 'timestamptz', updated_at: 'timestamptz' },
+  trips: { id: 'uuid', client_id: 'uuid', created_by: 'uuid', name: 'text', description: 'text', travel_date: 'date', status: 'text', created_at: 'timestamptz', updated_at: 'timestamptz' },
 }

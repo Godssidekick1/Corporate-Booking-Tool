@@ -23,9 +23,44 @@
 // Populated by scripts/generate-allowlist.mjs. Kept as a plain object literal
 // rather than read from disk at runtime so it is bundled, immutable, and
 // available in every environment without a file read.
-import { TABLE_COLUMNS } from './schemaTables.generated'
+import { TABLE_COLUMNS, COLUMN_TYPES, type ColumnKind } from './schemaTables.generated'
 
-export { TABLE_COLUMNS }
+export { TABLE_COLUMNS, COLUMN_TYPES }
+export type { ColumnKind }
+
+// ── Binding a value for a column ─────────────────────────────────────────────
+// THE BUG THIS EXISTS FOR, because it cost a real booking:
+//
+// node-postgres encodes a top-level JavaScript array as a PostgreSQL ARRAY
+// LITERAL. `[{a:1}]` becomes `{"{\"a\":1}"}`, which is correct for text[] and
+// is not valid JSON. Sent to a jsonb column, PostgreSQL rejects it with
+// 22P02: 'Expected ":", but found "}"'.
+//
+// Plain objects were fine -- pg JSON.stringifies those -- so only top-level
+// ARRAYS broke, and only on the columns that hold one. bookings.resolved_deal_codes
+// is such a column: the insert failed after the passenger had already reached
+// the airline.
+//
+// PostgREST never had this problem. It receives a JSON body and hands the value
+// to PostgreSQL as jsonb, so an array is just an array. Reproducing that means
+// encoding the value ourselves rather than letting pg guess from the JavaScript
+// type, which it cannot do correctly without knowing the column.
+//
+// ARRAY COLUMNS ARE DELIBERATELY LEFT ALONE. text[] genuinely wants pg's array
+// literal; JSON-encoding those would break ticket_numbers, fop_priority and
+// exclude_tax_codes to fix jsonb.
+export function coerceForColumn(table: string, column: string, value: unknown): unknown {
+  if (value === null || value === undefined) return value
+  if (COLUMN_TYPES[table]?.[column] !== 'json') return value
+
+  // Already a string: assume it is serialised JSON and pass it through. Nothing
+  // in this codebase does that today (measured: 0 call sites), but
+  // double-encoding a value someone deliberately stringified would be worse
+  // than trusting them.
+  if (typeof value === 'string') return value
+
+  return JSON.stringify(value)
+}
 
 export function assertTable(table: string): void {
   if (!Object.prototype.hasOwnProperty.call(TABLE_COLUMNS, table)) {
