@@ -78,14 +78,46 @@ function selectedDriver(): 'pg' | 'postgrest' {
   return process.env.DATABASE_URL ? 'pg' : 'postgrest'
 }
 
+// Says once, per process, where this environment's data is going and why.
+//
+// THE OUTAGE WAS INVISIBLE FOR WANT OF THIS LINE. Both drivers return
+// { data, error }, so a deployment silently running the wrong one looks
+// healthy until a query fails and some route misreports it. One line in the
+// boot log would have named the problem immediately instead of sending
+// somebody to read /api/me.
+//
+// Deliberately not gated on NODE_ENV: a production log is exactly where this
+// matters. It names no secrets -- only which driver, and what decided it.
+let announced = false
+
+function announceDriver(driver: 'pg' | 'postgrest'): void {
+  if (announced) return
+  announced = true
+
+  const why = process.env.DB_DRIVER
+    ? `DB_DRIVER=${process.env.DB_DRIVER}`
+    : process.env.DATABASE_URL
+      ? 'DATABASE_URL is set and DB_DRIVER is not'
+      : 'neither DB_DRIVER nor DATABASE_URL is set'
+
+  const target = driver === 'pg' ? 'PostgreSQL (direct)' : 'Supabase PostgREST (HTTP)'
+  console.info(`[db] data -> ${target}; auth -> Supabase GoTrue. (${why})`)
+
+  if (process.env.DB_DUAL_RUN === '1') {
+    console.info('[db] DB_DUAL_RUN is on: reads run through both drivers and divergence is logged. Writes do not.')
+  }
+}
+
 export function createServiceClient(): ServiceClient {
   const supabase = createSupabaseClient()
+  const driver = selectedDriver()
+  announceDriver(driver)
 
   // The rollback path: data goes back over HTTP to PostgREST. Cast because
   // supabase-js's builder is structurally compatible with what the call sites
   // use but is not the shim's declared type. Temporary by design -- this
   // branch and the flag are deleted once the team's QA pass is clean.
-  if (selectedDriver() === 'postgrest') {
+  if (driver === 'postgrest') {
     return supabase as unknown as ServiceClient
   }
 
