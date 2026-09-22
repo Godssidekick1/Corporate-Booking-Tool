@@ -547,3 +547,59 @@ d('shim — value types', () => {
     expect(await rawValue(`select 42::int8 as v`)).toBe(42)
   })
 })
+
+// ── The replace-wholesale pattern ────────────────────────────────────────────
+// DELETE-then-INSERT is how several routes replace a set: permissions, client
+// access, policy group bands, chain approvers. It is also the shape with the
+// worst failure mode, because the intermediate state is "the user has nothing".
+// ─────────────────────────────────────────────────────────────────────────────
+
+d('shim — replace-wholesale is atomic', () => {
+  it('a failed INSERT does not leave the earlier DELETE committed', async () => {
+    // Modelled on PATCH /api/tmc/tcs/[id], which replaces a TC's permission set
+    // wholesale. Before transactions, an insert that failed after its delete
+    // succeeded left that TC with NO permissions at all -- a validation error
+    // silently escalated into a lockout.
+    //
+    // Run against a real employee with real permissions, then rolled back, so
+    // the row count before and after must be identical.
+    const { data: victim } = await db
+      .from('employee_permissions')
+      .select('employee_id, permission_key')
+      .limit(1)
+      .maybeSingle()
+
+    if (!victim) return  // no seeded permissions; nothing to prove against
+
+    const employeeId = (victim as { employee_id: string }).employee_id
+
+    const countPerms = async () => {
+      const { count } = await db
+        .from('employee_permissions')
+        .select('employee_id', { count: 'exact', head: true })
+        .eq('employee_id', employeeId)
+      return count
+    }
+
+    const before = await countPerms()
+    expect(before).toBeGreaterThan(0)
+
+    const { error } = await withTransaction(async (tx) => {
+      await orAbort(tx.from('employee_permissions').delete().eq('employee_id', employeeId))
+      // Fails: granted_by must reference a real employee, so this violates the
+      // foreign key -- the same class of failure the route can hit for real.
+      await orAbort(tx.from('employee_permissions').insert({
+        employee_id: employeeId,
+        permission_key: 'parity_probe',
+        granted_by: '00000000-0000-0000-0000-000000000000',
+      }))
+    })
+
+    expect(error).not.toBeNull()
+    // 23503 foreign key violation, surfaced intact rather than flattened.
+    expect(error?.code).toBe('23503')
+
+    // The whole point: the permissions are still there.
+    expect(await countPerms()).toBe(before)
+  })
+})
