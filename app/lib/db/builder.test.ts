@@ -200,6 +200,26 @@ d('shim — setup', () => {
     expect(data).toBeNull()
   })
 
+  it('upsert with ignoreDuplicates KEEPS the existing row', async () => {
+    // PostgREST's ignoreDuplicates is ON CONFLICT DO NOTHING. Four call sites
+    // use it so assigning the same target twice is a no-op rather than a 409.
+    // The bug it guards against is the opposite of a 409: silently OVERWRITING
+    // the row that was already there.
+    await db.from('airlines').delete().eq('code', 'Z8')
+    await db.from('airlines').insert({ code: 'Z8', name: 'Original' })
+
+    const { error } = await db
+      .from('airlines')
+      .upsert({ code: 'Z8', name: 'Should Not Win' }, { onConflict: 'code', ignoreDuplicates: true })
+
+    expect(error).toBeNull()
+
+    const { data } = await db.from('airlines').select('name').eq('code', 'Z8').single()
+    expect((data as { name: string }).name).toBe('Original')
+
+    await db.from('airlines').delete().eq('code', 'Z8')
+  })
+
   it('upsert with onConflict updates instead of failing', async () => {
     const { error } = await db
       .from('airlines')

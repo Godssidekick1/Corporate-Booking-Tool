@@ -10,6 +10,18 @@ function splitTop(s: string): string[] {
   return s.split(',').map(c => c.trim()).filter(Boolean)
 }
 
+// What a write accepts. Widened to `object` from Record<string, unknown>
+// because call sites build their rows as typed literals and an interface
+// without an index signature is not assignable to Record<string, unknown> --
+// TypeScript's rule, not a real difference. Every key is still checked against
+// the schema allow-list at build time, so the looseness buys no unsafety.
+type InsertPayload = object
+
+function toRows(rows: InsertPayload | InsertPayload[]): Record<string, unknown>[] {
+  const list = Array.isArray(rows) ? rows : [rows]
+  return list as Record<string, unknown>[]
+}
+
 // ── The query builder ────────────────────────────────────────────────────────
 // A reimplementation of the part of supabase-js's PostgREST builder that this
 // codebase actually uses, over node-postgres.
@@ -90,6 +102,7 @@ export class QueryBuilder<T = unknown[]> implements PromiseLike<DbResult<T>> {
   private offsetN: number | null = null
   private payload: Record<string, unknown>[] = []
   private conflictTarget: string | null = null
+  private ignoreDuplicates = false
   private wantCount = false
   private headOnly = false
   private returning = false
@@ -121,25 +134,29 @@ export class QueryBuilder<T = unknown[]> implements PromiseLike<DbResult<T>> {
     return this
   }
 
-  insert(rows: Record<string, unknown> | Record<string, unknown>[]): this {
+  insert(rows: InsertPayload | InsertPayload[]): this {
     this.mode = 'insert'
-    this.payload = Array.isArray(rows) ? rows : [rows]
+    this.payload = toRows(rows)
     return this
   }
 
-  update(values: Record<string, unknown>): this {
+  update(values: InsertPayload): this {
     this.mode = 'update'
-    this.payload = [values]
+    this.payload = toRows(values)
     return this
   }
 
   upsert(
-    rows: Record<string, unknown> | Record<string, unknown>[],
-    options?: { onConflict?: string }
+    rows: InsertPayload | InsertPayload[],
+    // ignoreDuplicates is PostgREST's name for ON CONFLICT DO NOTHING: keep the
+    // existing row rather than overwriting it. Four call sites use it to make
+    // assigning the same target twice a no-op instead of a 409.
+    options?: { onConflict?: string; ignoreDuplicates?: boolean }
   ): this {
     this.mode = 'upsert'
-    this.payload = Array.isArray(rows) ? rows : [rows]
+    this.payload = toRows(rows)
     this.conflictTarget = options?.onConflict ?? null
+    this.ignoreDuplicates = options?.ignoreDuplicates === true
     return this
   }
 
@@ -429,7 +446,17 @@ export class QueryBuilder<T = unknown[]> implements PromiseLike<DbResult<T>> {
       target.forEach(c => assertColumn(this.table, c))
 
       if (target.length === 0) {
+        // No conflict target: DO NOTHING is the only legal action, and it
+        // covers every constraint on the table. This is what the four
+        // `ignoreDuplicates: true` call sites rely on -- assigning the same
+        // target twice is a no-op rather than a 409, which the three partial
+        // unique indexes on those tables are what make safe.
         sql += ' ON CONFLICT DO NOTHING'
+      } else if (this.ignoreDuplicates) {
+        // Target AND ignoreDuplicates: keep the existing row. Checked before
+        // the DO UPDATE branch, or an explicit "leave it alone" would silently
+        // become an overwrite.
+        sql += ` ON CONFLICT (${target.map(quoteIdent).join(', ')}) DO NOTHING`
       } else {
         const updates = columns
           .filter(c => !target.includes(c))
