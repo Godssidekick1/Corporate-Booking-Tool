@@ -1,5 +1,25 @@
 import { defineConfig } from 'vitest/config'
 import { fileURLToPath } from 'node:url'
+import { readFileSync, existsSync } from 'node:fs'
+
+// ── .env.local ───────────────────────────────────────────────────────────────
+// Next.js loads this automatically; Vitest does not, and Vite's own env
+// handling only exposes VITE_-prefixed values to client code. The database
+// tests read process.env.DATABASE_URL directly, so it has to be put there.
+//
+// Parsed rather than pulled in via dotenv: it is fifteen lines of KEY=value and
+// a dependency for that is not worth it. Existing values win, so a variable set
+// on the command line still overrides the file.
+const envPath = fileURLToPath(new URL('./.env.local', import.meta.url))
+if (existsSync(envPath)) {
+  for (const line of readFileSync(envPath, 'utf8').split(/\r?\n/)) {
+    const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/i)
+    if (!match) continue
+    const [, key, raw] = match
+    if (process.env[key] !== undefined) continue
+    process.env[key] = raw.replace(/^["']|["']$/g, '')
+  }
+}
 
 // ── Vitest ───────────────────────────────────────────────────────────────────
 // The safety net for the PostgreSQL migration. 562 PostgREST call sites are
@@ -32,6 +52,10 @@ export default defineConfig({
     // startup cost to every run for no benefit.
     environment: 'node',
     include: ['app/lib/**/*.test.ts'],
+    // The database tests share one PostgreSQL instance and write real rows.
+    // Running files in parallel would let one file's cleanup delete another
+    // file's fixtures mid-assertion.
+    fileParallelism: false,
     // Surface slow tests rather than letting a hanging one look like a pass.
     testTimeout: 10_000,
   },

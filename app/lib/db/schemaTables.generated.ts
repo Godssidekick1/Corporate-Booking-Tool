@@ -1,0 +1,50 @@
+// GENERATED FILE -- DO NOT EDIT BY HAND.
+//
+// Written by scripts/generate-allowlist.mjs from schema/baseline.sql.
+// Re-run it after capture-schema.ps1 rather than editing this.
+//
+// 41 tables, 445 columns.
+
+export const TABLE_COLUMNS: Record<string, string[]> = {
+  airlines: ['code', 'name', 'first_seen_at', 'last_seen_at'],
+  amadeus_session: ['id', 'session_id', 'expires_at', 'updated_at'],
+  approval_chain_templates: ['id', 'tmc_id', 'name', 'code', 'description', 'mode', 'quorum', 'tiers', 'version', 'updated_by', 'created_at', 'client_id'],
+  approval_tier_approvers: ['client_id', 'template_id', 'tier', 'approver_type', 'approver_user_id', 'min_band_rank', 'assigned_by', 'assigned_at'],
+  approvals: ['id', 'client_id', 'booking_id', 'approver_id', 'tier', 'status', 'reason', 'actioned_at', 'escalates_at', 'created_at', 'verdict', 'decision_note', 'chain_template_id'],
+  audit_log: ['id', 'client_id', 'tmc_id', 'user_id', 'action', 'entity_type', 'entity_id', 'metadata', 'created_at'],
+  band_approval_templates: ['client_id', 'band_code', 'category', 'template_id', 'assigned_at', 'assigned_by'],
+  bands: ['id', 'client_id', 'code', 'label', 'rank', 'created_at'],
+  bookings: ['id', 'client_id', 'employee_id', 'booking_type', 'status', 'policy_status', 'total_cost', 'provider_order_id', 'pnr', 'itinerary', 'traveler_snapshot', 'created_at', 'updated_at', 'requested_for', 'trip_id', 'provider', 'session_id', 'search_key', 'amadeus_key', 'pricing_key', 'is_ndc', 'ticket_numbers', 'fare_breakdown', 'policy_verdict', 'policy_verdict_detail', 'result_index', 'resolved_deal_codes', 'resolved_fop', 'sell_total', 'commercials', 'share_token'],
+  branches: ['id', 'tmc_id', 'name', 'branch_no', 'profit_centre_code', 'gst_number', 'gst_name', 'gst_email', 'gst_contact', 'gst_address_1', 'gst_address_2', 'country', 'gst_state', 'gst_city', 'gst_zip', 'iata_number', 'office_id', 'is_head_office', 'status', 'created_by', 'created_at', 'updated_at'],
+  bucket_clients: ['bucket_id', 'client_id', 'created_at'],
+  buckets: ['id', 'tmc_id', 'name', 'code', 'description', 'created_by', 'created_at'],
+  client_default_approval_templates: ['client_id', 'category', 'template_id', 'assigned_at', 'assigned_by'],
+  client_groups: ['id', 'tmc_id', 'name', 'city', 'country', 'created_at', 'group_code', 'contact_first_name', 'contact_last_name', 'contact_email', 'contact_mobile', 'bill_to_address_1', 'bill_to_address_2', 'bill_to_state', 'bill_to_pincode'],
+  client_gst_registrations: ['id', 'client_id', 'gstin', 'gst_holder', 'email', 'contact', 'address_1', 'address_2', 'city', 'state', 'country', 'zip', 'registration_date', 'valid_from', 'valid_to', 'cost_centre_id', 'is_primary', 'created_at'],
+  client_mandatory_info: ['id', 'client_id', 'code', 'description', 'type', 'gds_entry', 'value_prefix', 'is_mandatory', 'created_at'],
+  client_policy_groups: ['client_id', 'policy_group_id', 'assigned_at', 'assigned_by'],
+  clients: ['id', 'tmc_id', 'name', 'status', 'settings', 'created_at', 'setup_completed', 'setup_completed_at', 'size', 'currency', 'country', 'timezone', 'booking_mode', 'client_group_id', 'managed_by', 'registered_address', 'industry', 'primary_contact_phone', 'branch_id', 'client_code', 'sap_customer_code', 'sap_group_code', 'email', 'phone', 'address_1', 'address_2', 'city', 'state', 'pincode', 'collections_name', 'collections_email', 'collections_mobile', 'booking_activation', 'hold_activation', 'dom_ticketing', 'intl_ticketing', 'hold_auto_issue', 'sbt_ticketing', 'policy_controlling', 'personal_bookings_allowed', 'agency_fop_allowed', 'corporate_fop_allowed', 'discount_active', 'processing_fee_active', 'air_approval_mode', 'hotel_approval_mode', 'bta_cta_allowed', 'bta_cta_manual_allowed', 'fop_priority', 'markup_active'],
+  commercial_rule_assignments: ['id', 'tmc_id', 'rule_id', 'kind', 'client_id', 'client_group_id', 'bucket_id', 'created_by', 'created_at'],
+  commercial_rules: ['id', 'tmc_id', 'kind', 'category_id', 'airline_code', 'cabin', 'rbd_spec', 'fare_type', 'calc_type', 'calc_on', 'rate', 'calc_basis', 'exclude_tax_codes', 'include_ssr', 'valid_from', 'valid_to', 'active', 'notes', 'created_by', 'created_at', 'updated_at'],
+  cost_centres: ['id', 'client_id', 'code', 'name', 'created_at'],
+  deal_code_assignments: ['id', 'tmc_id', 'deal_code_id', 'kind', 'client_id', 'client_group_id', 'bucket_id', 'created_by', 'created_at'],
+  deal_code_categories: ['id', 'tmc_id', 'code', 'label', 'active', 'created_at'],
+  deal_code_category_types: ['category_id', 'code_type', 'allowed'],
+  deal_codes: ['id', 'tmc_id', 'category_id', 'airline_code', 'code', 'code_type', 'flight_spec', 'sales_from', 'sales_to', 'travel_from', 'travel_to', 'active', 'notes', 'created_by', 'created_at', 'updated_at'],
+  employee_approval_templates: ['employee_id', 'category', 'template_id', 'assigned_at', 'assigned_by'],
+  employee_client_access: ['employee_id', 'client_id', 'granted_by', 'granted_at'],
+  employee_permissions: ['employee_id', 'permission_key', 'granted_by', 'granted_at'],
+  employees: ['id', 'client_id', 'tmc_id', 'band_id', 'manager_id', 'full_name', 'email', 'role', 'department', 'cost_centre', 'band_code', 'band_rank', 'traveler_profile', 'status', 'created_at', 'invited_by', 'invited_at', 'onboarding_method', 'first_login_completed', 'client_group_id', 'auth_user_id', 'top_of_hierarchy', 'designation', 'branch_id'],
+  fop_assignments: ['id', 'tmc_id', 'fop_id', 'kind', 'client_id', 'client_group_id', 'bucket_id', 'created_by', 'created_at', 'is_active'],
+  fop_gds_entries: ['id', 'tmc_id', 'code', 'label', 'active', 'created_at'],
+  fop_payment_types: ['id', 'tmc_id', 'code', 'label', 'requires_card', 'active', 'created_at'],
+  forms_of_payment: ['id', 'tmc_id', 'label', 'fop_type', 'payer', 'card_type', 'last4', 'expiry_month', 'expiry_year', 'gds_alias', 'branch_id', 'owner_client_id', 'owner_employee_id', 'airline_code', 'rbd_spec', 'active', 'notes', 'created_by', 'created_at', 'updated_at', 'fop_code', 'gds_entry_id', 'payment_type_id', 'is_default'],
+  platform_admins: ['user_id', 'email', 'note', 'created_at'],
+  policy_group_band_ranks: ['policy_group_id', 'band_rank'],
+  policy_groups: ['id', 'name', 'description', 'created_at', 'tmc_id', 'code'],
+  policy_rules: ['id', 'client_id', 'tmc_id', 'band_id', 'travel_type', 'limit_key', 'limit_value', 'locked', 'version', 'updated_by', 'created_at', 'policy_group_id', 'deleted_at', 'band_code', 'limit_bool'],
+  price_quotes: ['id', 'client_id', 'employee_id', 'amadeus_key', 'reference_no', 'pricing_key', 'provider', 'result_index', 'airline_components', 'commercials', 'sell_total', 'created_at', 'expires_at'],
+  tmcs: ['id', 'name', 'status', 'settings', 'created_at'],
+  trip_expenses: ['id', 'trip_id', 'client_id', 'created_by', 'expense_type', 'amount', 'currency', 'description', 'receipt_url', 'expense_date', 'created_at', 'updated_at'],
+  trips: ['id', 'client_id', 'created_by', 'name', 'description', 'travel_date', 'status', 'created_at', 'updated_at'],
+}
