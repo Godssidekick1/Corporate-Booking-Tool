@@ -2,6 +2,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { NextRequest } from 'next/server'
 import { advanceApprovalChain } from '@/app/lib/approval-engine/resolveApprovalTier'
+import { withTransaction, orAbort } from '@/app/lib/db/tx'
 import type { Verdict } from '@/app/lib/rule-engine/evaluateBooking'
 
 // ── PATCH /api/approvals/[approvalId] ────────────────────────────────────
@@ -90,61 +91,51 @@ export async function PATCH(
     }, { status: 409 })
   }
 
-  const { error: decisionError } = await service
-    .from('approvals')
-    .update({
-      status: decision === 'approve' ? 'approved' : 'rejected',
-      decision_note: note ?? null,
-      actioned_at: new Date().toISOString(),
-    })
-    .eq('id', approvalId)
+  // ── The decision, the booking status and the next tier, atomically ────────
+  // THE STATE THIS ELIMINATES. Every branch below used to be its own HTTP call,
+  // and each carried an error message that only makes sense without a
+  // transaction: "Your decision was recorded, but the booking status could not
+  // be updated. Please contact support." That is a torn write described in
+  // prose — the approval says approved, the booking still says
+  // pending_approval, and no amount of retrying fixes it because the approval
+  // row is already decided and the caller is no longer the pending approver.
+  //
+  // advanceApprovalChain runs on the SAME connection, so the next tier's
+  // approval row is part of the same commit. If raising it fails, the decision
+  // is undone too and the approver can simply try again.
+  const { data: outcomeStatus, error: writeError } = await withTransaction(async (db) => {
+    await orAbort(
+      db.from('approvals')
+        .update({
+          status: decision === 'approve' ? 'approved' : 'rejected',
+          decision_note: note ?? null,
+          actioned_at: new Date().toISOString(),
+        })
+        .eq('id', approvalId)
+    )
 
-  if (decisionError) {
-    return Response.json({ error: decisionError.message }, { status: 500 })
-  }
-
-  if (decision === 'reject') {
-    const { error: rejectError } = await service
-      .from('bookings')
-      .update({ status: 'rejected', updated_at: new Date().toISOString() })
-      .eq('id', booking.id)
-
-    if (rejectError) {
-      console.error('Approval decided but failed to flip booking to rejected', rejectError, { bookingId: booking.id })
-      return Response.json({
-        ok: false,
-        error: 'Your decision was recorded, but the booking status could not be updated. Please contact support.',
-      }, { status: 500 })
+    const setBooking = async (status: string) => {
+      await orAbort(
+        db.from('bookings')
+          .update({ status, updated_at: new Date().toISOString() })
+          .eq('id', booking.id)
+      )
+      return status
     }
 
-    return Response.json({ ok: true, bookingStatus: 'rejected' })
-  }
+    if (decision === 'reject') return { bookingStatus: await setBooking('rejected') }
 
-  // Approved — see if the chain has a next tier that this booking's stored
-  // verdict actually meets. chain_template_id/verdict were captured on the approval
-  // row itself when it was created, so no need to re-derive them here.
-  if (!approval.chain_template_id) {
-    // Shouldn't happen in practice (every approval created by the engine
-    // sets chain_template_id), but fail toward finalizing rather than leaving the
-    // booking stuck if it somehow does.
-    const { error: finalizeError } = await service
-      .from('bookings')
-      .update({ status: 'approved', updated_at: new Date().toISOString() })
-      .eq('id', booking.id)
-
-    if (finalizeError) {
-      console.error('Approval decided but failed to flip booking to approved (no chain_template_id)', finalizeError, { bookingId: booking.id })
-      return Response.json({
-        ok: false,
-        error: 'Your decision was recorded, but the booking status could not be updated. Please contact support.',
-      }, { status: 500 })
+    // Approved — see if the chain has a next tier that this booking's stored
+    // verdict actually meets. chain_template_id/verdict were captured on the
+    // approval row itself when it was created, so no need to re-derive them.
+    if (!approval.chain_template_id) {
+      // Shouldn't happen in practice (every approval created by the engine
+      // sets chain_template_id), but fail toward finalizing rather than
+      // leaving the booking stuck if it somehow does.
+      return { bookingStatus: await setBooking('approved') }
     }
 
-    return Response.json({ ok: true, bookingStatus: 'approved' })
-  }
-
-  try {
-    const outcome = await advanceApprovalChain(service, {
+    const outcome = await advanceApprovalChain(db, {
       bookingId: booking.id,
       clientId: approval.client_id,
       employeeId: booking.employee_id,
@@ -154,51 +145,21 @@ export async function PATCH(
       reason: approval.reason ?? 'Within policy',
     })
 
-    if (!outcome.requiresApproval) {
-      const { error: finalizeError } = await service
-        .from('bookings')
-        .update({ status: 'approved', updated_at: new Date().toISOString() })
-        .eq('id', booking.id)
-
-      if (finalizeError) {
-        console.error('Approval decided but failed to flip booking to approved', finalizeError, { bookingId: booking.id })
-        return Response.json({
-          ok: false,
-          error: 'Your decision was recorded, but the booking status could not be updated. Please contact support.',
-        }, { status: 500 })
-      }
-
-      return Response.json({ ok: true, bookingStatus: 'approved' })
-    }
-
-    if (!outcome.approverId) {
-      const { error: misconfigError } = await service
-        .from('bookings')
-        .update({ status: 'approval_misconfigured', updated_at: new Date().toISOString() })
-        .eq('id', booking.id)
-
-      if (misconfigError) {
-        console.error('Approval decided but failed to flip booking to approval_misconfigured', misconfigError, { bookingId: booking.id })
-        return Response.json({
-          ok: false,
-          error: 'Your decision was recorded, but the booking status could not be updated. Please contact support.',
-        }, { status: 500 })
-      }
-
-      return Response.json({ ok: true, bookingStatus: 'approval_misconfigured' })
-    }
+    if (!outcome.requiresApproval) return { bookingStatus: await setBooking('approved') }
+    if (!outcome.approverId) return { bookingStatus: await setBooking('approval_misconfigured') }
 
     // Next tier's approval row was created — booking stays pending_approval.
-    return Response.json({ ok: true, bookingStatus: 'pending_approval', nextTier: outcome.tier })
-  } catch (err) {
-    console.error('Failed to advance approval chain after approval', err)
-    // The approval itself was recorded successfully — only the next-tier
-    // creation failed. Leave the booking at pending_approval (its current
-    // DB state) rather than claim success or silently approve past a
-    // broken chain step.
+    return { bookingStatus: 'pending_approval', nextTier: outcome.tier }
+  })
+
+  if (writeError) {
+    console.error('Approval decision rolled back', writeError, { approvalId, bookingId: booking.id })
+    // Honest now, and actionable: nothing was recorded, so retrying is safe.
     return Response.json({
       ok: false,
-      error: 'Your decision was recorded, but there was a problem advancing to the next approval step. Please contact support.',
+      error: 'Your decision could not be recorded. Nothing was changed — please try again.',
     }, { status: 500 })
   }
+
+  return Response.json({ ok: true, ...outcomeStatus })
 }

@@ -1,7 +1,11 @@
 import { createServiceClient } from '@/utils/supabase/service'
 import type { ApproverType, ChainTier } from './resolveApprovalTier'
 
-type ServiceClient = ReturnType<typeof createServiceClient>
+// Data access only -- narrowed from the full service client with Pick so that
+// a TRANSACTION client satisfies it too. Nothing in this file touches .auth,
+// and requiring the whole client would mean these functions could never run
+// inside withTransaction, which is where approval writes belong.
+type ServiceClient = Pick<ReturnType<typeof createServiceClient>, "from">
 
 export type ChainMode = 'sequential' | 'parallel'
 export type ChainQuorum = 'any' | 'all'

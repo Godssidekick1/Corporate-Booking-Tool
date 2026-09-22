@@ -8,7 +8,11 @@ import {
   type ChainQuorum,
 } from './linkedApprovalTemplates'
 
-type ServiceClient = ReturnType<typeof createServiceClient>
+// Data access only -- narrowed from the full service client with Pick so that
+// a TRANSACTION client satisfies it too. Nothing in this file touches .auth,
+// and requiring the whole client would mean these functions could never run
+// inside withTransaction, which is where approval writes belong.
+type ServiceClient = Pick<ReturnType<typeof createServiceClient>, "from">
 
 // ── Approval Engine v3 ───────────────────────────────────────────────────
 // A chain is resolved for (employee, category) down a three-rung ladder —

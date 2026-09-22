@@ -3,6 +3,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { getBandRanksByGroup } from '@/app/lib/rule-engine/linkedPolicyGroups'
 import { normaliseBandRanks } from '../route'
+import { withTransaction, orAbort } from '@/app/lib/db/tx'
 import { NextRequest } from 'next/server'
 
 // ── PATCH /api/tmc/policy-groups/[id] ────────────────────────────────────
@@ -79,68 +80,74 @@ export async function PATCH(
   if (body.code !== undefined) fields.code = body.code?.trim() || null
   if (body.description !== undefined) fields.description = body.description?.trim() || null
 
-  if (Object.keys(fields).length > 0) {
-    const { error: updateError } = await service
-      .from('policy_groups')
-      .update(fields)
-      .eq('id', id)
+  // ── Rename, re-band and soft-delete, atomically ──────────────────────────
+  // Four writes across three tables. Without a transaction the dangerous
+  // interleaving is: band ranks removed, then the soft-delete of the rules
+  // authored at those ranks fails. The group now covers ranks whose rules are
+  // still live but unreachable — resolveEffectivePolicy only looks at ranks in
+  // the set, so those rules silently stop applying while still appearing in the
+  // UI as active policy. That last write did not even check its own error.
+  const { error: writeError } = await withTransaction(async (db) => {
+    if (Object.keys(fields).length > 0) {
+      await orAbort(db.from('policy_groups').update(fields).eq('id', id))
+    }
 
-    if (updateError) {
-      if (updateError.code === '23505') {
-        return Response.json(
-          { error: `Another policy group already uses that ${updateError.message.includes('code') ? 'code' : 'name'}` },
-          { status: 409 }
+    if (body.bandRanks !== undefined) {
+      const desired = normaliseBandRanks(body.bandRanks)
+      // Read through the transaction, so it sees this transaction's own writes.
+      const current = (await getBandRanksByGroup(db, [id])).get(id) ?? []
+
+      const toAdd = desired.filter(r => !current.includes(r))
+      const toRemove = current.filter(r => !desired.includes(r))
+
+      if (toRemove.length > 0) {
+        await orAbort(
+          db.from('policy_group_band_ranks')
+            .delete()
+            .eq('policy_group_id', id)
+            .in('band_rank', toRemove)
         )
       }
-      return Response.json({ error: updateError.message }, { status: 500 })
-    }
-  }
 
-  if (body.bandRanks !== undefined) {
-    const desired = normaliseBandRanks(body.bandRanks)
-    const current = (await getBandRanksByGroup(service, [id])).get(id) ?? []
+      if (toAdd.length > 0) {
+        await orAbort(
+          db.from('policy_group_band_ranks')
+            .insert(toAdd.map(band_rank => ({ policy_group_id: id, band_rank })))
+        )
+      }
 
-    const toAdd = desired.filter(r => !current.includes(r))
-    const toRemove = current.filter(r => !desired.includes(r))
-
-    if (toRemove.length > 0) {
-      const { error: removeError } = await service
-        .from('policy_group_band_ranks')
-        .delete()
-        .eq('policy_group_id', id)
-        .in('band_rank', toRemove)
-
-      if (removeError) {
-        return Response.json({ error: removeError.message }, { status: 500 })
+      // Rules authored at a rank the group no longer covers are unreachable —
+      // resolveEffectivePolicy only looks at ranks in the set. Soft-delete them
+      // so the version history stays intact but they stop being served.
+      if (toRemove.length > 0) {
+        await orAbort(
+          db.from('policy_rules')
+            .update({ deleted_at: new Date().toISOString() })
+            .eq('policy_group_id', id)
+            .in('band_rank', toRemove)
+            .is('deleted_at', null)
+        )
       }
     }
+  })
 
-    if (toAdd.length > 0) {
-      const { error: addError } = await service
-        .from('policy_group_band_ranks')
-        .insert(toAdd.map(band_rank => ({ policy_group_id: id, band_rank })))
-
-      if (addError) {
-        // 23P01 comes from policy_group_band_ranks_no_overlap: this rank is
-        // already covered by another group at a client using this one.
-        if (addError.code === '23P01') {
-          return Response.json({ error: addError.message }, { status: 409 })
-        }
-        return Response.json({ error: addError.message }, { status: 500 })
-      }
+  if (writeError) {
+    // The two constraint violations that are a user's mistake rather than a
+    // fault, mapped to 409 exactly as they were before. Both codes survive the
+    // transaction intact, which is the whole reason TxAbort carries the
+    // DbError rather than re-deriving one.
+    if (writeError.code === '23505') {
+      return Response.json(
+        { error: `Another policy group already uses that ${writeError.message.includes('code') ? 'code' : 'name'}` },
+        { status: 409 }
+      )
     }
-
-    // Rules authored at a rank the group no longer covers are unreachable —
-    // resolveEffectivePolicy only looks at ranks in the set. Soft-delete them
-    // so the version history stays intact but they stop being served.
-    if (toRemove.length > 0) {
-      await service
-        .from('policy_rules')
-        .update({ deleted_at: new Date().toISOString() })
-        .eq('policy_group_id', id)
-        .in('band_rank', toRemove)
-        .is('deleted_at', null)
+    // 23P01 comes from policy_group_band_ranks_no_overlap: this rank is
+    // already covered by another group at a client using this one.
+    if (writeError.code === '23P01') {
+      return Response.json({ error: writeError.message }, { status: 409 })
     }
+    return Response.json({ error: writeError.message }, { status: 500 })
   }
 
   const bandRanks = (await getBandRanksByGroup(service, [id])).get(id) ?? []

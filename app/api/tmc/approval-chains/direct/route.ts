@@ -2,6 +2,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { APPROVAL_CATEGORIES } from '@/app/lib/approval-engine/resolveApprovalTier'
+import { withTransaction, orAbort } from '@/app/lib/db/tx'
 import { NextRequest } from 'next/server'
 
 // ── /api/tmc/approval-chains/direct ──────────────────────────────────────────
@@ -247,16 +248,13 @@ export async function POST(req: NextRequest) {
     label: null,
   }))
 
-  let templateId = await findExistingChain(service, clientId, employeeId, category)
+  const existingId = await findExistingChain(service, clientId, employeeId, category)
 
-  if (templateId) {
-    const { error } = await service
-      .from('approval_chain_templates')
-      .update({ mode, quorum, tiers, updated_by: caller?.id ?? null })
-      .eq('id', templateId)
-
-    if (error) return Response.json({ error: error.message }, { status: 500 })
-  } else {
+  // Naming reads happen outside the transaction: they are pure lookups, only
+  // needed when a chain is being created, and keeping them out means the
+  // transaction below holds its connection for writes alone.
+  let name = ''
+  if (!existingId) {
     const [{ data: client }, { data: employee }] = await Promise.all([
       service.from('clients').select('name').eq('id', clientId).single(),
       employeeId
@@ -269,86 +267,103 @@ export async function POST(req: NextRequest) {
     // the same name at the same client from colliding.
     const who = employee?.full_name ?? 'All employees'
     const suffix = employeeId ? ` [${employeeId.slice(0, 8)}]` : ''
-    const name = `${client?.name ?? 'Client'} — ${who} — ${category}${suffix}`
-
-    const { data: created, error } = await service
-      .from('approval_chain_templates')
-      .insert({
-        tmc_id: access.tmcId,
-        client_id: clientId,
-        name,
-        category,
-        mode,
-        quorum,
-        tiers,
-        updated_by: caller?.id ?? null,
-      })
-      .select('id')
-      .single()
-
-    if (error || !created) {
-      return Response.json({ error: error?.message ?? 'Could not create the chain' }, { status: 500 })
-    }
-    templateId = created.id
+    name = `${client?.name ?? 'Client'} — ${who} — ${category}${suffix}`
   }
 
-  // Replace the bindings wholesale rather than diffing. The step numbering
-  // shifts whenever an approver is removed or the mode flips, so matching old
-  // rows to new positions would be guesswork.
-  await service
-    .from('approval_tier_approvers')
-    .delete()
-    .eq('client_id', clientId)
-    .eq('template_id', templateId)
+  // ── The chain, its approvers and the pointer at it, atomically ───────────
+  // THE FAILURE THIS PREVENTS: the approver bindings are replaced wholesale as
+  // DELETE-then-INSERT. If the insert failed — and 23514 says it realistically
+  // can, when someone named does not work at this client — the chain was left
+  // with NO approvers while the pointer below still routed bookings to it.
+  // Every booking down that chain then resolves to no approver at all and
+  // lands in approval_misconfigured, for a request that returned 400 and
+  // looked like it had changed nothing.
+  const { data: chainId, error: writeError } = await withTransaction(async (db) => {
+    let templateId = existingId
 
-  const { error: bindError } = await service
-    .from('approval_tier_approvers')
-    .insert(approvers.map((a, i) => ({
-      client_id: clientId,
-      template_id: templateId,
-      tier: i + 1,
-      approver_type: a.approver_type,
-      approver_user_id: a.approver_type === 'specific_user' ? a.approver_user_id : null,
-      min_band_rank: a.approver_type === 'any_manager_at' ? a.min_band_rank : null,
-      assigned_by: caller?.id ?? null,
-    })))
+    if (templateId) {
+      await orAbort(
+        db.from('approval_chain_templates')
+          .update({ mode, quorum, tiers, updated_by: caller?.id ?? null })
+          .eq('id', templateId)
+      )
+    } else {
+      const created = await orAbort(
+        db.from<{ id: string }[]>('approval_chain_templates')
+          .insert({
+            tmc_id: access.tmcId,
+            client_id: clientId,
+            name,
+            category,
+            mode,
+            quorum,
+            tiers,
+            updated_by: caller?.id ?? null,
+          })
+          .select('id')
+          .single()
+      )
+      templateId = created.id
+    }
 
-  if (bindError) {
-    if (bindError.code === '23514') {
+    // Replace the bindings wholesale rather than diffing. The step numbering
+    // shifts whenever an approver is removed or the mode flips, so matching
+    // old rows to new positions would be guesswork.
+    await orAbort(
+      db.from('approval_tier_approvers')
+        .delete()
+        .eq('client_id', clientId)
+        .eq('template_id', templateId)
+    )
+
+    await orAbort(
+      db.from('approval_tier_approvers')
+        .insert(approvers.map((a, i) => ({
+          client_id: clientId,
+          template_id: templateId,
+          tier: i + 1,
+          approver_type: a.approver_type,
+          approver_user_id: a.approver_type === 'specific_user' ? a.approver_user_id : null,
+          min_band_rank: a.approver_type === 'any_manager_at' ? a.min_band_rank : null,
+          assigned_by: caller?.id ?? null,
+        })))
+    )
+
+    // Point the target at this chain.
+    if (employeeId) {
+      await orAbort(
+        db.from('employee_approval_templates').upsert({
+          employee_id: employeeId,
+          category,
+          template_id: templateId,
+          assigned_by: caller?.id ?? null,
+          assigned_at: new Date().toISOString(),
+        }, { onConflict: 'employee_id,category' })
+      )
+    } else {
+      await orAbort(
+        db.from('client_default_approval_templates').upsert({
+          client_id: clientId,
+          category,
+          template_id: templateId,
+          assigned_by: caller?.id ?? null,
+          assigned_at: new Date().toISOString(),
+        }, { onConflict: 'client_id,category' })
+      )
+    }
+
+    return templateId
+  })
+
+  if (writeError) {
+    if (writeError.code === '23514') {
       return Response.json(
         { error: 'One of those people does not work at this client' },
         { status: 400 }
       )
     }
-    return Response.json({ error: bindError.message }, { status: 500 })
+    return Response.json({ error: writeError.message }, { status: 500 })
   }
 
-  // Point the target at this chain.
-  if (employeeId) {
-    const { error } = await service
-      .from('employee_approval_templates')
-      .upsert({
-        employee_id: employeeId,
-        category,
-        template_id: templateId,
-        assigned_by: caller?.id ?? null,
-        assigned_at: new Date().toISOString(),
-      }, { onConflict: 'employee_id,category' })
-
-    if (error) return Response.json({ error: error.message }, { status: 500 })
-  } else {
-    const { error } = await service
-      .from('client_default_approval_templates')
-      .upsert({
-        client_id: clientId,
-        category,
-        template_id: templateId,
-        assigned_by: caller?.id ?? null,
-        assigned_at: new Date().toISOString(),
-      }, { onConflict: 'client_id,category' })
-
-    if (error) return Response.json({ error: error.message }, { status: 500 })
-  }
-
-  return Response.json({ ok: true, chainId: templateId })
+  return Response.json({ ok: true, chainId })
 }

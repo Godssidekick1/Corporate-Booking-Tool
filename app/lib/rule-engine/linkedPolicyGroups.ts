@@ -1,6 +1,8 @@
 import { createServiceClient } from '@/utils/supabase/service'
 
-type ServiceClient = ReturnType<typeof createServiceClient>
+// Data access only, so a transaction client satisfies it too. See the same
+// narrowing in the approval engine.
+type ServiceClient = Pick<ReturnType<typeof createServiceClient>, "from">
 
 export interface LinkedPolicyGroup {
   id: string
