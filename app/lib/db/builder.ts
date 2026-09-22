@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from 'pg'
 import { getPool } from './pool'
-import { toDbError, notASingleRow, type DbError } from './errors'
+import { toDbError, notASingleRow, DbConfigurationError, type DbError } from './errors'
 import { assertTable, assertColumn, quoteIdent, TABLE_COLUMNS } from './schemaAllowList'
 import { findRelationship } from './relationships'
 
@@ -347,7 +347,13 @@ export class QueryBuilder<T = unknown[]> implements PromiseLike<DbResult<T>> {
 
       return ok(shaped as unknown as T, count)
     } catch (err) {
-      // NEVER throws. Every call site is written against { data, error }.
+      // A misconfigured database is not a query result. Re-thrown so it
+      // becomes a 500 naming the problem, rather than a null row that each
+      // route interprets for itself -- /api/me read exactly this as "employee
+      // not found" and answered 404. See DbConfigurationError in errors.ts.
+      if (err instanceof DbConfigurationError) throw err
+      // Otherwise NEVER throws: every call site is written against
+      // { data, error } and a throw would bypass all 537 of them.
       return fail(toDbError(err))
     }
   }

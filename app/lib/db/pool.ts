@@ -1,5 +1,6 @@
 import { Pool, type PoolClient } from 'pg'
 import { applyTypeParsers } from './typeParsers'
+import { DbConfigurationError } from './errors'
 
 // ── Connection pool ──────────────────────────────────────────────────────────
 // One pool per process, created lazily.
@@ -29,9 +30,14 @@ export function getPool(): Pool {
 
   const connectionString = process.env.DATABASE_URL
   if (!connectionString) {
-    throw new Error(
-      '[db] DATABASE_URL is not set. Add it to .env.local:\n' +
-      '  DATABASE_URL=postgresql://postgres:<password>@localhost:5432/cbt_local'
+    // DbConfigurationError, not a plain Error: the builder re-throws this kind
+    // rather than folding it into { data: null, error }, so a database that is
+    // not configured surfaces as a 500 naming the variable instead of as a
+    // per-route guess at what a null row means. See errors.ts.
+    throw new DbConfigurationError(
+      '[db] DB_DRIVER is "pg" but DATABASE_URL is not set.\n' +
+      '  Local:  DATABASE_URL=postgresql://postgres:<password>@localhost:5432/cbt_local\n' +
+      '  Deployed: set DATABASE_URL, or set DB_DRIVER=postgrest to stay on Supabase.'
     )
   }
 

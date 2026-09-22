@@ -41,6 +41,31 @@ interface PgErrorLike {
   column?: string
 }
 
+// ── Configuration failures are NOT query failures ────────────────────────────
+// The "never throws" contract above exists so 537 call sites do not need a
+// try/catch around every query. It applies to QUERY failures -- a constraint
+// violation, a missing row -- which a caller can sensibly interpret.
+//
+// A missing DATABASE_URL is not that. It is not recoverable by the caller, it
+// affects every query equally, and returning it as { data: null, error } means
+// each route invents its own wrong interpretation of a total outage.
+//
+// THIS EXACT FAILURE REACHED PRODUCTION. With DB_DRIVER defaulting to pg and no
+// DATABASE_URL on Vercel, getPool() threw, the builder caught it, and
+// app/api/me/route.ts read `if (employeeError || !employee)` as "no employee
+// row" -- answering 404 "Employee profile not found", which the login page
+// renders as "Could not determine your account role. Please contact support."
+// A database that was not configured looked like a user who did not exist.
+//
+// So this one throws, and the builder re-throws it. A 500 naming the missing
+// variable is diagnosable in a log; a 404 is not.
+export class DbConfigurationError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'DbConfigurationError'
+  }
+}
+
 export function toDbError(err: unknown): DbError {
   const e = (err ?? {}) as PgErrorLike
 

@@ -55,6 +55,29 @@ function createSupabaseClient(): SupabaseClient {
   )
 }
 
+// Which driver this environment gets.
+//
+// AN UNSET DB_DRIVER USED TO MEAN "pg", AND THAT BROKE PRODUCTION. The moment
+// Vercel built this branch, the preview deployment switched to PostgreSQL --
+// which does not exist there, because DATABASE_URL is a local-only variable.
+// Sign-in still worked, because auth goes to GoTrue; every data query failed.
+// The symptom was a 404 from /api/me and "Could not determine your account
+// role" on the login screen.
+//
+// So the default now follows the environment rather than leading it: pg only
+// where a DATABASE_URL actually exists. An environment nobody has configured
+// keeps working exactly as it did before this migration, which is the only
+// safe behaviour for a flag that redirects every query in the application.
+//
+// Setting DB_DRIVER explicitly still wins, in both directions -- including
+// DB_DRIVER=pg with no DATABASE_URL, which fails loudly at the first query
+// rather than silently going back to Supabase and hiding the misconfiguration.
+function selectedDriver(): 'pg' | 'postgrest' {
+  const explicit = process.env.DB_DRIVER
+  if (explicit === 'pg' || explicit === 'postgrest') return explicit
+  return process.env.DATABASE_URL ? 'pg' : 'postgrest'
+}
+
 export function createServiceClient(): ServiceClient {
   const supabase = createSupabaseClient()
 
@@ -62,7 +85,7 @@ export function createServiceClient(): ServiceClient {
   // supabase-js's builder is structurally compatible with what the call sites
   // use but is not the shim's declared type. Temporary by design -- this
   // branch and the flag are deleted once the team's QA pass is clean.
-  if (process.env.DB_DRIVER === 'postgrest') {
+  if (selectedDriver() === 'postgrest') {
     return supabase as unknown as ServiceClient
   }
 
