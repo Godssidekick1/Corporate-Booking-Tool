@@ -368,17 +368,15 @@ describe('resolveApproverForTier — the other approver types', () => {
   })
 })
 
-describe('resolveApproverForTier — characterisation, not endorsement', () => {
-  it('CURRENTLY lets a manager resolve as their own approver', async () => {
-    // Recorded, not endorsed. 'any_manager_at' filters by client, role, status
-    // and rank -- it does NOT exclude the traveller. A manager booking their
-    // own travel can therefore be selected to approve it.
+describe('resolveApproverForTier — the traveller qualifying against themselves', () => {
+  it('reports no_approval_needed rather than assigning the booking to its own traveller', async () => {
+    // A manager at the minimum rank IS, by the rule, the approver closest in
+    // seniority to themselves. Approving your own booking and needing no
+    // approval are the same outcome, so it is reported as the latter.
     //
-    // There is a separate 'self' approver type, which suggests self-approval is
-    // meant to be an explicit choice rather than something reachable by
-    // accident. Whether to exclude the traveller here is a product decision, so
-    // this pins the current behaviour and fails loudly if it changes by
-    // accident rather than on purpose.
+    // The behaviour this replaces was strictly worse: a PENDING approval
+    // assigned to the traveller, which blocks their own booking until they
+    // click approve on their own request.
     const result = await resolveApproverForTier(
       svc({ employees: [manager('traveller-1', 'L4', '2024-01-01')], bands: BANDS }),
       tier({ min_band_rank: 1 }),
@@ -386,6 +384,54 @@ describe('resolveApproverForTier — characterisation, not endorsement', () => {
       CLIENT
     )
 
-    expect(result).toEqual({ kind: 'approver', approverId: 'traveller-1' })
+    expect(result).toEqual({
+      kind: 'no_approval_needed',
+      reason: 'the traveller is themselves the closest qualifying approver at this rank',
+    })
+  })
+
+  it('still routes to someone else when a CLOSER qualifying approver exists', async () => {
+    // The traveller only wins when nobody qualifying sits below them. An L4
+    // traveller with an L2 manager available is approved by the L2 manager,
+    // exactly as before -- self-resolution is a consequence of the seniority
+    // rule, not a shortcut around it.
+    const result = await resolveApproverForTier(
+      svc({
+        employees: [
+          manager('traveller-1', 'L4', '2024-01-01'),
+          manager('m-l2', 'L2', '2024-01-01'),
+        ],
+        bands: BANDS,
+      }),
+      tier({ min_band_rank: 1 }),
+      'traveller-1',
+      CLIENT
+    )
+
+    expect(result).toEqual({ kind: 'approver', approverId: 'm-l2' })
+  })
+
+  it('does not escalate UPWARD past the traveller', async () => {
+    // Documents the boundary of the change. An L2 traveller with only an L4
+    // manager above them needs no approval -- it does not escalate to the L4.
+    // If that is ever wanted it is a different rule ("someone other than the
+    // traveller"), not a bug in this one.
+    const result = await resolveApproverForTier(
+      svc({
+        employees: [
+          manager('traveller-1', 'L2', '2024-01-01'),
+          manager('m-l4', 'L4', '2024-01-01'),
+        ],
+        bands: BANDS,
+      }),
+      tier({ min_band_rank: 1 }),
+      'traveller-1',
+      CLIENT
+    )
+
+    expect(result).toEqual({
+      kind: 'no_approval_needed',
+      reason: 'the traveller is themselves the closest qualifying approver at this rank',
+    })
   })
 })

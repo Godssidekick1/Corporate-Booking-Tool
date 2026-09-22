@@ -337,14 +337,34 @@ export async function resolveApproverForTier(
         return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
       })
 
+    const chosen = qualifying[0]
+    if (!chosen) return { kind: 'unresolved' }
+
+    // The traveller can qualify against their own booking: a manager at the
+    // minimum rank is, by the rule, the approver closest in seniority to
+    // themselves. Approving your own booking and needing no approval are the
+    // same outcome, so it is reported as the latter.
+    //
+    // This is not a loophole being closed or opened — it is the same decision
+    // stated honestly. raiseApprovals treats 'no_approval_needed' exactly as
+    // it treats the 'self' approver type: an approvals row written with
+    // status 'approved' and a reason saying no human reviewed it, so the
+    // booking still carries an audit trail. The alternative it replaces was
+    // strictly worse: a PENDING approval assigned to the traveller, which
+    // blocks the booking until they click approve on their own request.
+    if (chosen.id === employeeId) {
+      return {
+        kind: 'no_approval_needed',
+        reason: 'the traveller is themselves the closest qualifying approver at this rank',
+      }
+    }
+
     // Returns the resolution object, not a bare id. It used to return
     // `qualifying[0]?.id ?? null`, which type-checked only because the id came
     // back as `any` from the query — so at runtime an 'any_manager_at' step
     // produced a value with no `kind`, fell past both guards in raiseApprovals,
     // and inserted approver_id: undefined, failing the NOT NULL constraint.
-    return qualifying[0]
-      ? { kind: 'approver', approverId: qualifying[0].id }
-      : { kind: 'unresolved' }
+    return { kind: 'approver', approverId: chosen.id }
   }
 
   if (tier.approver_type === 'finance_role' || tier.approver_type === 'admin') {
