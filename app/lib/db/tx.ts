@@ -92,6 +92,11 @@ export async function withTransaction<T>(
       // loudly because the pool will hand it to somebody else.
       console.error('[db] ROLLBACK failed', rollbackErr)
     }
+    // A TxAbort is already carrying the DbError that caused it. Running it back
+    // through toDbError would read it as a plain Error -- no .code, no .details
+    // -- and flatten a 23505 into an empty string, which is exactly what the
+    // eleven call sites that branch on .code depend on.
+    if (err instanceof TxAbort) return { data: null, error: err.dbError }
     return { data: null, error: toDbError(err) }
   } finally {
     client.release()
