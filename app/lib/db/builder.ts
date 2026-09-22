@@ -2,6 +2,13 @@ import type { Pool, PoolClient } from 'pg'
 import { getPool } from './pool'
 import { toDbError, notASingleRow, type DbError } from './errors'
 import { assertTable, assertColumn, quoteIdent, TABLE_COLUMNS } from './schemaAllowList'
+import { findRelationship } from './relationships'
+
+// Splits a comma-separated column list, dropping blanks. Only ever called on a
+// fragment already known to contain no parentheses.
+function splitTop(s: string): string[] {
+  return s.split(',').map(c => c.trim()).filter(Boolean)
+}
 
 // ── The query builder ────────────────────────────────────────────────────────
 // A reimplementation of the part of supabase-js's PostgREST builder that this
@@ -340,11 +347,26 @@ export class QueryBuilder<T = unknown[]> implements PromiseLike<DbResult<T>> {
   }
 
   private async runCount(): Promise<number> {
-    const where = this.whereClause(1)
+    // INNER joins are part of the count -- they can exclude rows. LEFT joins
+    // cannot change the count of a to-one relation, so they are left out and
+    // the count query stays cheap.
+    const joins = this.joinClause(true)
+    const where = this.whereClause(1, 'base')
     const sql =
-      `SELECT count(*)::int AS n FROM ${quoteIdent(this.table)}${where.sql}`
+      `SELECT count(*)::int AS n FROM ${quoteIdent(this.table)} base${joins}${where.sql}`
     const rows = await this.run(sql, where.values)
     return Number(rows[0]?.n ?? 0)
+  }
+
+  private joinClause(innerOnly = false): string {
+    return this.embeds
+      .map((e, i) => ({ e, i }))
+      .filter(({ e }) => !innerOnly || e.inner)
+      .map(({ e, i }) =>
+        ` ${e.inner ? 'INNER' : 'LEFT'} JOIN ${quoteIdent(e.table)} e${i} ` +
+        `ON e${i}.${quoteIdent(e.foreignColumn)} = base.${quoteIdent(e.localColumn)}`
+      )
+      .join('')
   }
 
   // ── SQL assembly ───────────────────────────────────────────────────────────
@@ -362,12 +384,7 @@ export class QueryBuilder<T = unknown[]> implements PromiseLike<DbResult<T>> {
   private buildSelect(): { sql: string; values: unknown[] } {
     const t = quoteIdent(this.table)
     const cols = this.selectList('base')
-    const joins = this.embeds.map((e, i) => {
-      const alias = `e${i}`
-      const kind = e.inner ? 'INNER' : 'LEFT'
-      return ` ${kind} JOIN ${quoteIdent(e.table)} ${alias} ` +
-        `ON ${alias}.${quoteIdent(e.foreignColumn)} = base.${quoteIdent(e.localColumn)}`
-    }).join('')
+    const joins = this.joinClause()
 
     const where = this.whereClause(1, 'base')
     const order = this.orderBy.length > 0
@@ -532,18 +549,94 @@ export class QueryBuilder<T = unknown[]> implements PromiseLike<DbResult<T>> {
     })
   }
 
+  // Splits a select string into its own columns and its embedded relations,
+  // resolving each embed against the hand-declared map in relationships.ts.
+  //
+  // Parsed rather than required through .withEmbed() so the five call sites
+  // that embed stay byte-identical. That matters more than it looks: identical
+  // call sites are what let DB_DUAL_RUN compare the two drivers on the same
+  // code, and what keeps DB_DRIVER=postgrest a working rollback rather than a
+  // revert.
+  //
+  // An embed this map does not know is refused, loudly. PostgREST answers an
+  // unresolvable embed with 400 PGRST200 in the body, which callers that
+  // destructure only `data` silently read as "no rows" -- that is exactly how
+  // `bands:band_code(rank)` disabled band-scoped approvals unnoticed.
   private parseSelect(columns: string): void {
-    // Embeds are declared through withEmbed(), not parsed out of the string --
-    // resolving `clients(id, name)` needs a foreign-key catalogue the shim does
-    // not have. A select string containing one is refused loudly rather than
-    // silently returning the wrong shape.
-    if (/\w+\s*\(/.test(columns)) {
+    const own: string[] = []
+    let rest = columns
+
+    // Depth-aware scan: a comma inside `client_groups(id, name)` separates that
+    // embed's columns, not the outer list, so String.split(',') is wrong here.
+    while (rest.length > 0) {
+      const open = rest.indexOf('(')
+      if (open === -1) { own.push(...splitTop(rest)); break }
+
+      let depth = 0
+      let close = -1
+      for (let i = open; i < rest.length; i++) {
+        if (rest[i] === '(') depth++
+        else if (rest[i] === ')' && --depth === 0) { close = i; break }
+      }
+      if (close === -1) {
+        throw new Error(`[db] select() on "${this.table}" has an unbalanced "(":\n  ${columns}`)
+      }
+
+      // Everything before the '(' back to the previous top-level comma is the
+      // relation's name; anything earlier belongs to the outer column list.
+      const head = rest.slice(0, open)
+      const comma = head.lastIndexOf(',')
+      own.push(...splitTop(head.slice(0, comma + 1)))
+
+      const spec = head.slice(comma + 1).trim()
+      this.embeds.push(this.resolveEmbed(spec, rest.slice(open + 1, close), columns))
+
+      // Skip the trailing comma that separated this embed from what follows.
+      rest = rest.slice(close + 1).replace(/^\s*,/, '')
+    }
+
+    this.columns = own.length > 0 ? own.join(', ') : '*'
+  }
+
+  // `client_groups(...)`, `bands:band_code(...)` and `clients!inner(...)` are
+  // the three spellings PostgREST allows for the name in front of the paren.
+  private resolveEmbed(spec: string, inner: string, whole: string): EmbedSpec {
+    const inner_ = spec.includes('!inner')
+    let name = spec.replace('!inner', '').replace('!left', '').trim()
+    let alias = name
+
+    // `alias:relation` -- the property name differs from the relation's.
+    const colon = name.indexOf(':')
+    if (colon !== -1) {
+      alias = name.slice(0, colon).trim()
+      name = name.slice(colon + 1).trim()
+    }
+
+    const rel = findRelationship(this.table, name)
+    if (!rel) {
       throw new Error(
-        `[db] select() on "${this.table}" contains an embedded relation:\n  ${columns}\n` +
-        `The shim cannot infer PostgREST embeds. Declare it with .withEmbed({...}) instead.`
+        `[db] select() on "${this.table}" embeds "${name}", which is not a declared relationship:\n` +
+        `  ${whole}\n` +
+        `Add it to RELATIONSHIPS in app/lib/db/relationships.ts, after confirming the ` +
+        `foreign key it rides on actually exists in schema/baseline.sql.`
       )
     }
-    this.columns = columns
+
+    const nested = splitTop(inner)
+    if (nested.some(c => c.includes('('))) {
+      throw new Error(
+        `[db] select() on "${this.table}" nests an embed inside "${name}". Not supported:\n  ${whole}`
+      )
+    }
+
+    return {
+      alias,
+      table: rel.table,
+      columns: nested,
+      localColumn: rel.localColumn,
+      foreignColumn: rel.foreignColumn,
+      inner: inner_,
+    }
   }
 
   private cmp(column: string, operator: string, value: unknown): this {

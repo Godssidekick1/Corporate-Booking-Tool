@@ -232,11 +232,13 @@ describe('shim — identifier allow-list', () => {
       .toThrow(/not a column/)
   })
 
-  it('refuses an embedded relation in a select string', () => {
-    // The shim has no foreign-key catalogue, so it cannot infer these. Failing
-    // loudly beats returning a silently wrong shape.
+  it('refuses an embed across a relationship that is not declared', () => {
+    // The shim has no foreign-key catalogue; relationships.ts declares the four
+    // the codebase actually uses. Anything else fails loudly rather than
+    // returning a silently wrong shape -- which is what PostgREST did with
+    // `bands:band_code(rank)` for months while the caller discarded the error.
     expect(() => createDbClient().from('airlines').select('code, clients(id)'))
-      .toThrow(/embedded relation/)
+      .toThrow(/not a declared relationship/)
   })
 
   it('refuses an unsupported operator', () => {
@@ -330,5 +332,125 @@ d('shim — transactions', () => {
       return res.error
     })
     expect(guc).toBeNull()
+  })
+})
+
+// ── Embedded relations ───────────────────────────────────────────────────────
+// The five embedding call sites, in their four distinct shapes. These run
+// against real rows rather than fixtures because the whole question is whether
+// the generated JOIN produces the shape the call sites already destructure.
+// ─────────────────────────────────────────────────────────────────────────────
+
+d('shim — embeds', () => {
+  it('parses two to-one embeds and nests each as an object', async () => {
+    // app/api/tmc/clients/route.ts:50, verbatim shape.
+    const { data, error } = await db
+      .from('clients')
+      .select('id, name, client_group_id, branch_id, client_groups(id, name, city, group_code), branches(id, name, branch_no)')
+      .limit(5)
+
+    expect(error).toBeNull()
+    for (const row of (data ?? []) as Record<string, unknown>[]) {
+      // Present as a key on every row, object or null -- never undefined, and
+      // never an object of nulls, because the call site renders `?.name`.
+      expect(row).toHaveProperty('client_groups')
+      expect(row).toHaveProperty('branches')
+
+      const group = row.client_groups as Record<string, unknown> | null
+      if (row.client_group_id === null) expect(group).toBeNull()
+      else expect(group?.id).toBe(row.client_group_id)
+
+      const branch = row.branches as Record<string, unknown> | null
+      if (row.branch_id === null) expect(branch).toBeNull()
+      else expect(branch?.id).toBe(row.branch_id)
+    }
+  })
+
+  it('embeds through a join table', async () => {
+    // app/api/tmc/clients/[id]/buckets/route.ts:64 and :138.
+    const { data, error } = await db
+      .from('bucket_clients')
+      .select('bucket_id, buckets ( id, name, code )')
+      .limit(5)
+
+    expect(error).toBeNull()
+    for (const row of (data ?? []) as Record<string, unknown>[]) {
+      const bucket = row.buckets as Record<string, unknown> | null
+      expect(bucket?.id).toBe(row.bucket_id)
+      // The call site does .map(r => r.buckets).filter(Boolean), so a matched
+      // row must never come back null.
+      expect(bucket).not.toBeNull()
+    }
+  })
+
+  it('!inner excludes rows with no match, and counts them out too', async () => {
+    // app/api/tmc/forms-of-payment/route.ts:414 -- the only INNER join.
+    const { data, error } = await db
+      .from('employees')
+      .select('id, client_id, clients!inner(tmc_id)')
+      .limit(5)
+
+    expect(error).toBeNull()
+    for (const row of (data ?? []) as Record<string, unknown>[]) {
+      // An INNER join guarantees a match, so this is never null -- which is
+      // what makes `owner.clients.tmc_id` safe at the call site.
+      expect(row.clients).not.toBeNull()
+      expect((row.clients as Record<string, unknown>).tmc_id).toBeDefined()
+    }
+
+    // An employee with no client cannot survive the join, so the inner count
+    // must not exceed the plain one.
+    const { count: innerCount } = await db
+      .from('employees')
+      .select('id, clients!inner(tmc_id)', { count: 'exact', head: true })
+    const { count: plainCount } = await db
+      .from('employees')
+      .select('id', { count: 'exact', head: true })
+
+    expect(innerCount).not.toBeNull()
+    expect(innerCount as number).toBeLessThanOrEqual(plainCount as number)
+  })
+
+  it('applies filters, ordering and an exact count alongside a join', async () => {
+    // The clients list does all four at once; the risk is an unqualified
+    // column going ambiguous once a join is in the FROM clause.
+    const { data, error, count } = await db
+      .from('clients')
+      .select('id, name, created_at, client_groups(id, name)', { count: 'exact' })
+      .neq('status', 'inactive')
+      .order('created_at', { ascending: false })
+      .range(0, 4)
+
+    expect(error).toBeNull()
+    expect(count).not.toBeNull()
+    expect((data ?? []).length).toBeLessThanOrEqual(5)
+
+    // A LEFT join on a to-one relation cannot change the count, so the count
+    // is of clients, not of joined pairs.
+    const { count: plain } = await db
+      .from('clients')
+      .select('id', { count: 'exact', head: true })
+      .neq('status', 'inactive')
+    expect(count).toBe(plain)
+
+    // Compared as numbers, not with a bare .sort(). pg hands back timestamptz
+    // as a Date, and Array.sort with no comparator sorts by toString() -- so
+    // "Fri Jul" would order before "Mon Sep" and the assertion would fail on
+    // correctly ordered data.
+    const times = (data ?? []).map(r => new Date((r as Record<string, string>).created_at).getTime())
+    expect(times).toEqual([...times].sort((a, b) => b - a))
+  })
+
+  it('aliases an embed when the select uses alias:relation', () => {
+    // PostgREST's `alias:relation(cols)` spelling. Parsed, then refused here
+    // because no aliased relationship is declared -- the assertion is that the
+    // ALIAS is stripped before the lookup, not reported as the relation name.
+    expect(() => db.from('clients').select('id, grp:not_a_relation(id)'))
+      .toThrow(/embeds "not_a_relation"/)
+  })
+
+  it('refuses a nested embed rather than generating a wrong join', () => {
+    expect(() => db.from('clients').select('id, branches(id, tmcs(name))'))
+      .toThrow(/nests an embed/)
   })
 })

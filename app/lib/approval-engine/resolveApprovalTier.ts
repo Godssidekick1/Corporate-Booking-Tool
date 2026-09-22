@@ -280,15 +280,21 @@ async function resolveApproverForTier(
     const minRank = tier.min_band_rank ?? 0
     const { data: candidates } = await service
       .from('employees')
-      .select('id, band_code, bands:band_code(rank)')
+      .select('id, band_code')
       .eq('client_id', clientId)
       .in('role', ['manager', 'admin'])
       .eq('status', 'active')
 
-    // bands:band_code(rank) FK-embed syntax isn't used elsewhere in this
-    // codebase and its behavior here is unverified — resolve rank via a
-    // manual second query instead, consistent with how the rest of this
-    // file avoids relying on embed inference.
+    // This used to select `bands:band_code(rank)` as well. There is no foreign
+    // key from employees.band_code to bands, so PostgREST could not resolve the
+    // relation and answered the whole request with 400 PGRST200 — verified
+    // against the live project. The error was discarded, `candidates` came back
+    // null, and every 'any_manager_at' tier fell through to 'unresolved': the
+    // "Any manager at rank…" approver type never resolved anybody.
+    //
+    // The embedded rank was never read in the first place. Rank is resolved by
+    // the manual query below, which is why dropping the embed restores the
+    // feature rather than changing its behaviour.
     if (!candidates || candidates.length === 0) return { kind: 'unresolved' }
 
     const { data: bandRanks } = await service
