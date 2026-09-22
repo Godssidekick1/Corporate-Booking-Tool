@@ -603,3 +603,83 @@ d('shim — replace-wholesale is atomic', () => {
     expect(await countPerms()).toBe(before)
   })
 })
+
+// ── register-company's three-table insert ────────────────────────────────────
+// The route that used a hand-written compensating delete: create a client, seed
+// its bands, create its admin. Exercised here against the real tables, because
+// the FK order and the clients -> branches -> employees cycle are the parts a
+// unit test on a toy table cannot cover.
+// ─────────────────────────────────────────────────────────────────────────────
+
+d('shim — multi-table registration rolls back', () => {
+  const probeName = 'ZZ Parity Probe Ltd'
+
+  const cleanup = async () => {
+    const { data } = await db.from('clients').select('id').eq('name', probeName)
+    for (const row of (data ?? []) as { id: string }[]) {
+      await db.from('employees').delete().eq('client_id', row.id)
+      await db.from('bands').delete().eq('client_id', row.id)
+      await db.from('clients').delete().eq('id', row.id)
+    }
+  }
+
+  beforeAll(cleanup)
+  afterAll(async () => { await cleanup(); await closePool() })
+
+  it('commits all three tables together when every insert succeeds', async () => {
+    const { data: clientId, error } = await withTransaction(async (tx) => {
+      const client = await orAbort(
+        tx.from<{ id: string }[]>('clients')
+          .insert({ name: probeName, status: 'active' })
+          .select('id')
+          .single()
+      )
+      await orAbort(tx.from('bands').insert([
+        { client_id: client.id, code: 'P1', label: 'Probe One', rank: 1 },
+        { client_id: client.id, code: 'P2', label: 'Probe Two', rank: 2 },
+      ]))
+      return client.id
+    })
+
+    expect(error).toBeNull()
+    expect(clientId).toBeTruthy()
+
+    const { count } = await db
+      .from('bands')
+      .select('code', { count: 'exact', head: true })
+      .eq('client_id', clientId as string)
+    expect(count).toBe(2)
+
+    await cleanup()
+  })
+
+  it('leaves NO client behind when a later insert fails', async () => {
+    // The failure the compensating delete existed to clean up. A half-created
+    // company can neither log in nor be registered again, because the email is
+    // already taken in GoTrue.
+    const { error } = await withTransaction(async (tx) => {
+      const client = await orAbort(
+        tx.from<{ id: string }[]>('clients')
+          .insert({ name: probeName, status: 'active' })
+          .select('id')
+          .single()
+      )
+      // Duplicate band code within one client -- a real unique violation.
+      await orAbort(tx.from('bands').insert([
+        { client_id: client.id, code: 'P1', label: 'Probe One', rank: 1 },
+        { client_id: client.id, code: 'P1', label: 'Probe Clash', rank: 2 },
+      ]))
+      return client.id
+    })
+
+    expect(error).not.toBeNull()
+
+    // The client row must not exist. Before transactions this needed a
+    // compensating delete that could itself fail.
+    const { count } = await db
+      .from('clients')
+      .select('id', { count: 'exact', head: true })
+      .eq('name', probeName)
+    expect(count).toBe(0)
+  })
+})
