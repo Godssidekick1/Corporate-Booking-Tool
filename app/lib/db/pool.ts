@@ -1,4 +1,5 @@
 import { Pool, type PoolClient } from 'pg'
+import { applyTypeParsers } from './typeParsers'
 
 // ── Connection pool ──────────────────────────────────────────────────────────
 // One pool per process, created lazily.
@@ -21,6 +22,10 @@ let pool: Pool | null = null
 
 export function getPool(): Pool {
   if (pool) return pool
+
+  // Before any connection is opened: setTypeParser is global to the pg module
+  // and only affects rows decoded after it is called.
+  applyTypeParsers()
 
   const connectionString = process.env.DATABASE_URL
   if (!connectionString) {

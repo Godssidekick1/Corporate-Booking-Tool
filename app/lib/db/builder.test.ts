@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { createDbClient } from './client'
 import { withTransaction, orAbort, TxAbort } from './tx'
-import { closePool } from './pool'
+import { closePool, getPool } from './pool'
 import { QueryBuilder } from './builder'
 
 // ── Shim behaviour, against a real PostgreSQL ────────────────────────────────
@@ -25,6 +25,15 @@ const db = createDbClient()
 
 // A code no real carrier uses, so these rows are unmistakably ours.
 const TEST_CODES = ['Z1', 'Z2', 'Z3']
+
+// Reads one value straight off the connection, bypassing the builder. Used by
+// the value-type tests so they assert how pg DECODES a type, independent of
+// whether any seeded row happens to exercise it.
+async function rawValue<T = unknown>(sql: string): Promise<T> {
+  const pool = getPool()
+  const res = await pool.query(sql)
+  return res.rows[0].v as T
+}
 
 d('shim — setup', () => {
   beforeAll(async () => {
@@ -452,5 +461,69 @@ d('shim — embeds', () => {
   it('refuses a nested embed rather than generating a wrong join', () => {
     expect(() => db.from('clients').select('id, branches(id, tmcs(name))'))
       .toThrow(/nests an embed/)
+  })
+})
+
+// ── Value representation ─────────────────────────────────────────────────────
+// The difference between the drivers that would corrupt rather than fail. Each
+// assertion here is "what PostgREST's JSON gave the call sites", not "what
+// node-postgres happens to produce".
+// ─────────────────────────────────────────────────────────────────────────────
+
+d('shim — value types', () => {
+  it('decodes numeric as a NUMBER, so money arithmetic is addition', async () => {
+    // pg's default is a string to protect precision. Left alone,
+    // `"100.00" + 5` is "100.005" and `"9" > "10"` is true -- a spend limit
+    // compared lexicographically would pass the wrong bookings.
+    const { data } = await db
+      .from('commercial_rules')
+      .select('id, rate')
+      .limit(1)
+
+    const row = (data as { rate: unknown }[])[0]
+    // Empty in a fresh restore; the literal probe below covers that case.
+    if (!row) return
+
+    expect(typeof row.rate).toBe('number')
+    expect((row.rate as number) + 1).toBeGreaterThan(row.rate as number)
+  })
+
+  it('decodes timestamptz as an ISO STRING, not a Date', async () => {
+    // resolveCommercials, resolveFop and resolveDealCodes all tie-break with
+    // `b.rule.created_at.localeCompare(a.rule.created_at)`. Date has no
+    // localeCompare, so a Date here is a TypeError in the money path.
+    const { data, error } = await db.from('airlines').select('code, first_seen_at').limit(1)
+    expect(error).toBeNull()
+
+    const row = (data as { first_seen_at: unknown }[])[0]
+    if (!row?.first_seen_at) return
+
+    expect(typeof row.first_seen_at).toBe('string')
+    expect(row.first_seen_at as string).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)
+    // The operation the three resolvers actually perform.
+    expect(() => (row.first_seen_at as string).localeCompare('2020-01-01')).not.toThrow()
+  })
+
+  it('decodes date as YYYY-MM-DD without inventing a timezone', async () => {
+    // A `date` routed through Date lands at LOCAL midnight, so 2026-09-22 in
+    // IST is 2026-09-21 in UTC -- travel dates would move by a day depending
+    // on where the server runs.
+    const { data, error } = await db
+      .from('airlines')
+      .select('code')
+      .limit(1)
+    expect(error).toBeNull()
+    expect(data).toBeDefined()
+
+    // Asserted directly against the engine, since no seeded `date` column is
+    // guaranteed to hold a row.
+    const probe = await rawValue<string>(`select '2026-09-22'::date as v`)
+    expect(typeof probe).toBe('string')
+    expect(probe).toBe('2026-09-22')
+  })
+
+  it('decodes numeric and int8 from a literal, independent of seeded data', async () => {
+    expect(await rawValue(`select 12345.67::numeric(12,2) as v`)).toBe(12345.67)
+    expect(await rawValue(`select 42::int8 as v`)).toBe(42)
   })
 })
