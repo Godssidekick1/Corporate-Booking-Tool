@@ -233,12 +233,15 @@ function eligibleTiers(tiers: ChainTier[], verdict: Verdict): ChainTier[] {
 // of a client could never have a clean approval setup.
 // ─────────────────────────────────────────────────────────────────────────────
 
-type ApproverResolution =
+export type ApproverResolution =
   | { kind: 'approver'; approverId: string }
   | { kind: 'unresolved' }
   | { kind: 'no_approval_needed'; reason: string }
 
-async function resolveApproverForTier(
+// Exported for tests. The rank arithmetic below decides who is ASKED to
+// approve someone else's spend, which makes it worth asserting directly rather
+// than only through the route that calls it.
+export async function resolveApproverForTier(
   service: ServiceClient,
   tier: ChainTier,
   employeeId: string,
@@ -284,7 +287,7 @@ async function resolveApproverForTier(
     const minRank = tier.min_band_rank ?? 0
     const { data: candidates } = await service
       .from('employees')
-      .select('id, band_code')
+      .select('id, band_code, created_at')
       .eq('client_id', clientId)
       .in('role', ['manager', 'admin'])
       .eq('status', 'active')
@@ -310,10 +313,29 @@ async function resolveApproverForTier(
     const qualifying = candidates
       .map(c => ({
         id: c.id as string,
+        // An unrecognised band_code sorts to -1, below every real rank, so it
+        // fails `>= minRank` for any minRank of 0 or more. Excluding rather
+        // than defaulting is the safe direction: a manager whose band was
+        // renamed should not silently satisfy a rank requirement.
         rank: rankByCode.get((c as { band_code: string | null }).band_code ?? '') ?? -1,
+        createdAt: String((c as { created_at?: string }).created_at ?? ''),
       }))
       .filter(c => c.rank >= minRank)
-      .sort((a, b) => a.rank - b.rank)
+      // TIE-BREAK, AND IT MATTERS. Rank alone is not a total order: two active
+      // managers commonly share a band. The query has no ORDER BY, so the rows
+      // arrive in whatever physical order PostgreSQL happens to scan -- which
+      // changes after an UPDATE moves a row or a VACUUM repacks the page.
+      //
+      // Sorting on rank alone therefore picked an ARBITRARY one of the tied
+      // managers, and could pick a different one for the next booking with no
+      // configuration having changed. Longest-serving wins, then id, which
+      // makes the choice stable and matches how the finance_role and admin
+      // branch below already resolves its single candidate.
+      .sort((a, b) => {
+        if (a.rank !== b.rank) return a.rank < b.rank ? -1 : 1
+        if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? -1 : 1
+        return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+      })
 
     // Returns the resolution object, not a bare id. It used to return
     // `qualifying[0]?.id ?? null`, which type-checked only because the id came
