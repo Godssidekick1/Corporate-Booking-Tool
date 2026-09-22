@@ -1,4 +1,4 @@
-import pgTypes from 'pg-types'
+import { types as pgTypes } from 'pg'
 
 // ── Matching PostgREST's JSON representation ─────────────────────────────────
 // THE MOST DANGEROUS DIFFERENCE BETWEEN THE TWO DRIVERS, and the one least
@@ -33,6 +33,14 @@ import pgTypes from 'pg-types'
 //
 // setTypeParser is global to the pg module, which is why this is called once
 // from pool.ts before any connection is opened rather than per query.
+//
+// IMPORTED FROM 'pg', NOT FROM 'pg-types'. Under plain Node the two resolve to
+// the same module instance, so registering on either works -- but Next's
+// bundler can give this file its own copy of pg-types while the pooled client
+// keeps another, and the parsers then register on an object nobody reads.
+// That failed silently: the tests passed and a live route still answered
+// sell_total as the string "10717.00". Reaching types through the pg package
+// we already import makes one instance the only possibility.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const NUMERIC = 1700

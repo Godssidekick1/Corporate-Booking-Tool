@@ -22,6 +22,25 @@ interface BookBody {
   bookingId: string
 }
 
+// ── NO TRANSACTION HERE, DELIBERATELY ───────────────────────────────────────
+// Every other multi-write route in this codebase has been wrapped in
+// withTransaction. This one has not, and should not be.
+//
+// The writes below are single-row status updates on `bookings`, and each is
+// separated from the next by a network call to Amadeus — price, addPassenger,
+// booking. Wrapping them would mean holding a PostgreSQL transaction open
+// across a GDS round trip, taking a row lock hostage to a third party's
+// latency and timeout behaviour. That is a well-known way to exhaust a
+// connection pool.
+//
+// It would also not fix anything. The hazard on this path is not a torn write
+// across several rows; it is "the airline confirmed and we failed to record
+// it" — and no database transaction can roll back a booking that exists in the
+// GDS. The compensations already here (mark the booking failed, log loudly,
+// hand the traveller the airline's own reference) are the right shape for an
+// action that reaches outside the database.
+// ─────────────────────────────────────────────────────────────────────────────
+
 // Shared by both the initial Booking attempt and the retry after a
 // silent re-price/re-AddPassenger recovery (see the session-expiry catch
 // below) — same persistence logic either way.
