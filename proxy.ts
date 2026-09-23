@@ -1,5 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
 
 // Exact-or-child-segment match.
 // /book/flights → matches /book
@@ -160,20 +162,25 @@ export async function proxy(request: NextRequest) {
     (needsRoleCheck || needsOnboardingCheck) &&
     (!resolvedRole || firstLoginCompleted === undefined)
   ) {
-    const { data: employee, error: employeeError } = await supabase
-      .from('employees')
-      .select('role, first_login_completed')
-      .eq('id', user!.id)
-      .single()
-
-    // This query runs on the anon client, so RLS applies to it. Discarding the
-    // error hid a broken policy for a long time: the read failed on every
-    // request, firstLoginCompleted stayed undefined, and the onboarding gate
-    // below silently never fired because it tests `=== false`. Failing open is
-    // the right call in middleware -- a database blip should not lock everyone
-    // out -- but it must be loud when it happens.
-    if (employeeError) {
-      console.error('[proxy] employee lookup failed:', employeeError.message)
+    // Through the repository, not the anon Supabase client. This was the one
+    // PostgREST call the Stage 1 shim never covered: it ran on the anon key
+    // with RLS, on page navigation, so even on DB_DRIVER=pg every signed-in
+    // page load still made an HTTP round trip to Supabase. Next 16 runs proxy
+    // on the Node.js runtime, so node-postgres works here.
+    //
+    // The id is the one from the VERIFIED session above, so reading with the
+    // application's connection returns exactly the row RLS used to allow.
+    //
+    // Failing open is still the right call in middleware -- a database blip
+    // should not lock everyone out -- but it must be loud when it happens. A
+    // discarded error here once hid a broken RLS policy for a long time: the
+    // read failed on every request and the onboarding gate below, which tests
+    // `=== false`, silently never fired.
+    let employee: employees.SessionProfile | null = null
+    try {
+      employee = await employees.sessionProfile(db, user!.id)
+    } catch (err) {
+      console.error('[proxy] employee lookup failed:', err)
     }
 
     resolvedRole = resolvedRole ?? employee?.role

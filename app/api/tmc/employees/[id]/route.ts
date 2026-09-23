@@ -92,7 +92,7 @@ export async function PATCH(
     }
 
     const validation = await validateManagerAssignment(
-      service,
+      db,
       target.id,
       target.client_id,
       body.managerId
