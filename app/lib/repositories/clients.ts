@@ -86,3 +86,31 @@ export async function portfolio(
     ${accessibleIds !== null ? sql`and id = any(${[...accessibleIds]})` : empty}
     order by created_at, id`)
 }
+
+// ═══ Lookups used across screens ════════════════════════════════════════════
+
+export async function bookingMode(db: Queryable, clientId: string): Promise<Pick<Row<'clients'>, 'booking_mode'> | null> {
+  return maybeOne(db, sql`select booking_mode from clients where id = ${clientId}`)
+}
+
+// Which TMC a client belongs to -- the tenancy check behind "a tmc_admin passes
+// the permission check for ANY clientId, so confirm this one is theirs".
+export async function tenancy(db: Queryable, clientId: string): Promise<Pick<Row<'clients'>, 'id' | 'tmc_id'> | null> {
+  return maybeOne(db, sql`select id, tmc_id from clients where id = ${clientId}`)
+}
+
+export type ClientName = Pick<Row<'clients'>, 'id' | 'name'>
+
+// A TMC's clients by name, optionally narrowed to a counsellor's grants.
+export async function namesForTmc(
+  db: Queryable,
+  tmcId: string,
+  accessibleIds: readonly string[] | null
+): Promise<ClientName[]> {
+  if (accessibleIds !== null && accessibleIds.length === 0) return []
+  return many<ClientName>(db, sql`
+    select id, name from clients
+    where tmc_id = ${tmcId}
+    ${accessibleIds !== null ? sql`and id = any(${[...accessibleIds]})` : empty}
+    order by name, id`)
+}

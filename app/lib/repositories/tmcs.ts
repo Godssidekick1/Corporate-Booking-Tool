@@ -19,3 +19,9 @@ export async function platformAdmin(db: Queryable, userId: string): Promise<Plat
   return maybeOne<PlatformAdminRow>(db, sql`
     select user_id, email from platform_admins where user_id = ${userId}`)
 }
+
+// ═══ tmcs ═══════════════════════════════════════════════════════════════════
+
+export async function tmcName(db: Queryable, tmcId: string): Promise<Pick<Row<'tmcs'>, 'id' | 'name'> | null> {
+  return maybeOne(db, sql`select id, name from tmcs where id = ${tmcId}`)
+}

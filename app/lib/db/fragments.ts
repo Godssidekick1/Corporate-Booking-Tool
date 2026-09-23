@@ -68,3 +68,29 @@ export function without(row: Record<string, unknown>, ...prefixes: string[]): Re
   }
   return out
 }
+
+// ── assignments ──────────────────────────────────────────────────────────────
+// A SET clause built from a partial patch, for routes that update whichever
+// fields the caller sent.
+//
+//   const COLUMNS = { role: sql`role`, status: sql`status` } as const
+//   sql`update employees set ${assignments(COLUMNS, patch)} where id = ${id}`
+//
+// Column names never come from the patch: each key maps to a LITERAL sql
+// fragment written in the repository, so a key that is not in the map cannot
+// reach the query -- TypeScript rejects it, and so does this at runtime.
+// Undefined values are skipped (absent means "leave alone"); null is written
+// (null means "clear it").
+export function assignments<K extends string>(
+  columns: Readonly<Record<K, Sql>>,
+  patch: Partial<Record<K, unknown>>
+): Sql {
+  const parts: Sql[] = []
+  for (const key of Object.keys(patch) as K[]) {
+    if (!(key in columns)) throw new Error(`[db] "${key}" is not an updatable column here`)
+    if (patch[key] === undefined) continue
+    parts.push(sql`${columns[key]} = ${patch[key]}`)
+  }
+  if (parts.length === 0) throw new Error('[db] update with nothing to set')
+  return join(parts)
+}

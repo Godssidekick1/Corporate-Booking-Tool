@@ -1,4 +1,4 @@
-import { sql, many, type Queryable } from '@/app/lib/db/sql'
+import { sql, many, one, type Queryable } from '@/app/lib/db/sql'
 import type { Row } from '@/app/lib/db/types.generated'
 
 // ── Bookings and price quotes ────────────────────────────────────────────────
@@ -20,4 +20,11 @@ export async function statRows(db: Queryable, clientIds: readonly string[]): Pro
     select id, client_id, total_cost, status, created_at from bookings
     where client_id = any(${[...clientIds]})
     order by created_at, id`)
+}
+
+export async function countForClients(db: Queryable, clientIds: readonly string[]): Promise<number> {
+  if (clientIds.length === 0) return 0
+  const row = await one<{ n: number }>(db, sql`
+    select count(*)::int as n from bookings where client_id = any(${[...clientIds]})`)
+  return row.n
 }

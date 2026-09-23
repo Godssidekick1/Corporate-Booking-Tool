@@ -1,0 +1,662 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`people screens > employees/me PATCH: saves the profile and completes first login 1`] = `
+{
+  "firstLoginCompleted": true,
+  "ok": true,
+  "travelerProfile": {
+    "address": "Test Address",
+    "city": "Testcity",
+    "dateOfBirth": "01/01/1990",
+    "email": "traveller@example.test",
+    "gender": "Male",
+    "mobile": "9999999999",
+    "state": "Teststate",
+    "title": "MR",
+    "zipCode": "400001",
+  },
+}
+`;
+
+exports[`people screens > employees/me: the traveller profile 1`] = `
+{
+  "email": "employee.4ae427@example.test",
+  "firstLoginCompleted": true,
+  "fullName": "Employee 4ae427",
+  "ok": true,
+  "travelerProfile": {
+    "address": "Test Address",
+    "city": "Gurugram",
+    "dateOfBirth": "1990-01-01",
+    "email": "traveller@example.test",
+    "gender": "Male",
+    "issuingCountry": "IN",
+    "mealPreference": "Non-Veg",
+    "mobile": "9999999999",
+    "nationality": "IN",
+    "passportExpiryDate": "2035-01-01",
+    "passportNumber": "X0000000",
+    "state": "Haryana",
+    "title": "MR",
+    "zipCode": "Test Address",
+  },
+}
+`;
+
+exports[`people screens > settings/users/[id]: changes a role 1`] = `
+{
+  "employee": {
+    "band_code": "L3",
+    "email": "employee.1c5a5b@example.test",
+    "full_name": "Employee 1c5a5b",
+    "id": "f86261c4-5ab5-4d5a-b436-5932de829ede",
+    "manager_id": "d674c0fd-ccef-4077-87fe-5af32f06cabc",
+    "role": "manager",
+    "status": "active",
+  },
+  "ok": true,
+}
+`;
+
+exports[`people screens > settings/users: ?all=true for the hierarchy tree 1`] = `
+{
+  "items": [
+    {
+      "band_code": "L4",
+      "cost_centre": "IT101G",
+      "department": "IT",
+      "email": "employee.12be2c@example.test",
+      "full_name": "Employee 12be2c",
+      "id": "d674c0fd-ccef-4077-87fe-5af32f06cabc",
+      "manager_id": "c0fc26d8-292b-4e90-9716-3b4d4f890838",
+      "onboarding_method": "direct_create",
+      "role": "employee",
+      "status": "active",
+      "top_of_hierarchy": false,
+    },
+    {
+      "band_code": "L3",
+      "cost_centre": "IT101G",
+      "department": null,
+      "email": "employee.1c5a5b@example.test",
+      "full_name": "Employee 1c5a5b",
+      "id": "f86261c4-5ab5-4d5a-b436-5932de829ede",
+      "manager_id": "d674c0fd-ccef-4077-87fe-5af32f06cabc",
+      "onboarding_method": "direct_create",
+      "role": "employee",
+      "status": "active",
+      "top_of_hierarchy": false,
+    },
+    {
+      "band_code": "L5",
+      "cost_centre": "IT101G",
+      "department": "IT",
+      "email": "employee.4ae427@example.test",
+      "full_name": "Employee 4ae427",
+      "id": "c0fc26d8-292b-4e90-9716-3b4d4f890838",
+      "manager_id": null,
+      "onboarding_method": "invite",
+      "role": "admin",
+      "status": "active",
+      "top_of_hierarchy": true,
+    },
+    {
+      "band_code": "L1",
+      "cost_centre": "IT101G",
+      "department": "IT",
+      "email": "employee.8bebd3@example.test",
+      "full_name": "Employee 8bebd3",
+      "id": "6052570d-8f27-47f8-8b1f-98686fc6b098",
+      "manager_id": "d674c0fd-ccef-4077-87fe-5af32f06cabc",
+      "onboarding_method": "direct_create",
+      "role": "employee",
+      "status": "active",
+      "top_of_hierarchy": false,
+    },
+    {
+      "band_code": "L2",
+      "cost_centre": null,
+      "department": null,
+      "email": "new.person@example.test",
+      "full_name": "New Person",
+      "id": "5fc7c4d8-3edd-411e-8de3-a5571a4e0158",
+      "manager_id": null,
+      "onboarding_method": "invite",
+      "role": "employee",
+      "status": "invited",
+      "top_of_hierarchy": false,
+    },
+    {
+      "band_code": "L2",
+      "cost_centre": null,
+      "department": null,
+      "email": "direct@example.test",
+      "full_name": "New Person",
+      "id": "ac51c1bc-935c-4fee-9f9b-cb2f078928c6",
+      "manager_id": null,
+      "onboarding_method": "direct_create",
+      "role": "employee",
+      "status": "active",
+      "top_of_hierarchy": false,
+    },
+  ],
+  "ok": true,
+  "page": 1,
+  "pageSize": 10,
+  "total": 6,
+  "totalPages": 1,
+}
+`;
+
+exports[`people screens > settings/users: first page 1`] = `
+{
+  "items": [
+    {
+      "band_code": "L4",
+      "cost_centre": "IT101G",
+      "department": "IT",
+      "email": "employee.12be2c@example.test",
+      "full_name": "Employee 12be2c",
+      "id": "d674c0fd-ccef-4077-87fe-5af32f06cabc",
+      "manager_id": "c0fc26d8-292b-4e90-9716-3b4d4f890838",
+      "onboarding_method": "direct_create",
+      "role": "employee",
+      "status": "active",
+      "top_of_hierarchy": false,
+    },
+    {
+      "band_code": "L3",
+      "cost_centre": "IT101G",
+      "department": null,
+      "email": "employee.1c5a5b@example.test",
+      "full_name": "Employee 1c5a5b",
+      "id": "f86261c4-5ab5-4d5a-b436-5932de829ede",
+      "manager_id": "d674c0fd-ccef-4077-87fe-5af32f06cabc",
+      "onboarding_method": "direct_create",
+      "role": "employee",
+      "status": "active",
+      "top_of_hierarchy": false,
+    },
+    {
+      "band_code": "L5",
+      "cost_centre": "IT101G",
+      "department": "IT",
+      "email": "employee.4ae427@example.test",
+      "full_name": "Employee 4ae427",
+      "id": "c0fc26d8-292b-4e90-9716-3b4d4f890838",
+      "manager_id": null,
+      "onboarding_method": "invite",
+      "role": "admin",
+      "status": "active",
+      "top_of_hierarchy": true,
+    },
+    {
+      "band_code": "L1",
+      "cost_centre": "IT101G",
+      "department": "IT",
+      "email": "employee.8bebd3@example.test",
+      "full_name": "Employee 8bebd3",
+      "id": "6052570d-8f27-47f8-8b1f-98686fc6b098",
+      "manager_id": "d674c0fd-ccef-4077-87fe-5af32f06cabc",
+      "onboarding_method": "direct_create",
+      "role": "employee",
+      "status": "active",
+      "top_of_hierarchy": false,
+    },
+    {
+      "band_code": "L2",
+      "cost_centre": null,
+      "department": null,
+      "email": "new.person@example.test",
+      "full_name": "New Person",
+      "id": "5fc7c4d8-3edd-411e-8de3-a5571a4e0158",
+      "manager_id": null,
+      "onboarding_method": "invite",
+      "role": "employee",
+      "status": "invited",
+      "top_of_hierarchy": false,
+    },
+    {
+      "band_code": "L2",
+      "cost_centre": null,
+      "department": null,
+      "email": "direct@example.test",
+      "full_name": "New Person",
+      "id": "ac51c1bc-935c-4fee-9f9b-cb2f078928c6",
+      "manager_id": null,
+      "onboarding_method": "direct_create",
+      "role": "employee",
+      "status": "active",
+      "top_of_hierarchy": false,
+    },
+  ],
+  "ok": true,
+  "page": 1,
+  "pageSize": 10,
+  "total": 6,
+  "totalPages": 1,
+}
+`;
+
+exports[`people screens > settings/users: search 1`] = `
+{
+  "items": [
+    {
+      "band_code": "L2",
+      "cost_centre": null,
+      "department": null,
+      "email": "new.person@example.test",
+      "full_name": "New Person",
+      "id": "5fc7c4d8-3edd-411e-8de3-a5571a4e0158",
+      "manager_id": null,
+      "onboarding_method": "invite",
+      "role": "employee",
+      "status": "invited",
+      "top_of_hierarchy": false,
+    },
+    {
+      "band_code": "L2",
+      "cost_centre": null,
+      "department": null,
+      "email": "direct@example.test",
+      "full_name": "New Person",
+      "id": "ac51c1bc-935c-4fee-9f9b-cb2f078928c6",
+      "manager_id": null,
+      "onboarding_method": "direct_create",
+      "role": "employee",
+      "status": "active",
+      "top_of_hierarchy": false,
+    },
+  ],
+  "ok": true,
+  "page": 1,
+  "pageSize": 10,
+  "total": 2,
+  "totalPages": 1,
+}
+`;
+
+exports[`people screens > tmc/employees/[id]: giving someone a manager un-marks them as top 1`] = `
+{
+  "employee": {
+    "band_code": "L3",
+    "band_rank": 3,
+    "full_name": "Employee 1c5a5b",
+    "id": "f86261c4-5ab5-4d5a-b436-5932de829ede",
+    "manager_id": "d674c0fd-ccef-4077-87fe-5af32f06cabc",
+    "top_of_hierarchy": false,
+  },
+  "ok": true,
+}
+`;
+
+exports[`people screens > tmc/employees/[id]: marking top of hierarchy clears the manager 1`] = `
+{
+  "employee": {
+    "band_code": "L3",
+    "band_rank": 3,
+    "full_name": "Employee 1c5a5b",
+    "id": "f86261c4-5ab5-4d5a-b436-5932de829ede",
+    "manager_id": null,
+    "top_of_hierarchy": true,
+  },
+  "ok": true,
+}
+`;
+
+exports[`people screens > tmc/employees/[id]: moves someone to a band, denormalising code and rank 1`] = `
+{
+  "employee": {
+    "band_code": "L4",
+    "band_rank": 4,
+    "full_name": "Employee 1c5a5b",
+    "id": "f86261c4-5ab5-4d5a-b436-5932de829ede",
+    "manager_id": "d674c0fd-ccef-4077-87fe-5af32f06cabc",
+    "top_of_hierarchy": false,
+  },
+  "ok": true,
+}
+`;
+
+exports[`people screens > tmc/employees: ?missingManager=1 narrows to people with no reporting line 1`] = `
+{
+  "employees": [
+    {
+      "band_code": "L2",
+      "band_rank": 2,
+      "email": "new.person@example.test",
+      "full_name": "New Person",
+      "id": "5fc7c4d8-3edd-411e-8de3-a5571a4e0158",
+      "manager_id": null,
+      "status": "invited",
+      "top_of_hierarchy": false,
+    },
+    {
+      "band_code": "L2",
+      "band_rank": 2,
+      "email": "direct@example.test",
+      "full_name": "New Person",
+      "id": "ac51c1bc-935c-4fee-9f9b-cb2f078928c6",
+      "manager_id": null,
+      "status": "active",
+      "top_of_hierarchy": false,
+    },
+  ],
+  "items": [
+    {
+      "band_code": "L2",
+      "band_rank": 2,
+      "email": "new.person@example.test",
+      "full_name": "New Person",
+      "id": "5fc7c4d8-3edd-411e-8de3-a5571a4e0158",
+      "manager_id": null,
+      "status": "invited",
+      "top_of_hierarchy": false,
+    },
+    {
+      "band_code": "L2",
+      "band_rank": 2,
+      "email": "direct@example.test",
+      "full_name": "New Person",
+      "id": "ac51c1bc-935c-4fee-9f9b-cb2f078928c6",
+      "manager_id": null,
+      "status": "active",
+      "top_of_hierarchy": false,
+    },
+  ],
+  "ok": true,
+  "page": 1,
+  "pageSize": 10,
+  "total": 2,
+  "totalPages": 1,
+}
+`;
+
+exports[`people screens > tmc/employees: search 1`] = `
+{
+  "employees": [
+    {
+      "band_code": "L2",
+      "band_rank": 2,
+      "email": "new.person@example.test",
+      "full_name": "New Person",
+      "id": "5fc7c4d8-3edd-411e-8de3-a5571a4e0158",
+      "manager_id": null,
+      "status": "invited",
+      "top_of_hierarchy": false,
+    },
+    {
+      "band_code": "L2",
+      "band_rank": 2,
+      "email": "direct@example.test",
+      "full_name": "New Person",
+      "id": "ac51c1bc-935c-4fee-9f9b-cb2f078928c6",
+      "manager_id": null,
+      "status": "active",
+      "top_of_hierarchy": false,
+    },
+  ],
+  "items": [
+    {
+      "band_code": "L2",
+      "band_rank": 2,
+      "email": "new.person@example.test",
+      "full_name": "New Person",
+      "id": "5fc7c4d8-3edd-411e-8de3-a5571a4e0158",
+      "manager_id": null,
+      "status": "invited",
+      "top_of_hierarchy": false,
+    },
+    {
+      "band_code": "L2",
+      "band_rank": 2,
+      "email": "direct@example.test",
+      "full_name": "New Person",
+      "id": "ac51c1bc-935c-4fee-9f9b-cb2f078928c6",
+      "manager_id": null,
+      "status": "active",
+      "top_of_hierarchy": false,
+    },
+  ],
+  "ok": true,
+  "page": 1,
+  "pageSize": 10,
+  "total": 2,
+  "totalPages": 1,
+}
+`;
+
+exports[`people screens > tmc/employees: the roster 1`] = `
+{
+  "employees": [
+    {
+      "band_code": "L4",
+      "band_rank": 4,
+      "email": "employee.12be2c@example.test",
+      "full_name": "Employee 12be2c",
+      "id": "d674c0fd-ccef-4077-87fe-5af32f06cabc",
+      "manager_id": "c0fc26d8-292b-4e90-9716-3b4d4f890838",
+      "status": "active",
+      "top_of_hierarchy": false,
+    },
+    {
+      "band_code": "L3",
+      "band_rank": 3,
+      "email": "employee.1c5a5b@example.test",
+      "full_name": "Employee 1c5a5b",
+      "id": "f86261c4-5ab5-4d5a-b436-5932de829ede",
+      "manager_id": "d674c0fd-ccef-4077-87fe-5af32f06cabc",
+      "status": "active",
+      "top_of_hierarchy": false,
+    },
+    {
+      "band_code": "L5",
+      "band_rank": 5,
+      "email": "employee.4ae427@example.test",
+      "full_name": "Employee 4ae427",
+      "id": "c0fc26d8-292b-4e90-9716-3b4d4f890838",
+      "manager_id": null,
+      "status": "active",
+      "top_of_hierarchy": true,
+    },
+    {
+      "band_code": "L1",
+      "band_rank": 1,
+      "email": "employee.8bebd3@example.test",
+      "full_name": "Employee 8bebd3",
+      "id": "6052570d-8f27-47f8-8b1f-98686fc6b098",
+      "manager_id": "d674c0fd-ccef-4077-87fe-5af32f06cabc",
+      "status": "active",
+      "top_of_hierarchy": false,
+    },
+    {
+      "band_code": "L2",
+      "band_rank": 2,
+      "email": "new.person@example.test",
+      "full_name": "New Person",
+      "id": "5fc7c4d8-3edd-411e-8de3-a5571a4e0158",
+      "manager_id": null,
+      "status": "invited",
+      "top_of_hierarchy": false,
+    },
+    {
+      "band_code": "L2",
+      "band_rank": 2,
+      "email": "direct@example.test",
+      "full_name": "New Person",
+      "id": "ac51c1bc-935c-4fee-9f9b-cb2f078928c6",
+      "manager_id": null,
+      "status": "active",
+      "top_of_hierarchy": false,
+    },
+  ],
+  "items": [
+    {
+      "band_code": "L4",
+      "band_rank": 4,
+      "email": "employee.12be2c@example.test",
+      "full_name": "Employee 12be2c",
+      "id": "d674c0fd-ccef-4077-87fe-5af32f06cabc",
+      "manager_id": "c0fc26d8-292b-4e90-9716-3b4d4f890838",
+      "status": "active",
+      "top_of_hierarchy": false,
+    },
+    {
+      "band_code": "L3",
+      "band_rank": 3,
+      "email": "employee.1c5a5b@example.test",
+      "full_name": "Employee 1c5a5b",
+      "id": "f86261c4-5ab5-4d5a-b436-5932de829ede",
+      "manager_id": "d674c0fd-ccef-4077-87fe-5af32f06cabc",
+      "status": "active",
+      "top_of_hierarchy": false,
+    },
+    {
+      "band_code": "L5",
+      "band_rank": 5,
+      "email": "employee.4ae427@example.test",
+      "full_name": "Employee 4ae427",
+      "id": "c0fc26d8-292b-4e90-9716-3b4d4f890838",
+      "manager_id": null,
+      "status": "active",
+      "top_of_hierarchy": true,
+    },
+    {
+      "band_code": "L1",
+      "band_rank": 1,
+      "email": "employee.8bebd3@example.test",
+      "full_name": "Employee 8bebd3",
+      "id": "6052570d-8f27-47f8-8b1f-98686fc6b098",
+      "manager_id": "d674c0fd-ccef-4077-87fe-5af32f06cabc",
+      "status": "active",
+      "top_of_hierarchy": false,
+    },
+    {
+      "band_code": "L2",
+      "band_rank": 2,
+      "email": "new.person@example.test",
+      "full_name": "New Person",
+      "id": "5fc7c4d8-3edd-411e-8de3-a5571a4e0158",
+      "manager_id": null,
+      "status": "invited",
+      "top_of_hierarchy": false,
+    },
+    {
+      "band_code": "L2",
+      "band_rank": 2,
+      "email": "direct@example.test",
+      "full_name": "New Person",
+      "id": "ac51c1bc-935c-4fee-9f9b-cb2f078928c6",
+      "manager_id": null,
+      "status": "active",
+      "top_of_hierarchy": false,
+    },
+  ],
+  "ok": true,
+  "page": 1,
+  "pageSize": 10,
+  "total": 6,
+  "totalPages": 1,
+}
+`;
+
+exports[`people screens > tmc/profile: a tc sees their permissions and granted clients only 1`] = `
+{
+  "access": {
+    "clients": [
+      {
+        "id": "b5005d4e-b813-4f10-ae59-1b0f5257357e",
+        "name": "BCG",
+      },
+    ],
+    "fullAccess": false,
+    "permissions": [
+      "book_on_behalf",
+      "manage_approvals",
+      "manage_branches",
+      "manage_policy",
+      "manage_users",
+      "view_reports",
+    ],
+  },
+  "account": {
+    "email": "employee.8159bb@example.test",
+    "fullName": "Employee 8159bb",
+    "id": "2669257f-ab87-4031-ab47-76e4af8e271b",
+    "joinedAt": "2026-07-15T07:22:12.985Z",
+    "role": "tc",
+    "status": "active",
+    "tmcName": "AMEX",
+  },
+  "activity": {
+    "bookings": 31,
+    "clients": 1,
+    "lastSignInAt": null,
+    "travellers": 4,
+  },
+  "ok": true,
+}
+`;
+
+exports[`people screens > tmc/profile: a tmc_admin sees full access and the whole portfolio 1`] = `
+{
+  "access": {
+    "clients": [
+      {
+        "id": "2dbeb834-8151-46b7-b73c-775c9ca359d9",
+        "name": "Arjun K",
+      },
+      {
+        "id": "52f419af-d730-4928-8714-a74e8e362f52",
+        "name": "Arjun K",
+      },
+      {
+        "id": "b5005d4e-b813-4f10-ae59-1b0f5257357e",
+        "name": "BCG",
+      },
+      {
+        "id": "51e2569a-91b8-4844-afd8-1a725450a8fc",
+        "name": "ekjd",
+      },
+      {
+        "id": "5f73d5e1-afcd-494c-b172-8a2de53cc9c9",
+        "name": "Flip",
+      },
+      {
+        "id": "911a4f7f-b278-4918-9136-972a0c4da47c",
+        "name": "Lenskart",
+      },
+      {
+        "id": "a908acf4-31d1-45e9-abcd-f0eba6c26c83",
+        "name": "Micron",
+      },
+      {
+        "id": "d9e1cc42-e3fe-41c3-b2c4-6c1ba14ba062",
+        "name": "wd",
+      },
+      {
+        "id": "e28889b2-7718-4ed2-bc50-c4a5bd7024e9",
+        "name": "X",
+      },
+    ],
+    "fullAccess": true,
+    "permissions": [],
+  },
+  "account": {
+    "email": "employee.281282@example.test",
+    "fullName": "Employee 281282",
+    "id": "f425dc71-960b-4164-b87a-b4616d86406f",
+    "joinedAt": "2026-07-08T11:25:00.168Z",
+    "role": "tmc_admin",
+    "status": "active",
+    "tmcName": "AMEX",
+  },
+  "activity": {
+    "bookings": 32,
+    "clients": 9,
+    "lastSignInAt": null,
+    "travellers": 13,
+  },
+  "ok": true,
+}
+`;
