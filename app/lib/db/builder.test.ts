@@ -417,6 +417,7 @@ d('shim — embeds', () => {
     const { data, error } = await db
       .from('employees')
       .select('id, client_id, clients!inner(tmc_id)')
+      .order('id')
       .limit(5)
 
     expect(error).toBeNull()

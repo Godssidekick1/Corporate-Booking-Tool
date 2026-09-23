@@ -574,7 +574,12 @@ export class QueryBuilder<T = unknown[]> implements PromiseLike<DbResult<T>> {
         const obj = nested[e.alias]
         // All-null means the LEFT JOIN matched nothing -- PostgREST reports
         // that as null, not as an object of nulls.
-        const empty = !obj || Object.values(obj).every(v => v === null)
+        //
+        // NOT for an INNER join, where a match is guaranteed: a matched row
+        // whose selected columns are genuinely NULL (a client with no tmc_id)
+        // is { tmc_id: null }, not null. The all-null heuristic used to apply
+        // to both and reported a present row as absent.
+        const empty = !obj || (!e.inner && Object.values(obj).every(v => v === null))
         out[e.alias] = empty ? null : obj
       }
 
