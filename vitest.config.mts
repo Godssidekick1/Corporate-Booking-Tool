@@ -21,6 +21,25 @@ if (existsSync(envPath)) {
   }
 }
 
+// ── The test database ────────────────────────────────────────────────────────
+// Tests never touch cbt_local. Every run clones a fresh cbt_test from
+// cbt_template -- an anonymised copy of cbt_local built by
+// scripts/make-test-template.mjs -- so tests can write freely, start from
+// identical data every time, and cannot put a real passport number into a
+// committed snapshot.
+//
+// Derived from DATABASE_URL by swapping the database name, so the same host and
+// credentials serve both.
+function withDatabase(url: string, database: string): string {
+  const u = new URL(url)
+  u.pathname = `/${database}`
+  return u.toString()
+}
+
+const devUrl = process.env.DATABASE_URL
+const testUrl = devUrl ? withDatabase(devUrl, 'cbt_test') : undefined
+const adminUrl = devUrl ? withDatabase(devUrl, 'postgres') : undefined
+
 // ── Vitest ───────────────────────────────────────────────────────────────────
 // The safety net for the PostgreSQL migration. 562 PostgREST call sites are
 // about to be rewritten underneath this application; without tests that is an
@@ -51,7 +70,20 @@ export default defineConfig({
     // Node, not jsdom: nothing under test touches the DOM, and jsdom would add
     // startup cost to every run for no benefit.
     environment: 'node',
-    include: ['app/lib/**/*.test.ts'],
+    // app/lib: domain and data-layer tests. tests/: route characterisation
+    // tests, which call route handlers directly -- see tests/harness.
+    include: ['app/lib/**/*.test.ts', 'tests/**/*.test.ts'],
+    // Recreates cbt_test from cbt_template once per run. Skipped when there is
+    // no DATABASE_URL, in which case database tests skip themselves.
+    globalSetup: testUrl ? ['./tests/setup/database.ts'] : [],
+    // Replaces Supabase auth with a controllable fake for every test file.
+    // Route handlers authenticate through utils/supabase/server, and 77 of 86
+    // do nothing else with Supabase; mocking that one module is what lets a
+    // test call a handler directly, as any user, with no login.
+    setupFiles: ['./tests/setup/auth.ts'],
+    env: testUrl && adminUrl
+      ? { DATABASE_URL: testUrl, TEST_DATABASE_URL: testUrl, TEST_ADMIN_DATABASE_URL: adminUrl }
+      : {},
     // The database tests share one PostgreSQL instance and write real rows.
     // Running files in parallel would let one file's cleanup delete another
     // file's fixtures mid-assertion.
