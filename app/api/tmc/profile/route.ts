@@ -1,6 +1,11 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
+import * as clients from '@/app/lib/repositories/clients'
+import * as tmcs from '@/app/lib/repositories/tmcs'
+import * as bookings from '@/app/lib/repositories/bookings'
+import { route } from '@/app/lib/http/handler'
 
 // ── /api/tmc/profile ─────────────────────────────────────────────────────────
 // The TMC-side user's own account: who they are, what they can reach, and what
@@ -15,7 +20,7 @@ import { NextRequest } from 'next/server'
 //   PATCH the one field they own — their display name
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function GET() {
+export const GET = route(async () => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -23,13 +28,7 @@ export async function GET() {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-
-  const { data: employee } = await service
-    .from('employees')
-    .select('id, full_name, email, role, status, tmc_id, created_at')
-    .eq('id', user.id)
-    .maybeSingle()
+  const employee = await employees.tmcAccount(db, user.id)
 
   if (!employee) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
@@ -41,61 +40,32 @@ export async function GET() {
     return Response.json({ error: 'Not a TMC account' }, { status: 403 })
   }
 
-  const [{ data: tmc }, { data: permissionRows }] = await Promise.all([
-    service.from('tmcs').select('id, name').eq('id', employee.tmc_id).maybeSingle(),
-    service.from('employee_permissions').select('permission_key').eq('employee_id', employee.id),
-  ])
-
   const isAdmin = employee.role === 'tmc_admin'
 
   // tmc_admin holds no permission rows — requireTmcPermission short-circuits on
   // the role instead. Reporting an empty list would read as "no access" when it
   // means the opposite, so the flag carries that distinction to the UI.
-  const permissions = isAdmin ? [] : (permissionRows ?? []).map(p => p.permission_key)
+  //
+  // Which clients this person can reach: every client at the TMC for an admin
+  // (null = no narrowing), only explicitly granted ones for a counsellor.
+  const [tmc, permissions, accessibleIds] = await Promise.all([
+    employee.tmc_id ? tmcs.tmcName(db, employee.tmc_id) : Promise.resolve(null),
+    isAdmin ? Promise.resolve([]) : employees.permissionKeys(db, employee.id),
+    isAdmin ? Promise.resolve(null) : employees.accessibleClientIds(db, employee.id),
+  ])
 
-  // Which clients this person can reach: every client at the TMC for an admin,
-  // only explicitly granted ones for a counsellor.
-  const { data: accessRows } = isAdmin
-    ? { data: null }
-    : await service
-        .from('employee_client_access')
-        .select('client_id')
-        .eq('employee_id', employee.id)
-
-  let clientQuery = service
-    .from('clients')
-    .select('id, name')
-    .eq('tmc_id', employee.tmc_id)
-    .order('name')
-
-  if (!isAdmin) {
-    const ids = (accessRows ?? []).map(a => a.client_id)
-    if (ids.length === 0) {
-      return Response.json({
-        ok: true,
-        account: accountOf(employee, tmc?.name ?? null),
-        access: { fullAccess: false, permissions, clients: [] },
-        activity: { clients: 0, travellers: 0, bookings: 0, lastSignInAt: lastSignIn(user) },
-      })
-    }
-    clientQuery = clientQuery.in('id', ids)
-  }
-
-  const { data: clients } = await clientQuery
-  const clientIds = (clients ?? []).map(c => c.id)
+  const reachable = employee.tmc_id
+    ? await clients.namesForTmc(db, employee.tmc_id, accessibleIds)
+    : []
+  const clientIds = reachable.map(c => c.id)
 
   // Portfolio activity, not personal activity. There is deliberately no
   // "bookings you made" figure: add-passenger writes requested_for identical to
   // employee_id (book-on-behalf does not exist yet), so no booking records which
   // counsellor created it. A personal count would be fabricated.
-  const [{ count: travellers }, { count: bookings }] = await Promise.all([
-    clientIds.length
-      ? service.from('employees').select('id', { count: 'exact', head: true })
-          .in('client_id', clientIds).neq('status', 'deactivated')
-      : Promise.resolve({ count: 0 }),
-    clientIds.length
-      ? service.from('bookings').select('id', { count: 'exact', head: true }).in('client_id', clientIds)
-      : Promise.resolve({ count: 0 }),
+  const [travellers, bookingCount] = await Promise.all([
+    employees.countActiveInClients(db, clientIds),
+    bookings.countForClients(db, clientIds),
   ])
 
   return Response.json({
@@ -104,21 +74,18 @@ export async function GET() {
     access: {
       fullAccess: isAdmin,
       permissions,
-      clients: clients ?? [],
+      clients: reachable,
     },
     activity: {
       clients: clientIds.length,
-      travellers: travellers ?? 0,
-      bookings: bookings ?? 0,
+      travellers,
+      bookings: bookingCount,
       lastSignInAt: lastSignIn(user),
     },
   })
-}
+})
 
-function accountOf(
-  employee: { id: string; full_name: string; email: string; role: string; status: string; created_at: string },
-  tmcName: string | null
-) {
+function accountOf(employee: employees.TmcAccount, tmcName: string | null) {
   return {
     id: employee.id,
     fullName: employee.full_name,
@@ -135,7 +102,7 @@ function lastSignIn(user: { last_sign_in_at?: string }): string | null {
   return user.last_sign_in_at ?? null
 }
 
-export async function PATCH(req: NextRequest) {
+export const PATCH = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -143,13 +110,7 @@ export async function PATCH(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-
-  const { data: employee } = await service
-    .from('employees')
-    .select('id, role')
-    .eq('id', user.id)
-    .maybeSingle()
+  const employee = await employees.roleAndStatus(db, user.id)
 
   if (!employee || (employee.role !== 'tmc_admin' && employee.role !== 'tc')) {
     return Response.json({ error: 'Not a TMC account' }, { status: 403 })
@@ -164,16 +125,11 @@ export async function PATCH(req: NextRequest) {
     return Response.json({ error: 'Name cannot be empty' }, { status: 400 })
   }
 
-  const { data: updated, error } = await service
-    .from('employees')
-    .update({ full_name: body.fullName.trim() })
-    .eq('id', user.id)
-    .select('id, full_name')
-    .single()
+  const updated = await employees.rename(db, user.id, body.fullName.trim())
 
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
+  if (!updated) {
+    return Response.json({ error: 'Employee record not found' }, { status: 404 })
   }
 
   return Response.json({ ok: true, fullName: updated.full_name })
-}
+})

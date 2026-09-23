@@ -1,12 +1,14 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
-import { parsePageParams, pagedResponse, ilikeAcross } from '@/app/lib/pagination'
+import { parsePageParams, pagedResponse } from '@/app/lib/pagination'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
+import { route } from '@/app/lib/http/handler'
 
 // ── GET /api/settings/users ──────────────────────────────────────────────────
 // List all employees in the admin's client, for the settings/users table.
 
-export async function GET(req: NextRequest) {
+export const GET = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -14,15 +16,9 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
+  const caller = await employees.clientScope(db, user.id)
 
-  const { data: caller, error: callerError } = await service
-    .from('employees')
-    .select('client_id, role')
-    .eq('id', user.id)
-    .single()
-
-  if (callerError || !caller) {
+  if (!caller) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
   }
 
@@ -42,30 +38,19 @@ export async function GET(req: NextRequest) {
   const wantsAll = req.nextUrl.searchParams.get('all') === 'true'
   const ALL_CAP = 1000
 
-  let query = service
-    .from('employees')
-    .select(
-      'id, full_name, email, role, status, band_code, department, cost_centre, onboarding_method, manager_id, top_of_hierarchy',
-      { count: 'exact' }
-    )
-    .eq('client_id', caller.client_id)
-    .order('full_name')
-
-  if (ids.length > 0) {
-    query = query.in('id', ids)
-  } else if (wantsAll) {
-    query = query.range(0, ALL_CAP - 1)
-  } else {
-    const filter = ilikeAcross(['full_name', 'email', 'department', 'cost_centre'], params.search)
-    if (filter) query = query.or(filter)
-    query = query.range(params.from, params.to)
+  // An admin always belongs to a client; one who somehow does not has nobody
+  // to list, which is what the old `client_id = null` filter returned too.
+  if (!caller.client_id) {
+    return Response.json(pagedResponse([], 0, params))
   }
 
-  const { data: employees, error, count } = await query
+  const { rows, total } = await employees.directory(
+    db,
+    caller.client_id,
+    ids.length > 0 ? { ids }
+      : wantsAll ? { cap: ALL_CAP }
+      : { search: params.search, page: params }
+  )
 
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
-
-  return Response.json(pagedResponse(employees ?? [], count ?? null, params))
-}
+  return Response.json(pagedResponse(rows, total, params))
+})

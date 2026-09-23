@@ -1,6 +1,8 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
+import { route } from '@/app/lib/http/handler'
 
 // ── PATCH /api/settings/users/[id] ───────────────────────────────────────────
 // Admin edits an existing employee: role change and/or status toggle
@@ -19,10 +21,10 @@ interface UpdateEmployeeBody {
   managerId?: string | null
 }
 
-export async function PATCH(
+export const PATCH = route(async (
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
+) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -31,15 +33,9 @@ export async function PATCH(
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
+  const caller = await employees.clientScope(db, user.id)
 
-  const { data: caller, error: callerError } = await service
-    .from('employees')
-    .select('client_id, role')
-    .eq('id', user.id)
-    .single()
-
-  if (callerError || !caller) {
+  if (!caller) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
   }
 
@@ -48,14 +44,11 @@ export async function PATCH(
   }
 
   // Confirm the target employee belongs to the same client
-  const { data: target, error: targetError } = await service
-    .from('employees')
-    .select('id, client_id, status')
-    .eq('id', id)
-    .eq('client_id', caller.client_id)
-    .maybeSingle()
+  const target = caller.client_id
+    ? await employees.findWithStatusInClient(db, id, caller.client_id)
+    : null
 
-  if (targetError || !target) {
+  if (!target) {
     return Response.json({ error: 'Employee not found in your client' }, { status: 404 })
   }
 
@@ -67,7 +60,7 @@ export async function PATCH(
   const body: UpdateEmployeeBody = await req.json()
   const { role, status, band, managerId } = body
 
-  const update: Record<string, string | number | null> = {}
+  const update: employees.CorporateEdit = {}
 
   if (role !== undefined) {
     const normalized = role.toLowerCase() as ValidRole
@@ -120,16 +113,7 @@ export async function PATCH(
     return Response.json({ error: 'No fields to update' }, { status: 400 })
   }
 
-  const { data: updated, error: updateError } = await service
-    .from('employees')
-    .update(update)
-    .eq('id', id)
-    .select('id, full_name, email, role, status, band_code, manager_id')
-    .single()
-
-  if (updateError) {
-    return Response.json({ error: updateError.message }, { status: 500 })
-  }
+  const updated = await employees.applyCorporateEdit(db, id, update)
 
   return Response.json({ ok: true, employee: updated })
-}
+})

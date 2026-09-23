@@ -1,6 +1,10 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { NextRequest } from 'next/server'
+import { db, isConstraint } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
+import * as clients from '@/app/lib/repositories/clients'
+import { route } from '@/app/lib/http/handler'
 
 // ── POST /api/employees ───────────────────────────────────────────────────────
 // Adds an employee to the admin's client. Behavior depends on the client's
@@ -38,7 +42,7 @@ interface CreateEmployeeBody {
 // a lasting one.
 const MIN_INITIAL_PASSWORD = 10
 
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -46,15 +50,13 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
+  // Only for GoTrue: accounts are created and rolled back through the auth
+  // admin API. Every table read and write below goes through repositories.
   const service = createServiceClient()
 
-  const { data: caller, error: callerError } = await service
-    .from('employees')
-    .select('client_id, role')
-    .eq('id', user.id)
-    .single()
+  const caller = await employees.clientScope(db, user.id)
 
-  if (callerError || !caller) {
+  if (!caller) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
   }
 
@@ -63,14 +65,9 @@ export async function POST(req: NextRequest) {
   }
 
   const clientId = caller.client_id
+  const client = clientId ? await clients.bookingMode(db, clientId) : null
 
-  const { data: client, error: clientError } = await service
-    .from('clients')
-    .select('booking_mode')
-    .eq('id', clientId)
-    .single()
-
-  if (clientError || !client) {
+  if (!clientId || !client) {
     return Response.json({ error: 'Client not found' }, { status: 404 })
   }
 
@@ -102,23 +99,13 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: `Invalid role: ${role}` }, { status: 400 })
   }
 
-  const { data: bandRow, error: bandError } = await service
-    .from('bands')
-    .select('id, code, rank')
-    .eq('client_id', clientId)
-    .eq('code', band.toUpperCase())
-    .single()
+  const bandRow = await employees.bandByCode(db, clientId, band.toUpperCase())
 
-  if (bandError || !bandRow) {
+  if (!bandRow) {
     return Response.json({ error: `Band ${band} not found for this client` }, { status: 422 })
   }
 
-  const { data: existing } = await service
-    .from('employees')
-    .select('id, status')
-    .eq('client_id', clientId)
-    .eq('email', normalizedEmail)
-    .maybeSingle()
+  const existing = await employees.findByEmailInClient(db, clientId, normalizedEmail)
 
   if (existing) {
     return Response.json(
@@ -178,7 +165,7 @@ export async function POST(req: NextRequest) {
       authUserId = authData.user.id
     }
 
-    const { error: employeeError } = await service.from('employees').insert({
+    await employees.insert(db, {
       id: authUserId,
       auth_user_id: authUserId,
       client_id: clientId,
@@ -198,11 +185,6 @@ export async function POST(req: NextRequest) {
       cost_centre: cost_centre ?? null,
     })
 
-    if (employeeError) {
-      await service.auth.admin.deleteUser(authUserId)
-      return Response.json({ error: employeeError.message }, { status: 500 })
-    }
-
     return Response.json({
       ok: true,
       employeeId: authUserId,
@@ -212,10 +194,18 @@ export async function POST(req: NextRequest) {
     }, { status: 201 })
 
   } catch (err) {
+    // The auth account exists but its employees row does not: remove the
+    // account, or it is a login that belongs to nobody. The database's error
+    // text is logged, not returned -- it names constraints and columns.
     if (authUserId) {
       await service.auth.admin.deleteUser(authUserId)
     }
-    const message = err instanceof Error ? err.message : 'Failed to create employee'
-    return Response.json({ error: message }, { status: 500 })
+    // Two admins adding the same person at once: both pass the existence
+    // check above, and the unique constraint decides. Same answer as the check.
+    if (isConstraint(err, 'unique', 'employees_company_email_unique')) {
+      return Response.json({ error: 'An employee with this email already exists' }, { status: 409 })
+    }
+    console.error('[employees] create failed', err)
+    return Response.json({ error: 'Failed to create employee' }, { status: 500 })
   }
-}
+})

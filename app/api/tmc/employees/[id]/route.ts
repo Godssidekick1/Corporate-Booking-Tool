@@ -1,9 +1,11 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { validateManagerAssignment } from '@/app/lib/hierarchy/validateManagerAssignment'
 import { NextRequest } from 'next/server'
 import { db } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
+import * as clients from '@/app/lib/repositories/clients'
+import { route } from '@/app/lib/http/handler'
 
 // ── PATCH /api/tmc/employees/[id] ────────────────────────────────────────────
 // Sets a client employee's reporting line and band.
@@ -27,10 +29,10 @@ interface UpdateBody {
   band?: string
 }
 
-export async function PATCH(
+export const PATCH = route(async (
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
+) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -39,13 +41,7 @@ export async function PATCH(
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-
-  const { data: target } = await service
-    .from('employees')
-    .select('id, client_id, full_name, top_of_hierarchy')
-    .eq('id', id)
-    .maybeSingle()
+  const target = await employees.reportingTarget(db, id)
 
   if (!target?.client_id) {
     return Response.json({ error: 'Employee not found' }, { status: 404 })
@@ -60,18 +56,14 @@ export async function PATCH(
 
   // A tmc_admin passes the permission check for any clientId, so the tenancy
   // boundary is checked explicitly here.
-  const { data: client } = await service
-    .from('clients')
-    .select('id, tmc_id')
-    .eq('id', target.client_id)
-    .maybeSingle()
+  const client = await clients.tenancy(db, target.client_id)
 
   if (!client || client.tmc_id !== auth.tmcId) {
     return Response.json({ error: 'Employee not found for this TMC' }, { status: 404 })
   }
 
   const body: UpdateBody = await req.json()
-  const update: Record<string, string | number | boolean | null> = {}
+  const update: employees.ReportingEdit = {}
 
   // ── Top of hierarchy ──────────────────────────────────────────────────────
   // Marking someone top clears their manager in the same write. The DB rejects
@@ -112,12 +104,7 @@ export async function PATCH(
   // every other writer sets them, so policy resolution and the dashboard stay
   // consistent without a join.
   if (body.band !== undefined) {
-    const { data: bandRow } = await service
-      .from('bands')
-      .select('id, code, rank')
-      .eq('client_id', target.client_id)
-      .eq('code', body.band)
-      .maybeSingle()
+    const bandRow = await employees.bandByCode(db, target.client_id, body.band)
 
     if (!bandRow) {
       return Response.json(
@@ -135,16 +122,7 @@ export async function PATCH(
     return Response.json({ error: 'Nothing to update' }, { status: 400 })
   }
 
-  const { data: updated, error } = await service
-    .from('employees')
-    .update(update)
-    .eq('id', id)
-    .select('id, full_name, manager_id, top_of_hierarchy, band_code, band_rank')
-    .single()
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
+  const updated = await employees.applyReportingEdit(db, id, update)
 
   return Response.json({ ok: true, employee: updated })
-}
+})

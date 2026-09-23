@@ -1,5 +1,8 @@
-import { sql, many, maybeOne, exec, type Queryable } from '@/app/lib/db/sql'
+import { sql, empty, json, many, maybeOne, one, exec, type Queryable, type Sql } from '@/app/lib/db/sql'
+import { searchAcross, page, assignments } from '@/app/lib/db/fragments'
 import type { Row } from '@/app/lib/db/types.generated'
+import type { PageParams } from '@/app/lib/pagination'
+import type { TravelerProfile } from '@/app/lib/book/types'
 
 // ── Employees, bands and access ──────────────────────────────────────────────
 // Owns: employees, bands, employee_permissions, employee_client_access.
@@ -162,4 +165,262 @@ export async function statusesInClients(db: Queryable, clientIds: readonly strin
     select id, client_id, status from employees
     where client_id = any(${[...clientIds]})
     order by client_id, id`)
+}
+
+// Travellers across a set of clients -- anyone not deactivated, which includes
+// people who have been invited but not yet signed in.
+export async function countActiveInClients(db: Queryable, clientIds: readonly string[]): Promise<number> {
+  if (clientIds.length === 0) return 0
+  const row = await one<{ n: number }>(db, sql`
+    select count(*)::int as n from employees
+    where client_id = any(${[...clientIds]}) and status <> 'deactivated'`)
+  return row.n
+}
+
+// ═══ TMC-side account (/api/tmc/profile) ════════════════════════════════════
+
+export type TmcAccount = Pick<Row<'employees'>,
+  'id' | 'full_name' | 'email' | 'role' | 'status' | 'tmc_id' | 'created_at'>
+
+export async function tmcAccount(db: Queryable, employeeId: string): Promise<TmcAccount | null> {
+  return maybeOne<TmcAccount>(db, sql`
+    select id, full_name, email, role, status, tmc_id, created_at
+    from employees where id = ${employeeId}`)
+}
+
+// Display name only -- see the route for why nothing else is self-editable.
+export async function rename(
+  db: Queryable,
+  employeeId: string,
+  fullName: string
+): Promise<Pick<Row<'employees'>, 'id' | 'full_name'> | null> {
+  return maybeOne(db, sql`
+    update employees set full_name = ${fullName}
+    where id = ${employeeId}
+    returning id, full_name`)
+}
+
+// ═══ Traveller profile (/api/employees/me) ══════════════════════════════════
+
+export interface TravellerRecord {
+  id: string
+  full_name: string
+  email: string
+  traveler_profile: TravelerProfile | null
+  first_login_completed: boolean
+}
+
+export async function travellerRecord(db: Queryable, employeeId: string): Promise<TravellerRecord | null> {
+  return maybeOne<TravellerRecord>(db, sql`
+    select id, full_name, email, traveler_profile, first_login_completed
+    from employees where id = ${employeeId}`)
+}
+
+export type SavedTravellerProfile = Pick<TravellerRecord, 'id' | 'traveler_profile' | 'first_login_completed'>
+
+// Saving the profile IS the end of first-login onboarding: proxy.ts keeps
+// redirecting to /profile until first_login_completed is true.
+export async function saveTravellerProfile(
+  db: Queryable,
+  employeeId: string,
+  profile: TravelerProfile
+): Promise<SavedTravellerProfile | null> {
+  return maybeOne<SavedTravellerProfile>(db, sql`
+    update employees
+    set traveler_profile = ${json(profile)}, first_login_completed = true
+    where id = ${employeeId}
+    returning id, traveler_profile, first_login_completed`)
+}
+
+// ═══ Corporate admin: the company's people ══════════════════════════════════
+
+export type ClientScope = Pick<Row<'employees'>, 'client_id' | 'role'>
+
+// Which company the caller administers, and whether they may.
+export async function clientScope(db: Queryable, employeeId: string): Promise<ClientScope | null> {
+  return maybeOne<ClientScope>(db, sql`select client_id, role from employees where id = ${employeeId}`)
+}
+
+export type Band = Pick<Row<'bands'>, 'id' | 'code' | 'rank'>
+
+// Codes are matched exactly; callers that accept free-typed input normalise
+// the case themselves.
+export async function bandByCode(db: Queryable, clientId: string, code: string): Promise<Band | null> {
+  return maybeOne<Band>(db, sql`
+    select id, code, rank from bands where client_id = ${clientId} and code = ${code}`)
+}
+
+export async function findByEmailInClient(
+  db: Queryable,
+  clientId: string,
+  email: string
+): Promise<Pick<Row<'employees'>, 'id' | 'status'> | null> {
+  return maybeOne(db, sql`
+    select id, status from employees where client_id = ${clientId} and email = ${email}`)
+}
+
+export type NewEmployee = Pick<Row<'employees'>,
+  | 'id' | 'auth_user_id' | 'client_id' | 'band_id' | 'band_code' | 'band_rank'
+  | 'email' | 'full_name' | 'role' | 'status' | 'onboarding_method'
+  | 'first_login_completed' | 'department' | 'cost_centre'
+>
+
+export async function insert(db: Queryable, e: NewEmployee): Promise<void> {
+  await exec(db, sql`
+    insert into employees (
+      id, auth_user_id, client_id, band_id, band_code, band_rank, email, full_name,
+      role, status, onboarding_method, first_login_completed, department, cost_centre
+    ) values (
+      ${e.id}, ${e.auth_user_id}, ${e.client_id}, ${e.band_id}, ${e.band_code}, ${e.band_rank},
+      ${e.email}, ${e.full_name}, ${e.role}, ${e.status}, ${e.onboarding_method},
+      ${e.first_login_completed}, ${e.department}, ${e.cost_centre}
+    )`)
+}
+
+// How a people list is narrowed. Exactly one of the three: specific people
+// (a picker resolving the ids it already shows), everything up to a cap (the
+// hierarchy tree), or a searched page.
+export type ListScope =
+  | { ids: readonly string[] }
+  | { cap: number }
+  | { search: string; page: Pick<PageParams, 'from' | 'to'> }
+
+export interface Listed<T> {
+  rows: T[]
+  // Matches before paging -- the paged envelope's `total`.
+  total: number
+}
+
+// Shared by directory() and roster(): the same filter feeds the page and the
+// count, so the total always describes the rows the pages are cut from.
+async function listEmployees<T>(
+  db: Queryable,
+  columns: Sql,
+  where: Sql,
+  scope: ListScope,
+  searchColumns: readonly Sql[]
+): Promise<Listed<T>> {
+  let filter = where
+  let limit = empty
+  if ('ids' in scope) {
+    if (scope.ids.length === 0) return { rows: [], total: 0 }
+    filter = sql`${where} and id = any(${[...scope.ids]})`
+  } else if ('cap' in scope) {
+    limit = sql`limit ${scope.cap}`
+  } else {
+    filter = sql`${where} ${searchAcross(searchColumns, scope.search)}`
+    limit = page(scope.page)
+  }
+
+  const [rows, count] = await Promise.all([
+    many<T>(db, sql`select ${columns} from employees where ${filter} order by full_name, id ${limit}`),
+    one<{ n: number }>(db, sql`select count(*)::int as n from employees where ${filter}`),
+  ])
+  return { rows, total: count.n }
+}
+
+export type DirectoryRow = Pick<Row<'employees'>,
+  | 'id' | 'full_name' | 'email' | 'role' | 'status' | 'band_code' | 'department'
+  | 'cost_centre' | 'onboarding_method' | 'manager_id' | 'top_of_hierarchy'
+>
+
+// The corporate settings/users table.
+export async function directory(db: Queryable, clientId: string, scope: ListScope): Promise<Listed<DirectoryRow>> {
+  return listEmployees<DirectoryRow>(
+    db,
+    sql`id, full_name, email, role, status, band_code, department, cost_centre,
+        onboarding_method, manager_id, top_of_hierarchy`,
+    sql`client_id = ${clientId}`,
+    scope,
+    [sql`full_name`, sql`email`, sql`department`, sql`cost_centre`]
+  )
+}
+
+export type RosterRow = Pick<Row<'employees'>,
+  'id' | 'full_name' | 'email' | 'band_code' | 'band_rank' | 'status' | 'manager_id' | 'top_of_hierarchy'>
+
+// A client's people as the TMC sees them. `missingManager` narrows to people
+// with no reporting line who are not the top by design -- the ones a 'manager'
+// approval step would resolve to nobody for. Ignored when resolving ids.
+export async function roster(
+  db: Queryable,
+  clientId: string,
+  scope: ListScope,
+  options: { missingManager?: boolean } = {}
+): Promise<Listed<RosterRow>> {
+  const missing = options.missingManager && !('ids' in scope)
+    ? sql`and manager_id is null and top_of_hierarchy is not true`
+    : empty
+  return listEmployees<RosterRow>(
+    db,
+    sql`id, full_name, email, band_code, band_rank, status, manager_id, top_of_hierarchy`,
+    sql`client_id = ${clientId} ${missing}`,
+    scope,
+    [sql`full_name`, sql`email`]
+  )
+}
+
+export async function findWithStatusInClient(
+  db: Queryable,
+  employeeId: string,
+  clientId: string
+): Promise<Pick<Row<'employees'>, 'id' | 'client_id' | 'status'> | null> {
+  return maybeOne(db, sql`
+    select id, client_id, status from employees where id = ${employeeId} and client_id = ${clientId}`)
+}
+
+export type CorporateEdit = Partial<Pick<Row<'employees'>, 'role' | 'status'>>
+
+export type CorporateEditResult = Pick<Row<'employees'>,
+  'id' | 'full_name' | 'email' | 'role' | 'status' | 'band_code' | 'manager_id'>
+
+const CORPORATE_EDITABLE = { role: sql`role`, status: sql`status` } as const
+
+// What a corporate admin may change about someone: role and status. Bands and
+// reporting lines are the TMC's (applyReportingEdit).
+export async function applyCorporateEdit(
+  db: Queryable,
+  employeeId: string,
+  patch: CorporateEdit
+): Promise<CorporateEditResult> {
+  return one<CorporateEditResult>(db, sql`
+    update employees set ${assignments(CORPORATE_EDITABLE, patch)}
+    where id = ${employeeId}
+    returning id, full_name, email, role, status, band_code, manager_id`)
+}
+
+// ═══ TMC side: reporting lines and bands ════════════════════════════════════
+
+export type ReportingTarget = Pick<Row<'employees'>, 'id' | 'client_id' | 'full_name' | 'top_of_hierarchy'>
+
+export async function reportingTarget(db: Queryable, employeeId: string): Promise<ReportingTarget | null> {
+  return maybeOne<ReportingTarget>(db, sql`
+    select id, client_id, full_name, top_of_hierarchy from employees where id = ${employeeId}`)
+}
+
+export type ReportingEdit = Partial<Pick<Row<'employees'>,
+  'manager_id' | 'top_of_hierarchy' | 'band_id' | 'band_code' | 'band_rank'>>
+
+export type ReportingEditResult = Pick<Row<'employees'>,
+  'id' | 'full_name' | 'manager_id' | 'top_of_hierarchy' | 'band_code' | 'band_rank'>
+
+const REPORTING_EDITABLE = {
+  manager_id: sql`manager_id`,
+  top_of_hierarchy: sql`top_of_hierarchy`,
+  band_id: sql`band_id`,
+  band_code: sql`band_code`,
+  band_rank: sql`band_rank`,
+} as const
+
+// band_code and band_rank travel with band_id: they are denormalised onto the
+// employee so policy resolution needs no join, and must never disagree with it.
+export async function applyReportingEdit(
+  db: Queryable,
+  employeeId: string,
+  patch: ReportingEdit
+): Promise<ReportingEditResult> {
+  return one<ReportingEditResult>(db, sql`
+    update employees set ${assignments(REPORTING_EDITABLE, patch)}
+    where id = ${employeeId}
+    returning id, full_name, manager_id, top_of_hierarchy, band_code, band_rank`)
 }

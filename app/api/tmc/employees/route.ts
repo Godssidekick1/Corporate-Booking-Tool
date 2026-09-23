@@ -1,9 +1,11 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
-import { parsePageParams, pagedResponse, ilikeAcross } from '@/app/lib/pagination'
+import { parsePageParams, pagedResponse } from '@/app/lib/pagination'
 import { NextRequest } from 'next/server'
 import { db } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
+import * as clients from '@/app/lib/repositories/clients'
+import { route } from '@/app/lib/http/handler'
 
 // ── GET /api/tmc/employees?clientId=<uuid> ──────────────────────────────────
 // Lists a client's employees with their band, for TMC-side screens that need to
@@ -26,7 +28,7 @@ import { db } from '@/app/lib/db'
 // so there is nothing per-employee left to assign.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function GET(req: NextRequest) {
+export const GET = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -40,8 +42,6 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'clientId is required' }, { status: 400 })
   }
 
-  const service = createServiceClient()
-
   // Passing clientId here also enforces per-client access for 'tc' callers,
   // not just the manage_policy permission itself.
   const auth = await requireTmcPermission(db, user.id, 'manage_policy', clientId)
@@ -51,11 +51,7 @@ export async function GET(req: NextRequest) {
 
   // Confirm the client belongs to the caller's TMC — a tmc_admin passes the
   // permission check for any clientId, so the tenancy boundary is checked here.
-  const { data: client } = await service
-    .from('clients')
-    .select('id, tmc_id')
-    .eq('id', clientId)
-    .maybeSingle()
+  const client = await clients.tenancy(db, clientId)
 
   if (!client || client.tmc_id !== auth.tmcId) {
     return Response.json({ error: 'Client not found for this TMC' }, { status: 404 })
@@ -74,36 +70,15 @@ export async function GET(req: NextRequest) {
   // and the engine auto-approves their manager steps rather than stalling.
   // It was missing from this select, so every consumer reading it got undefined
   // and counted the owner of a client as a misconfiguration.
-  let query = service
-    .from('employees')
-    .select(
-      'id, full_name, email, band_code, band_rank, status, manager_id, top_of_hierarchy',
-      { count: 'exact' }
-    )
-    .eq('client_id', clientId)
-    .order('full_name')
-
-  if (ids.length > 0) {
-    query = query.in('id', ids)
-  } else {
-    if (missingManager) {
-      query = query.is('manager_id', null).not('top_of_hierarchy', 'is', true)
-    }
-    const filter = ilikeAcross(['full_name', 'email'], params.search)
-    if (filter) query = query.or(filter)
-    query = query.range(params.from, params.to)
-  }
-
-  const { data: employees, error, count } = await query
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
-
-  const items = employees ?? []
+  const { rows: items, total } = await employees.roster(
+    db,
+    clientId,
+    ids.length > 0 ? { ids } : { search: params.search, page: params },
+    { missingManager }
+  )
 
   // `employees` is kept alongside `items` because this route's callers predate
   // the paged envelope. Same array, two names — dropping the old one would break
   // them for no gain, and keeping it costs a reference.
-  return Response.json({ ...pagedResponse(items, count ?? null, params), employees: items })
-}
+  return Response.json({ ...pagedResponse(items, total, params), employees: items })
+})

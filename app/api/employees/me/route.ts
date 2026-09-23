@@ -1,7 +1,9 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { NextRequest } from 'next/server'
 import type { TravelerProfile } from '@/app/lib/book/types'
+import { db } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
+import { route } from '@/app/lib/http/handler'
 
 // ── GET / PATCH /api/employees/me ─────────────────────────────────────────────
 // Self-service profile endpoint — an employee reading/writing their OWN
@@ -22,7 +24,7 @@ import type { TravelerProfile } from '@/app/lib/book/types'
 // depends on.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function GET() {
+export const GET = route(async () => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -30,14 +32,10 @@ export async function GET() {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-  const { data: employee, error } = await service
-    .from('employees')
-    .select('id, full_name, email, traveler_profile, first_login_completed')
-    .eq('id', user.id)
-    .maybeSingle()
+  // A database failure throws (500) rather than reading as "not found".
+  const employee = await employees.travellerRecord(db, user.id)
 
-  if (error || !employee) {
+  if (!employee) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
   }
 
@@ -45,10 +43,10 @@ export async function GET() {
     ok: true,
     fullName: employee.full_name,
     email: employee.email,
-    travelerProfile: employee.traveler_profile as TravelerProfile | null,
+    travelerProfile: employee.traveler_profile,
     firstLoginCompleted: employee.first_login_completed,
   })
-}
+})
 
 const VALID_TITLES = ['MR', 'MRS', 'MS', 'MSTR', 'MISS']
 const VALID_GENDERS = ['Male', 'Female']
@@ -125,7 +123,7 @@ function validateTravelerProfile(body: unknown): { profile?: TravelerProfile; er
   }
 }
 
-export async function PATCH(req: NextRequest) {
+export const PATCH = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -136,23 +134,19 @@ export async function PATCH(req: NextRequest) {
   const body = await req.json()
   const { profile, error: validationError } = validateTravelerProfile(body)
 
-  if (validationError) {
+  if (validationError || !profile) {
     return Response.json({ error: validationError }, { status: 400 })
   }
 
-  const service = createServiceClient()
-  const { data: updated, error } = await service
-    .from('employees')
-    .update({
-      traveler_profile: profile,
-      first_login_completed: true,
-    })
-    .eq('id', user.id)
-    .select('id, traveler_profile, first_login_completed')
-    .maybeSingle()
+  let updated: employees.SavedTravellerProfile | null
+  try {
+    updated = await employees.saveTravellerProfile(db, user.id, profile)
+  } catch (err) {
+    console.error('Traveler profile update error:', err)
+    updated = null
+  }
 
-  if (error || !updated) {
-    console.error('Traveler profile update error:', error)
+  if (!updated) {
     return Response.json({ error: 'Could not save your profile' }, { status: 500 })
   }
 
@@ -161,4 +155,4 @@ export async function PATCH(req: NextRequest) {
     travelerProfile: updated.traveler_profile,
     firstLoginCompleted: updated.first_login_completed,
   })
-}
+})
