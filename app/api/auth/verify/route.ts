@@ -1,5 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
-import { createServiceClient } from '@/utils/supabase/service'
+import { db } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
+import { route } from '@/app/lib/http/handler'
 import { cookies } from 'next/headers'
 import { NextRequest } from 'next/server'
 import type { EmailOtpType } from '@supabase/supabase-js'
@@ -21,7 +23,7 @@ interface VerifyBody {
   next: string
 }
 
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const body: VerifyBody = await req.json()
   const { tokenHash, type, code, next } = body
 
@@ -71,22 +73,14 @@ export async function POST(req: NextRequest) {
     return Response.json({ ok: false, error: 'Could not verify your session. Please try again.' }, { status: 400 })
   }
 
-  // Use service client for employee lookup — bypasses RLS which may not be
-  // set up for a brand new invited user yet.
-  const service = createServiceClient()
-  const { data: employee } = await service
-    .from('employees')
-    .select('role, status')
-    .eq('id', user.id)
-    .maybeSingle()
+  // Read with the application's connection -- RLS may not be set up for a
+  // brand new invited user yet.
+  const employee = await employees.roleAndStatus(db, user.id)
 
   // First successful login after an email invite — flip invited -> active.
   // Direct-created employees are already 'active' so this is a no-op for them.
   if (employee?.status === 'invited') {
-    await service
-      .from('employees')
-      .update({ status: 'active' })
-      .eq('id', user.id)
+    await employees.activateIfInvited(db, user.id)
   }
 
   let destination = next && next !== '/' ? next : null
@@ -102,4 +96,4 @@ export async function POST(req: NextRequest) {
   }
 
   return Response.json({ ok: true, destination })
-}
+})

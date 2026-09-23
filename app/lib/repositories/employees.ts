@@ -1,4 +1,4 @@
-import { sql, many, maybeOne, type Queryable } from '@/app/lib/db/sql'
+import { sql, many, maybeOne, exec, type Queryable } from '@/app/lib/db/sql'
 import type { Row } from '@/app/lib/db/types.generated'
 
 // ── Employees, bands and access ──────────────────────────────────────────────
@@ -94,4 +94,36 @@ export type SessionProfile = Pick<Row<'employees'>, 'role' | 'first_login_comple
 export async function sessionProfile(db: Queryable, userId: string): Promise<SessionProfile | null> {
   return maybeOne<SessionProfile>(db, sql`
     select role, first_login_completed from employees where id = ${userId}`)
+}
+
+// ═══ Sign-in and activation ═════════════════════════════════════════════════
+
+export type RoleAndStatus = Pick<Row<'employees'>, 'role' | 'status'>
+
+export async function roleAndStatus(db: Queryable, employeeId: string): Promise<RoleAndStatus | null> {
+  return maybeOne<RoleAndStatus>(db, sql`select role, status from employees where id = ${employeeId}`)
+}
+
+// First successful sign-in after an email invite: invited -> active. A no-op
+// for anyone else, which is why the status is part of the WHERE rather than a
+// read-then-write -- two tabs finishing an invite at once cannot race it.
+export async function activateIfInvited(db: Queryable, employeeId: string): Promise<boolean> {
+  const n = await exec(db, sql`
+    update employees set status = 'active' where id = ${employeeId} and status = 'invited'`)
+  return n > 0
+}
+
+// Whether the company this person belongs to is still in service. TMC staff
+// carry no client_id and get { client_id: null, client_status: null }.
+export interface ClientStanding {
+  client_id: string | null
+  client_status: string | null
+}
+
+export async function clientStanding(db: Queryable, employeeId: string): Promise<ClientStanding | null> {
+  return maybeOne<ClientStanding>(db, sql`
+    select e.client_id, c.status as client_status
+    from employees e
+    left join clients c on c.id = e.client_id
+    where e.id = ${employeeId}`)
 }

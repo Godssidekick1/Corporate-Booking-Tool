@@ -1,5 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
+import { db } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
+import { route } from '@/app/lib/http/handler'
 import { NextRequest } from 'next/server'
 
 // ── POST /api/auth/signin ────────────────────────────────────────────────────
@@ -17,7 +19,7 @@ import { NextRequest } from 'next/server'
 // is where it is refused.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const { email, password } = await req.json()
 
   if (!email || !password) {
@@ -42,30 +44,20 @@ export async function POST(req: NextRequest) {
   // people who belong TO a client. A read failure lets them through: the whole
   // clientGates module fails open for the same reason, and locking a company out
   // of its travel tool over a database blip is the worse mistake.
-  // Two reads rather than an FK embed. PostgREST types a nested select as an
-  // array even for a to-one relationship, so the embed needs a cast to be
-  // usable — and this file is the last place to be clever about types, since
-  // getting it wrong either locks everyone out or lets everyone in. Two plain
-  // reads say what they mean. It also matches /api/approvals, which does its
-  // joins the same way and for the same reason.
-  const service = createServiceClient()
-  const { data: employee } = await service
-    .from('employees')
-    .select('client_id')
-    .eq('id', data.user.id)
-    .maybeSingle()
-
-  let clientStatus: string | null = null
-  if (employee?.client_id) {
-    const { data: client } = await service
-      .from('clients')
-      .select('status')
-      .eq('id', employee.client_id)
-      .maybeSingle()
-    clientStatus = client?.status ?? null
+  //
+  // One LEFT JOIN. The two separate reads that used to be here existed because
+  // PostgREST typed a to-one embed as an array; SQL has no such problem.
+  //
+  // The repository THROWS on a database failure, so the fail-open described
+  // above is now an explicit catch rather than a discarded error.
+  let standing: employees.ClientStanding | null = null
+  try {
+    standing = await employees.clientStanding(db, data.user.id)
+  } catch (err) {
+    console.error('[signin] client standing check failed; letting the sign-in through', err)
   }
 
-  if (employee?.client_id && clientStatus === 'inactive') {
+  if (standing?.client_id && standing.client_status === 'inactive') {
     // Sign back out before answering. Without this the cookie set by
     // signInWithPassword above stays on the response and the browser is left
     // holding a valid session for an account we have just refused — every
@@ -84,4 +76,4 @@ export async function POST(req: NextRequest) {
       email: data.user.email,
     },
   })
-}
+})
