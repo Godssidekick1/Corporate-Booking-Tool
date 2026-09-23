@@ -1,6 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { createDbClient } from '@/app/lib/db/client'
-import { createDualRunClient } from '@/app/lib/db/dualRun'
 import type { QueryBuilder } from '@/app/lib/db/builder'
 
 // ── The swap point ───────────────────────────────────────────────────────────
@@ -23,8 +22,10 @@ import type { QueryBuilder } from '@/app/lib/db/builder'
 //   pg        (default) data through the shim
 //   postgrest             data through Supabase, as before -- the rollback
 //
-// DB_DUAL_RUN=1 runs READS through both and logs where they disagree. See
-// app/lib/db/dualRun.ts.
+// STAGE 2: this file is being retired. Routes move one at a time onto typed
+// repositories (app/lib/repositories) and stop calling createServiceClient()
+// for data. When the last one has, this becomes utils/supabase/admin.ts --
+// auth only -- and DB_DRIVER is deleted.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // The compatibility surface. `from` is typed with an `any` default rather than
@@ -102,10 +103,6 @@ function announceDriver(driver: 'pg' | 'postgrest'): void {
 
   const target = driver === 'pg' ? 'PostgreSQL (direct)' : 'Supabase PostgREST (HTTP)'
   console.info(`[db] data -> ${target}; auth -> Supabase GoTrue. (${why})`)
-
-  if (process.env.DB_DUAL_RUN === '1') {
-    console.info('[db] DB_DUAL_RUN is on: reads run through both drivers and divergence is logged. Writes do not.')
-  }
 }
 
 export function createServiceClient(): ServiceClient {
@@ -123,12 +120,8 @@ export function createServiceClient(): ServiceClient {
 
   const pg = createDbClient()
 
-  const data = process.env.DB_DUAL_RUN === '1'
-    ? createDualRunClient(pg, supabase)
-    : pg
-
   return {
-    from: data.from.bind(data),
+    from: pg.from.bind(pg),
     // Not proxied, not reimplemented. GoTrue owns users this stage.
     auth: supabase.auth,
   } as ServiceClient
