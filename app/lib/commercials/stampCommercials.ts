@@ -12,6 +12,7 @@ import type { FareComponents } from './fareComponents'
 import type { FareType, CommercialKind } from './calcOnByKind'
 import type { FlatFlightResult } from '@/app/lib/book/types'
 import { cabinLetter } from '@/app/lib/book/cabin'
+import { db } from '@/app/lib/db'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
 
@@ -140,7 +141,7 @@ export async function loadCommercialContext(
 
     const [gates, { data: ruleRows }, { data: bucketRows }, { data: assignmentRows }, { data: categories }] =
       await Promise.all([
-        loadClientGates(service, clientId),
+        loadClientGates(db, clientId),
         service.from('commercial_rules').select(RULE_COLUMNS).eq('tmc_id', client.tmc_id),
         service.from('bucket_clients').select('bucket_id').eq('client_id', clientId),
         service

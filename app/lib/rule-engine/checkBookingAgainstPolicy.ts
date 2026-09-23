@@ -2,6 +2,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { resolveEffectivePolicy, PolicyBlocked } from './resolveEffectivePolicy'
 import { evaluateBooking, VerdictResult } from './evaluateBooking'
 import { loadClientGates } from '@/app/lib/clients/clientGates'
+import { db } from '@/app/lib/db'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
 
@@ -41,7 +42,7 @@ export async function checkBookingAgainstPolicy(
     .eq('id', input.employeeId)
     .maybeSingle()
 
-  const gates = await loadClientGates(service, employee?.client_id)
+  const gates = await loadClientGates(db, employee?.client_id)
 
   if (!gates.policyControlling) {
     return {

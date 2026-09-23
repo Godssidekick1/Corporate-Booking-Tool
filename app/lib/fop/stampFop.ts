@@ -2,6 +2,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { resolveFop, type ResolvableFopAssignment, type ResolvedFop } from './resolveFop'
 import { loadClientGates } from '@/app/lib/clients/clientGates'
 import type { FlatFlightResult } from '@/app/lib/book/types'
+import { db } from '@/app/lib/db'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
 
@@ -66,7 +67,7 @@ export async function stampFop(
 
     // Which payer types this client permits. Read here rather than inside
     // resolveFop so that function stays pure and testable without a database.
-    const gates = await loadClientGates(service, clientId)
+    const gates = await loadClientGates(db, clientId)
 
     const bucketIds = (bucketRows ?? []).map(b => b.bucket_id)
 
