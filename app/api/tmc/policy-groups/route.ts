@@ -3,6 +3,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { getBandRanksByGroup } from '@/app/lib/rule-engine/linkedPolicyGroups'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── GET /api/tmc/policy-groups?search=<text> ──────────────────────────────
 // Lists policy groups — reusable templates, no longer scoped to one
@@ -50,7 +51,7 @@ export async function GET(req: NextRequest) {
   // manage_policy is checked without a specific clientId — groups are
   // global templates now, so this just confirms the caller has
   // manage_policy on SOME scope (their TMC), not on one particular client.
-  const auth = await requireTmcPermission(service, user.id, 'manage_policy')
+  const auth = await requireTmcPermission(db, user.id, 'manage_policy')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
@@ -113,7 +114,7 @@ export async function POST(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, user.id, 'manage_policy')
+  const auth = await requireTmcPermission(db, user.id, 'manage_policy')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }

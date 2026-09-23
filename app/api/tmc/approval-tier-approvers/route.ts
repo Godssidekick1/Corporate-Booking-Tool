@@ -2,6 +2,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── /api/tmc/approval-tier-approvers ─────────────────────────────────────────
 // Who fills each step of one approval chain at one client.
@@ -41,7 +42,7 @@ async function authorise(
   clientId: string,
   templateId: string
 ): Promise<{ ok: true } | { ok: false; error: string; status: number }> {
-  const auth = await requireTmcPermission(service, userId, 'manage_approvals', clientId)
+  const auth = await requireTmcPermission(db, userId, 'manage_approvals', clientId)
   if (!auth.authorized || !auth.tmcId) {
     return { ok: false, error: auth.error ?? 'Forbidden', status: auth.status ?? 403 }
   }

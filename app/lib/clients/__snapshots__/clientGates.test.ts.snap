@@ -1,0 +1,64 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`loadClientGates > no client id is permissive 1`] = `
+{
+  "active": true,
+  "allowedPayers": [
+    "agency",
+    "corporate",
+    "traveller",
+  ],
+  "allowedPaymentTypes": [
+    "agency",
+    "bta_cta",
+    "bta_cta_manual",
+    "corporate",
+  ],
+  "bookingActivation": true,
+  "domTicketing": true,
+  "enabledCommercialKinds": [],
+  "holdActivation": true,
+  "intlTicketing": true,
+  "paymentPriority": [
+    "corporate",
+    "agency",
+    "bta_cta",
+    "bta_cta_manual",
+  ],
+  "personalBookingsAllowed": false,
+  "policyControlling": true,
+}
+`;
+
+exports[`loadClientGates > reads a real client 1`] = `
+{
+  "active": true,
+  "allowedPayers": [
+    "agency",
+    "corporate",
+    "traveller",
+  ],
+  "allowedPaymentTypes": [
+    "agency",
+    "bta_cta",
+    "corporate",
+  ],
+  "bookingActivation": true,
+  "domTicketing": true,
+  "enabledCommercialKinds": [
+    "discount",
+    "markup",
+    "processing_fee",
+  ],
+  "holdActivation": true,
+  "intlTicketing": true,
+  "paymentPriority": [
+    "corporate",
+    "agency",
+    "bta_cta",
+    "bta_cta_manual",
+  ],
+  "personalBookingsAllowed": false,
+  "policyControlling": true,
+}
+`;

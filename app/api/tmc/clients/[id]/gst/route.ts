@@ -3,6 +3,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { gstinFinding } from '@/app/lib/data/gstin'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── /api/tmc/clients/[id]/gst ────────────────────────────────────────────────
 // The GST registrations a client bills under.
@@ -49,7 +50,7 @@ async function authorise(clientId: string) {
   }
 
   const service = createServiceClient()
-  const check = await requireTmcPermission(service, user.id, 'manage_clients', clientId)
+  const check = await requireTmcPermission(db, user.id, 'manage_clients', clientId)
   if (!check.authorized || !check.tmcId) {
     return { error: Response.json({ error: check.error ?? 'Forbidden' }, { status: check.status ?? 403 }) }
   }

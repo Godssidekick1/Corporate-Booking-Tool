@@ -6,6 +6,7 @@ import { describeVia } from '@/app/lib/commercials/resolveCommercials'
 import { isCommercialKind, type CommercialKind } from '@/app/lib/commercials/calcOnByKind'
 import { RULE_COLUMNS, validateRule, type RuleBody, type CommercialRuleRow } from '../route'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── /api/tmc/commercial-rules/[id] ───────────────────────────────────────────
 // One rule, with the targets it reaches.
@@ -21,7 +22,7 @@ async function authorise(ruleId: string) {
   }
 
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, user.id, 'manage_commercials')
+  const auth = await requireTmcPermission(db, user.id, 'manage_commercials')
   if (!auth.authorized || !auth.tmcId) {
     return { error: Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 }) }
   }

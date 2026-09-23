@@ -4,6 +4,7 @@ import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic, CustomerInfo } from '
 import { loadClientGates } from '@/app/lib/clients/clientGates'
 import { NextRequest } from 'next/server'
 import util from 'util'
+import { db } from '@/app/lib/db'
 
 // ── POST /api/book/book ───────────────────────────────────────────────────────
 // Fourth step (search → price → add-passenger → book → ticket). Commits the
@@ -128,7 +129,7 @@ export async function POST(req: NextRequest) {
   // This route creates the PNR, which in this app IS the hold: booking and
   // ticketing are separate routes, so a confirmed-but-unticketed booking is
   // exactly what "hold" means. Both switches therefore land here.
-  const gates = await loadClientGates(service, employee.client_id)
+  const gates = await loadClientGates(db, employee.client_id)
 
   if (!gates.bookingActivation) {
     return Response.json(

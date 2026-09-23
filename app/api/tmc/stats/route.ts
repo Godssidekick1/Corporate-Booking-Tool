@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission, getAccessibleClientIds } from '@/app/lib/permissions/requireTmcPermission'
+import { db } from '@/app/lib/db'
 
 // ── GET /api/tmc/stats ───────────────────────────────────────────────────────
 // Booking activity across the TMC's clients, for the dashboard.
@@ -38,7 +39,7 @@ export async function GET() {
 
   // No specific clientId — this is a whole-portfolio view, and which slice of
   // it the caller may see is decided by getAccessibleClientIds below.
-  const auth = await requireTmcPermission(service, user.id, 'view_reports')
+  const auth = await requireTmcPermission(db, user.id, 'view_reports')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
@@ -49,7 +50,7 @@ export async function GET() {
     .eq('id', user.id)
     .single()
 
-  const accessibleIds = await getAccessibleClientIds(service, user.id, caller?.role ?? 'tc')
+  const accessibleIds = await getAccessibleClientIds(db, user.id, caller?.role ?? 'tc')
 
   let clientQuery = service
     .from('clients')

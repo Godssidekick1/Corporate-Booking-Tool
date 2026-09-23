@@ -3,6 +3,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { getAccessibleClientIds } from '@/app/lib/permissions/requireTmcPermission'
 import { parsePageParams, pagedResponse, ilikeAcross } from '@/app/lib/pagination'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── GET /api/tmc/clients ─────────────────────────────────────────────────────
 // Paged. Serves both the clients table and every client picker in the app, so
@@ -37,7 +38,7 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  const accessibleIds = await getAccessibleClientIds(service, user.id, caller.role)
+  const accessibleIds = await getAccessibleClientIds(db, user.id, caller.role)
   const params = parsePageParams(req.nextUrl.searchParams)
   const ids = req.nextUrl.searchParams.get('ids')?.split(',').filter(Boolean) ?? []
   const includeInactive = req.nextUrl.searchParams.get('includeInactive') === '1'

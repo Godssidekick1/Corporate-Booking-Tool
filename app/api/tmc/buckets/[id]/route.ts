@@ -2,6 +2,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── /api/tmc/buckets/[id] ────────────────────────────────────────────────────
 // GET     the bucket, its client members, and which deal codes target it
@@ -11,7 +12,7 @@ import { NextRequest } from 'next/server'
 
 async function authorise(userId: string, id: string) {
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, userId, 'manage_deal_codes')
+  const auth = await requireTmcPermission(db, userId, 'manage_deal_codes')
 
   if (!auth.authorized || !auth.tmcId) {
     return { ok: false as const, service, error: auth.error ?? 'Forbidden', status: auth.status ?? 403 }

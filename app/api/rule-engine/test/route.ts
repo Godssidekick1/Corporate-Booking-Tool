@@ -3,6 +3,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { checkBookingAgainstPolicy } from '@/app/lib/rule-engine/checkBookingAgainstPolicy'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── POST /api/rule-engine/test ────────────────────────────────────────────────
 // Directly invokes the Rule Engine with manually-supplied booking values —
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Employee not found' }, { status: 404 })
   }
 
-  const auth = await requireTmcPermission(service, user.id, 'manage_policy', employee.client_id)
+  const auth = await requireTmcPermission(db, user.id, 'manage_policy', employee.client_id)
   if (!auth.authorized) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }

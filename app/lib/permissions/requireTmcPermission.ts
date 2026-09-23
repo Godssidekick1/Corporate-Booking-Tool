@@ -1,6 +1,5 @@
-import { createServiceClient } from '@/utils/supabase/service'
-
-type ServiceClient = ReturnType<typeof createServiceClient>
+import type { Queryable } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
 
 export interface TmcCallerCheck {
   authorized: boolean
@@ -16,21 +15,22 @@ export interface TmcCallerCheck {
 // clientId is provided — must also have explicit access to that client.
 // Always queries fresh; never trust a permissions array passed in from
 // the client.
+//
+// A DATABASE FAILURE NOW THROWS. It used to come back as { error }, which this
+// function read the same way as a missing row -- so an outage told the caller
+// "Employee record not found" (404). A route wrapped in route() turns the
+// throw into a 500 that says what actually happened.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function requireTmcPermission(
-  service: ServiceClient,
+  db: Queryable,
   userId: string,
   permissionKey: string,
   clientId?: string
 ): Promise<TmcCallerCheck> {
-  const { data: caller, error: callerError } = await service
-    .from('employees')
-    .select('role, tmc_id, status')
-    .eq('id', userId)
-    .single()
+  const caller = await employees.accessProfile(db, userId)
 
-  if (callerError || !caller) {
+  if (!caller) {
     return { authorized: false, error: 'Employee record not found', status: 404 }
   }
 
@@ -47,28 +47,12 @@ export async function requireTmcPermission(
   }
 
   // caller.role === 'tc' — must have the specific permission
-  const { data: perm } = await service
-    .from('employee_permissions')
-    .select('permission_key')
-    .eq('employee_id', userId)
-    .eq('permission_key', permissionKey)
-    .maybeSingle()
-
-  if (!perm) {
+  if (!(await employees.hasPermission(db, userId, permissionKey))) {
     return { authorized: false, error: `Missing permission: ${permissionKey}`, status: 403 }
   }
 
-  if (clientId) {
-    const { data: access } = await service
-      .from('employee_client_access')
-      .select('client_id')
-      .eq('employee_id', userId)
-      .eq('client_id', clientId)
-      .maybeSingle()
-
-    if (!access) {
-      return { authorized: false, error: 'No access to this client', status: 403 }
-    }
+  if (clientId && !(await employees.hasClientAccess(db, userId, clientId))) {
+    return { authorized: false, error: 'No access to this client', status: 403 }
   }
 
   return { authorized: true, role: caller.role, tmcId: caller.tmc_id }
@@ -80,16 +64,10 @@ export async function requireTmcPermission(
 // tc gets the explicit list from employee_client_access (possibly empty).
 
 export async function getAccessibleClientIds(
-  service: ServiceClient,
+  db: Queryable,
   userId: string,
   role: string
 ): Promise<string[] | null> {
   if (role === 'tmc_admin') return null
-
-  const { data: access } = await service
-    .from('employee_client_access')
-    .select('client_id')
-    .eq('employee_id', userId)
-
-  return (access ?? []).map(a => a.client_id)
+  return employees.accessibleClientIds(db, userId)
 }

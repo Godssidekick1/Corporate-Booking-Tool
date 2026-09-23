@@ -2,6 +2,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── /api/tmc/deal-code-assignments ───────────────────────────────────────────
 // Who a deal reaches. This is the column that used to live on the deal itself,
@@ -40,7 +41,7 @@ export async function GET(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, user.id, 'manage_deal_codes')
+  const auth = await requireTmcPermission(db, user.id, 'manage_deal_codes')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
@@ -77,7 +78,7 @@ export async function POST(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, user.id, 'manage_deal_codes')
+  const auth = await requireTmcPermission(db, user.id, 'manage_deal_codes')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
@@ -155,7 +156,7 @@ export async function DELETE(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, user.id, 'manage_deal_codes')
+  const auth = await requireTmcPermission(db, user.id, 'manage_deal_codes')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }

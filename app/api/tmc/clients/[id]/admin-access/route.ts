@@ -3,6 +3,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { inviteRedirectUrl } from '@/app/lib/onboarding/onboardTmc'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── /api/tmc/clients/[id]/admin-access ───────────────────────────────────────
 // GET   the client's corporate admins, so the TMC can see who can let people in
@@ -25,7 +26,7 @@ import { NextRequest } from 'next/server'
 
 async function authorise(userId: string, clientId: string) {
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, userId, 'manage_clients', clientId)
+  const auth = await requireTmcPermission(db, userId, 'manage_clients', clientId)
 
   if (!auth.authorized || !auth.tmcId) {
     return { ok: false as const, error: auth.error ?? 'Forbidden', status: auth.status ?? 403 }

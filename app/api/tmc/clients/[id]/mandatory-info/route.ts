@@ -2,6 +2,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── /api/tmc/clients/[id]/mandatory-info ─────────────────────────────────────
 // The entries a booking for this client must carry, and the GDS command each
@@ -32,7 +33,7 @@ const COLUMNS = 'id, code, description, type, gds_entry, value_prefix, is_mandat
 
 async function authorise(userId: string, clientId: string) {
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, userId, 'manage_clients', clientId)
+  const auth = await requireTmcPermission(db, userId, 'manage_clients', clientId)
 
   if (!auth.authorized || !auth.tmcId) {
     return { ok: false as const, error: auth.error ?? 'Forbidden', status: auth.status ?? 403 }

@@ -1,0 +1,7 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`getAccessibleClientIds > a tc gets exactly their granted clients 1`] = `
+[
+  "b5005d4e-b813-4f10-ae59-1b0f5257357e",
+]
+`;

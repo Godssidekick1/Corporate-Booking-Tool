@@ -3,6 +3,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { parsePageParams, pagedResponse, ilikeAcross } from '@/app/lib/pagination'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── GET /api/tmc/employees?clientId=<uuid> ──────────────────────────────────
 // Lists a client's employees with their band, for TMC-side screens that need to
@@ -43,7 +44,7 @@ export async function GET(req: NextRequest) {
 
   // Passing clientId here also enforces per-client access for 'tc' callers,
   // not just the manage_policy permission itself.
-  const auth = await requireTmcPermission(service, user.id, 'manage_policy', clientId)
+  const auth = await requireTmcPermission(db, user.id, 'manage_policy', clientId)
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }

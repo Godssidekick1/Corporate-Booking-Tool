@@ -8,6 +8,7 @@ import {
 } from '@/app/lib/deal-codes/resolveDealCodes'
 import { parsePageParams, paginateInMemory } from '@/app/lib/pagination'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── GET /api/tmc/deal-codes/effective ────────────────────────────────────────
 // Coverage: which code actually applies, for every client, and why.
@@ -48,7 +49,7 @@ export async function GET(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, user.id, 'manage_deal_codes')
+  const auth = await requireTmcPermission(db, user.id, 'manage_deal_codes')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
@@ -58,7 +59,7 @@ export async function GET(req: NextRequest) {
   // client detail page reuses this endpoint for its own section.
   const onlyClientId = req.nextUrl.searchParams.get('clientId')
 
-  const accessibleIds = await getAccessibleClientIds(service, user.id, auth.role ?? '')
+  const accessibleIds = await getAccessibleClientIds(db, user.id, auth.role ?? '')
 
   let clientQuery = service
     .from('clients')

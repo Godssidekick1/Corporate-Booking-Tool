@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
+import { db } from '@/app/lib/db'
 
 // ── GET /api/tmc/fop-codes ───────────────────────────────────────────────────
 // The two code lists a form of payment is built from.
@@ -41,7 +42,7 @@ export async function GET() {
   }
 
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, user.id, 'manage_fops')
+  const auth = await requireTmcPermission(db, user.id, 'manage_fops')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }

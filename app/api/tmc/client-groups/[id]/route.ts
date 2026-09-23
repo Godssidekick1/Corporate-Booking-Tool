@@ -8,6 +8,7 @@ import {
   type ClientGroupBody,
 } from '../route'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 export async function PATCH(
   req: NextRequest,
@@ -23,7 +24,7 @@ export async function PATCH(
 
   const service = createServiceClient()
 
-  const auth = await requireTmcPermission(service, user.id, 'manage_client_groups')
+  const auth = await requireTmcPermission(db, user.id, 'manage_client_groups')
   if (!auth.authorized) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }
@@ -89,7 +90,7 @@ export async function DELETE(
 
   const service = createServiceClient()
 
-  const auth = await requireTmcPermission(service, user.id, 'manage_client_groups')
+  const auth = await requireTmcPermission(db, user.id, 'manage_client_groups')
   if (!auth.authorized) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }

@@ -3,6 +3,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { MODES, QUORUMS, validateTiers } from '../route'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── PATCH /api/tmc/approval-templates/[id] ───────────────────────────────────
 // Edits a chain's name, its steps, or its mode. Not its approvers — those are
@@ -59,7 +60,7 @@ export async function PATCH(
     return Response.json({ error: 'Approval template not found' }, { status: 404 })
   }
 
-  const auth = await requireTmcPermission(service, user.id, 'manage_approvals')
+  const auth = await requireTmcPermission(db, user.id, 'manage_approvals')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
@@ -161,7 +162,7 @@ export async function DELETE(
     return Response.json({ error: 'Approval template not found' }, { status: 404 })
   }
 
-  const auth = await requireTmcPermission(service, user.id, 'manage_approvals')
+  const auth = await requireTmcPermission(db, user.id, 'manage_approvals')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }

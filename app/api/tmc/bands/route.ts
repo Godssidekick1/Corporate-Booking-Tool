@@ -2,6 +2,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── GET /api/tmc/bands?clientId=<uuid> ──────────────────────────────────────
 // A client's bands, ordered by rank, with a count of employees on each so an
@@ -30,7 +31,7 @@ export async function authoriseBandAccess(
   userId: string,
   clientId: string
 ): Promise<{ ok: true } | { ok: false; error: string; status: number }> {
-  const auth = await requireTmcPermission(service, userId, 'manage_policy', clientId)
+  const auth = await requireTmcPermission(db, userId, 'manage_policy', clientId)
   if (!auth.authorized || !auth.tmcId) {
     return { ok: false, error: auth.error ?? 'Forbidden', status: auth.status ?? 403 }
   }

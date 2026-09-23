@@ -3,6 +3,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { APPROVAL_CATEGORIES } from '@/app/lib/approval-engine/resolveApprovalTier'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── GET /api/tmc/approval-templates?search=<text> ────────────────────────────
 // Lists the caller's TMC's approval templates. A template is the reusable
@@ -92,7 +93,7 @@ export async function GET(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, user.id, 'manage_approvals')
+  const auth = await requireTmcPermission(db, user.id, 'manage_approvals')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
@@ -163,7 +164,7 @@ export async function POST(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, user.id, 'manage_approvals')
+  const auth = await requireTmcPermission(db, user.id, 'manage_approvals')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }

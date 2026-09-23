@@ -10,6 +10,7 @@ import {
 import { KIND_LABELS, type CommercialKind } from '@/app/lib/commercials/calcOnByKind'
 import { RULE_COLUMNS } from '@/app/api/tmc/commercial-rules/route'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── GET /api/tmc/clients/[id]/commercials ────────────────────────────────────
 // The markup, discount and processing fee in force for ONE client, for
@@ -67,7 +68,7 @@ export async function GET(
   }
 
   const service = createServiceClient()
-  const check = await requireTmcPermission(service, user.id, 'manage_clients', id)
+  const check = await requireTmcPermission(db, user.id, 'manage_clients', id)
   if (!check.authorized || !check.tmcId) {
     return Response.json({ error: check.error ?? 'Forbidden' }, { status: check.status ?? 403 })
   }

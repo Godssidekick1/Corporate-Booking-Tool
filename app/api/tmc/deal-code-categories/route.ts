@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
+import { db } from '@/app/lib/db'
 
 // ── GET /api/tmc/deal-code-categories ────────────────────────────────────────
 // The TMC's airline categories, each with the code types it permits.
@@ -43,7 +44,7 @@ export async function GET() {
   }
 
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, user.id, 'manage_deal_codes')
+  const auth = await requireTmcPermission(db, user.id, 'manage_deal_codes')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }

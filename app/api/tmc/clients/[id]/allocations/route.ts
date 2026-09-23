@@ -2,6 +2,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── GET /api/tmc/clients/[id]/allocations ────────────────────────────────────
 // Every deal code and form of payment that REACHES this client, and how.
@@ -60,7 +61,7 @@ export async function GET(
   }
 
   const service = createServiceClient()
-  const check = await requireTmcPermission(service, user.id, 'manage_clients', id)
+  const check = await requireTmcPermission(db, user.id, 'manage_clients', id)
   if (!check.authorized || !check.tmcId) {
     return Response.json({ error: check.error ?? 'Forbidden' }, { status: check.status ?? 403 })
   }

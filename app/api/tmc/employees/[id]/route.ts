@@ -3,6 +3,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { validateManagerAssignment } from '@/app/lib/hierarchy/validateManagerAssignment'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── PATCH /api/tmc/employees/[id] ────────────────────────────────────────────
 // Sets a client employee's reporting line and band.
@@ -52,7 +53,7 @@ export async function PATCH(
 
   // Passing clientId also enforces per-client access for 'tc' callers, not
   // just the manage_users permission itself.
-  const auth = await requireTmcPermission(service, user.id, 'manage_users', target.client_id)
+  const auth = await requireTmcPermission(db, user.id, 'manage_users', target.client_id)
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }

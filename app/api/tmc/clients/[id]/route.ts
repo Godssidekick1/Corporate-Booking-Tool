@@ -3,6 +3,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { PAYMENT_TYPES, type PaymentType } from '@/app/lib/fop/paymentTypes'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── GET /api/tmc/clients/[id] ─────────────────────────────────────────────
 // Full detail view of one client client. tmc_admin sees any of their
@@ -174,7 +175,7 @@ export async function PATCH(
 
   const service = createServiceClient()
 
-  const auth = await requireTmcPermission(service, user.id, 'manage_clients', id)
+  const auth = await requireTmcPermission(db, user.id, 'manage_clients', id)
   if (!auth.authorized) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }
@@ -448,7 +449,7 @@ export async function DELETE(
 
   // manage_clients, matching PATCH. Deactivating a client is a bigger act than
   // editing one, so anything narrower would be wrong.
-  const auth = await requireTmcPermission(service, user.id, 'manage_clients', id)
+  const auth = await requireTmcPermission(db, user.id, 'manage_clients', id)
   if (!auth.authorized) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }

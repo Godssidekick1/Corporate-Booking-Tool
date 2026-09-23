@@ -12,6 +12,7 @@ import {
   type CommercialKind, type CalcOn,
 } from '@/app/lib/commercials/calcOnByKind'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── /api/tmc/commercial-rules ────────────────────────────────────────────────
 // Markup, discount and processing fee. One table, one route, `?kind=` to
@@ -155,7 +156,7 @@ export async function GET(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, user.id, 'manage_commercials')
+  const auth = await requireTmcPermission(db, user.id, 'manage_commercials')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
@@ -231,7 +232,7 @@ export async function POST(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, user.id, 'manage_commercials')
+  const auth = await requireTmcPermission(db, user.id, 'manage_commercials')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }

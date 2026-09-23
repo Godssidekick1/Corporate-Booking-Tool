@@ -3,6 +3,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { parsePageParams, pagedResponse, ilikeAcross } from '@/app/lib/pagination'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── GET /api/tmc/traveler-profiles?clientId=<uuid> ──────────────────────────
 // Every employee at a client with the details the list needs up front — name,
@@ -18,7 +19,7 @@ export async function authoriseClient(
   userId: string,
   clientId: string
 ): Promise<{ ok: true; tmcId: string } | { ok: false; error: string; status: number }> {
-  const auth = await requireTmcPermission(service, userId, 'manage_users', clientId)
+  const auth = await requireTmcPermission(db, userId, 'manage_users', clientId)
   if (!auth.authorized || !auth.tmcId) {
     return { ok: false, error: auth.error ?? 'Forbidden', status: auth.status ?? 403 }
   }

@@ -4,6 +4,7 @@ import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission
 import { fopStatus, describeFop } from '@/app/lib/fop/fopStatus'
 import { FOP_COLUMNS, validateFop, normaliseFop, deriveFopType, claimDefault } from '../route'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── /api/tmc/forms-of-payment/[id] ───────────────────────────────────────────
 // GET     one, with its assignments resolved to names
@@ -16,7 +17,7 @@ import { NextRequest } from 'next/server'
 
 async function authorise(userId: string, id: string) {
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, userId, 'manage_fops')
+  const auth = await requireTmcPermission(db, userId, 'manage_fops')
 
   if (!auth.authorized || !auth.tmcId) {
     return { ok: false as const, service, error: auth.error ?? 'Forbidden', status: auth.status ?? 403 }

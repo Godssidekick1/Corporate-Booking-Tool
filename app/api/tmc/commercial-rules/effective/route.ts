@@ -11,6 +11,7 @@ import {
 import { KIND_LABELS, type CommercialKind } from '@/app/lib/commercials/calcOnByKind'
 import { RULE_COLUMNS } from '../route'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── GET /api/tmc/commercial-rules/effective ──────────────────────────────────
 // What each client actually ends up with: one row per client, carrying the
@@ -82,7 +83,7 @@ export async function GET(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, user.id, 'manage_commercials')
+  const auth = await requireTmcPermission(db, user.id, 'manage_commercials')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
@@ -91,7 +92,7 @@ export async function GET(req: NextRequest) {
   const params = parsePageParams(req.nextUrl.searchParams)
   const kindFilter = req.nextUrl.searchParams.get('kind') as CommercialKind | null
 
-  const accessibleIds = await getAccessibleClientIds(service, user.id, auth.role ?? '')
+  const accessibleIds = await getAccessibleClientIds(db, user.id, auth.role ?? '')
 
   let clientQuery = service
     .from('clients')

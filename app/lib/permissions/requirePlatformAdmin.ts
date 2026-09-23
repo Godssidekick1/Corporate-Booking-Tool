@@ -1,5 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
+import { db } from '@/app/lib/db'
+import * as tmcs from '@/app/lib/repositories/tmcs'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
 
@@ -12,9 +14,9 @@ type ServiceClient = ReturnType<typeof createServiceClient>
 // the same code path as the lowest is exactly the confusion this separation
 // exists to prevent.
 //
-// The lookup always runs against the service client. platform_admins has RLS on
-// with no policies, so an anon-key read returns nothing — which is the point,
-// and also why this cannot be checked from the proxy or a client component.
+// platform_admins has RLS on with no policies, so only a privileged connection
+// can read it -- which is also why this cannot be checked from the proxy or a
+// client component.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface PlatformAdmin {
@@ -22,19 +24,8 @@ export interface PlatformAdmin {
   email: string | null
 }
 
-export async function isPlatformAdmin(
-  service: ServiceClient,
-  userId: string
-): Promise<boolean> {
-  const { data } = await service
-    .from('platform_admins')
-    .select('user_id')
-    .eq('user_id', userId)
-    .maybeSingle()
-
-  return !!data
-}
-
+// STAGE 2: `service` is still returned because the three /api/platform routes
+// query through it. It is removed when they move onto repositories.
 export type PlatformCheck =
   | { ok: true; service: ServiceClient; admin: PlatformAdmin }
   | { ok: false; status: number; error: string }
@@ -53,13 +44,7 @@ export async function requirePlatformAdmin(): Promise<PlatformCheck> {
     return { ok: false, status: 401, error: 'Not authenticated' }
   }
 
-  const service = createServiceClient()
-
-  const { data: admin } = await service
-    .from('platform_admins')
-    .select('user_id, email')
-    .eq('user_id', user.id)
-    .maybeSingle()
+  const admin = await tmcs.platformAdmin(db, user.id)
 
   if (!admin) {
     return { ok: false, status: 404, error: 'Not found' }
@@ -67,7 +52,7 @@ export async function requirePlatformAdmin(): Promise<PlatformCheck> {
 
   return {
     ok: true,
-    service,
+    service: createServiceClient(),
     admin: { userId: admin.user_id, email: admin.email ?? user.email ?? null },
   }
 }

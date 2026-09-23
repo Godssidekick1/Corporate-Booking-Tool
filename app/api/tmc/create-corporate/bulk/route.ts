@@ -3,6 +3,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { onboardClient, OnboardClientInput } from '@/app/lib/onboarding/onboardClient'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── POST /api/tmc/create-corporate/bulk ──────────────────────────────────────
 // Creates ONE client (with admin invite), then bulk-creates its employee
@@ -46,7 +47,7 @@ export async function POST(req: NextRequest) {
   // that, not the point. manage_users governs people inside a client the TC has
   // already been given, which is a narrower thing and was the wrong gate here —
   // it let anyone who could edit travellers create tenants.
-  const auth = await requireTmcPermission(service, user.id, 'manage_clients')
+  const auth = await requireTmcPermission(db, user.id, 'manage_clients')
   if (!auth.authorized) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }

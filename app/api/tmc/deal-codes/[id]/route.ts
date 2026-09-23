@@ -4,6 +4,7 @@ import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission
 import { dealCodeStatus } from '@/app/lib/deal-codes/dealCodeStatus'
 import { DEAL_CODE_COLUMNS, loadCategory, validateDealCode } from '../route'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── /api/tmc/deal-codes/[id] ─────────────────────────────────────────────────
 // GET     one deal with its assignments resolved to names
@@ -13,7 +14,7 @@ import { NextRequest } from 'next/server'
 
 async function authorise(userId: string, id: string) {
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, userId, 'manage_deal_codes')
+  const auth = await requireTmcPermission(db, userId, 'manage_deal_codes')
 
   if (!auth.authorized || !auth.tmcId) {
     return { ok: false as const, service, error: auth.error ?? 'Forbidden', status: auth.status ?? 403 }

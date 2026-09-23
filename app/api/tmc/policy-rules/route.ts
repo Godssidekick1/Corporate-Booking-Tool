@@ -3,6 +3,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { getBandRanksByGroup } from '@/app/lib/rule-engine/linkedPolicyGroups'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── GET /api/tmc/policy-rules?groupId=<uuid> ──────────────────────────────
 // The latest version's rules for one policy group. ONE set, not one per rank:
@@ -75,7 +76,7 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'Policy group not found' }, { status: 404 })
   }
 
-  const auth = await requireTmcPermission(service, user.id, 'manage_policy')
+  const auth = await requireTmcPermission(db, user.id, 'manage_policy')
   if (!auth.authorized) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }
@@ -117,7 +118,7 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Policy group not found' }, { status: 404 })
   }
 
-  const auth = await requireTmcPermission(service, user.id, 'manage_policy')
+  const auth = await requireTmcPermission(db, user.id, 'manage_policy')
   if (!auth.authorized) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }

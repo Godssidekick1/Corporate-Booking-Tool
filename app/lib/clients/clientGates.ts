@@ -1,11 +1,10 @@
-import { createServiceClient } from '@/utils/supabase/service'
+import type { Queryable } from '@/app/lib/db'
+import * as clients from '@/app/lib/repositories/clients'
 import {
   DEFAULT_PAYMENT_PRIORITY, PAYMENT_TYPES, normalisePriority,
   type PaymentType,
 } from '@/app/lib/fop/paymentTypes'
 import type { CommercialKind } from '@/app/lib/commercials/calcOnByKind'
-
-type ServiceClient = ReturnType<typeof createServiceClient>
 
 // ── Client gates ─────────────────────────────────────────────────────────────
 // The Corporate Settings toggles that actually stop something happening.
@@ -108,50 +107,21 @@ const PERMISSIVE: ClientGates = {
   enabledCommercialKinds: new Set<CommercialKind>(),
 }
 
-export const CLIENT_GATE_COLUMNS =
-  'status, ' +
-  'booking_activation, hold_activation, dom_ticketing, intl_ticketing, ' +
-  'policy_controlling, personal_bookings_allowed, ' +
-  'agency_fop_allowed, corporate_fop_allowed, ' +
-  'bta_cta_allowed, bta_cta_manual_allowed, fop_priority, ' +
-  'markup_active, discount_active, processing_fee_active'
-
-// Declared rather than inferred. Supabase derives a row type from a select
-// STRING LITERAL; the constant above is a concatenation, so inference gives up
-// and hands back an error type. Stating the shape is more honest anyway — these
-// columns are read by four call sites and the compiler should know them.
-interface ClientGateRow {
-  status?: string | null
-  booking_activation?: boolean | null
-  hold_activation?: boolean | null
-  dom_ticketing?: boolean | null
-  intl_ticketing?: boolean | null
-  policy_controlling?: boolean | null
-  personal_bookings_allowed?: boolean | null
-  agency_fop_allowed?: boolean | null
-  corporate_fop_allowed?: boolean | null
-  bta_cta_allowed?: boolean | null
-  bta_cta_manual_allowed?: boolean | null
-  fop_priority?: string[] | null
-  markup_active?: boolean | null
-  discount_active?: boolean | null
-  processing_fee_active?: boolean | null
-}
+// The columns come from clients.gateSettings(), whose return type is generated
+// from the schema. The hand-declared row interface that used to sit here
+// existed only because supabase-js could not infer a type from a concatenated
+// select string.
 
 export async function loadClientGates(
-  service: ServiceClient,
+  db: Queryable,
   clientId: string | null | undefined
 ): Promise<ClientGates> {
   if (!clientId) return PERMISSIVE
 
   try {
-    const { data: raw } = await service
-      .from('clients')
-      .select(CLIENT_GATE_COLUMNS)
-      .eq('id', clientId)
-      .maybeSingle()
-
-    const data = raw as ClientGateRow | null
+    // Throws on a database failure; caught below and treated as permissive,
+    // exactly as the unreadable-row case always was.
+    const data = await clients.gateSettings(db, clientId)
     if (!data) return PERMISSIVE
 
     const types = new Set<PaymentType>()

@@ -124,7 +124,7 @@ export async function GET(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, user.id, 'manage_deal_codes')
+  const auth = await requireTmcPermission(db, user.id, 'manage_deal_codes')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
@@ -245,7 +245,7 @@ export async function POST(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, user.id, 'manage_deal_codes')
+  const auth = await requireTmcPermission(db, user.id, 'manage_deal_codes')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
@@ -297,3 +297,5 @@ export async function POST(req: NextRequest) {
     dealCode: { ...created, status: dealCodeStatus(created), targetCount: 0 },
   })
 }
+
+import { db } from '@/app/lib/db'

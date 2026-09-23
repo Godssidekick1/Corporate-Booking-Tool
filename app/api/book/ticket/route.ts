@@ -4,6 +4,7 @@ import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic } from '@/app/lib/amad
 import { loadClientGates } from '@/app/lib/clients/clientGates'
 import { classifyFlight } from '@/app/lib/rule-engine/classifyTrip'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── POST /api/book/ticket ─────────────────────────────────────────────────────
 // Final step (search → price → add-passenger → book → ticket). Issues the
@@ -84,7 +85,7 @@ export async function POST(req: NextRequest) {
   // refusing the hold would take away the thing that lets a desk sort the
   // ticketing out. The route is classified the same way the policy engine
   // classifies it, via the shared classifyFlight.
-  const gates = await loadClientGates(service, employee.client_id)
+  const gates = await loadClientGates(db, employee.client_id)
   const itinerary = booking.itinerary as Parameters<typeof classifyFlight>[0] | null
 
   if (itinerary) {

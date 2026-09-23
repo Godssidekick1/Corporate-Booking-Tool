@@ -4,6 +4,7 @@ import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission
 import { APPROVAL_CATEGORIES } from '@/app/lib/approval-engine/resolveApprovalTier'
 import { withTransaction, orAbort } from '@/app/lib/db/tx'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── /api/tmc/approval-chains/direct ──────────────────────────────────────────
 // One request, one whole chain: pick a client, pick who it covers, list the
@@ -51,7 +52,7 @@ async function authorise(
   userId: string,
   clientId: string
 ): Promise<{ ok: true; tmcId: string } | { ok: false; error: string; status: number }> {
-  const auth = await requireTmcPermission(service, userId, 'manage_approvals', clientId)
+  const auth = await requireTmcPermission(db, userId, 'manage_approvals', clientId)
   if (!auth.authorized || !auth.tmcId) {
     return { ok: false, error: auth.error ?? 'Forbidden', status: auth.status ?? 403 }
   }
@@ -278,18 +279,18 @@ export async function POST(req: NextRequest) {
   // Every booking down that chain then resolves to no approver at all and
   // lands in approval_misconfigured, for a request that returned 400 and
   // looked like it had changed nothing.
-  const { data: chainId, error: writeError } = await withTransaction(async (db) => {
+  const { data: chainId, error: writeError } = await withTransaction(async (tx) => {
     let templateId = existingId
 
     if (templateId) {
       await orAbort(
-        db.from('approval_chain_templates')
+        tx.from('approval_chain_templates')
           .update({ mode, quorum, tiers, updated_by: caller?.id ?? null })
           .eq('id', templateId)
       )
     } else {
       const created = await orAbort(
-        db.from<{ id: string }[]>('approval_chain_templates')
+        tx.from<{ id: string }[]>('approval_chain_templates')
           .insert({
             tmc_id: access.tmcId,
             client_id: clientId,
@@ -310,14 +311,14 @@ export async function POST(req: NextRequest) {
     // shifts whenever an approver is removed or the mode flips, so matching
     // old rows to new positions would be guesswork.
     await orAbort(
-      db.from('approval_tier_approvers')
+      tx.from('approval_tier_approvers')
         .delete()
         .eq('client_id', clientId)
         .eq('template_id', templateId)
     )
 
     await orAbort(
-      db.from('approval_tier_approvers')
+      tx.from('approval_tier_approvers')
         .insert(approvers.map((a, i) => ({
           client_id: clientId,
           template_id: templateId,
@@ -332,7 +333,7 @@ export async function POST(req: NextRequest) {
     // Point the target at this chain.
     if (employeeId) {
       await orAbort(
-        db.from('employee_approval_templates').upsert({
+        tx.from('employee_approval_templates').upsert({
           employee_id: employeeId,
           category,
           template_id: templateId,
@@ -342,7 +343,7 @@ export async function POST(req: NextRequest) {
       )
     } else {
       await orAbort(
-        db.from('client_default_approval_templates').upsert({
+        tx.from('client_default_approval_templates').upsert({
           client_id: clientId,
           category,
           template_id: templateId,

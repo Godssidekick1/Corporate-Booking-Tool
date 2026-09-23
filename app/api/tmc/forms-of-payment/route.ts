@@ -6,6 +6,7 @@ import { validateRbdSpec } from '@/app/lib/fop/rbdSpec'
 import { fopStatus, describeFop, type FopStatus } from '@/app/lib/fop/fopStatus'
 import { validateAirlineCode } from '@/app/lib/reference/airlineCode'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── GET /api/tmc/forms-of-payment ────────────────────────────────────────────
 // The TMC's payment methods, filtered by who is asking.
@@ -105,7 +106,7 @@ export async function GET(req: NextRequest) {
   const isTmcSide = caller.role === 'tmc_admin' || caller.role === 'tc'
 
   if (isTmcSide) {
-    const auth = await requireTmcPermission(service, user.id, 'manage_fops')
+    const auth = await requireTmcPermission(db, user.id, 'manage_fops')
     if (!auth.authorized) {
       return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
     }
@@ -367,7 +368,7 @@ export async function POST(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, user.id, 'manage_fops')
+  const auth = await requireTmcPermission(db, user.id, 'manage_fops')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }

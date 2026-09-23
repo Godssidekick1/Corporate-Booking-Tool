@@ -5,6 +5,7 @@ import { getBandRanksByGroup } from '@/app/lib/rule-engine/linkedPolicyGroups'
 import { normaliseBandRanks } from '../route'
 import { withTransaction, orAbort } from '@/app/lib/db/tx'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── PATCH /api/tmc/policy-groups/[id] ────────────────────────────────────
 // Edits a group's identity and, more importantly, the set of band ranks it
@@ -59,7 +60,7 @@ export async function PATCH(
     return Response.json({ error: 'Policy group not found' }, { status: 404 })
   }
 
-  const auth = await requireTmcPermission(service, user.id, 'manage_policy')
+  const auth = await requireTmcPermission(db, user.id, 'manage_policy')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
@@ -87,22 +88,22 @@ export async function PATCH(
   // still live but unreachable — resolveEffectivePolicy only looks at ranks in
   // the set, so those rules silently stop applying while still appearing in the
   // UI as active policy. That last write did not even check its own error.
-  const { error: writeError } = await withTransaction(async (db) => {
+  const { error: writeError } = await withTransaction(async (tx) => {
     if (Object.keys(fields).length > 0) {
-      await orAbort(db.from('policy_groups').update(fields).eq('id', id))
+      await orAbort(tx.from('policy_groups').update(fields).eq('id', id))
     }
 
     if (body.bandRanks !== undefined) {
       const desired = normaliseBandRanks(body.bandRanks)
       // Read through the transaction, so it sees this transaction's own writes.
-      const current = (await getBandRanksByGroup(db, [id])).get(id) ?? []
+      const current = (await getBandRanksByGroup(tx, [id])).get(id) ?? []
 
       const toAdd = desired.filter(r => !current.includes(r))
       const toRemove = current.filter(r => !desired.includes(r))
 
       if (toRemove.length > 0) {
         await orAbort(
-          db.from('policy_group_band_ranks')
+          tx.from('policy_group_band_ranks')
             .delete()
             .eq('policy_group_id', id)
             .in('band_rank', toRemove)
@@ -111,7 +112,7 @@ export async function PATCH(
 
       if (toAdd.length > 0) {
         await orAbort(
-          db.from('policy_group_band_ranks')
+          tx.from('policy_group_band_ranks')
             .insert(toAdd.map(band_rank => ({ policy_group_id: id, band_rank })))
         )
       }
@@ -121,7 +122,7 @@ export async function PATCH(
       // so the version history stays intact but they stop being served.
       if (toRemove.length > 0) {
         await orAbort(
-          db.from('policy_rules')
+          tx.from('policy_rules')
             .update({ deleted_at: new Date().toISOString() })
             .eq('policy_group_id', id)
             .in('band_rank', toRemove)
@@ -188,7 +189,7 @@ export async function DELETE(
   // No clientId to check anymore — a shared group isn't scoped to one
   // client, so authorization is just "does this caller manage policy for
   // the TMC that owns this group."
-  const auth = await requireTmcPermission(service, user.id, 'manage_policy')
+  const auth = await requireTmcPermission(db, user.id, 'manage_policy')
   if (!auth.authorized) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }

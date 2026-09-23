@@ -2,6 +2,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── GET / PUT /api/tmc/clients/[id]/buckets ──────────────────────────────────
 // Which buckets this client belongs to, edited from the client's own screen.
@@ -31,7 +32,7 @@ async function authorise(clientId: string) {
   }
 
   const service = createServiceClient()
-  const check = await requireTmcPermission(service, user.id, 'manage_clients', clientId)
+  const check = await requireTmcPermission(db, user.id, 'manage_clients', clientId)
   if (!check.authorized || !check.tmcId) {
     return { error: Response.json({ error: check.error ?? 'Forbidden' }, { status: check.status ?? 403 }) }
   }

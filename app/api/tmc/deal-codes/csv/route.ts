@@ -5,6 +5,7 @@ import { validateFlightSpec } from '@/app/lib/deal-codes/flightSpec'
 import { CODE_TYPES, CODE_TYPE_LABELS, type CodeType } from '../route'
 import { validateAirlineCode, normaliseAirlineCode } from '@/app/lib/reference/airlineCode'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── /api/tmc/deal-codes/csv ──────────────────────────────────────────────────
 // GET   download every deal code as CSV
@@ -44,7 +45,7 @@ export async function GET() {
   }
 
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, user.id, 'manage_deal_codes')
+  const auth = await requireTmcPermission(db, user.id, 'manage_deal_codes')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
@@ -116,7 +117,7 @@ export async function POST(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, user.id, 'manage_deal_codes')
+  const auth = await requireTmcPermission(db, user.id, 'manage_deal_codes')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }

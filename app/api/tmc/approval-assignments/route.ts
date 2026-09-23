@@ -7,6 +7,7 @@ import {
 } from '@/app/lib/approval-engine/linkedApprovalTemplates'
 import { APPROVAL_CATEGORIES } from '@/app/lib/approval-engine/resolveApprovalTier'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── GET /api/tmc/approval-assignments?clientId=<uuid> ───────────────────────
 // The whole client's approval routing in one payload — all three rungs of the
@@ -46,7 +47,7 @@ async function authorise(
   userId: string,
   clientId: string
 ): Promise<{ ok: true; tmcId: string } | { ok: false; error: string; status: number }> {
-  const auth = await requireTmcPermission(service, userId, 'manage_approvals', clientId)
+  const auth = await requireTmcPermission(db, userId, 'manage_approvals', clientId)
   if (!auth.authorized || !auth.tmcId) {
     return { ok: false, error: auth.error ?? 'Forbidden', status: auth.status ?? 403 }
   }

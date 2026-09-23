@@ -3,6 +3,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { getBandRanksByGroup } from '@/app/lib/rule-engine/linkedPolicyGroups'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
 
 // ── GET /api/tmc/client-policy-groups?clientId=<uuid> ──────────────────
 // Lists every policy group currently linked to a client, with the band ranks
@@ -49,7 +50,7 @@ export async function GET(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, user.id, 'manage_policy', clientId)
+  const auth = await requireTmcPermission(db, user.id, 'manage_policy', clientId)
   if (!auth.authorized) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }
@@ -110,7 +111,7 @@ export async function POST(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, user.id, 'manage_policy', clientId)
+  const auth = await requireTmcPermission(db, user.id, 'manage_policy', clientId)
   if (!auth.authorized) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }
@@ -222,7 +223,7 @@ export async function DELETE(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const auth = await requireTmcPermission(service, user.id, 'manage_policy', clientId)
+  const auth = await requireTmcPermission(db, user.id, 'manage_policy', clientId)
   if (!auth.authorized) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }
