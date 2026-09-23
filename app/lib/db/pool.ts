@@ -41,13 +41,21 @@ export function getPool(): Pool {
     )
   }
 
+  const serverless = Boolean(process.env.VERCEL)
+
   pool = new Pool({
     connectionString,
-    // Modest: this is one application server against one database. Too many
-    // idle connections is a cost paid on the PostgreSQL side, where each one is
-    // a backend process.
-    max: 10,
-    idleTimeoutMillis: 30_000,
+    // SIZED FOR WHERE IT RUNS. A long-lived local server is one process, so 10
+    // connections is modest. On Vercel every concurrent function instance
+    // evaluates this module and gets ITS OWN pool -- 20 warm instances at
+    // max 10 is 200 connections against a database whose limit is far lower,
+    // and the failure ("remaining connection slots are reserved") appears only
+    // under load, never in dev. So serverless gets a pool of 3, and relies on
+    // the Supabase transaction pooler (port 6543) to multiplex upstream.
+    max: serverless ? 3 : 10,
+    // Idle connections on a frozen serverless instance are held open against
+    // the pooler for nothing; release them quickly.
+    idleTimeoutMillis: serverless ? 5_000 : 30_000,
     // Fail fast rather than hanging a request forever on an unreachable
     // database -- a 500 with a clear message beats a spinner that never stops.
     connectionTimeoutMillis: 10_000,
