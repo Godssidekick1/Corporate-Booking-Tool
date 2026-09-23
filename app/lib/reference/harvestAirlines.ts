@@ -1,4 +1,5 @@
-import { createServiceClient } from '@/utils/supabase/service'
+import { db } from '@/app/lib/db'
+import * as reference from '@/app/lib/repositories/reference'
 import type { FlightResult } from '@/app/lib/amadeus/client'
 import { normaliseAirlineCode } from './airlineCode'
 
@@ -61,47 +62,17 @@ export async function harvestAirlines(flights: FlightResult[]): Promise<void> {
 
     if (named.size === 0 && unnamed.size === 0) return
 
-    const service = createServiceClient()
     const now = new Date().toISOString()
 
-    // first_seen_at is deliberately ABSENT from every payload below. PostgREST
-    // builds its ON CONFLICT DO UPDATE SET clause from the keys actually sent,
-    // so leaving it out means the column keeps its existing value on an update
-    // and takes its `now()` default on an insert. Sending it would reset the
-    // first-seen date on every single search.
-    if (named.size > 0) {
-      const { error } = await service
-        .from('airlines')
-        .upsert(
-          [...named.entries()].map(([code, name]) => ({ code, name, last_seen_at: now })),
-          { onConflict: 'code' }
-        )
-      if (error) throw new Error(error.message)
-    }
-
-    if (unnamed.size > 0) {
-      const codes = [...unnamed]
-
-      // Insert-only for these. Writing the code as a placeholder name is fine
-      // for a carrier we have never seen named, but it must not overwrite a real
-      // name recorded earlier — which a plain upsert would do the first time a
-      // known airline appears only as somebody else's operating carrier.
-      const { error: insertError } = await service
-        .from('airlines')
-        .upsert(
-          codes.map(code => ({ code, name: code, last_seen_at: now })),
-          { onConflict: 'code', ignoreDuplicates: true }
-        )
-      if (insertError) throw new Error(insertError.message)
-
-      // Which leaves last_seen_at unmoved for the ones that already existed, so
-      // it is refreshed separately. One statement over a handful of codes.
-      const { error: touchError } = await service
-        .from('airlines')
-        .update({ last_seen_at: now })
-        .in('code', codes)
-      if (touchError) throw new Error(touchError.message)
-    }
+    // The rules about first_seen_at (never written) and placeholder names
+    // (never overwriting a real one) live in the repository functions, where
+    // the SQL that enforces them is.
+    await reference.upsertNamedAirlines(
+      db,
+      [...named.entries()].map(([code, name]) => ({ code, name })),
+      now
+    )
+    await reference.recordUnnamedAirlines(db, [...unnamed], now)
   } catch (error) {
     // Swallowed on purpose. Rule 1 above.
     console.error('[airlines] harvest failed', error)

@@ -1,4 +1,4 @@
-// ── Amadeus session store (Supabase-backed) ──────────────────────────────────
+// ── Amadeus session store (PostgreSQL-backed) ────────────────────────────────
 // Replaces an in-memory module-level cache, which is unreliable on Vercel:
 // serverless functions don't guarantee a persistent process, so a plain
 // variable works by accident on a warm container and silently fails
@@ -16,9 +16,9 @@
 // as a true account-wide cache; until then, treat this table as available
 // infrastructure, not as confirmed-correct behavior.
 
-import { createServiceClient } from '@/utils/supabase/service'
+import { db } from '@/app/lib/db'
+import * as reference from '@/app/lib/repositories/reference'
 
-const SESSION_ROW_ID = 1
 const TTL_MINUTES = 25 // matches the estimate used elsewhere for this session's expiry window
 
 export interface CachedSession {
@@ -26,12 +26,12 @@ export interface CachedSession {
   expiresAt: number // epoch ms, for cheap comparison against Date.now()
 }
 
-// ── L1: in-process memo in front of the Supabase row ─────────────────────────
-// MEASURED: a Supabase round trip from here is ~200ms (min 183, median 205 over
-// repeated reads). Every single Amadeus call pays it before the request even
-// leaves, because getSessionId() reads the session row first — so a booking,
-// which makes several provider calls, was spending the better part of a second
-// asking the database for a string it had just been told.
+// ── L1: in-process memo in front of the row ──────────────────────────────────
+// MEASURED: a database round trip from here was ~200ms (min 183, median 205
+// over repeated reads). Every single Amadeus call pays it before the request
+// even leaves, because getSessionId() reads the session row first — so a
+// booking, which makes several provider calls, was spending the better part of
+// a second asking the database for a string it had just been told.
 //
 // This does NOT replace the table, for exactly the reason the header gives: a
 // module-level variable is unreliable ACROSS serverless invocations. It is a
@@ -43,52 +43,47 @@ export interface CachedSession {
 // it cannot outlive the session it describes or survive a deliberate refresh.
 let memo: CachedSession | null = null
 
+// ── Best effort, deliberately ────────────────────────────────────────────────
+// All three functions catch and log rather than throw. A session cache that
+// cannot be read or written costs a re-authentication -- correct but slow --
+// and must never take down a booking flow that could otherwise succeed. This
+// is a considered exception to "repositories throw": the repository DOES throw,
+// and this module decides a cache failure is not a booking failure.
+
 export async function getCachedSession(): Promise<CachedSession | null> {
   // Checked against the clock, not merely for presence — an expired memo is a
   // stale session id, and handing one out would produce a "Session Expired"
   // from the provider and the retry that costs far more than the read saved.
   if (memo && Date.now() < memo.expiresAt) return memo
 
-  const service = createServiceClient()
-  const { data, error } = await service
-    .from('amadeus_session')
-    .select('session_id, expires_at')
-    .eq('id', SESSION_ROW_ID)
-    .maybeSingle()
+  try {
+    // Expired rows are filtered by the query itself, for the same reason.
+    const row = await reference.currentAmadeusSession(db)
+    if (!row) return null
 
-  if (error || !data) return null
-
-  memo = {
-    sessionId: data.session_id,
-    expiresAt: new Date(data.expires_at).getTime(),
+    memo = {
+      sessionId: row.session_id,
+      expiresAt: new Date(row.expires_at).getTime(),
+    }
+    return memo
+  } catch (err) {
+    console.error('getCachedSession failed; the caller will re-authenticate:', err)
+    return null
   }
-  return memo
 }
 
 export async function setCachedSession(sessionId: string): Promise<void> {
-  const service = createServiceClient()
   const expiry = Date.now() + TTL_MINUTES * 60 * 1000
-  const expiresAt = new Date(expiry).toISOString()
 
-  // Populated before the write, not after: the write is best-effort (see below)
-  // and a failed one must not leave this process re-authenticating on every
-  // call when it holds a session it knows is good.
+  // Populated before the write, not after: the write is best-effort and a
+  // failed one must not leave this process re-authenticating on every call when
+  // it holds a session it knows is good.
   memo = { sessionId, expiresAt: expiry }
 
-  const { error } = await service
-    .from('amadeus_session')
-    .upsert({
-      id: SESSION_ROW_ID,
-      session_id: sessionId,
-      expires_at: expiresAt,
-      updated_at: new Date().toISOString(),
-    })
-
-  if (error) {
-    // Don't throw here -- a failed cache write shouldn't take down a booking
-    // flow that otherwise succeeded. Log and move on; the next call will
-    // just re-authenticate, which is correct-but-slow, not broken.
-    console.error('setCachedSession failed:', error)
+  try {
+    await reference.saveAmadeusSession(db, sessionId, new Date(expiry).toISOString())
+  } catch (err) {
+    console.error('setCachedSession failed:', err)
   }
 }
 
@@ -98,13 +93,9 @@ export async function clearCachedSession(): Promise<void> {
   // straight back to the retry that is about to run.
   memo = null
 
-  const service = createServiceClient()
-  const { error } = await service
-    .from('amadeus_session')
-    .delete()
-    .eq('id', SESSION_ROW_ID)
-
-  if (error) {
-    console.error('clearCachedSession failed:', error)
+  try {
+    await reference.deleteAmadeusSession(db)
+  } catch (err) {
+    console.error('clearCachedSession failed:', err)
   }
 }

@@ -1,6 +1,8 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
-import { parsePageParams, pagedResponse, ilikeAcross } from '@/app/lib/pagination'
+import { parsePageParams, pagedResponse } from '@/app/lib/pagination'
+import { db } from '@/app/lib/db'
+import * as reference from '@/app/lib/repositories/reference'
+import { route } from '@/app/lib/http/handler'
 import { NextRequest } from 'next/server'
 
 // ── GET /api/reference/airlines ──────────────────────────────────────────────
@@ -20,7 +22,7 @@ import { NextRequest } from 'next/server'
 // what lets a free-typed value round-trip through the picker unchanged.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function GET(req: NextRequest) {
+export const GET = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -28,35 +30,19 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
   const params = parsePageParams(req.nextUrl.searchParams)
   const ids = req.nextUrl.searchParams.get('ids')?.split(',').filter(Boolean) ?? []
 
-  let query = service
-    .from('airlines')
-    .select('code, name, last_seen_at', { count: 'exact' })
-    .order('code')
-
-  if (ids.length > 0) {
-    query = query.in('code', ids.map(id => id.trim().toUpperCase()))
-  } else {
-    // Both columns: people look up "6E" and "IndiGo" about equally, and which
-    // one they reach for depends entirely on whether they are reading a GDS
-    // screen or talking to a colleague.
-    const filter = ilikeAcross(['code', 'name'], params.search)
-    if (filter) query = query.or(filter)
-    query = query.range(params.from, params.to)
-  }
-
-  const { data: airlines, error, count } = await query
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
-
   // `id` mirrors `code` so the response speaks useLookup's shape without the
   // caller needing a custom toOption just to rename one field.
-  const items = (airlines ?? []).map(a => ({ ...a, id: a.code }))
+  const withId = (a: reference.Airline) => ({ ...a, id: a.code })
 
-  return Response.json(pagedResponse(items, count ?? null, params))
-}
+  // Resolving specific codes for a picker's labels: every match, unpaged.
+  if (ids.length > 0) {
+    const rows = await reference.airlinesByCode(db, ids)
+    return Response.json(pagedResponse(rows.map(withId), rows.length, params))
+  }
+
+  const { rows, total } = await reference.listAirlines(db, params)
+  return Response.json(pagedResponse(rows.map(withId), total, params))
+})

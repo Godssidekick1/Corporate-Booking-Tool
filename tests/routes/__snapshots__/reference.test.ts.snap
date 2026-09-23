@@ -1,0 +1,216 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`GET /api/reference/airlines > ?ids= resolves specific codes, upper-cased, unpaged 1`] = `
+{
+  "items": [
+    {
+      "code": "6E",
+      "id": "6E",
+      "last_seen_at": "2026-09-17T11:01:01.677Z",
+      "name": "6E",
+    },
+    {
+      "code": "AI",
+      "id": "AI",
+      "last_seen_at": "2026-09-22T10:34:37.855Z",
+      "name": "Air India",
+    },
+  ],
+  "ok": true,
+  "page": 1,
+  "pageSize": 10,
+  "total": 2,
+  "totalPages": 1,
+}
+`;
+
+exports[`GET /api/reference/airlines > a page past the end is empty, not an error 1`] = `
+{
+  "items": [],
+  "ok": true,
+  "page": 99,
+  "pageSize": 10,
+  "total": 14,
+  "totalPages": 2,
+}
+`;
+
+exports[`GET /api/reference/airlines > first page, any signed-in user 1`] = `
+{
+  "items": [
+    {
+      "code": "6E",
+      "id": "6E",
+      "last_seen_at": "2026-09-17T11:01:01.677Z",
+      "name": "6E",
+    },
+    {
+      "code": "AA",
+      "id": "AA",
+      "last_seen_at": "2026-09-17T11:01:01.677Z",
+      "name": "American Airlines",
+    },
+    {
+      "code": "AC",
+      "id": "AC",
+      "last_seen_at": "2026-09-17T11:01:01.677Z",
+      "name": "Air Canada",
+    },
+    {
+      "code": "AI",
+      "id": "AI",
+      "last_seen_at": "2026-09-22T10:34:37.855Z",
+      "name": "Air India",
+    },
+    {
+      "code": "AZ",
+      "id": "AZ",
+      "last_seen_at": "2026-09-17T11:01:01.677Z",
+      "name": "Alitalia",
+    },
+    {
+      "code": "EK",
+      "id": "EK",
+      "last_seen_at": "2026-09-17T11:01:01.677Z",
+      "name": "Emirates",
+    },
+    {
+      "code": "EY",
+      "id": "EY",
+      "last_seen_at": "2026-09-17T11:01:01.677Z",
+      "name": "Etihad Airways",
+    },
+    {
+      "code": "FB",
+      "id": "FB",
+      "last_seen_at": "2026-09-17T11:01:01.677Z",
+      "name": "Bulgaria Air",
+    },
+    {
+      "code": "IX",
+      "id": "IX",
+      "last_seen_at": "2026-09-22T10:34:37.855Z",
+      "name": "IX",
+    },
+    {
+      "code": "LH",
+      "id": "LH",
+      "last_seen_at": "2026-09-17T11:01:01.677Z",
+      "name": "Lufthansa",
+    },
+  ],
+  "ok": true,
+  "page": 1,
+  "pageSize": 10,
+  "total": 14,
+  "totalPages": 2,
+}
+`;
+
+exports[`GET /api/reference/airlines > search matches code or name, case-insensitively 1`] = `
+{
+  "items": [
+    {
+      "code": "AA",
+      "id": "AA",
+      "last_seen_at": "2026-09-17T11:01:01.677Z",
+      "name": "American Airlines",
+    },
+    {
+      "code": "AC",
+      "id": "AC",
+      "last_seen_at": "2026-09-17T11:01:01.677Z",
+      "name": "Air Canada",
+    },
+    {
+      "code": "AI",
+      "id": "AI",
+      "last_seen_at": "2026-09-22T10:34:37.855Z",
+      "name": "Air India",
+    },
+    {
+      "code": "EY",
+      "id": "EY",
+      "last_seen_at": "2026-09-17T11:01:01.677Z",
+      "name": "Etihad Airways",
+    },
+    {
+      "code": "FB",
+      "id": "FB",
+      "last_seen_at": "2026-09-17T11:01:01.677Z",
+      "name": "Bulgaria Air",
+    },
+    {
+      "code": "SQ",
+      "id": "SQ",
+      "last_seen_at": "2026-09-17T11:01:01.677Z",
+      "name": "Singapore Air",
+    },
+    {
+      "code": "SV",
+      "id": "SV",
+      "last_seen_at": "2026-09-17T11:01:01.677Z",
+      "name": "Saudi Arabian Air",
+    },
+  ],
+  "ok": true,
+  "page": 1,
+  "pageSize": 10,
+  "total": 7,
+  "totalPages": 1,
+}
+`;
+
+exports[`GET /api/reference/airlines > search strips the characters PostgREST could not escape 1`] = `
+{
+  "items": [
+    {
+      "code": "AI",
+      "id": "AI",
+      "last_seen_at": "2026-09-22T10:34:37.855Z",
+      "name": "Air India",
+    },
+  ],
+  "ok": true,
+  "page": 1,
+  "pageSize": 10,
+  "total": 1,
+  "totalPages": 1,
+}
+`;
+
+exports[`GET /api/reference/airlines > second page 1`] = `
+{
+  "items": [
+    {
+      "code": "NH",
+      "id": "NH",
+      "last_seen_at": "2026-09-17T11:01:01.677Z",
+      "name": "All Nippon",
+    },
+    {
+      "code": "QR",
+      "id": "QR",
+      "last_seen_at": "2026-09-17T11:01:01.677Z",
+      "name": "Qatar",
+    },
+    {
+      "code": "SQ",
+      "id": "SQ",
+      "last_seen_at": "2026-09-17T11:01:01.677Z",
+      "name": "Singapore Air",
+    },
+    {
+      "code": "SV",
+      "id": "SV",
+      "last_seen_at": "2026-09-17T11:01:01.677Z",
+      "name": "Saudi Arabian Air",
+    },
+  ],
+  "ok": true,
+  "page": 2,
+  "pageSize": 10,
+  "total": 14,
+  "totalPages": 2,
+}
+`;
