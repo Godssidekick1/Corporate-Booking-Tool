@@ -1,7 +1,10 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission, getAccessibleClientIds } from '@/app/lib/permissions/requireTmcPermission'
 import { db } from '@/app/lib/db'
+import * as clientsRepo from '@/app/lib/repositories/clients'
+import * as employees from '@/app/lib/repositories/employees'
+import * as bookingsRepo from '@/app/lib/repositories/bookings'
+import { route } from '@/app/lib/http/handler'
 
 // ── GET /api/tmc/stats ───────────────────────────────────────────────────────
 // Booking activity across the TMC's clients, for the dashboard.
@@ -27,15 +30,13 @@ interface ClientStat {
   lastBookingAt: string | null
 }
 
-export async function GET() {
+export const GET = route(async () => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
   if (authError || !user) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
-
-  const service = createServiceClient()
 
   // No specific clientId — this is a whole-portfolio view, and which slice of
   // it the caller may see is decided by getAccessibleClientIds below.
@@ -44,51 +45,33 @@ export async function GET() {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
 
-  const { data: caller } = await service
-    .from('employees')
-    .select('role')
-    .eq('id', user.id)
-    .single()
-
-  const accessibleIds = await getAccessibleClientIds(db, user.id, caller?.role ?? 'tc')
-
-  let clientQuery = service
-    .from('clients')
-    .select('id, name, status, created_at')
-    .eq('tmc_id', auth.tmcId)
+  // The role requireTmcPermission just read, rather than a second read of the
+  // same row.
+  const accessibleIds = await getAccessibleClientIds(db, user.id, auth.role ?? 'tc')
 
   // null means "every client at this TMC" (tmc_admin); an array is the explicit
   // allow-list for a travel counsellor.
-  if (accessibleIds !== null) {
-    if (accessibleIds.length === 0) {
-      return Response.json({ ok: true, totals: emptyTotals(), clients: [], trend: [] })
-    }
-    clientQuery = clientQuery.in('id', accessibleIds)
+  if (accessibleIds !== null && accessibleIds.length === 0) {
+    return Response.json({ ok: true, totals: emptyTotals(), clients: [], trend: [] })
   }
 
-  const { data: clientRows, error: clientError } = await clientQuery
+  const clientRows = await clientsRepo.portfolio(db, auth.tmcId, accessibleIds)
 
-  if (clientError) {
-    return Response.json({ error: clientError.message }, { status: 500 })
-  }
-
-  const clientIds = (clientRows ?? []).map(c => c.id)
+  const clientIds = clientRows.map(c => c.id)
 
   if (clientIds.length === 0) {
     return Response.json({ ok: true, totals: emptyTotals(), clients: [], trend: [] })
   }
 
-  const [{ data: employees }, { data: bookings }] = await Promise.all([
-    service.from('employees').select('id, client_id, status').in('client_id', clientIds),
-    service
-      .from('bookings')
-      .select('id, client_id, total_cost, status, created_at')
-      .in('client_id', clientIds),
+  const [staff, bookings] = await Promise.all([
+    employees.statusesInClients(db, clientIds),
+    bookingsRepo.statRows(db, clientIds),
   ])
 
   const employeesByClient = new Map<string, number>()
-  for (const e of employees ?? []) {
+  for (const e of staff) {
     if (e.status === 'deactivated') continue
+    if (!e.client_id) continue
     employeesByClient.set(e.client_id, (employeesByClient.get(e.client_id) ?? 0) + 1)
   }
 
@@ -104,7 +87,7 @@ export async function GET() {
     bookingsByClient.set(b.client_id, entry)
   }
 
-  const clients: ClientStat[] = (clientRows ?? []).map(c => {
+  const clients: ClientStat[] = clientRows.map(c => {
     const b = bookingsByClient.get(c.id)
     return {
       clientId: c.id,
@@ -128,7 +111,7 @@ export async function GET() {
     const end = new Date(start)
     end.setUTCDate(end.getUTCDate() + 7)
 
-    const count = (bookings ?? []).filter(b => {
+    const count = bookings.filter(b => {
       const t = new Date(b.created_at).getTime()
       return t >= start.getTime() && t < end.getTime()
     }).length
@@ -161,7 +144,7 @@ export async function GET() {
     clients,
     trend,
   })
-}
+})
 
 function emptyTotals() {
   return {

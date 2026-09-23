@@ -1,4 +1,4 @@
-import { sql, maybeOne, type Queryable } from '@/app/lib/db/sql'
+import { sql, empty, many, maybeOne, type Queryable } from '@/app/lib/db/sql'
 import type { Row } from '@/app/lib/db/types.generated'
 
 // ── Clients ──────────────────────────────────────────────────────────────────
@@ -31,4 +31,58 @@ export async function gateSettings(db: Queryable, clientId: string): Promise<Cli
            bta_cta_allowed, bta_cta_manual_allowed, fop_priority,
            markup_active, discount_active, processing_fee_active
     from clients where id = ${clientId}`)
+}
+
+// ═══ The signed-in person's company ═════════════════════════════════════════
+
+export type ClientSummary = Pick<Row<'clients'>,
+  | 'id' | 'name' | 'settings' | 'setup_completed' | 'status'
+  | 'timezone' | 'currency' | 'country' | 'booking_mode'
+>
+
+export async function summary(db: Queryable, clientId: string): Promise<ClientSummary | null> {
+  return maybeOne<ClientSummary>(db, sql`
+    select id, name, settings, setup_completed, status, timezone, currency, country, booking_mode
+    from clients where id = ${clientId}`)
+}
+
+export interface OnboardingCounts {
+  employees: number
+  bookings: number
+  policyGroups: number
+}
+
+// The setup checklist's inputs, in ONE round trip where there used to be three.
+// Client-wide rather than personal: "has anyone at this client booked yet".
+//
+// Policy is counted from client_policy_groups -- where policy actually lives --
+// and not from the settings.approvalModel jsonb key the dashboard once read,
+// which nothing had ever written.
+export async function onboardingCounts(db: Queryable, clientId: string): Promise<OnboardingCounts> {
+  const row = await maybeOne<OnboardingCounts>(db, sql`
+    select
+      (select count(*)::int from employees where client_id = ${clientId}) as employees,
+      (select count(*)::int from bookings where client_id = ${clientId}) as bookings,
+      (select count(*)::int from client_policy_groups where client_id = ${clientId}) as "policyGroups"`)
+  return row ?? { employees: 0, bookings: 0, policyGroups: 0 }
+}
+
+// ═══ Portfolio ══════════════════════════════════════════════════════════════
+
+export type ClientPortfolioRow = Pick<Row<'clients'>, 'id' | 'name' | 'status' | 'created_at'>
+
+// A TMC's clients, optionally narrowed to the ones a travel counsellor was
+// granted. `accessibleIds === null` means every client of the TMC (tmc_admin);
+// an empty array means none.
+export async function portfolio(
+  db: Queryable,
+  tmcId: string,
+  accessibleIds: readonly string[] | null
+): Promise<ClientPortfolioRow[]> {
+  if (accessibleIds !== null && accessibleIds.length === 0) return []
+  return many<ClientPortfolioRow>(db, sql`
+    select id, name, status, created_at from clients
+    where tmc_id = ${tmcId}
+    ${accessibleIds !== null ? sql`and id = any(${[...accessibleIds]})` : empty}
+    order by created_at, id`)
 }

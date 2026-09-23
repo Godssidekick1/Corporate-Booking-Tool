@@ -1,0 +1,317 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`GET /api/me > a corporate admin: profile, client and onboarding progress 1`] = `
+{
+  "client": {
+    "booking_mode": "sbt",
+    "country": "India",
+    "currency": "INR",
+    "id": "b5005d4e-b813-4f10-ae59-1b0f5257357e",
+    "name": "BCG",
+    "settings": {
+      "approvalModel": "two-tier",
+      "setup_confirmed": true,
+      "setup_confirmed_at": "2026-07-09T05:47:33.387Z",
+    },
+    "setup_completed": false,
+    "status": "active",
+    "timezone": "Asia/Kolkata",
+  },
+  "clientAccess": [],
+  "employee": {
+    "band_code": "L5",
+    "band_id": "34b3952c-eccb-4bd6-985f-a05c674394c3",
+    "band_rank": 5,
+    "client_id": "b5005d4e-b813-4f10-ae59-1b0f5257357e",
+    "cost_centre": "IT101G",
+    "department": "IT",
+    "email": "employee.4ae427@example.test",
+    "full_name": "Employee 4ae427",
+    "id": "c0fc26d8-292b-4e90-9716-3b4d4f890838",
+    "manager_id": null,
+    "role": "admin",
+    "status": "active",
+    "tmc_id": null,
+  },
+  "employeeCount": 4,
+  "hasBookings": true,
+  "hasPolicy": true,
+  "ok": true,
+  "permissions": [],
+  "platformAdmin": false,
+}
+`;
+
+exports[`GET /api/me > a platform admin with no employees row is answered, not refused 1`] = `
+{
+  "client": null,
+  "clientAccess": [],
+  "employee": null,
+  "employeeCount": 0,
+  "hasBookings": false,
+  "ok": true,
+  "permissions": [],
+  "platformAdmin": true,
+}
+`;
+
+exports[`GET /api/me > a tc: permissions and client access for the restricted view 1`] = `
+{
+  "client": null,
+  "clientAccess": [
+    "b5005d4e-b813-4f10-ae59-1b0f5257357e",
+  ],
+  "employee": {
+    "band_code": null,
+    "band_id": null,
+    "band_rank": null,
+    "client_id": null,
+    "cost_centre": null,
+    "department": null,
+    "email": "employee.8159bb@example.test",
+    "full_name": "Employee 8159bb",
+    "id": "2669257f-ab87-4031-ab47-76e4af8e271b",
+    "manager_id": null,
+    "role": "tc",
+    "status": "active",
+    "tmc_id": "426e0538-f739-4563-872f-f01b3d327c7c",
+  },
+  "employeeCount": 0,
+  "hasBookings": false,
+  "hasPolicy": false,
+  "ok": true,
+  "permissions": [
+    "book_on_behalf",
+    "manage_approvals",
+    "manage_branches",
+    "manage_policy",
+    "manage_users",
+    "view_reports",
+  ],
+  "platformAdmin": false,
+}
+`;
+
+exports[`GET /api/me > a tmc_admin: no client, no counts 1`] = `
+{
+  "client": null,
+  "clientAccess": [],
+  "employee": {
+    "band_code": null,
+    "band_id": null,
+    "band_rank": null,
+    "client_id": null,
+    "cost_centre": null,
+    "department": null,
+    "email": "employee.281282@example.test",
+    "full_name": "Employee 281282",
+    "id": "f425dc71-960b-4164-b87a-b4616d86406f",
+    "manager_id": null,
+    "role": "tmc_admin",
+    "status": "active",
+    "tmc_id": "426e0538-f739-4563-872f-f01b3d327c7c",
+  },
+  "employeeCount": 0,
+  "hasBookings": false,
+  "hasPolicy": false,
+  "ok": true,
+  "permissions": [],
+  "platformAdmin": false,
+}
+`;
+
+exports[`GET /api/tmc/stats > a tc sees only the clients they were granted 1`] = `
+{
+  "clients": [
+    {
+      "bookings": 31,
+      "clientId": "b5005d4e-b813-4f10-ae59-1b0f5257357e",
+      "employees": 4,
+      "lastBookingAt": "2026-09-20T17:18:48.682Z",
+      "name": "BCG",
+      "recentBookings": 14,
+      "spend": 535039,
+    },
+  ],
+  "ok": true,
+  "totals": {
+    "activeClients": 1,
+    "avgBookings": 31,
+    "bookings": 31,
+    "clients": 1,
+    "employees": 4,
+    "maxBookings": 31,
+    "minBookings": 31,
+    "recentBookings": 14,
+    "spend": 535039,
+  },
+  "trend": [
+    {
+      "bookings": 0,
+      "weekStart": "2026-08-05",
+    },
+    {
+      "bookings": 0,
+      "weekStart": "2026-08-12",
+    },
+    {
+      "bookings": 17,
+      "weekStart": "2026-08-19",
+    },
+    {
+      "bookings": 5,
+      "weekStart": "2026-08-26",
+    },
+    {
+      "bookings": 0,
+      "weekStart": "2026-09-02",
+    },
+    {
+      "bookings": 1,
+      "weekStart": "2026-09-09",
+    },
+    {
+      "bookings": 8,
+      "weekStart": "2026-09-16",
+    },
+    {
+      "bookings": 0,
+      "weekStart": "2026-09-23",
+    },
+  ],
+}
+`;
+
+exports[`GET /api/tmc/stats > a tmc_admin sees their whole portfolio 1`] = `
+{
+  "clients": [
+    {
+      "bookings": 31,
+      "clientId": "b5005d4e-b813-4f10-ae59-1b0f5257357e",
+      "employees": 4,
+      "lastBookingAt": "2026-09-20T17:18:48.682Z",
+      "name": "BCG",
+      "recentBookings": 14,
+      "spend": 535039,
+    },
+    {
+      "bookings": 1,
+      "clientId": "52f419af-d730-4928-8714-a74e8e362f52",
+      "employees": 1,
+      "lastBookingAt": "2026-09-16T14:33:02.667Z",
+      "name": "Arjun K",
+      "recentBookings": 1,
+      "spend": 14002,
+    },
+    {
+      "bookings": 0,
+      "clientId": "2dbeb834-8151-46b7-b73c-775c9ca359d9",
+      "employees": 1,
+      "lastBookingAt": null,
+      "name": "Arjun K",
+      "recentBookings": 0,
+      "spend": 0,
+    },
+    {
+      "bookings": 0,
+      "clientId": "51e2569a-91b8-4844-afd8-1a725450a8fc",
+      "employees": 1,
+      "lastBookingAt": null,
+      "name": "ekjd",
+      "recentBookings": 0,
+      "spend": 0,
+    },
+    {
+      "bookings": 0,
+      "clientId": "5f73d5e1-afcd-494c-b172-8a2de53cc9c9",
+      "employees": 1,
+      "lastBookingAt": null,
+      "name": "Flip",
+      "recentBookings": 0,
+      "spend": 0,
+    },
+    {
+      "bookings": 0,
+      "clientId": "911a4f7f-b278-4918-9136-972a0c4da47c",
+      "employees": 2,
+      "lastBookingAt": null,
+      "name": "Lenskart",
+      "recentBookings": 0,
+      "spend": 0,
+    },
+    {
+      "bookings": 0,
+      "clientId": "a908acf4-31d1-45e9-abcd-f0eba6c26c83",
+      "employees": 1,
+      "lastBookingAt": null,
+      "name": "Micron",
+      "recentBookings": 0,
+      "spend": 0,
+    },
+    {
+      "bookings": 0,
+      "clientId": "d9e1cc42-e3fe-41c3-b2c4-6c1ba14ba062",
+      "employees": 1,
+      "lastBookingAt": null,
+      "name": "wd",
+      "recentBookings": 0,
+      "spend": 0,
+    },
+    {
+      "bookings": 0,
+      "clientId": "e28889b2-7718-4ed2-bc50-c4a5bd7024e9",
+      "employees": 1,
+      "lastBookingAt": null,
+      "name": "X",
+      "recentBookings": 0,
+      "spend": 0,
+    },
+  ],
+  "ok": true,
+  "totals": {
+    "activeClients": 2,
+    "avgBookings": 16,
+    "bookings": 32,
+    "clients": 9,
+    "employees": 13,
+    "maxBookings": 31,
+    "minBookings": 0,
+    "recentBookings": 15,
+    "spend": 549041,
+  },
+  "trend": [
+    {
+      "bookings": 0,
+      "weekStart": "2026-08-05",
+    },
+    {
+      "bookings": 0,
+      "weekStart": "2026-08-12",
+    },
+    {
+      "bookings": 17,
+      "weekStart": "2026-08-19",
+    },
+    {
+      "bookings": 5,
+      "weekStart": "2026-08-26",
+    },
+    {
+      "bookings": 0,
+      "weekStart": "2026-09-02",
+    },
+    {
+      "bookings": 1,
+      "weekStart": "2026-09-09",
+    },
+    {
+      "bookings": 9,
+      "weekStart": "2026-09-16",
+    },
+    {
+      "bookings": 0,
+      "weekStart": "2026-09-23",
+    },
+  ],
+}
+`;

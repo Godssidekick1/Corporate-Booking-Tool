@@ -1,7 +1,23 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
+import { db } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
+import * as clients from '@/app/lib/repositories/clients'
+import * as tmcs from '@/app/lib/repositories/tmcs'
+import { route } from '@/app/lib/http/handler'
 
-export async function GET() {
+// ── GET /api/me ──────────────────────────────────────────────────────────────
+// Who the signed-in person is, and enough about their company for the login
+// page to route them and the dashboard to show setup progress.
+//
+// THE ROUTE THAT BROKE ON VERCEL. It used to read `if (employeeError ||
+// !employee)` -- a database failure and a missing row, treated identically --
+// so an unconfigured database answered "Employee profile not found" and the
+// login page told every user it "could not determine your account role". The
+// repositories throw on failure now, so a missing row is the ONLY way to reach
+// the 404 below; an outage is a 500 that says so.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const GET = route(async () => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -9,29 +25,15 @@ export async function GET() {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
+  // Someone can be both: a TMC employee who also runs the platform. Checked for
+  // everyone so the nav can offer the link instead of making them remember the
+  // URL -- and fetched alongside the profile rather than after it.
+  const [employee, platformAdmin] = await Promise.all([
+    employees.profile(db, user.id),
+    tmcs.platformAdmin(db, user.id),
+  ])
 
-  const { data: employee, error: employeeError } = await service
-    .from('employees')
-    .select(`
-      id,
-      full_name,
-      email,
-      role,
-      status,
-      client_id,
-      tmc_id,
-      band_id,
-      band_code,
-      band_rank,
-      manager_id,
-      department,
-      cost_centre
-    `)
-    .eq('id', user.id)
-    .single()
-
-  if (employeeError || !employee) {
+  if (!employee) {
     // A platform admin has NO employees row — deliberately, since they are
     // Amadeus staff rather than a member of any tenant. Returning 404 here left
     // them signed in but stranded: the login page reads this to decide where to
@@ -41,12 +43,6 @@ export async function GET() {
     //
     // Everyone else still gets the 404. A missing employees row for an ordinary
     // user is a real broken state and must not be smoothed over.
-    const { data: platformAdmin } = await service
-      .from('platform_admins')
-      .select('user_id')
-      .eq('user_id', user.id)
-      .maybeSingle()
-
     if (platformAdmin) {
       return Response.json({
         ok: true,
@@ -65,79 +61,34 @@ export async function GET() {
 
   const isTmcSide = employee.role === 'tmc_admin' || employee.role === 'tc'
 
-  const { data: client } = isTmcSide
-    ? { data: null }
-    : await service
-        .from('clients')
-        .select('id, name, settings, setup_completed, status, timezone, currency, country, booking_mode')
-        .eq('id', employee.client_id)
-        .single()
+  // Corporate side only: the company, and the setup checklist's counts. The
+  // policy count comes from client_policy_groups, where policy actually lives.
+  const [client, counts] = !isTmcSide && employee.client_id
+    ? await Promise.all([
+        clients.summary(db, employee.client_id),
+        clients.onboardingCounts(db, employee.client_id),
+      ])
+    : [null, { employees: 0, bookings: 0, policyGroups: 0 }]
 
-  const { count: employeeCount } = isTmcSide
-    ? { count: 0 }
-    : await service
-        .from('employees')
-        .select('id', { count: 'exact', head: true })
-        .eq('client_id', employee.client_id)
-
-  // Client-wide, not just this employee's own bookings — the setup
-  // checklist item is "has anyone at this client made a booking yet",
-  // same scope as employeeCount above (client-level onboarding progress,
-  // not a personal stat).
-  const { count: bookingCount } = isTmcSide
-    ? { count: 0 }
-    : await service
-        .from('bookings')
-        .select('id', { count: 'exact', head: true })
-        .eq('client_id', employee.client_id)
-
-  // Whether this client has any policy at all, for the setup checklist.
-  //
-  // The dashboard used to read `client.settings.approvalModel` for this — a
-  // jsonb key nothing has ever written, so the "Confirm your travel policy"
-  // item was permanently unticked for every client no matter how much policy
-  // they had configured. Policy lives in client_policy_groups now, so that is
-  // what gets counted.
-  const { count: policyGroupCount } = isTmcSide
-    ? { count: 0 }
-    : await service
-        .from('client_policy_groups')
-        .select('policy_group_id', { count: 'exact', head: true })
-        .eq('client_id', employee.client_id)
-
-  // For TCs, load their granted permissions and client access so the
-  // frontend can render a restricted view of the TMC dashboard/settings.
-  // tmc_admin has full access implicitly and never needs these checked.
-  let permissions: string[] = []
-  let clientAccess: string[] = []
-
-  if (employee.role === 'tc') {
-    const [{ data: perms }, { data: access }] = await Promise.all([
-      service.from('employee_permissions').select('permission_key').eq('employee_id', employee.id),
-      service.from('employee_client_access').select('client_id').eq('employee_id', employee.id),
-    ])
-    permissions = (perms ?? []).map(p => p.permission_key)
-    clientAccess = (access ?? []).map(a => a.client_id)
-  }
-
-  // Someone can be both: a TMC employee who also runs the platform. Checked for
-  // everyone rather than only the no-employee case, so the nav can offer the
-  // link instead of making them remember the URL.
-  const { data: alsoPlatformAdmin } = await service
-    .from('platform_admins')
-    .select('user_id')
-    .eq('user_id', user.id)
-    .maybeSingle()
+  // For TCs, their granted permissions and client access, so the frontend can
+  // render a restricted view of the TMC dashboard and settings. tmc_admin has
+  // full access implicitly and never needs these.
+  const [permissions, clientAccess] = employee.role === 'tc'
+    ? await Promise.all([
+        employees.permissionKeys(db, employee.id),
+        employees.accessibleClientIds(db, employee.id),
+      ])
+    : [[], []]
 
   return Response.json({
     ok: true,
     employee,
-    platformAdmin: !!alsoPlatformAdmin,
+    platformAdmin: !!platformAdmin,
     client: client ?? null,
-    employeeCount: employeeCount ?? 0,
-    hasBookings: (bookingCount ?? 0) > 0,
-    hasPolicy: (policyGroupCount ?? 0) > 0,
+    employeeCount: counts.employees,
+    hasBookings: counts.bookings > 0,
+    hasPolicy: counts.policyGroups > 0,
     permissions,
     clientAccess,
   })
-}
+})
