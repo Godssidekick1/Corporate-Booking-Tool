@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
 
 // ── A fake GoTrue admin API ──────────────────────────────────────────────────
 // Routes that create people call service.auth.admin.inviteUserByEmail /
@@ -28,13 +28,21 @@ export function failNextAuthWith(message: string): void {
   failNext = message
 }
 
+// DETERMINISTIC ids, derived from the email. A random id here once made every
+// list snapshot that included a newly created person differ on every run --
+// the test passed the run that wrote the snapshot and failed every run after.
+function idFor(email: string): string {
+  const h = createHash('sha256').update(email.toLowerCase()).digest('hex')
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`
+}
+
 function created(email: string) {
   if (failNext) {
     const message = failNext
     failNext = null
     return { data: { user: null }, error: { message, status: 422 } }
   }
-  return { data: { user: { id: randomUUID(), email } }, error: null }
+  return { data: { user: { id: idFor(email), email } }, error: null }
 }
 
 export const fakeAuth = {
