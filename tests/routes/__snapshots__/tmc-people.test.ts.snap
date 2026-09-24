@@ -1,0 +1,400 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`tmc/bands > GET: bands by rank with how many people are on each 1`] = `
+{
+  "bands": [
+    {
+      "code": "L1",
+      "employeeCount": 1,
+      "id": "32d0f0e0-e069-47a8-9d8b-c5617d30dbb6",
+      "label": "Junior",
+      "rank": 1,
+    },
+    {
+      "code": "L2",
+      "employeeCount": 0,
+      "id": "d6e77777-0fe0-4104-9bda-f39bde8133b5",
+      "label": "Associate",
+      "rank": 2,
+    },
+    {
+      "code": "L3",
+      "employeeCount": 1,
+      "id": "4a73a279-faa8-48f2-9ebd-15849bc4552a",
+      "label": "Senior",
+      "rank": 3,
+    },
+    {
+      "code": "L4",
+      "employeeCount": 1,
+      "id": "4b5c1e38-d6f5-4653-a5e9-741f3b61ef0b",
+      "label": "Manager",
+      "rank": 4,
+    },
+    {
+      "code": "L5",
+      "employeeCount": 1,
+      "id": "34b3952c-eccb-4bd6-985f-a05c674394c3",
+      "label": "Director",
+      "rank": 5,
+    },
+  ],
+  "ok": true,
+}
+`;
+
+exports[`tmc/branches > [id] GET: the branch and who works there 1`] = `
+{
+  "branch": {
+    "branch_no": "1",
+    "country": "India",
+    "created_at": "2026-09-07T10:02:13.342Z",
+    "gst_address_1": "Test Address",
+    "gst_address_2": null,
+    "gst_city": "Gurugram",
+    "gst_contact": null,
+    "gst_email": "branch@example.test",
+    "gst_name": "AMEX GBT",
+    "gst_number": "07AAAAA00000Z5",
+    "gst_state": "Haryana",
+    "gst_zip": "122009",
+    "iata_number": "1234",
+    "id": "8cd02caa-4e8e-4a62-9a33-797827a75f55",
+    "is_head_office": false,
+    "name": "AMEX-GGN",
+    "office_id": "GGNIN23U",
+    "profit_centre_code": "312",
+    "status": "active",
+  },
+  "ok": true,
+  "staff": [
+    {
+      "email": "employee.8159bb@example.test",
+      "full_name": "Employee 8159bb",
+      "id": "2669257f-ab87-4031-ab47-76e4af8e271b",
+      "role": "tc",
+      "status": "active",
+    },
+  ],
+}
+`;
+
+exports[`tmc/branches > GET: the TMC's branches with staff counts 1`] = `
+{
+  "items": [
+    {
+      "branch_no": "1",
+      "country": "India",
+      "created_at": "2026-09-07T10:02:13.342Z",
+      "gst_address_1": "Test Address",
+      "gst_address_2": null,
+      "gst_city": "Gurugram",
+      "gst_contact": null,
+      "gst_email": "branch@example.test",
+      "gst_name": "AMEX GBT",
+      "gst_number": "07AAAAA00000Z5",
+      "gst_state": "Haryana",
+      "gst_zip": "122009",
+      "iata_number": "1234",
+      "id": "8cd02caa-4e8e-4a62-9a33-797827a75f55",
+      "is_head_office": true,
+      "name": "AMEX-GGN",
+      "office_id": "GGNIN23U",
+      "profit_centre_code": "312",
+      "staffCount": 1,
+      "status": "active",
+    },
+  ],
+  "ok": true,
+  "page": 1,
+  "pageSize": 10,
+  "total": 1,
+  "totalPages": 1,
+}
+`;
+
+exports[`tmc/branches > POST: creates a branch, normalising codes 1`] = `
+{
+  "branch_no": "BOM-01",
+  "country": "India",
+  "gst_address_1": null,
+  "gst_address_2": null,
+  "gst_city": "Mumbai",
+  "gst_contact": null,
+  "gst_email": null,
+  "gst_name": null,
+  "gst_number": "27ABCDE1234F1Z5",
+  "gst_state": null,
+  "gst_zip": null,
+  "iata_number": null,
+  "is_head_office": false,
+  "name": "Mumbai",
+  "office_id": null,
+  "profit_centre_code": null,
+  "staffCount": 0,
+  "status": "active",
+}
+`;
+
+exports[`tmc/tcs > GET: the TMC's counsellors with permissions, access and branch 1`] = `
+{
+  "items": [
+    {
+      "branchName": null,
+      "branch_id": null,
+      "clientIds": [
+        "b5005d4e-b813-4f10-ae59-1b0f5257357e",
+      ],
+      "created_at": "2026-07-15T07:22:12.985Z",
+      "email": "employee.8159bb@example.test",
+      "full_name": "Employee 8159bb",
+      "id": "2669257f-ab87-4031-ab47-76e4af8e271b",
+      "permissions": [
+        "book_on_behalf",
+        "manage_approvals",
+        "manage_branches",
+        "manage_policy",
+        "manage_users",
+        "view_reports",
+      ],
+      "status": "active",
+    },
+    {
+      "branchName": null,
+      "branch_id": null,
+      "clientIds": [
+        "5f73d5e1-afcd-494c-b172-8a2de53cc9c9",
+        "911a4f7f-b278-4918-9136-972a0c4da47c",
+        "b5005d4e-b813-4f10-ae59-1b0f5257357e",
+      ],
+      "created_at": "2026-07-15T12:10:58.708Z",
+      "email": "employee.94ef72@example.test",
+      "full_name": "Employee 94ef72",
+      "id": "ad3c84ad-c596-4a24-bc1d-5567238fe970",
+      "permissions": [
+        "book_on_behalf",
+        "manage_approvals",
+        "manage_branches",
+        "manage_policy",
+        "manage_users",
+        "view_reports",
+      ],
+      "status": "active",
+    },
+  ],
+  "ok": true,
+  "page": 1,
+  "pageSize": 10,
+  "total": 2,
+  "totalPages": 1,
+}
+`;
+
+exports[`tmc/traveler-profiles > [id] PATCH: merges the profile, keeping what the traveller entered 1`] = `
+{
+  "employee": {
+    "band_code": "L4",
+    "band_rank": 4,
+    "cost_centre": "IT101G",
+    "department": null,
+    "designation": "Lead",
+    "email": "employee.12be2c@example.test",
+    "full_name": "Edited Name",
+    "id": "d674c0fd-ccef-4077-87fe-5af32f06cabc",
+    "traveler_profile": {
+      "city": "New City",
+      "dateOfBirth": "02/02/1992",
+      "mealPreference": "Veg",
+    },
+  },
+  "ok": true,
+}
+`;
+
+exports[`tmc/traveler-profiles > CSV GET: the roster as the upload template 1`] = `
+"email,full_name,band,cost_centre,department,designation,title,gender,date_of_birth,passport_number,passport_expiry,nationality,issuing_country,mobile,address,city,state,zip_code
+employee.12be2c@example.test,Edited Name,L4,IT101G,,Lead,,,02/02/1992,,,,,,,New City,,
+employee.1c5a5b@example.test,Employee 1c5a5b,L3,IT101G,,SWE,MR,Male,1990-01-01,X0000000,2035-01-01,IN,IN,9999999999,Test Address,Gurugram,Haryana,Test Address
+employee.4ae427@example.test,Employee 4ae427,L5,IT101G,IT,Head of IT,MR,Male,1990-01-01,X0000000,2035-01-01,IN,IN,9999999999,Test Address,Gurugram,Haryana,Test Address
+employee.8bebd3@example.test,Employee 8bebd3,L1,IT101G,IT,Junior SWE,MR,Male,1990-01-01,X0000000,2035-01-01,,India,9999999999,Test Address,Gurugram,Haryana,Test Address"
+`;
+
+exports[`tmc/traveler-profiles > GET: the roster with trips, bands and cost centres 1`] = `
+{
+  "bands": [
+    {
+      "code": "L1",
+      "id": "32d0f0e0-e069-47a8-9d8b-c5617d30dbb6",
+      "label": "Junior",
+      "rank": 1,
+    },
+    {
+      "code": "L2",
+      "id": "d6e77777-0fe0-4104-9bda-f39bde8133b5",
+      "label": "Associate",
+      "rank": 2,
+    },
+    {
+      "code": "L3",
+      "id": "4a73a279-faa8-48f2-9ebd-15849bc4552a",
+      "label": "Senior",
+      "rank": 3,
+    },
+    {
+      "code": "L4",
+      "id": "4b5c1e38-d6f5-4653-a5e9-741f3b61ef0b",
+      "label": "Manager",
+      "rank": 4,
+    },
+    {
+      "code": "L5",
+      "id": "34b3952c-eccb-4bd6-985f-a05c674394c3",
+      "label": "Director",
+      "rank": 5,
+    },
+  ],
+  "costCentres": [
+    {
+      "code": "IT101G",
+      "id": "14bbfd23-a4ad-4552-8191-92733c00af40",
+      "name": "Info Tech Amadeus",
+    },
+  ],
+  "items": [
+    {
+      "band_code": "L4",
+      "band_rank": 4,
+      "cost_centre": "IT101G",
+      "department": "IT",
+      "designation": "SWE",
+      "email": "employee.12be2c@example.test",
+      "first_login_completed": false,
+      "full_name": "Employee 12be2c",
+      "id": "d674c0fd-ccef-4077-87fe-5af32f06cabc",
+      "manager_id": "c0fc26d8-292b-4e90-9716-3b4d4f890838",
+      "profileComplete": true,
+      "role": "employee",
+      "status": "active",
+      "top_of_hierarchy": false,
+      "traveler_profile": {
+        "address": "Test Address",
+        "city": "Gurugram",
+        "dateOfBirth": "1990-01-01",
+        "email": "traveller@example.test",
+        "gender": "Male",
+        "issuingCountry": "India",
+        "mobile": "9999999999",
+        "nationality": "Indian",
+        "passportExpiryDate": "2035-01-01",
+        "passportNumber": "X0000000",
+        "state": "Haryana",
+        "title": "MR",
+        "zipCode": "Test Address",
+      },
+      "trips": 0,
+    },
+    {
+      "band_code": "L3",
+      "band_rank": 3,
+      "cost_centre": "IT101G",
+      "department": null,
+      "designation": "SWE",
+      "email": "employee.1c5a5b@example.test",
+      "first_login_completed": true,
+      "full_name": "Employee 1c5a5b",
+      "id": "f86261c4-5ab5-4d5a-b436-5932de829ede",
+      "manager_id": "d674c0fd-ccef-4077-87fe-5af32f06cabc",
+      "profileComplete": true,
+      "role": "employee",
+      "status": "active",
+      "top_of_hierarchy": false,
+      "traveler_profile": {
+        "address": "Test Address",
+        "city": "Gurugram",
+        "dateOfBirth": "1990-01-01",
+        "email": "traveller@example.test",
+        "gender": "Male",
+        "issuingCountry": "IN",
+        "mealPreference": "Non-Veg",
+        "mobile": "9999999999",
+        "nationality": "IN",
+        "passportExpiryDate": "2035-01-01",
+        "passportNumber": "X0000000",
+        "state": "Haryana",
+        "title": "MR",
+        "zipCode": "Test Address",
+      },
+      "trips": 15,
+    },
+    {
+      "band_code": "L5",
+      "band_rank": 5,
+      "cost_centre": "IT101G",
+      "department": "IT",
+      "designation": "Head of IT",
+      "email": "employee.4ae427@example.test",
+      "first_login_completed": true,
+      "full_name": "Employee 4ae427",
+      "id": "c0fc26d8-292b-4e90-9716-3b4d4f890838",
+      "manager_id": null,
+      "profileComplete": true,
+      "role": "admin",
+      "status": "active",
+      "top_of_hierarchy": true,
+      "traveler_profile": {
+        "address": "Test Address",
+        "city": "Gurugram",
+        "dateOfBirth": "1990-01-01",
+        "email": "traveller@example.test",
+        "gender": "Male",
+        "issuingCountry": "IN",
+        "mealPreference": "Non-Veg",
+        "mobile": "9999999999",
+        "nationality": "IN",
+        "passportExpiryDate": "2035-01-01",
+        "passportNumber": "X0000000",
+        "state": "Haryana",
+        "title": "MR",
+        "zipCode": "Test Address",
+      },
+      "trips": 14,
+    },
+    {
+      "band_code": "L1",
+      "band_rank": 1,
+      "cost_centre": "IT101G",
+      "department": "IT",
+      "designation": "Junior SWE",
+      "email": "employee.8bebd3@example.test",
+      "first_login_completed": false,
+      "full_name": "Employee 8bebd3",
+      "id": "6052570d-8f27-47f8-8b1f-98686fc6b098",
+      "manager_id": "d674c0fd-ccef-4077-87fe-5af32f06cabc",
+      "profileComplete": true,
+      "role": "employee",
+      "status": "active",
+      "top_of_hierarchy": false,
+      "traveler_profile": {
+        "address": "Test Address",
+        "city": "Gurugram",
+        "dateOfBirth": "1990-01-01",
+        "email": "traveller@example.test",
+        "gender": "Male",
+        "issuingCountry": "India",
+        "mobile": "9999999999",
+        "passportExpiryDate": "2035-01-01",
+        "passportNumber": "X0000000",
+        "state": "Haryana",
+        "title": "MR",
+        "zipCode": "Test Address",
+      },
+      "trips": 2,
+    },
+  ],
+  "ok": true,
+  "page": 1,
+  "pageSize": 10,
+  "total": 4,
+  "totalPages": 1,
+}
+`;
