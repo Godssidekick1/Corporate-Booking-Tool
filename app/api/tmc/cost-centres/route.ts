@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const access = await authoriseClient(service, user.id, clientId)
+  const access = await authoriseClient(user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
@@ -103,7 +103,7 @@ export async function POST(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const access = await authoriseClient(service, user.id, clientId)
+  const access = await authoriseClient(user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
@@ -145,7 +145,7 @@ export async function PATCH(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const access = await authoriseClient(service, user.id, clientId)
+  const access = await authoriseClient(user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
@@ -196,7 +196,7 @@ export async function DELETE(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const access = await authoriseClient(service, user.id, clientId)
+  const access = await authoriseClient(user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }

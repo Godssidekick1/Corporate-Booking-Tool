@@ -1,7 +1,9 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { authoriseBandAccess } from '../route'
 import { NextRequest } from 'next/server'
+import { db, isConstraint } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
+import { route } from '@/app/lib/http/handler'
 
 // ── PATCH /api/tmc/bands/[id] ────────────────────────────────────────────────
 // Renames a band or moves it to a different rank.
@@ -23,19 +25,9 @@ interface UpdateBandBody {
   rank?: number
 }
 
-async function loadBand(service: ReturnType<typeof createServiceClient>, id: string) {
-  const { data } = await service
-    .from('bands')
-    .select('id, client_id, code, label, rank')
-    .eq('id', id)
-    .maybeSingle()
-  return data
-}
+type Ctx = { params: Promise<{ id: string }> }
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export const PATCH = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -44,20 +36,19 @@ export async function PATCH(
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-  const band = await loadBand(service, id)
+  const band = await employees.band(db, id)
 
   if (!band) {
     return Response.json({ error: 'Band not found' }, { status: 404 })
   }
 
-  const access = await authoriseBandAccess(service, user.id, band.client_id)
+  const access = await authoriseBandAccess(user.id, band.client_id)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
 
   const body: UpdateBandBody = await req.json()
-  const fields: Record<string, string | number> = {}
+  const fields: employees.BandEdit = {}
 
   if (body.code !== undefined) {
     if (!body.code.trim()) {
@@ -79,13 +70,7 @@ export async function PATCH(
     }
 
     if (Number(body.rank) !== band.rank) {
-      const { data: rankClash } = await service
-        .from('bands')
-        .select('code')
-        .eq('client_id', band.client_id)
-        .eq('rank', Number(body.rank))
-        .neq('id', id)
-        .maybeSingle()
+      const rankClash = await employees.bandAtRank(db, band.client_id, Number(body.rank), id)
 
       if (rankClash) {
         return Response.json(
@@ -102,21 +87,17 @@ export async function PATCH(
     return Response.json({ error: 'Nothing to update' }, { status: 400 })
   }
 
-  const { data: updated, error } = await service
-    .from('bands')
-    .update(fields)
-    .eq('id', id)
-    .select('id, code, label, rank')
-    .single()
-
-  if (error) {
-    if (error.code === '23505') {
+  let updated: employees.BandRow
+  try {
+    updated = await employees.updateBand(db, id, fields)
+  } catch (err) {
+    if (isConstraint(err, 'unique')) {
       return Response.json(
         { error: `This client already has a band with code "${fields.code}"` },
         { status: 409 }
       )
     }
-    return Response.json({ error: error.message }, { status: 500 })
+    throw err
   }
 
   // Changing a band's rank changes which policy group covers its employees —
@@ -124,12 +105,9 @@ export async function PATCH(
   const rankChanged = fields.rank !== undefined && fields.rank !== band.rank
 
   return Response.json({ ok: true, band: updated, rankChanged })
-}
+})
 
-export async function DELETE(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export const DELETE = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -138,38 +116,29 @@ export async function DELETE(
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-  const band = await loadBand(service, id)
+  const band = await employees.band(db, id)
 
   if (!band) {
     return Response.json({ error: 'Band not found' }, { status: 404 })
   }
 
-  const access = await authoriseBandAccess(service, user.id, band.client_id)
+  const access = await authoriseBandAccess(user.id, band.client_id)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
 
   // Check before relying on the FK so the message names the problem rather
   // than surfacing a raw constraint violation.
-  const { count } = await service
-    .from('employees')
-    .select('id', { count: 'exact', head: true })
-    .eq('client_id', band.client_id)
-    .eq('band_code', band.code)
+  const count = await employees.countOnBandCode(db, band.client_id, band.code)
 
-  if (count && count > 0) {
+  if (count > 0) {
     return Response.json(
       { error: `${count} employee${count > 1 ? 's are' : ' is'} on band "${band.code}". Move them to another band before deleting it.` },
       { status: 409 }
     )
   }
 
-  const { error } = await service.from('bands').delete().eq('id', id)
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
+  await employees.deleteBand(db, id)
 
   return Response.json({ ok: true })
-}
+})

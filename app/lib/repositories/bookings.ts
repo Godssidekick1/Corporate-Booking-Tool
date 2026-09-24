@@ -28,3 +28,17 @@ export async function countForClients(db: Queryable, clientIds: readonly string[
     select count(*)::int as n from bookings where client_id = any(${[...clientIds]})`)
   return row.n
 }
+
+// Bookings per traveller at a client, for the people on one roster page.
+export async function tripCounts(
+  db: Queryable,
+  clientId: string,
+  employeeIds: readonly string[]
+): Promise<Map<string, number>> {
+  if (employeeIds.length === 0) return new Map()
+  const rows = await many<{ employee_id: string; n: number }>(db, sql`
+    select employee_id, count(*)::int as n from bookings
+    where client_id = ${clientId} and employee_id = any(${[...employeeIds]})
+    group by employee_id`)
+  return new Map(rows.map(r => [r.employee_id, r.n]))
+}

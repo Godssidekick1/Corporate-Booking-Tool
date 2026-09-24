@@ -94,3 +94,28 @@ export function assignments<K extends string>(
   if (parts.length === 0) throw new Error('[db] update with nothing to set')
   return join(parts)
 }
+
+// ── insertColumns ────────────────────────────────────────────────────────────
+// The INSERT counterpart of assignments(): `(a, b) values ($1, $2)` for the
+// fields present in `row`, under the same column map.
+//
+//   sql`insert into branches ${insertColumns(COLUMNS, fields)} returning …`
+//
+// Undefined fields are left out of the statement entirely, so the column's
+// DEFAULT applies -- sending NULL for them would override it (country would
+// be NULL rather than 'India', and the insert would fail NOT NULL).
+export function insertColumns<K extends string>(
+  columns: Readonly<Record<K, Sql>>,
+  row: Partial<Record<K, unknown>>
+): Sql {
+  const names: Sql[] = []
+  const values: Sql[] = []
+  for (const key of Object.keys(row) as K[]) {
+    if (!(key in columns)) throw new Error(`[db] "${key}" is not an insertable column here`)
+    if (row[key] === undefined) continue
+    names.push(columns[key])
+    values.push(sql`${row[key]}`)
+  }
+  if (names.length === 0) throw new Error('[db] insert with no columns')
+  return sql`(${join(names)}) values (${join(values)})`
+}

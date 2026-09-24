@@ -1,7 +1,10 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { authoriseClient } from '../route'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
+import * as clients from '@/app/lib/repositories/clients'
+import { route } from '@/app/lib/http/handler'
 
 // ── PATCH /api/tmc/traveler-profiles/[id] ────────────────────────────────────
 // Edits one employee's corporate record and travel profile from the TMC side.
@@ -35,10 +38,10 @@ interface UpdateBody {
   profile?: Record<string, unknown>
 }
 
-export async function PATCH(
+export const PATCH = route(async (
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
+) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -47,25 +50,20 @@ export async function PATCH(
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-
-  const { data: target } = await service
-    .from('employees')
-    .select('id, client_id, traveler_profile')
-    .eq('id', id)
-    .maybeSingle()
+  const target = await employees.profileTarget(db, id)
 
   if (!target?.client_id) {
     return Response.json({ error: 'Employee not found' }, { status: 404 })
   }
+  const clientId = target.client_id
 
-  const access = await authoriseClient(service, user.id, target.client_id)
+  const access = await authoriseClient(user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
 
   const body: UpdateBody = await req.json()
-  const update: Record<string, unknown> = {}
+  const update: employees.TravellerEdit = {}
 
   if (body.fullName !== undefined) {
     if (!body.fullName.trim()) {
@@ -82,31 +80,17 @@ export async function PATCH(
 
     // Checked against the client's own list so a typo doesn't silently create a
     // cost centre that exists on exactly one person and matches nothing in a report.
-    if (code) {
-      const { data: centre } = await service
-        .from('cost_centres')
-        .select('code')
-        .eq('client_id', target.client_id)
-        .eq('code', code)
-        .maybeSingle()
-
-      if (!centre) {
-        return Response.json({
-          error: `"${code}" is not one of this client's cost centres. Add it under Cost centres first.`,
-        }, { status: 422 })
-      }
+    if (code && !(await clients.hasCostCentre(db, clientId, code))) {
+      return Response.json({
+        error: `"${code}" is not one of this client's cost centres. Add it under Cost centres first.`,
+      }, { status: 422 })
     }
 
     update.cost_centre = code
   }
 
   if (body.band !== undefined) {
-    const { data: bandRow } = await service
-      .from('bands')
-      .select('id, code, rank')
-      .eq('client_id', target.client_id)
-      .eq('code', body.band)
-      .maybeSingle()
+    const bandRow = await employees.bandByCode(db, clientId, body.band)
 
     if (!bandRow) {
       return Response.json(
@@ -123,8 +107,8 @@ export async function PATCH(
   }
 
   if (body.profile !== undefined) {
-    const existing = (target.traveler_profile as Record<string, unknown> | null) ?? {}
-    const incoming: Record<string, unknown> = {}
+    const existing = target.traveler_profile ?? {}
+    const incoming: employees.ProfileJson = {}
 
     for (const field of PROFILE_FIELDS) {
       if (body.profile[field] === undefined) continue
@@ -139,16 +123,7 @@ export async function PATCH(
     return Response.json({ error: 'Nothing to update' }, { status: 400 })
   }
 
-  const { data: updated, error } = await service
-    .from('employees')
-    .update(update)
-    .eq('id', id)
-    .select('id, full_name, email, band_code, band_rank, department, cost_centre, designation, traveler_profile')
-    .single()
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
+  const updated = await employees.applyTravellerEdit(db, id, update)
 
   return Response.json({ ok: true, employee: updated })
-}
+})

@@ -424,3 +424,315 @@ export async function applyReportingEdit(
     where id = ${employeeId}
     returning id, full_name, manager_id, top_of_hierarchy, band_code, band_rank`)
 }
+
+// ═══ Travel counsellors (TMC staff) ═════════════════════════════════════════
+
+export type CounsellorRow = Pick<Row<'employees'>, 'id' | 'full_name' | 'email' | 'status' | 'created_at' | 'branch_id'>
+
+export async function counsellors(db: Queryable, tmcId: string, scope: ListScope): Promise<Listed<CounsellorRow>> {
+  return listEmployees<CounsellorRow>(
+    db,
+    sql`id, full_name, email, status, created_at, branch_id`,
+    sql`tmc_id = ${tmcId} and role = 'tc'`,
+    scope,
+    [sql`full_name`, sql`email`]
+  )
+}
+
+export async function findCounsellorInTmc(
+  db: Queryable,
+  employeeId: string,
+  tmcId: string
+): Promise<Pick<Row<'employees'>, 'id'> | null> {
+  return maybeOne(db, sql`
+    select id from employees where id = ${employeeId} and tmc_id = ${tmcId} and role = 'tc'`)
+}
+
+export async function findByEmailInTmc(
+  db: Queryable,
+  tmcId: string,
+  email: string
+): Promise<Pick<Row<'employees'>, 'id'> | null> {
+  return maybeOne(db, sql`select id from employees where tmc_id = ${tmcId} and email = ${email}`)
+}
+
+export interface NewCounsellor {
+  id: string
+  tmc_id: string
+  full_name: string
+  email: string
+}
+
+// A counsellor starts 'invited' with no client of their own; what they can
+// reach is granted separately (grantPermissions, grantClientAccess).
+export async function insertCounsellor(db: Queryable, c: NewCounsellor): Promise<void> {
+  await exec(db, sql`
+    insert into employees (id, auth_user_id, tmc_id, client_id, full_name, email, role, status)
+    values (${c.id}, ${c.id}, ${c.tmc_id}, null, ${c.full_name}, ${c.email}, 'tc', 'invited')`)
+}
+
+export async function setStatus(db: Queryable, employeeId: string, status: string): Promise<void> {
+  await exec(db, sql`update employees set status = ${status} where id = ${employeeId}`)
+}
+
+// Organisational only -- a branch grants nothing.
+export async function setBranch(db: Queryable, employeeId: string, branchId: string | null): Promise<void> {
+  await exec(db, sql`update employees set branch_id = ${branchId} where id = ${employeeId}`)
+}
+
+// ═══ Grants: permissions and client access ══════════════════════════════════
+
+export interface PermissionGrant { employee_id: string; permission_key: string }
+export interface ClientGrant { employee_id: string; client_id: string }
+
+export async function permissionsFor(db: Queryable, employeeIds: readonly string[]): Promise<PermissionGrant[]> {
+  if (employeeIds.length === 0) return []
+  return many<PermissionGrant>(db, sql`
+    select employee_id, permission_key from employee_permissions
+    where employee_id = any(${[...employeeIds]})
+    order by employee_id, permission_key`)
+}
+
+export async function clientAccessFor(db: Queryable, employeeIds: readonly string[]): Promise<ClientGrant[]> {
+  if (employeeIds.length === 0) return []
+  return many<ClientGrant>(db, sql`
+    select employee_id, client_id from employee_client_access
+    where employee_id = any(${[...employeeIds]})
+    order by employee_id, client_id`)
+}
+
+// One statement for the whole set. A repeated key violates the primary key and
+// fails the statement -- inside a transaction, the whole replacement.
+export async function grantPermissions(
+  db: Queryable,
+  employeeId: string,
+  keys: readonly string[],
+  grantedBy: string
+): Promise<void> {
+  if (keys.length === 0) return
+  await exec(db, sql`
+    insert into employee_permissions (employee_id, permission_key, granted_by)
+    select ${employeeId}, k, ${grantedBy} from unnest(${[...keys]}::text[]) as k`)
+}
+
+export async function grantClientAccess(
+  db: Queryable,
+  employeeId: string,
+  clientIds: readonly string[],
+  grantedBy: string
+): Promise<void> {
+  if (clientIds.length === 0) return
+  await exec(db, sql`
+    insert into employee_client_access (employee_id, client_id, granted_by)
+    select ${employeeId}, c, ${grantedBy} from unnest(${[...clientIds]}::uuid[]) as c`)
+}
+
+export async function revokeAllPermissions(db: Queryable, employeeId: string): Promise<void> {
+  await exec(db, sql`delete from employee_permissions where employee_id = ${employeeId}`)
+}
+
+export async function revokeAllClientAccess(db: Queryable, employeeId: string): Promise<void> {
+  await exec(db, sql`delete from employee_client_access where employee_id = ${employeeId}`)
+}
+
+// ═══ Branch staff ═══════════════════════════════════════════════════════════
+// Who works out of which branch. Branches themselves are tmcs.ts's; the
+// question "who is there" is about employees.
+
+export async function staffCountsByBranch(db: Queryable, branchIds: readonly string[]): Promise<Map<string, number>> {
+  if (branchIds.length === 0) return new Map()
+  const rows = await many<{ branch_id: string; n: number }>(db, sql`
+    select branch_id, count(*)::int as n from employees
+    where branch_id = any(${[...branchIds]})
+    group by branch_id`)
+  return new Map(rows.map(r => [r.branch_id, r.n]))
+}
+
+export type BranchStaff = Pick<Row<'employees'>, 'id' | 'full_name' | 'email' | 'role' | 'status'>
+
+export async function staffAtBranch(db: Queryable, branchId: string): Promise<BranchStaff[]> {
+  return many<BranchStaff>(db, sql`
+    select id, full_name, email, role, status from employees
+    where branch_id = ${branchId}
+    order by full_name, id`)
+}
+
+export async function countAtBranch(db: Queryable, branchId: string): Promise<number> {
+  return (await one<{ n: number }>(db, sql`
+    select count(*)::int as n from employees where branch_id = ${branchId}`)).n
+}
+
+// ═══ Bands ══════════════════════════════════════════════════════════════════
+// A client's own grading vocabulary. `rank` is the structural part policy
+// groups match on; code and label are whatever the client calls them.
+//
+// Renames reach employees through the bands_sync_employees trigger, in the
+// same statement -- nothing here copies band_code/band_rank on a band edit.
+
+export type BandRow = Pick<Row<'bands'>, 'id' | 'code' | 'label' | 'rank'>
+export type BandRecord = BandRow & Pick<Row<'bands'>, 'client_id'>
+
+export async function bandsForClient(db: Queryable, clientId: string): Promise<BandRow[]> {
+  return many<BandRow>(db, sql`
+    select id, code, label, rank from bands where client_id = ${clientId} order by rank, id`)
+}
+
+export async function band(db: Queryable, bandId: string): Promise<BandRecord | null> {
+  return maybeOne<BandRecord>(db, sql`
+    select id, client_id, code, label, rank from bands where id = ${bandId}`)
+}
+
+// The band already holding a rank, if any. `limit 1` rather than expecting
+// one: rank is unique by convention, not by constraint, and a client that
+// already has a clash must still get a clear 409 here rather than a 500.
+export async function bandAtRank(
+  db: Queryable,
+  clientId: string,
+  rank: number,
+  exceptBandId?: string
+): Promise<Pick<Row<'bands'>, 'code'> | null> {
+  return maybeOne(db, sql`
+    select code from bands
+    where client_id = ${clientId} and rank = ${rank}
+    ${exceptBandId ? sql`and id <> ${exceptBandId}` : empty}
+    order by code
+    limit 1`)
+}
+
+export async function insertBand(
+  db: Queryable,
+  b: Pick<Row<'bands'>, 'client_id' | 'code' | 'label' | 'rank'>
+): Promise<BandRow> {
+  return one<BandRow>(db, sql`
+    insert into bands (client_id, code, label, rank)
+    values (${b.client_id}, ${b.code}, ${b.label}, ${b.rank})
+    returning id, code, label, rank`)
+}
+
+export type BandEdit = Partial<Pick<Row<'bands'>, 'code' | 'label' | 'rank'>>
+
+const BAND_EDITABLE = { code: sql`code`, label: sql`label`, rank: sql`rank` } as const
+
+export async function updateBand(db: Queryable, bandId: string, patch: BandEdit): Promise<BandRow> {
+  return one<BandRow>(db, sql`
+    update bands set ${assignments(BAND_EDITABLE, patch)}
+    where id = ${bandId}
+    returning id, code, label, rank`)
+}
+
+export async function deleteBand(db: Queryable, bandId: string): Promise<void> {
+  await exec(db, sql`delete from bands where id = ${bandId}`)
+}
+
+// People per band code at a client -- what a rename touches and what blocks a
+// delete.
+export async function headcountByBandCode(db: Queryable, clientId: string): Promise<Map<string, number>> {
+  const rows = await many<{ band_code: string; n: number }>(db, sql`
+    select band_code, count(*)::int as n from employees
+    where client_id = ${clientId} and band_code is not null
+    group by band_code`)
+  return new Map(rows.map(r => [r.band_code, r.n]))
+}
+
+export async function countOnBandCode(db: Queryable, clientId: string, code: string): Promise<number> {
+  return (await one<{ n: number }>(db, sql`
+    select count(*)::int as n from employees where client_id = ${clientId} and band_code = ${code}`)).n
+}
+
+// ═══ Traveller profiles, TMC side ═══════════════════════════════════════════
+// The travel desk maintains the corporate half of a traveller's record (band,
+// cost centre, department) and the travel document half on their behalf.
+//
+// traveler_profile is typed loosely here on purpose: the TMC side MERGES into
+// it, and must carry through whatever keys the traveller saved themselves.
+
+export type ProfileJson = Record<string, unknown>
+
+export type TravellerRosterRow = Pick<Row<'employees'>,
+  | 'id' | 'full_name' | 'email' | 'role' | 'status' | 'band_code' | 'band_rank' | 'department'
+  | 'cost_centre' | 'designation' | 'manager_id' | 'top_of_hierarchy' | 'first_login_completed'
+> & { traveler_profile: ProfileJson | null }
+
+export async function travellerRoster(
+  db: Queryable,
+  clientId: string,
+  scope: ListScope
+): Promise<Listed<TravellerRosterRow>> {
+  return listEmployees<TravellerRosterRow>(
+    db,
+    sql`id, full_name, email, role, status, band_code, band_rank, department, cost_centre,
+        designation, manager_id, top_of_hierarchy, traveler_profile, first_login_completed`,
+    sql`client_id = ${clientId}`,
+    scope,
+    [sql`full_name`, sql`email`, sql`department`, sql`designation`, sql`cost_centre`]
+  )
+}
+
+export interface ProfileTarget {
+  id: string
+  client_id: string | null
+  traveler_profile: ProfileJson | null
+}
+
+export async function profileTarget(db: Queryable, employeeId: string): Promise<ProfileTarget | null> {
+  return maybeOne<ProfileTarget>(db, sql`
+    select id, client_id, traveler_profile from employees where id = ${employeeId}`)
+}
+
+// The profile keyed by email, for matching an uploaded roster to people.
+export async function profilesByEmail(
+  db: Queryable,
+  clientId: string
+): Promise<(ProfileTarget & Pick<Row<'employees'>, 'email'>)[]> {
+  return many(db, sql`
+    select id, client_id, email, traveler_profile from employees
+    where client_id = ${clientId}
+    order by email, id`)
+}
+
+export type RosterExportRow = Pick<Row<'employees'>,
+  'email' | 'full_name' | 'band_code' | 'cost_centre' | 'department' | 'designation'
+> & { traveler_profile: ProfileJson | null }
+
+export async function rosterForExport(db: Queryable, clientId: string): Promise<RosterExportRow[]> {
+  return many<RosterExportRow>(db, sql`
+    select email, full_name, band_code, cost_centre, department, designation, traveler_profile
+    from employees where client_id = ${clientId}
+    order by full_name, id`)
+}
+
+export type TravellerEdit = Partial<Pick<Row<'employees'>,
+  'full_name' | 'department' | 'designation' | 'cost_centre' | 'band_id' | 'band_code' | 'band_rank'
+>> & { traveler_profile?: ProfileJson }
+
+export type TravellerEditResult = Pick<Row<'employees'>,
+  'id' | 'full_name' | 'email' | 'band_code' | 'band_rank' | 'department' | 'cost_centre' | 'designation'
+> & { traveler_profile: ProfileJson | null }
+
+const TRAVELLER_EDITABLE = {
+  full_name: sql`full_name`,
+  department: sql`department`,
+  designation: sql`designation`,
+  cost_centre: sql`cost_centre`,
+  band_id: sql`band_id`,
+  band_code: sql`band_code`,
+  band_rank: sql`band_rank`,
+  traveler_profile: sql`traveler_profile`,
+} as const
+
+// The caller has already merged traveler_profile with what was there; this
+// writes the result whole.
+export async function applyTravellerEdit(
+  db: Queryable,
+  employeeId: string,
+  patch: TravellerEdit
+): Promise<TravellerEditResult> {
+  const values = {
+    ...patch,
+    traveler_profile: patch.traveler_profile === undefined ? undefined : json(patch.traveler_profile),
+  }
+  return one<TravellerEditResult>(db, sql`
+    update employees set ${assignments(TRAVELLER_EDITABLE, values)}
+    where id = ${employeeId}
+    returning id, full_name, email, band_code, band_rank, department, cost_centre, designation, traveler_profile`)
+}

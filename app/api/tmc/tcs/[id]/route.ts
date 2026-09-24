@@ -1,8 +1,11 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { isPermissionKey } from '@/app/lib/permissions/permissionKeys'
-import { withTransaction, orAbort } from '@/app/lib/db/tx'
 import { NextRequest } from 'next/server'
+import { db, transaction } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
+import * as clients from '@/app/lib/repositories/clients'
+import * as tmcs from '@/app/lib/repositories/tmcs'
+import { route } from '@/app/lib/http/handler'
 
 // ── PATCH /api/tmc/tcs/[id] ──────────────────────────────────────────────────
 // Replaces a TC's permission set and/or client access list wholesale
@@ -17,20 +20,10 @@ interface UpdateTcBody {
   branchId?: string | null
 }
 
-async function getTmcCaller(userId: string, service: ReturnType<typeof createServiceClient>) {
-  const { data: caller } = await service
-    .from('employees')
-    .select('role, tmc_id')
-    .eq('id', userId)
-    .single()
-  if (!caller || caller.role !== 'tmc_admin' || !caller.tmc_id) return null
-  return caller
-}
-
-export async function PATCH(
+export const PATCH = route(async (
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
+) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -39,19 +32,13 @@ export async function PATCH(
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-  const caller = await getTmcCaller(user.id, service)
-  if (!caller) {
+  const caller = await employees.accessProfile(db, user.id)
+  if (!caller || caller.role !== 'tmc_admin' || !caller.tmc_id) {
     return Response.json({ error: 'Only TMC admins can edit TCs' }, { status: 403 })
   }
+  const tmcId = caller.tmc_id
 
-  const { data: target } = await service
-    .from('employees')
-    .select('id')
-    .eq('id', id)
-    .eq('tmc_id', caller.tmc_id)
-    .eq('role', 'tc')
-    .maybeSingle()
+  const target = await employees.findCounsellorInTmc(db, id, tmcId)
 
   if (!target) {
     return Response.json({ error: 'TC not found' }, { status: 404 })
@@ -74,13 +61,8 @@ export async function PATCH(
   }
 
   if (clientIds !== undefined && clientIds.length > 0) {
-    const { data: validClients } = await service
-      .from('clients')
-      .select('id')
-      .eq('tmc_id', caller.tmc_id)
-      .in('id', clientIds)
-
-    if ((validClients?.length ?? 0) !== clientIds.length) {
+    const valid = await clients.idsInTmc(db, tmcId, clientIds)
+    if (valid.length !== clientIds.length) {
       return Response.json({ error: 'One or more clients not found for your TMC' }, { status: 400 })
     }
   }
@@ -92,14 +74,7 @@ export async function PATCH(
   // branch_id is a plain FK, so another tenant's branch would satisfy the
   // constraint and quietly file this person under someone else's office.
   if (branchId !== undefined && branchId !== null && branchId !== '') {
-    const { data: branch } = await service
-      .from('branches')
-      .select('id')
-      .eq('id', branchId)
-      .eq('tmc_id', caller.tmc_id)
-      .maybeSingle()
-
-    if (!branch) {
+    if (!(await tmcs.branchInTmc(db, branchId, tmcId))) {
       return Response.json({ error: 'That branch does not belong to your TMC' }, { status: 422 })
     }
   }
@@ -111,43 +86,28 @@ export async function PATCH(
   // client access at all -- silently escalating a validation error into a
   // lockout, with nothing recording what the previous state was.
   //
-  // It was worse than that: the two deletes did not check their own error, so
-  // a failed delete was ignored and the insert that followed simply added
-  // duplicates on top of rows that were supposed to be gone.
-  const { error: writeError } = await withTransaction(async (db) => {
+  // Any repository throw rolls the whole block back; route() answers 500.
+  await transaction(async tx => {
     if (permissions !== undefined) {
-      await orAbort(db.from('employee_permissions').delete().eq('employee_id', id))
-      if (permissions.length > 0) {
-        await orAbort(db.from('employee_permissions').insert(
-          permissions.map(p => ({ employee_id: id, permission_key: p, granted_by: user.id }))
-        ))
-      }
+      await employees.revokeAllPermissions(tx, id)
+      await employees.grantPermissions(tx, id, permissions, user.id)
     }
 
     if (clientIds !== undefined) {
-      await orAbort(db.from('employee_client_access').delete().eq('employee_id', id))
-      if (clientIds.length > 0) {
-        await orAbort(db.from('employee_client_access').insert(
-          clientIds.map(cid => ({ employee_id: id, client_id: cid, granted_by: user.id }))
-        ))
-      }
+      await employees.revokeAllClientAccess(tx, id)
+      await employees.grantClientAccess(tx, id, clientIds, user.id)
     }
 
     if (status !== undefined) {
-      await orAbort(db.from('employees').update({ status }).eq('id', id))
+      await employees.setStatus(tx, id, status)
     }
 
     // Which office this counsellor works out of. Organisational only — it
     // grants nothing, since client access is employee_client_access above.
     if (branchId !== undefined) {
-      const value = branchId === null || branchId === '' ? null : branchId
-      await orAbort(db.from('employees').update({ branch_id: value }).eq('id', id))
+      await employees.setBranch(tx, id, branchId === null || branchId === '' ? null : branchId)
     }
-  })
-
-  if (writeError) {
-    return Response.json({ error: writeError.message }, { status: 500 })
-  }
+  }, { tenantId: tmcId, userId: user.id })
 
   return Response.json({ ok: true })
-}
+})

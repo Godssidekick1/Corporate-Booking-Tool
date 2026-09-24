@@ -1,9 +1,11 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
-import { parsePageParams, pagedResponse, ilikeAcross } from '@/app/lib/pagination'
+import { parsePageParams, pagedResponse } from '@/app/lib/pagination'
 import { NextRequest } from 'next/server'
-import { db } from '@/app/lib/db'
+import { db, transaction, isConstraint } from '@/app/lib/db'
+import * as tmcs from '@/app/lib/repositories/tmcs'
+import * as employees from '@/app/lib/repositories/employees'
+import { route } from '@/app/lib/http/handler'
 
 // ── /api/tmc/branches ────────────────────────────────────────────────────────
 // The TMC's own offices. Paged and searched like every other list; `ids=`
@@ -14,13 +16,7 @@ import { db } from '@/app/lib/db'
 // is one env var for the whole application.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// One unbroken literal on purpose. Concatenating it widens the type from a
-// string literal to `string`, and Supabase's client parses the select list at
-// the type level — so a joined string silently degrades every row it returns to
-// GenericStringError and every field access becomes an error.
-export const BRANCH_COLUMNS = 'id, name, branch_no, profit_centre_code, gst_number, gst_name, gst_email, gst_contact, gst_address_1, gst_address_2, country, gst_state, gst_city, gst_zip, iata_number, office_id, is_head_office, status, created_at'
-
-export async function GET(req: NextRequest) {
+export const GET = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -28,7 +24,6 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
   const auth = await requireTmcPermission(db, user.id, 'manage_branches')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
@@ -37,53 +32,24 @@ export async function GET(req: NextRequest) {
   const params = parsePageParams(req.nextUrl.searchParams)
   const ids = req.nextUrl.searchParams.get('ids')?.split(',').filter(Boolean) ?? []
 
-  let query = service
-    .from('branches')
-    .select(BRANCH_COLUMNS, { count: 'exact' })
-    .eq('tmc_id', auth.tmcId)
-    // Head office first, then alphabetical: it is the one a desk looks for.
-    .order('is_head_office', { ascending: false })
-    .order('name')
-
-  if (ids.length > 0) {
-    query = query.in('id', ids)
-  } else {
-    const filter = ilikeAcross(['name', 'branch_no', 'gst_city', 'gst_state'], params.search)
-    if (filter) query = query.or(filter)
-    query = query.range(params.from, params.to)
-  }
-
-  const { data: branches, error, count } = await query
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
+  const { rows, total } = await tmcs.branches(
+    db,
+    auth.tmcId,
+    ids.length > 0 ? { ids } : { search: params.search, page: params }
+  )
 
   // How many counsellors sit at each. Shown so the consequence of retiring a
   // branch is legible before anyone tries.
-  const branchIds = (branches ?? []).map(b => b.id)
-  const staffCount = new Map<string, number>()
-
-  if (branchIds.length > 0) {
-    const { data: staff } = await service
-      .from('employees')
-      .select('branch_id')
-      .in('branch_id', branchIds)
-
-    for (const s of staff ?? []) {
-      if (!s.branch_id) continue
-      staffCount.set(s.branch_id, (staffCount.get(s.branch_id) ?? 0) + 1)
-    }
-  }
+  const staffCount = await employees.staffCountsByBranch(db, rows.map(b => b.id))
 
   return Response.json(
     pagedResponse(
-      (branches ?? []).map(b => ({ ...b, staffCount: staffCount.get(b.id) ?? 0 })),
-      count ?? null,
+      rows.map(b => ({ ...b, staffCount: staffCount.get(b.id) ?? 0 })),
+      total,
       params
     )
   )
-}
+})
 
 export interface BranchBody {
   name?: string
@@ -107,17 +73,19 @@ export interface BranchBody {
 
 export const BRANCH_STATUSES = ['active', 'inactive'] as const
 
+type TextField = Exclude<keyof tmcs.BranchFields, 'name' | 'country' | 'is_head_office' | 'status'>
+
 // Maps a body onto column values. Shared with PATCH so the two cannot normalise
 // differently — a GST number uppercased on create but not on edit would produce
 // two spellings of the same registration.
-export function branchFields(body: BranchBody): Record<string, unknown> {
-  const fields: Record<string, unknown> = {}
+export function branchFields(body: BranchBody): tmcs.BranchFields {
+  const fields: tmcs.BranchFields = {}
 
-  const text = (key: keyof BranchBody, column = key as string) => {
-    if (body[key] !== undefined) fields[column] = (body[key] as string | null)?.trim() || null
+  const text = (key: TextField) => {
+    if (body[key] !== undefined) fields[key] = body[key]?.trim() || null
   }
-  const upper = (key: keyof BranchBody, column = key as string) => {
-    if (body[key] !== undefined) fields[column] = (body[key] as string | null)?.trim().toUpperCase() || null
+  const upper = (key: TextField) => {
+    if (body[key] !== undefined) fields[key] = body[key]?.trim().toUpperCase() || null
   }
 
   if (body.name !== undefined) fields.name = body.name.trim()
@@ -144,7 +112,10 @@ export function branchFields(body: BranchBody): Record<string, unknown> {
   return fields
 }
 
-export async function POST(req: NextRequest) {
+// Any unique index on branches: (tmc_id, name), or (tmc_id, branch_no).
+export const DUPLICATE_BRANCH = { error: 'A branch with that name or number already exists' }
+
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -152,11 +123,11 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
   const auth = await requireTmcPermission(db, user.id, 'manage_branches')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
+  const tmcId = auth.tmcId
 
   const body: BranchBody = await req.json()
 
@@ -167,36 +138,21 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: `Invalid status: ${body.status}` }, { status: 400 })
   }
 
-  // Clearing the flag elsewhere BEFORE inserting, or the partial unique index
-  // rejects the row and the admin gets a constraint error instead of a branch.
-  if (body.is_head_office) {
-    await service
-      .from('branches')
-      .update({ is_head_office: false })
-      .eq('tmc_id', auth.tmcId)
-      .eq('is_head_office', true)
+  try {
+    const created = await transaction(async tx => {
+      // Clearing the flag elsewhere BEFORE inserting, or the partial unique
+      // index rejects the row. In the same transaction, so a rejected insert
+      // does not leave the TMC with no head office at all.
+      if (body.is_head_office) await tmcs.demoteHeadOffice(tx, tmcId)
+      return tmcs.insertBranch(tx, tmcId, user.id, {
+        ...branchFields(body),
+        status: body.status ?? 'active',
+      })
+    }, { tenantId: tmcId, userId: user.id })
+
+    return Response.json({ ok: true, branch: { ...created, staffCount: 0 } })
+  } catch (err) {
+    if (isConstraint(err, 'unique')) return Response.json(DUPLICATE_BRANCH, { status: 409 })
+    throw err
   }
-
-  const { data: created, error } = await service
-    .from('branches')
-    .insert({
-      ...branchFields(body),
-      tmc_id: auth.tmcId,
-      status: body.status ?? 'active',
-      created_by: user.id,
-    })
-    .select(BRANCH_COLUMNS)
-    .single()
-
-  if (error) {
-    if (error.code === '23505') {
-      return Response.json(
-        { error: 'A branch with that name or number already exists' },
-        { status: 409 }
-      )
-    }
-    return Response.json({ error: error.message }, { status: 500 })
-  }
-
-  return Response.json({ ok: true, branch: { ...created, staffCount: 0 } })
-}
+})

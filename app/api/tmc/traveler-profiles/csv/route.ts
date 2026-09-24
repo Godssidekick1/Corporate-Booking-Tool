@@ -1,7 +1,10 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { authoriseClient } from '../route'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
+import * as clients from '@/app/lib/repositories/clients'
+import { route } from '@/app/lib/http/handler'
 
 // ── /api/tmc/traveler-profiles/csv ───────────────────────────────────────────
 // GET  ?clientId=   downloads the current roster as CSV
@@ -52,7 +55,7 @@ function escapeCell(value: unknown): string {
   return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
 }
 
-export async function GET(req: NextRequest) {
+export const GET = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -65,23 +68,18 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'clientId is required' }, { status: 400 })
   }
 
-  const service = createServiceClient()
-  const access = await authoriseClient(service, user.id, clientId)
+  const access = await authoriseClient(user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
 
-  const [{ data: employees }, { data: client }] = await Promise.all([
-    service
-      .from('employees')
-      .select('email, full_name, band_code, cost_centre, department, designation, traveler_profile')
-      .eq('client_id', clientId)
-      .order('full_name'),
-    service.from('clients').select('name').eq('id', clientId).single(),
+  const [roster, client] = await Promise.all([
+    employees.rosterForExport(db, clientId),
+    clients.clientName(db, clientId),
   ])
 
-  const rows = (employees ?? []).map(e => {
-    const profile = (e.traveler_profile as Record<string, unknown> | null) ?? {}
+  const rows = roster.map(e => {
+    const profile = e.traveler_profile ?? {}
     return COLUMNS.map(col => {
       if (col === 'email') return escapeCell(e.email)
       if (col === 'full_name') return escapeCell(e.full_name)
@@ -102,7 +100,7 @@ export async function GET(req: NextRequest) {
       'Content-Disposition': `attachment; filename="${filename}"`,
     },
   })
-}
+})
 
 interface ImportRow {
   email?: string
@@ -114,7 +112,7 @@ interface ImportBody {
   rows: ImportRow[]
 }
 
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -135,24 +133,20 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Maximum 1000 rows per upload' }, { status: 400 })
   }
 
-  const service = createServiceClient()
-  const access = await authoriseClient(service, user.id, clientId)
+  const access = await authoriseClient(user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
 
-  const [{ data: employees }, { data: bands }, { data: centres }] = await Promise.all([
-    service
-      .from('employees')
-      .select('id, email, traveler_profile')
-      .eq('client_id', clientId),
-    service.from('bands').select('code, id, rank').eq('client_id', clientId),
-    service.from('cost_centres').select('code').eq('client_id', clientId),
+  const [people, bands, centres] = await Promise.all([
+    employees.profilesByEmail(db, clientId),
+    employees.bandsForClient(db, clientId),
+    clients.costCentres(db, clientId),
   ])
 
-  const byEmail = new Map((employees ?? []).map(e => [e.email.toLowerCase(), e]))
-  const bandByCode = new Map((bands ?? []).map(b => [b.code.toLowerCase(), b]))
-  const centreCodes = new Set((centres ?? []).map(c => c.code.toLowerCase()))
+  const byEmail = new Map(people.map(e => [e.email.toLowerCase(), e]))
+  const bandByCode = new Map(bands.map(b => [b.code.toLowerCase(), b]))
+  const centreCodes = new Set(centres.map(c => c.code.toLowerCase()))
 
   const errors: { row: number; email: string; error: string }[] = []
   let updated = 0
@@ -175,7 +169,7 @@ export async function POST(req: NextRequest) {
       continue
     }
 
-    const update: Record<string, unknown> = {}
+    const update: employees.TravellerEdit = {}
 
     if (row.full_name?.trim()) update.full_name = row.full_name.trim()
     if (row.department !== undefined) update.department = row.department.trim() || null
@@ -201,8 +195,8 @@ export async function POST(req: NextRequest) {
       update.cost_centre = code || null
     }
 
-    const existingProfile = (employee.traveler_profile as Record<string, unknown> | null) ?? {}
-    const profilePatch: Record<string, unknown> = {}
+    const existingProfile: employees.ProfileJson = employee.traveler_profile ?? {}
+    const profilePatch: employees.ProfileJson = {}
 
     for (const [column, key] of Object.entries(PROFILE_COLUMN_MAP)) {
       const value = row[column]
@@ -220,10 +214,13 @@ export async function POST(req: NextRequest) {
 
     if (Object.keys(update).length === 0) continue
 
-    const { error } = await service.from('employees').update(update).eq('id', employee.id)
-
-    if (error) {
-      errors.push({ row: rowNumber, email, error: error.message })
+    // A failed row is reported and the rest of the file carries on. The
+    // database's own text is logged, not echoed into the report.
+    try {
+      await employees.applyTravellerEdit(db, employee.id, update)
+    } catch (err) {
+      console.error('[traveler-profiles/csv] row failed', rowNumber, err)
+      errors.push({ row: rowNumber, email, error: 'Could not save this row' })
       continue
     }
 
@@ -231,4 +228,4 @@ export async function POST(req: NextRequest) {
   }
 
   return Response.json({ ok: true, updated, skipped: errors.length, errors: errors.slice(0, 50) })
-}
+})

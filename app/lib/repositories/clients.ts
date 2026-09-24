@@ -114,3 +114,32 @@ export async function namesForTmc(
     ${accessibleIds !== null ? sql`and id = any(${[...accessibleIds]})` : empty}
     order by name, id`)
 }
+
+// Which of these ids are clients of this TMC -- the check behind "every client
+// you are granting access to must be yours". A caller compares lengths.
+export async function idsInTmc(db: Queryable, tmcId: string, clientIds: readonly string[]): Promise<string[]> {
+  if (clientIds.length === 0) return []
+  const rows = await many<{ id: string }>(db, sql`
+    select id from clients where tmc_id = ${tmcId} and id = any(${[...clientIds]}) order by id`)
+  return rows.map(r => r.id)
+}
+
+export async function clientName(db: Queryable, clientId: string): Promise<Pick<Row<'clients'>, 'name'> | null> {
+  return maybeOne(db, sql`select name from clients where id = ${clientId}`)
+}
+
+// ═══ cost_centres ═══════════════════════════════════════════════════════════
+
+export type CostCentre = Pick<Row<'cost_centres'>, 'id' | 'code' | 'name'>
+
+export async function costCentres(db: Queryable, clientId: string): Promise<CostCentre[]> {
+  return many<CostCentre>(db, sql`
+    select id, code, name from cost_centres where client_id = ${clientId} order by code, id`)
+}
+
+// Exact match: the one-person typo this guards against differs by a character.
+export async function hasCostCentre(db: Queryable, clientId: string, code: string): Promise<boolean> {
+  const row = await maybeOne<{ ok: boolean }>(db, sql`
+    select true as ok from cost_centres where client_id = ${clientId} and code = ${code} limit 1`)
+  return row !== null
+}

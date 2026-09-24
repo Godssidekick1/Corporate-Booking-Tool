@@ -1,8 +1,13 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { isPermissionKey } from '@/app/lib/permissions/permissionKeys'
-import { parsePageParams, pagedResponse, ilikeAcross } from '@/app/lib/pagination'
+import { parsePageParams, pagedResponse } from '@/app/lib/pagination'
 import { NextRequest } from 'next/server'
+import { db, transaction } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
+import * as clients from '@/app/lib/repositories/clients'
+import * as tmcs from '@/app/lib/repositories/tmcs'
+import { route } from '@/app/lib/http/handler'
 
 // ── POST /api/tmc/tcs ────────────────────────────────────────────────────────
 // tmc_admin creates a new TC (travel counsellor) — either via email invite
@@ -20,7 +25,17 @@ interface CreateTcBody {
   clientIds: string[]
 }
 
-export async function GET(req: NextRequest) {
+function groupBy<T>(rows: readonly T[], key: (r: T) => string, value: (r: T) => string): Map<string, string[]> {
+  const out = new Map<string, string[]>()
+  for (const r of rows) {
+    const k = key(r)
+    if (!out.has(k)) out.set(k, [])
+    out.get(k)!.push(value(r))
+  }
+  return out
+}
+
+export const GET = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -28,87 +43,46 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
+  const caller = await employees.accessProfile(db, user.id)
 
-  const { data: caller, error: callerError } = await service
-    .from('employees')
-    .select('role, tmc_id')
-    .eq('id', user.id)
-    .single()
-
-  if (callerError || !caller || caller.role !== 'tmc_admin' || !caller.tmc_id) {
+  if (!caller || caller.role !== 'tmc_admin' || !caller.tmc_id) {
     return Response.json({ error: 'Only TMC admins can view TCs' }, { status: 403 })
   }
 
   const params = parsePageParams(req.nextUrl.searchParams)
   const ids = req.nextUrl.searchParams.get('ids')?.split(',').filter(Boolean) ?? []
 
-  let query = service
-    .from('employees')
-    .select('id, full_name, email, status, created_at, branch_id', { count: 'exact' })
-    .eq('tmc_id', caller.tmc_id)
-    .eq('role', 'tc')
-    .order('full_name')
+  const { rows: tcs, total } = await employees.counsellors(
+    db,
+    caller.tmc_id,
+    ids.length > 0 ? { ids } : { search: params.search, page: params }
+  )
 
-  if (ids.length > 0) {
-    query = query.in('id', ids)
-  } else {
-    const filter = ilikeAcross(['full_name', 'email'], params.search)
-    if (filter) query = query.or(filter)
-    query = query.range(params.from, params.to)
-  }
+  const tcIds = tcs.map(t => t.id)
+  // Branch names for this page's counsellors -- one lookup over the ids
+  // actually on screen.
+  const branchIds = [...new Set(tcs.map(t => t.branch_id).filter((b): b is string => Boolean(b)))]
 
-  const { data: tcs, error, count } = await query
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
-
-  const tcIds = (tcs ?? []).map(t => t.id)
-
-  const [{ data: perms }, { data: access }] = await Promise.all([
-    service.from('employee_permissions').select('employee_id, permission_key').in('employee_id', tcIds.length ? tcIds : ['00000000-0000-0000-0000-000000000000']),
-    service.from('employee_client_access').select('employee_id, client_id').in('employee_id', tcIds.length ? tcIds : ['00000000-0000-0000-0000-000000000000']),
+  const [perms, access, branchName] = await Promise.all([
+    employees.permissionsFor(db, tcIds),
+    employees.clientAccessFor(db, tcIds),
+    tmcs.branchNames(db, branchIds),
   ])
 
-  const permsByTc = new Map<string, string[]>()
-  for (const p of perms ?? []) {
-    if (!permsByTc.has(p.employee_id)) permsByTc.set(p.employee_id, [])
-    permsByTc.get(p.employee_id)!.push(p.permission_key)
-  }
+  const permsByTc = groupBy(perms, p => p.employee_id, p => p.permission_key)
+  const accessByTc = groupBy(access, a => a.employee_id, a => a.client_id)
 
-  const accessByTc = new Map<string, string[]>()
-  for (const a of access ?? []) {
-    if (!accessByTc.has(a.employee_id)) accessByTc.set(a.employee_id, [])
-    accessByTc.get(a.employee_id)!.push(a.client_id)
-  }
-
-  // Branch names for this page's counsellors. One lookup over the ids actually
-  // on screen, rather than embedding — this codebase does not rely on PostgREST
-  // embed-alias inference anywhere else.
-  const branchIds = [...new Set((tcs ?? []).map(t => t.branch_id).filter(Boolean) as string[])]
-  const branchName = new Map<string, string>()
-
-  if (branchIds.length > 0) {
-    const { data: branches } = await service
-      .from('branches')
-      .select('id, name')
-      .in('id', branchIds)
-
-    for (const b of branches ?? []) branchName.set(b.id, b.name)
-  }
-
-  const enriched = (tcs ?? []).map(tc => ({
+  const enriched = tcs.map(tc => ({
     ...tc,
     permissions: permsByTc.get(tc.id) ?? [],
     clientIds: accessByTc.get(tc.id) ?? [],
     branchName: tc.branch_id ? branchName.get(tc.branch_id) ?? null : null,
   }))
 
-  return Response.json(pagedResponse(enriched, count ?? null, params))
-}
+  return Response.json(pagedResponse(enriched, total, params))
+})
 
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -116,20 +90,15 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
+  const caller = await employees.accessProfile(db, user.id)
 
-  const { data: caller, error: callerError } = await service
-    .from('employees')
-    .select('role, tmc_id')
-    .eq('id', user.id)
-    .single()
-
-  if (callerError || !caller || caller.role !== 'tmc_admin' || !caller.tmc_id) {
+  if (!caller || caller.role !== 'tmc_admin' || !caller.tmc_id) {
     return Response.json({ error: 'Only TMC admins can create TC accounts' }, { status: 403 })
   }
+  const tmcId = caller.tmc_id
 
   const body: CreateTcBody = await req.json()
-  const { email, full_name, send_invite, permissions = [], clientIds = [] } = body
+  const { email, full_name, permissions = [], clientIds = [] } = body
 
   if (!email?.trim() || !full_name?.trim()) {
     return Response.json({ error: 'email and full_name are required' }, { status: 400 })
@@ -147,77 +116,55 @@ export async function POST(req: NextRequest) {
 
   // Confirm every requested client actually belongs to this TMC
   if (clientIds.length > 0) {
-    const { data: validClients } = await service
-      .from('clients')
-      .select('id')
-      .eq('tmc_id', caller.tmc_id)
-      .in('id', clientIds)
-
-    if ((validClients?.length ?? 0) !== clientIds.length) {
+    const valid = await clients.idsInTmc(db, tmcId, clientIds)
+    if (valid.length !== clientIds.length) {
       return Response.json({ error: 'One or more clients not found for your TMC' }, { status: 400 })
     }
   }
 
-  const { data: existing } = await service
-    .from('employees')
-    .select('id')
-    .eq('tmc_id', caller.tmc_id)
-    .eq('email', normalizedEmail)
-    .maybeSingle()
-
-  if (existing) {
+  if (await employees.findByEmailInTmc(db, tmcId, normalizedEmail)) {
     return Response.json({ error: 'A TC with this email already exists' }, { status: 409 })
   }
 
-  let authUserId: string | null = null
+  // Only for GoTrue: the account is invited, and rolled back, through the auth
+  // admin API. Table writes go through repositories.
+  const service = createServiceClient()
+
+  const { data: authData, error: inviteError } = await service.auth.admin.inviteUserByEmail(
+    normalizedEmail,
+    {
+      redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/auth/set-password`,
+      data: { full_name, tmc_id: tmcId, role: 'tc' },
+    }
+  )
+  // GoTrue's message is meant for people ("already been registered") and is
+  // passed on as it always was. Database errors below are not.
+  if (inviteError || !authData.user) {
+    return Response.json({ error: inviteError?.message ?? 'Failed to create TC' }, { status: 500 })
+  }
+  const employeeId = authData.user.id
 
   try {
-    const { data: authData, error: inviteError } = await service.auth.admin.inviteUserByEmail(
-      normalizedEmail,
-      {
-        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/auth/set-password`,
-        data: { full_name, tmc_id: caller.tmc_id, role: 'tc' },
-      }
-    )
-    if (inviteError) throw new Error(inviteError.message)
-    authUserId = authData.user.id
-
-    const { error: employeeError } = await service.from('employees').insert({
-      id: authUserId,
-      auth_user_id: authUserId,
-      tmc_id: caller.tmc_id,
-      client_id: null,
-      full_name: full_name.trim(),
-      email: normalizedEmail,
-      role: 'tc',
-      status: 'invited',
-    })
-
-    if (employeeError) throw new Error(employeeError.message)
-
-    if (permissions.length > 0) {
-      const { error: permError } = await service.from('employee_permissions').insert(
-        permissions.map(p => ({ employee_id: authUserId, permission_key: p, granted_by: user.id }))
-      )
-      if (permError) throw new Error(permError.message)
-    }
-
-    if (clientIds.length > 0) {
-      const { error: accessError } = await service.from('employee_client_access').insert(
-        clientIds.map(cid => ({ employee_id: authUserId, client_id: cid, granted_by: user.id }))
-      )
-      if (accessError) throw new Error(accessError.message)
-    }
+    // One transaction for the row and its grants: a counsellor must never
+    // exist with only some of what they were given -- or, if a grant fails,
+    // at all, since the auth account is removed below.
+    await transaction(async tx => {
+      await employees.insertCounsellor(tx, {
+        id: employeeId, tmc_id: tmcId, full_name: full_name.trim(), email: normalizedEmail,
+      })
+      await employees.grantPermissions(tx, employeeId, permissions, user.id)
+      await employees.grantClientAccess(tx, employeeId, clientIds, user.id)
+    }, { tenantId: tmcId, userId: user.id })
 
     return Response.json({
       ok: true,
-      employeeId: authUserId,
+      employeeId,
       message: `${full_name} invited as a TC.`,
     }, { status: 201 })
 
   } catch (err) {
-    if (authUserId) await service.auth.admin.deleteUser(authUserId)
-    const message = err instanceof Error ? err.message : 'Failed to create TC'
-    return Response.json({ error: message }, { status: 500 })
+    await service.auth.admin.deleteUser(employeeId)
+    console.error('[tmc/tcs] create failed', err)
+    return Response.json({ error: 'Failed to create TC' }, { status: 500 })
   }
-}
+})

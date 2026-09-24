@@ -1,8 +1,10 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
-import { db } from '@/app/lib/db'
+import { db, isConstraint } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
+import * as clients from '@/app/lib/repositories/clients'
+import { route } from '@/app/lib/http/handler'
 
 // ── GET /api/tmc/bands?clientId=<uuid> ──────────────────────────────────────
 // A client's bands, ordered by rank, with a count of employees on each so an
@@ -27,7 +29,6 @@ interface CreateBandBody {
 
 // Shared by both handlers here and by the [id] route.
 export async function authoriseBandAccess(
-  service: ReturnType<typeof createServiceClient>,
   userId: string,
   clientId: string
 ): Promise<{ ok: true } | { ok: false; error: string; status: number }> {
@@ -38,11 +39,7 @@ export async function authoriseBandAccess(
 
   // tmc_admin passes the permission check for any clientId, so the tenancy
   // boundary is checked explicitly here.
-  const { data: client } = await service
-    .from('clients')
-    .select('id, tmc_id')
-    .eq('id', clientId)
-    .maybeSingle()
+  const client = await clients.tenancy(db, clientId)
 
   if (!client || client.tmc_id !== auth.tmcId) {
     return { ok: false, error: 'Client not found for this TMC', status: 404 }
@@ -51,7 +48,7 @@ export async function authoriseBandAccess(
   return { ok: true }
 }
 
-export async function GET(req: NextRequest) {
+export const GET = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -64,43 +61,26 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'clientId is required' }, { status: 400 })
   }
 
-  const service = createServiceClient()
-  const access = await authoriseBandAccess(service, user.id, clientId)
+  const access = await authoriseBandAccess(user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
-  }
-
-  const { data: bands, error } = await service
-    .from('bands')
-    .select('id, code, label, rank')
-    .eq('client_id', clientId)
-    .order('rank')
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
   }
 
   // Employee count per band — a rename cascades automatically (see the
   // bands_sync_employees trigger), but a delete is blocked while anyone is on
   // the band, so the count is what tells an admin why.
-  const { data: employees } = await service
-    .from('employees')
-    .select('band_code')
-    .eq('client_id', clientId)
-
-  const countByCode = new Map<string, number>()
-  for (const e of employees ?? []) {
-    if (!e.band_code) continue
-    countByCode.set(e.band_code, (countByCode.get(e.band_code) ?? 0) + 1)
-  }
+  const [bands, countByCode] = await Promise.all([
+    employees.bandsForClient(db, clientId),
+    employees.headcountByBandCode(db, clientId),
+  ])
 
   return Response.json({
     ok: true,
-    bands: (bands ?? []).map(b => ({ ...b, employeeCount: countByCode.get(b.code) ?? 0 })),
+    bands: bands.map(b => ({ ...b, employeeCount: countByCode.get(b.code) ?? 0 })),
   })
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -122,8 +102,7 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'rank must be a non-negative whole number' }, { status: 400 })
   }
 
-  const service = createServiceClient()
-  const access = await authoriseBandAccess(service, user.id, clientId)
+  const access = await authoriseBandAccess(user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
@@ -131,12 +110,7 @@ export async function POST(req: NextRequest) {
   // Two bands at the same rank would both match any policy group covering it,
   // which resolveEffectivePolicy can't arbitrate. The DB only enforces
   // uniqueness on (client_id, code), so rank is checked here.
-  const { data: rankClash } = await service
-    .from('bands')
-    .select('code')
-    .eq('client_id', clientId)
-    .eq('rank', Number(rank))
-    .maybeSingle()
+  const rankClash = await employees.bandAtRank(db, clientId, Number(rank))
 
   if (rankClash) {
     return Response.json(
@@ -145,26 +119,21 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const { data: band, error } = await service
-    .from('bands')
-    .insert({
+  try {
+    const band = await employees.insertBand(db, {
       client_id: clientId,
       code: code.trim(),
       label: label.trim(),
       rank: Number(rank),
     })
-    .select('id, code, label, rank')
-    .single()
-
-  if (error) {
-    if (error.code === '23505') {
+    return Response.json({ ok: true, band: { ...band, employeeCount: 0 } }, { status: 201 })
+  } catch (err) {
+    if (isConstraint(err, 'unique')) {
       return Response.json(
         { error: `This client already has a band with code "${code.trim()}"` },
         { status: 409 }
       )
     }
-    return Response.json({ error: error.message }, { status: 500 })
+    throw err
   }
-
-  return Response.json({ ok: true, band: { ...band, employeeCount: 0 } }, { status: 201 })
-}
+})

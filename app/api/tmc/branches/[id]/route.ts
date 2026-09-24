@@ -1,9 +1,11 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
-import { BRANCH_COLUMNS, BRANCH_STATUSES, branchFields, type BranchBody } from '../route'
+import { BRANCH_STATUSES, DUPLICATE_BRANCH, branchFields, type BranchBody } from '../route'
 import { NextRequest } from 'next/server'
-import { db } from '@/app/lib/db'
+import { db, transaction, isConstraint } from '@/app/lib/db'
+import * as tmcs from '@/app/lib/repositories/tmcs'
+import * as employees from '@/app/lib/repositories/employees'
+import { route } from '@/app/lib/http/handler'
 
 // ── /api/tmc/branches/[id] ───────────────────────────────────────────────────
 // GET     the branch and the counsellors assigned to it
@@ -11,29 +13,25 @@ import { db } from '@/app/lib/db'
 // DELETE  refused while anyone still works there
 // ─────────────────────────────────────────────────────────────────────────────
 
+type Ctx = { params: Promise<{ id: string }> }
+
 async function authorise(userId: string, id: string) {
-  const service = createServiceClient()
   const auth = await requireTmcPermission(db, userId, 'manage_branches')
 
   if (!auth.authorized || !auth.tmcId) {
-    return { ok: false as const, service, error: auth.error ?? 'Forbidden', status: auth.status ?? 403 }
+    return { ok: false as const, error: auth.error ?? 'Forbidden', status: auth.status ?? 403 }
   }
 
-  const { data: branch } = await service
-    .from('branches')
-    .select('id, tmc_id, name')
-    .eq('id', id)
-    .eq('tmc_id', auth.tmcId)
-    .maybeSingle()
+  const branch = await tmcs.branchInTmc(db, id, auth.tmcId)
 
   if (!branch) {
-    return { ok: false as const, service, error: 'Branch not found', status: 404 }
+    return { ok: false as const, error: 'Branch not found', status: 404 }
   }
 
-  return { ok: true as const, service, tmcId: auth.tmcId, branch }
+  return { ok: true as const, tmcId: auth.tmcId, branch }
 }
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const GET = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -47,21 +45,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return Response.json({ error: check.error }, { status: check.status })
   }
 
-  const { service } = check
-
-  const [{ data: branch }, { data: staff }] = await Promise.all([
-    service.from('branches').select(BRANCH_COLUMNS).eq('id', id).single(),
-    service
-      .from('employees')
-      .select('id, full_name, email, role, status')
-      .eq('branch_id', id)
-      .order('full_name'),
+  const [branch, staff] = await Promise.all([
+    tmcs.branch(db, id),
+    employees.staffAtBranch(db, id),
   ])
 
-  return Response.json({ ok: true, branch, staff: staff ?? [] })
-}
+  return Response.json({ ok: true, branch, staff })
+})
 
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const PATCH = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -75,7 +67,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return Response.json({ error: check.error }, { status: check.status })
   }
 
-  const { service, tmcId } = check
+  const { tmcId } = check
   const body: BranchBody = await req.json()
 
   if (body.name !== undefined && !body.name.trim()) {
@@ -85,45 +77,26 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return Response.json({ error: `Invalid status: ${body.status}` }, { status: 400 })
   }
 
-  // Promoting a branch demotes the incumbent first. Without this the partial
-  // unique index rejects the update, and the admin sees a database constraint
-  // rather than the head office moving.
-  if (body.is_head_office) {
-    await service
-      .from('branches')
-      .update({ is_head_office: false })
-      .eq('tmc_id', tmcId)
-      .eq('is_head_office', true)
-      .neq('id', id)
+  const fields: tmcs.BranchFields = { ...branchFields(body) }
+  if (body.status) fields.status = body.status
+
+  try {
+    const updated = await transaction(async tx => {
+      // Promoting a branch demotes the incumbent first, or the partial unique
+      // index rejects the update. Together, so a failed update does not leave
+      // the TMC with no head office.
+      if (body.is_head_office) await tmcs.demoteHeadOffice(tx, tmcId, id)
+      return tmcs.updateBranch(tx, id, fields)
+    }, { tenantId: tmcId, userId: user.id })
+
+    return Response.json({ ok: true, branch: updated })
+  } catch (err) {
+    if (isConstraint(err, 'unique')) return Response.json(DUPLICATE_BRANCH, { status: 409 })
+    throw err
   }
+})
 
-  const update: Record<string, unknown> = {
-    ...branchFields(body),
-    updated_at: new Date().toISOString(),
-  }
-  if (body.status) update.status = body.status
-
-  const { data: updated, error } = await service
-    .from('branches')
-    .update(update)
-    .eq('id', id)
-    .select(BRANCH_COLUMNS)
-    .single()
-
-  if (error) {
-    if (error.code === '23505') {
-      return Response.json(
-        { error: 'A branch with that name or number already exists' },
-        { status: 409 }
-      )
-    }
-    return Response.json({ error: error.message }, { status: 500 })
-  }
-
-  return Response.json({ ok: true, branch: updated })
-}
-
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const DELETE = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -137,18 +110,15 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     return Response.json({ error: check.error }, { status: check.status })
   }
 
-  const { service, branch } = check
+  const { branch } = check
 
   // employees.branch_id is ON DELETE SET NULL, so deleting would silently
   // unassign everyone rather than failing. Refused instead: which branch a
   // counsellor works out of is somebody's decision, not a side effect. Retiring
   // a branch that still has history is what `status: inactive` is for.
-  const { count } = await service
-    .from('employees')
-    .select('id', { count: 'exact', head: true })
-    .eq('branch_id', id)
+  const count = await employees.countAtBranch(db, id)
 
-  if (count && count > 0) {
+  if (count > 0) {
     return Response.json(
       {
         error: `${count} ${count === 1 ? 'person works' : 'people work'} out of "${branch.name}". Move them to another branch first, or set this one inactive to retire it without losing its history.`,
@@ -157,11 +127,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     )
   }
 
-  const { error } = await service.from('branches').delete().eq('id', id)
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
+  await tmcs.deleteBranch(db, id)
 
   return Response.json({ ok: true })
-}
+})
