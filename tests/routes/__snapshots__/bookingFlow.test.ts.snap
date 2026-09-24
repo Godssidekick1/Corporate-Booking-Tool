@@ -1,0 +1,36 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`booking flow > price: the sell-side quote, with the airline side persisted server-side only 1`] = `
+{
+  "baseFare": 12000,
+  "cancelPenalties": [],
+  "changePenalties": [],
+  "currency": "INR",
+  "fareBasis": "Y1",
+  "fareType": "Retail",
+  "isRefundable": true,
+  "key": "KEY-1",
+  "lines": [
+    {
+      "amount": 1080,
+      "label": "Discount",
+      "sign": -1,
+      "source": "discount",
+    },
+  ],
+  "mealIncluded": false,
+  "ok": true,
+  "passengerBreakup": [
+    {
+      "BaseFare": 10000,
+      "PaxType": "ADT",
+      "Tax": 800,
+      "TotalFare": 10800,
+    },
+  ],
+  "referenceNo": "REF-1",
+  "sellTotal": 11720,
+  "tax": 800,
+  "totalFare": 12800,
+}
+`;
