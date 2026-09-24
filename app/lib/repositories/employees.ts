@@ -1,4 +1,4 @@
-import { sql, empty, json, many, maybeOne, one, exec, type Queryable, type Sql } from '@/app/lib/db/sql'
+import { sql, empty, json, join, many, maybeOne, one, exec, type Queryable, type Sql } from '@/app/lib/db/sql'
 import { searchAcross, page, assignments } from '@/app/lib/db/fragments'
 import type { Row } from '@/app/lib/db/types.generated'
 import type { PageParams } from '@/app/lib/pagination'
@@ -507,7 +507,8 @@ export async function grantPermissions(
   db: Queryable,
   employeeId: string,
   keys: readonly string[],
-  grantedBy: string
+  // Null when the grantor has no employees row (a platform admin).
+  grantedBy: string | null
 ): Promise<void> {
   if (keys.length === 0) return
   await exec(db, sql`
@@ -945,4 +946,62 @@ export async function identity(db: Queryable, employeeId: string): Promise<Ident
 export async function tmcOfTraveller(db: Queryable, employeeId: string): Promise<string | null> {
   return (await maybeOne<{ tmc_id: string }>(db, sql`
     select c.tmc_id from employees e join clients c on c.id = e.client_id where e.id = ${employeeId}`))?.tmc_id ?? null
+}
+
+// ═══ Onboarding ═════════════════════════════════════════════════════════════
+
+export type StaffMember = Pick<Row<'employees'>, 'id' | 'full_name' | 'email' | 'role' | 'status' | 'created_at'>
+
+// A TMC's own desk: admins and counsellors, never its clients' travellers.
+// Grouped by role for the screen; by name alone for the spreadsheet.
+export async function staffOfTmc(db: Queryable, tmcId: string, order: 'role' | 'name' = 'role'): Promise<StaffMember[]> {
+  return many<StaffMember>(db, sql`
+    select id, full_name, email, role, status, created_at from employees
+    where tmc_id = ${tmcId} and role in ('tmc_admin', 'tc')
+    order by ${order === 'role' ? sql`role, full_name, id` : sql`full_name, id`}`)
+}
+
+export interface NewTmcAdmin {
+  id: string
+  tmc_id: string
+  full_name: string
+  email: string
+}
+
+// Invited, so the account exists: auth_user_id is set, as it is for a TC.
+export async function insertTmcAdmin(db: Queryable, a: NewTmcAdmin): Promise<void> {
+  await exec(db, sql`
+    insert into employees (id, auth_user_id, tmc_id, client_id, full_name, email, role, status)
+    values (${a.id}, ${a.id}, ${a.tmc_id}, null, ${a.full_name}, ${a.email}, 'tmc_admin', 'invited')`)
+}
+
+export type NewBand = Pick<Row<'bands'>, 'code' | 'label' | 'rank'>
+
+// A client's whole ladder in one statement.
+export async function insertBands(db: Queryable, clientId: string, bands: readonly NewBand[]): Promise<BandRow[]> {
+  if (bands.length === 0) return []
+  return many<BandRow>(db, sql`
+    insert into bands (client_id, code, label, rank)
+    values ${join(bands.map(b => sql`(${clientId}, ${b.code}, ${b.label}, ${b.rank})`))}
+    returning id, code, label, rank`)
+}
+
+export interface NewClientAdmin {
+  id: string
+  client_id: string
+  band: BandRow
+  full_name: string
+  email: string
+  status: 'invited' | 'active'
+  onboarding_method: 'invite' | 'self_register'
+}
+
+// band_code and band_rank are denormalised from bands so profile reads need
+// no join.
+export async function insertClientAdmin(db: Queryable, a: NewClientAdmin): Promise<void> {
+  await exec(db, sql`
+    insert into employees (id, auth_user_id, client_id, tmc_id, band_id, band_code, band_rank,
+                           full_name, email, role, status, onboarding_method)
+    values (${a.id}, ${a.id}, ${a.client_id}, null, ${a.band.id}, ${a.band.code}, ${a.band.rank},
+            ${a.full_name}, ${a.email}, 'admin', ${a.status}, ${a.onboarding_method})`)
 }

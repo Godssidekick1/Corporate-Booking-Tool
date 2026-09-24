@@ -1,9 +1,6 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { db } from '@/app/lib/db'
 import * as tmcs from '@/app/lib/repositories/tmcs'
-
-type ServiceClient = ReturnType<typeof createServiceClient>
 
 // ── requirePlatformAdmin ─────────────────────────────────────────────────────
 // The gate on every /platform surface.
@@ -24,10 +21,8 @@ export interface PlatformAdmin {
   email: string | null
 }
 
-// STAGE 2: `service` is still returned because the three /api/platform routes
-// query through it. It is removed when they move onto repositories.
 export type PlatformCheck =
-  | { ok: true; service: ServiceClient; admin: PlatformAdmin }
+  | { ok: true; admin: PlatformAdmin }
   | { ok: false; status: number; error: string }
 
 // For route handlers. Resolves the session, then membership.
@@ -52,7 +47,6 @@ export async function requirePlatformAdmin(): Promise<PlatformCheck> {
 
   return {
     ok: true,
-    service: createServiceClient(),
     admin: { userId: admin.user_id, email: admin.email ?? user.email ?? null },
   }
 }

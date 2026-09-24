@@ -1,6 +1,7 @@
-import { createServiceClient } from '@/utils/supabase/service'
+import { route } from '@/app/lib/http/handler'
 import { onboardTmc } from '@/app/lib/onboarding/onboardTmc'
 import { NextRequest } from 'next/server'
+import { createHash, timingSafeEqual } from 'node:crypto'
 
 // ── Internal-only route ───────────────────────────────────────────────────────
 // Called by Amadeus staff via Postman to onboard a new TMC.
@@ -22,15 +23,15 @@ import { NextRequest } from 'next/server'
 //   }
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const secret = req.headers.get('x-internal-secret')
-  if (!secret || secret !== process.env.INTERNAL_API_SECRET) {
+  if (!secret || !secretMatches(secret, process.env.INTERNAL_API_SECRET)) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   const { tmcName, adminEmail, adminName } = await req.json()
 
-  const result = await onboardTmc(createServiceClient(), { tmcName, adminEmail, adminName })
+  const result = await onboardTmc({ tmcName, adminEmail, adminName })
 
   if (!result.ok) {
     return Response.json({ error: result.error }, { status: result.status })
@@ -41,4 +42,13 @@ export async function POST(req: NextRequest) {
     tmcId: result.tmcId,
     message: `TMC "${tmcName}" created. Invite sent to ${adminEmail}.`,
   }, { status: 201 })
+})
+
+// Constant-time, so the comparison does not reveal how much of a guess was
+// right. Hashed first because timingSafeEqual needs equal lengths, and
+// comparing lengths would itself leak one. An unset secret matches nothing.
+function secretMatches(given: string, expected: string | undefined): boolean {
+  if (!expected) return false
+  const digest = (s: string) => createHash('sha256').update(s).digest()
+  return timingSafeEqual(digest(given), digest(expected))
 }

@@ -138,3 +138,58 @@ export async function branchNames(db: Queryable, branchIds: readonly string[]): 
     select id, name from branches where id = any(${[...branchIds]})`)
   return new Map(rows.map(r => [r.id, r.name]))
 }
+
+// ═══ tmcs, as the platform sees them ════════════════════════════════════════
+
+export type Tmc = Pick<Row<'tmcs'>, 'id' | 'name' | 'status' | 'created_at'>
+
+export interface PlatformTmcRow extends Tmc {
+  clientCount: number
+  staffCount: number
+  adminCount: number
+}
+
+// One query for the page and its counts -- this was a count query per TMC per
+// figure, three per row. Newest first, as the platform screen lists them.
+export async function platformList(
+  db: Queryable,
+  search: string | null | undefined,
+  params: Pick<PageParams, 'from' | 'to'>
+): Promise<{ rows: PlatformTmcRow[]; total: number }> {
+  const where = sql`where true ${searchAcross([sql`t.name`], search)}`
+  const [rows, count] = await Promise.all([
+    many<PlatformTmcRow>(db, sql`
+      select t.id, t.name, t.status, t.created_at,
+             (select count(*)::int from clients c where c.tmc_id = t.id) as "clientCount",
+             (select count(*)::int from employees e where e.tmc_id = t.id and e.role in ('tmc_admin', 'tc')) as "staffCount",
+             (select count(*)::int from employees e where e.tmc_id = t.id and e.role = 'tmc_admin') as "adminCount"
+      from tmcs t ${where}
+      order by t.created_at desc, t.id
+      ${page(params)}`),
+    one<{ n: number }>(db, sql`select count(*)::int as n from tmcs t ${where}`),
+  ])
+  return { rows, total: count.n }
+}
+
+export async function tmc(db: Queryable, tmcId: string): Promise<Tmc | null> {
+  return maybeOne<Tmc>(db, sql`select id, name, status, created_at from tmcs where id = ${tmcId}`)
+}
+
+// Case-insensitive, and an existence check: it must not care how many
+// same-named TMCs there already are.
+export async function nameTaken(db: Queryable, name: string): Promise<boolean> {
+  return (await maybeOne(db, sql`select 1 from tmcs where lower(name) = lower(${name}) limit 1`)) !== null
+}
+
+export async function insertTmc(db: Queryable, name: string): Promise<{ id: string }> {
+  return one<{ id: string }>(db, sql`insert into tmcs (name, status) values (${name}, 'active') returning id`)
+}
+
+// Null when there is no such TMC.
+export async function setTmcStatus(
+  db: Queryable,
+  tmcId: string,
+  status: string
+): Promise<Pick<Row<'tmcs'>, 'id' | 'name' | 'status'> | null> {
+  return maybeOne(db, sql`update tmcs set status = ${status} where id = ${tmcId} returning id, name, status`)
+}

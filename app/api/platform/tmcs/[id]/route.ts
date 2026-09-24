@@ -1,6 +1,10 @@
 import { requirePlatformAdmin } from '@/app/lib/permissions/requirePlatformAdmin'
 import { inviteTmcAdmin } from '@/app/lib/onboarding/onboardTmc'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
+import * as tmcs from '@/app/lib/repositories/tmcs'
+import * as employees from '@/app/lib/repositories/employees'
+import { route } from '@/app/lib/http/handler'
 
 // ── /api/platform/tmcs/[id] ──────────────────────────────────────────────────
 // GET    one TMC, with its staff list — the detail behind a row on /platform
@@ -14,20 +18,16 @@ import { NextRequest } from 'next/server'
 
 const ALLOWED_STATUSES = ['active', 'inactive'] as const
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+type Ctx = { params: Promise<{ id: string }> }
+
+export const GET = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const check = await requirePlatformAdmin()
   if (!check.ok) {
     return Response.json({ error: check.error }, { status: check.status })
   }
 
-  const { service } = check
-
-  const { data: tmc } = await service
-    .from('tmcs')
-    .select('id, name, status, created_at')
-    .eq('id', id)
-    .maybeSingle()
+  const tmc = await tmcs.tmc(db, id)
 
   if (!tmc) {
     return Response.json({ error: 'TMC not found' }, { status: 404 })
@@ -35,33 +35,25 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   // TMC-side staff only. Corporate employees belong to a client, and listing
   // them here would mean this screen showing every traveller on the platform.
-  const { data: staff } = await service
-    .from('employees')
-    .select('id, full_name, email, role, status, created_at')
-    .eq('tmc_id', id)
-    .in('role', ['tmc_admin', 'tc'])
-    .order('role')
-    .order('full_name')
+  const staff = await employees.staffOfTmc(db, id)
 
-  return Response.json({ ok: true, tmc, staff: staff ?? [] })
-}
+  return Response.json({ ok: true, tmc, staff })
+})
 
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const POST = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const check = await requirePlatformAdmin()
   if (!check.ok) {
     return Response.json({ error: check.error }, { status: check.status })
   }
 
-  const { service } = check
-
-  const { data: tmc } = await service.from('tmcs').select('id, name').eq('id', id).maybeSingle()
+  const tmc = await tmcs.tmc(db, id)
   if (!tmc) {
     return Response.json({ error: 'TMC not found' }, { status: 404 })
   }
 
   const { fullName, email } = await req.json()
-  const result = await inviteTmcAdmin(service, id, fullName, email)
+  const result = await inviteTmcAdmin(id, fullName, email)
 
   if (!result.ok) {
     return Response.json({ error: result.error }, { status: result.status })
@@ -71,9 +63,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     ok: true,
     message: `Invite sent to ${email} for ${tmc.name}.`,
   }, { status: 201 })
-}
+})
 
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const PATCH = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const check = await requirePlatformAdmin()
   if (!check.ok) {
@@ -89,19 +81,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     )
   }
 
-  const { data: updated, error } = await check.service
-    .from('tmcs')
-    .update({ status })
-    .eq('id', id)
-    .select('id, name, status')
-    .maybeSingle()
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
+  const updated = await tmcs.setTmcStatus(db, id, status)
   if (!updated) {
     return Response.json({ error: 'TMC not found' }, { status: 404 })
   }
 
   return Response.json({ ok: true, tmc: updated })
-}
+})

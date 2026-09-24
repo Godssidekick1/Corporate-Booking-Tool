@@ -299,6 +299,31 @@ d('onboarding', () => {
     expect(invites()).toEqual(['bill@initech.example'])
   })
 
+  it('create corporate: roster bands are the client\'s own codes, and blank means the least senior', async () => {
+    // The importer used to uppercase the cell and default a blank to the
+    // literal 'L1', from before clients named their own bands -- so a client
+    // with bands "Band 1".."Band 3" failed every row.
+    const bands = [
+      { code: 'Band 1', label: 'Junior', rank: 1 },
+      { code: 'Band 2', label: 'Middle', rank: 2 },
+      { code: 'Band 3', label: 'Senior', rank: 3 },
+    ]
+    const res = await onboard({
+      client: { corporateName: 'Hooli', adminEmail: 'gavin@hooli.example', adminName: 'Gavin', bands, bookingMode: 'cbt' },
+      employees: [
+        { email: 'richard@hooli.example', full_name: 'Richard', band: 'band 2' },
+        { email: 'dinesh@hooli.example', full_name: 'Dinesh' },
+      ],
+    })
+    expect(res.json).toMatchObject({ employeesCreated: 2, employeesFailed: 0 })
+    const clientId = (res.json as { clientId: string }).clientId
+    expect(await many(db, sql`
+      select email, band_code from employees where client_id = ${clientId} and role <> 'admin' order by email`)).toEqual([
+      { email: 'dinesh@hooli.example', band_code: 'Band 1' },
+      { email: 'richard@hooli.example', band_code: 'Band 2' },
+    ])
+  })
+
   it('create corporate: a failed admin invite leaves no client behind', async () => {
     failNextAuthWith('Email rate limit exceeded')
     const res = await onboard({

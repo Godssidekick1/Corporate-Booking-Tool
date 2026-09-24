@@ -782,3 +782,30 @@ export async function coverageClients(
     ${onlyClientId ? sql`and id = ${onlyClientId}` : empty}
     order by name, id`)
 }
+
+// ═══ Onboarding ═════════════════════════════════════════════════════════════
+
+export type SameNameClient = Pick<Row<'clients'>, 'id' | 'name' | 'client_code' | 'city' | 'created_at'>
+
+// Existing clients this name would be confused with, case-insensitively. A
+// warning, never a rule: nothing constrains clients.name, nor should it.
+export async function sameName(db: Queryable, tmcId: string, name: string): Promise<SameNameClient[]> {
+  return many<SameNameClient>(db, sql`
+    select id, name, client_code, city, created_at from clients
+    where tmc_id = ${tmcId} and lower(name) = lower(${name})
+    order by created_at, id
+    limit 5`)
+}
+
+export type NewClient = Pick<Row<'clients'>, 'tmc_id' | 'name'> & Partial<Pick<Row<'clients'>,
+  | 'registered_address' | 'industry' | 'primary_contact_phone' | 'size' | 'booking_mode' | 'client_group_id'>>
+
+// Active, not yet set up. A null tmc_id is a company that registered itself.
+export async function insertClient(db: Queryable, c: NewClient): Promise<{ id: string }> {
+  return one<{ id: string }>(db, sql`
+    insert into clients (tmc_id, name, status, setup_completed, registered_address, industry,
+                         primary_contact_phone, size, booking_mode, client_group_id)
+    values (${c.tmc_id}, ${c.name}, 'active', false, ${c.registered_address ?? null}, ${c.industry ?? null},
+            ${c.primary_contact_phone ?? null}, ${c.size ?? null}, ${c.booking_mode ?? 'sbt'}, ${c.client_group_id ?? null})
+    returning id`)
+}

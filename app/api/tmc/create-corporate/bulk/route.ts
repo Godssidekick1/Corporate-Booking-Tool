@@ -3,15 +3,17 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { onboardClient, OnboardClientInput } from '@/app/lib/onboarding/onboardClient'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
-import { db } from '@/app/lib/db'
+import { randomUUID } from 'node:crypto'
+import * as employees from '@/app/lib/repositories/employees'
+import { route } from '@/app/lib/http/handler'
+import { db, isConstraint } from '@/app/lib/db'
 
 // ── POST /api/tmc/create-corporate/bulk ──────────────────────────────────────
 // Creates ONE client (with admin invite), then bulk-creates its employee
-// roster from CSV rows in the same request. Employee rows are created via
-// direct-create (status: 'active', password-reset email), matching the
-// existing "add directly" pattern — a CSV import implies the TMC/admin
-// already has clean offline data, not that each employee needs an
-// individual invite-acceptance step.
+// roster from CSV rows in the same request. What a row becomes depends on the
+// client's booking mode: for a CBT-only client, a traveller profile with no
+// account (the TMC books for them); otherwise an invited account, one invite
+// email per row. Failures are reported per row and never stop the file.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const MAX_EMPLOYEES = 250
@@ -32,15 +34,13 @@ interface EmployeeResult {
   error?: string
 }
 
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
   if (authError || !user) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
-
-  const service = createServiceClient()
 
   // manage_clients, not manage_users. This route's privileged act is bringing a
   // new client company into existence; the employee roster is a consequence of
@@ -69,12 +69,7 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Step 1: create the client + admin ─────────────────────────────────────
-  const clientResult = await onboardClient(
-    service,
-    tmcId,
-    process.env.NEXT_PUBLIC_APP_URL!,
-    client
-  )
+  const clientResult = await onboardClient(tmcId, process.env.NEXT_PUBLIC_APP_URL!, client)
 
   if (!clientResult.ok || !clientResult.clientId) {
     // 409 and the existing rows, not a flat 400: the caller is meant to show
@@ -103,15 +98,19 @@ export async function POST(req: NextRequest) {
     }, { status: 201 })
   }
 
-  // ── Step 2: load the bands just seeded for this client ────────────────────
-  const { data: bands } = await service
-    .from('bands')
-    .select('id, code, rank')
-    .eq('client_id', clientId)
-
-  const bandMap = Object.fromEntries((bands ?? []).map(b => [b.code, b]))
+  // ── Step 2: the bands just created for this client ────────────────────────
+  // Matched case-insensitively against the client's OWN codes, and a blank
+  // band means the least senior one. This used to uppercase the cell and
+  // default to the literal 'L1' -- from before clients named their own bands,
+  // so a client whose bands are "Band 1".."Band 4" failed every row.
+  const bands = await employees.bandsForClient(db, clientId)
+  const bandByCode = new Map(bands.map(b => [b.code.toLowerCase(), b]))
+  const leastSenior = bands.reduce<typeof bands[number] | null>((low, b) => (!low || b.rank < low.rank ? b : low), null)
 
   // ── Step 3: create each employee, sequentially ──────────────────────────────
+  // One at a time: for SBT each row is an invite, an API call that can fail on
+  // its own, and one bad row must not take the rest of the file down with it.
+  const authAdmin = createServiceClient().auth.admin
   const employeeResults: EmployeeResult[] = []
 
   for (const row of employeeRows) {
@@ -133,53 +132,48 @@ export async function POST(req: NextRequest) {
       continue
     }
 
-    const bandCode = row.band?.toUpperCase() || 'L1'
-    const band = bandMap[bandCode]
+    const bandCell = row.band?.trim()
+    const band = bandCell ? bandByCode.get(bandCell.toLowerCase()) : leastSenior
     if (!band) {
-      employeeResults.push({ email, status: 'failed', error: `Unknown band: ${bandCode}` })
+      employeeResults.push({ email, status: 'failed', error: `Unknown band: ${bandCell}` })
       continue
+    }
+
+    const profile = {
+      client_id: clientId,
+      band_id: band.id,
+      band_code: band.code,
+      band_rank: band.rank,
+      email,
+      full_name: fullName,
+      role,
+      first_login_completed: false,
+      department: row.department?.trim() || null,
+      cost_centre: row.cost_centre?.trim() || null,
     }
 
     // ── CBT-only client: pure traveler profile, no auth at all ──────────────
     if (isCbtOnly) {
-      const { error: employeeError } = await service.from('employees').insert({
-        client_id: clientId,
-        auth_user_id: null,
-        band_id: band.id,
-        band_code: band.code,
-        band_rank: band.rank,
-        email,
-        full_name: fullName,
-        role,
-        status: 'active',
+      try {
         // What happened to them, from the values the check constraint allows:
-        // a CBT-only traveller is created directly, with no account. This was
-        // 'csv_import', which the constraint rejects -- so every row failed.
-        onboarding_method: 'direct_create',
-        first_login_completed: false,
-        department: row.department?.trim() || null,
-        cost_centre: row.cost_centre?.trim() || null,
-      })
-
-      if (employeeError) {
-        employeeResults.push({ email, status: 'failed', error: employeeError.message })
-        continue
+        // created directly, with no account.
+        await employees.insert(db, {
+          ...profile, id: randomUUID(), auth_user_id: null, status: 'active', onboarding_method: 'direct_create',
+        })
+        employeeResults.push({ email, status: 'created' })
+      } catch (err) {
+        employeeResults.push({ email, status: 'failed', error: rowError(err) })
       }
-
-      employeeResults.push({ email, status: 'created' })
       continue
     }
 
     // ── SBT / hybrid client: real account, real invite email ────────────────
     let authUserId: string | null = null
     try {
-      const { data: authData, error: inviteError } = await service.auth.admin.inviteUserByEmail(
-        email,
-        {
-          redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/auth/set-password`,
-          data: { full_name: fullName, client_id: clientId, role, band_code: band.code },
-        }
-      )
+      const { data: authData, error: inviteError } = await authAdmin.inviteUserByEmail(email, {
+        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/auth/set-password`,
+        data: { full_name: fullName, client_id: clientId, role, band_code: band.code },
+      })
 
       if (inviteError) {
         employeeResults.push({ email, status: 'failed', error: inviteError.message })
@@ -187,38 +181,13 @@ export async function POST(req: NextRequest) {
       }
 
       authUserId = authData.user.id
-
-      const { error: employeeError } = await service.from('employees').insert({
-        id: authUserId,
-        auth_user_id: authUserId,
-        client_id: clientId,
-        band_id: band.id,
-        band_code: band.code,
-        band_rank: band.rank,
-        email,
-        full_name: fullName,
-        role,
-        status: 'invited',
-        // Invited. (Was 'csv_import': the constraint rejected it, AFTER the
-        // invite email had gone out, and the account was then deleted.)
-        onboarding_method: 'invite',
-        first_login_completed: false,
-        department: row.department?.trim() || null,
-        cost_centre: row.cost_centre?.trim() || null,
+      await employees.insert(db, {
+        ...profile, id: authUserId, auth_user_id: authUserId, status: 'invited', onboarding_method: 'invite',
       })
-
-      if (employeeError) {
-        await service.auth.admin.deleteUser(authUserId)
-        employeeResults.push({ email, status: 'failed', error: employeeError.message })
-        continue
-      }
-
       employeeResults.push({ email, status: 'created' })
-
     } catch (err) {
-      if (authUserId) await service.auth.admin.deleteUser(authUserId)
-      const message = err instanceof Error ? err.message : 'Failed to create employee'
-      employeeResults.push({ email, status: 'failed', error: message })
+      if (authUserId) await authAdmin.deleteUser(authUserId)
+      employeeResults.push({ email, status: 'failed', error: rowError(err) })
     }
   }
 
@@ -232,4 +201,12 @@ export async function POST(req: NextRequest) {
     employeesFailed,
     employeeResults,
   }, { status: 201 })
+})
+
+// A row the database refused. The one a person can act on is a duplicate
+// email; anything else is reported without the database's own wording.
+function rowError(err: unknown): string {
+  if (isConstraint(err, 'unique')) return 'Someone with this email already exists'
+  console.error('[create-corporate] employee row failed', err)
+  return 'Could not create this employee'
 }

@@ -1,7 +1,9 @@
 import { createServiceClient } from '@/utils/supabase/service'
+import { db, transaction } from '@/app/lib/db'
+import * as clients from '@/app/lib/repositories/clients'
+import * as employees from '@/app/lib/repositories/employees'
+import * as policy from '@/app/lib/repositories/policy'
 import { mostSeniorBand } from './defaultBands'
-
-type ServiceClient = ReturnType<typeof createServiceClient>
 
 export interface BandInput {
   code: string
@@ -100,10 +102,18 @@ export function validateBands(bands: BandInput[] | undefined): string | null {
 // group, and invites the corporate admin.
 // Shared by the single-client form and CSV bulk import so both stay in sync —
 // never fork this logic between the two entry points.
+//
+// ONE TRANSACTION for every database write, with the invite inside it, last
+// before the admin's own row. Any failure rolls the client, its GSTIN, its
+// bands and its policy link back together -- this used to delete the client
+// by hand in a catch block and rely on cascades to reach the rest. The invite
+// is not a database write and cannot be rolled back, so it is the one thing
+// still compensated by hand: if it succeeded and the admin's row then failed,
+// the account is deleted. Doing every other write first means a constraint
+// failure is found BEFORE anyone is sent an email.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function onboardClient(
-  service: ServiceClient,
   tmcId: string,
   appUrl: string,
   input: OnboardClientInput
@@ -139,17 +149,10 @@ export async function onboardClient(
   // gets attached to the wrong Acme and nobody finds out until a fare is wrong.
   //
   // Refusing ONCE and returning the existing rows turns an invisible collision
-  // into a decision. ilike, not eq: "acme" and "Acme" are the same collision,
-  // and a case-sensitive check would miss the most common way it happens.
+  // into a decision. Case-insensitive: "acme" and "Acme" are the same collision.
   if (!input.confirmDuplicateName) {
-    const { data: sameName } = await service
-      .from('clients')
-      .select('id, name, client_code, city, created_at')
-      .eq('tmc_id', tmcId)
-      .ilike('name', corporateName.trim())
-      .limit(5)
-
-    if (sameName && sameName.length > 0) {
+    const sameName = await clients.sameName(db, tmcId, corporateName.trim())
+    if (sameName.length > 0) {
       return {
         ok: false,
         error: `You already have a client named "${corporateName.trim()}".`,
@@ -160,45 +163,25 @@ export async function onboardClient(
 
   // Confirm the policy group belongs to this TMC before the client exists, so
   // a bad id fails fast rather than after a partial create.
-  if (input.policyGroupId) {
-    const { data: group } = await service
-      .from('policy_groups')
-      .select('id')
-      .eq('id', input.policyGroupId)
-      .eq('tmc_id', tmcId)
-      .maybeSingle()
-
-    if (!group) {
-      return { ok: false, error: 'Policy group not found for this TMC' }
-    }
+  if (input.policyGroupId && (await policy.groupOwner(db, input.policyGroupId))?.tmc_id !== tmcId) {
+    return { ok: false, error: 'Policy group not found for this TMC' }
   }
 
   // If a client_groupId was given, confirm it actually belongs to this TMC —
   // prevents cross-tenant assignment via a forged id.
-  if (input.client_groupId) {
-    const { data: client_group } = await service
-      .from('client_groups')
-      .select('id')
-      .eq('id', input.client_groupId)
-      .eq('tmc_id', tmcId)
-      .maybeSingle()
-
-    if (!client_group) {
-      return { ok: false, error: 'client_group not found for this TMC' }
-    }
+  if (input.client_groupId && !(await clients.groupInTmc(db, input.client_groupId, tmcId))) {
+    return { ok: false, error: 'client_group not found for this TMC' }
   }
 
-  let clientId: string | null = null
+  const email = adminEmail.trim().toLowerCase()
+  const auth = createServiceClient().auth.admin
   let authUserId: string | null = null
 
   try {
-    const { data: client, error: clientError } = await service
-      .from('clients')
-      .insert({
+    const clientId = await transaction(async (tx) => {
+      const { id } = await clients.insertClient(tx, {
         tmc_id: tmcId,
         name: corporateName.trim(),
-        status: 'active',
-        setup_completed: false,
         registered_address: input.registeredAddress?.trim() || null,
         industry: input.industry?.trim() || null,
         primary_contact_phone: input.primaryContactPhone?.trim() || null,
@@ -206,120 +189,65 @@ export async function onboardClient(
         booking_mode: bookingMode,
         client_group_id: input.client_groupId || null,
       })
-      .select('id')
-      .single()
 
-    if (clientError) {
-      console.error('onboardClient: client insert failed. Raw error:', JSON.stringify(clientError, null, 2))
-      throw new Error(clientError.message || clientError.details || clientError.hint || 'client insert failed')
-    }
-    clientId = client.id
-
-    // The GSTIN given at onboarding becomes the client's first — and, being the
-    // only one, primary — registration. It used to be a column on clients; a
-    // corporate bills through several, each with its own cost centre and
-    // validity window, so it is a table now.
-    if (input.gstNumber?.trim()) {
-      const { error: gstError } = await service
-        .from('client_gst_registrations')
-        .insert({
-          client_id: clientId,
+      // The GSTIN given at onboarding becomes the client's first — and, being
+      // the only one, primary — registration. A corporate bills through
+      // several, each with its own cost centre and validity window.
+      if (input.gstNumber?.trim()) {
+        await clients.insertGst(tx, id, {
           gstin: input.gstNumber.trim().toUpperCase(),
           gst_holder: corporateName.trim(),
           is_primary: true,
         })
-
-      if (gstError) {
-        console.error('onboardClient: GST registration insert failed. Raw error:', JSON.stringify(gstError, null, 2))
-        throw new Error(gstError.message || 'GST registration insert failed')
       }
-    }
 
-    const { data: bands, error: bandsError } = await service
-      .from('bands')
-      .insert(
-        input.bands.map(b => ({
-          client_id: clientId,
-          code: b.code.trim(),
-          label: b.label.trim(),
-          rank: Number(b.rank),
-        }))
-      )
-      .select('id, code, rank')
+      const bands = await employees.insertBands(tx, id, input.bands.map(b => ({
+        code: b.code.trim(), label: b.label.trim(), rank: Number(b.rank),
+      })))
 
-    if (bandsError) {
-      console.error('onboardClient: bands insert failed. Raw error:', JSON.stringify(bandsError, null, 2))
-      throw new Error(bandsError.message || bandsError.details || bandsError.hint || 'bands insert failed')
-    }
+      // The corporate admin goes on the most senior band. The only durable
+      // definition of "most senior" is the highest rank: a client names its own
+      // bands, so there is no fixed code to look for.
+      const adminBand = mostSeniorBand(bands)
+      if (!adminBand) throw new Error('Band seeding failed')
 
-    // The corporate admin goes on the most senior band. That used to be looked
-    // up as the literal code 'L5'; with the client naming its own bands, the
-    // only durable definition of "most senior" is the highest rank.
-    const adminBand = mostSeniorBand(bands)
-    if (!adminBand) throw new Error('Band seeding failed')
-
-    if (input.policyGroupId) {
-      const { error: linkError } = await service
-        .from('client_policy_groups')
-        .insert({ client_id: clientId, policy_group_id: input.policyGroupId })
-
-      if (linkError) {
-        console.error('onboardClient: policy group link failed. Raw error:', JSON.stringify(linkError, null, 2))
-        throw new Error(linkError.message || 'policy group link failed')
+      if (input.policyGroupId) {
+        await policy.link(tx, id, input.policyGroupId, null)
       }
-    }
 
-    // redirectTo points at /auth/callback, not /login — /login is gated by
-    // proxy.ts's "authenticated user visiting /login -> redirect to
-    // dashboard" rule, which runs server-side before any client page loads,
-    // so anyone with an existing session cookie in that browser would get
-    // bounced away before this invite was ever processed. /auth/callback is
-    // exempt from that redirect and does a proper server-side code
-    // exchange; next=/auth/set-password sends them to actually choose a
-    // password afterward instead of falling through to a role-based
-    // redirect. (Same fix as the other inviteUserByEmail call sites —
-    // this one was missed in that pass since it's shared logic, not a
-    // route file.)
-    const { data: authData, error: inviteError } =
-      await service.auth.admin.inviteUserByEmail(adminEmail.trim().toLowerCase(), {
+      // redirectTo points at /auth/callback, not /login — see inviteRedirectUrl.
+      const { data: authData, error: inviteError } = await auth.inviteUserByEmail(email, {
         redirectTo: `${appUrl}/auth/callback?next=/auth/set-password`,
       })
+      if (inviteError) throw new InviteRefused(inviteError.message)
+      authUserId = authData.user.id
 
-    if (inviteError) {
-      console.error('onboardClient: invite failed. Raw error:', JSON.stringify(inviteError, null, 2))
-      throw new Error(inviteError.message || 'invite failed')
-    }
-    authUserId = authData.user.id
+      await employees.insertClientAdmin(tx, {
+        id: authUserId,
+        client_id: id,
+        band: adminBand,
+        full_name: adminName.trim(),
+        email,
+        status: 'invited',
+        onboarding_method: 'invite',
+      })
 
-    const { error: employeeError } = await service.from('employees').insert({
-      id: authUserId,
-      client_id: clientId,
-      tmc_id: null,
-      band_id: adminBand.id,
-      band_code: adminBand.code,
-      band_rank: adminBand.rank,
-      full_name: adminName.trim(),
-      email: adminEmail.trim().toLowerCase(),
-      role: 'admin',
-      status: 'invited',
-    })
+      return id
+    }, { tenantId: tmcId })
 
-    if (employeeError) {
-      console.error('onboardClient: employee insert failed. Raw error:', JSON.stringify(employeeError, null, 2))
-      throw new Error(employeeError.message || employeeError.details || employeeError.hint || 'employee insert failed')
-    }
-
-    return { ok: true, clientId: clientId! }
-
+    return { ok: true, clientId }
   } catch (err) {
-    console.error('onboardClient error:', err)
-    if (authUserId) await service.auth.admin.deleteUser(authUserId)
-    if (clientId) await service.from('clients').delete().eq('id', clientId)
+    console.error('onboardClient failed, rolled back', err)
+    if (authUserId) await auth.deleteUser(authUserId)
 
-    const message =
-      err instanceof Error ? err.message :
-      typeof err === 'object' && err !== null && 'message' in err ? String((err as { message: unknown }).message) :
-      JSON.stringify(err)
-    return { ok: false, error: message || 'Failed to onboard client (no error details available)' }
+    // GoTrue's own message is the useful one ("already registered", "rate
+    // limit"); anything from the database is not for the browser.
+    return {
+      ok: false,
+      error: err instanceof InviteRefused ? err.message : 'The client could not be created. Nothing was saved.',
+    }
   }
 }
+
+// The admin's invite was refused by the auth service; its message is shown.
+class InviteRefused extends Error {}

@@ -2,6 +2,11 @@ import { requirePlatformAdmin } from '@/app/lib/permissions/requirePlatformAdmin
 import { inviteRedirectUrl } from '@/app/lib/onboarding/onboardTmc'
 import { PERMISSION_KEYS, isPermissionKey } from '@/app/lib/permissions/permissionKeys'
 import { NextRequest } from 'next/server'
+import { createServiceClient } from '@/utils/supabase/service'
+import { db, transaction } from '@/app/lib/db'
+import * as tmcs from '@/app/lib/repositories/tmcs'
+import * as employees from '@/app/lib/repositories/employees'
+import { route } from '@/app/lib/http/handler'
 
 // ── /api/platform/tmcs/[id]/staff-csv ────────────────────────────────────────
 // GET   downloads the TMC's counsellors as CSV
@@ -34,44 +39,31 @@ function escapeCell(value: unknown): string {
   return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
 }
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+type Ctx = { params: Promise<{ id: string }> }
+
+export const GET = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const check = await requirePlatformAdmin()
   if (!check.ok) {
     return Response.json({ error: check.error }, { status: check.status })
   }
 
-  const { service } = check
-
-  const { data: tmc } = await service.from('tmcs').select('id, name').eq('id', id).maybeSingle()
+  const tmc = await tmcs.tmc(db, id)
   if (!tmc) {
     return Response.json({ error: 'TMC not found' }, { status: 404 })
   }
 
-  const { data: staff } = await service
-    .from('employees')
-    .select('id, email, full_name, role, status')
-    .eq('tmc_id', id)
-    .in('role', ['tmc_admin', 'tc'])
-    .order('full_name')
-
-  const rows = staff ?? []
-
-  const { data: perms } = rows.length
-    ? await service
-        .from('employee_permissions')
-        .select('employee_id, permission_key')
-        .in('employee_id', rows.map(r => r.id))
-    : { data: [] }
+  const staff = await employees.staffOfTmc(db, id, 'name')
+  const perms = await employees.permissionsFor(db, staff.map(r => r.id))
 
   const byEmployee = new Map<string, string[]>()
-  for (const p of perms ?? []) {
+  for (const p of perms) {
     byEmployee.set(p.employee_id, [...(byEmployee.get(p.employee_id) ?? []), p.permission_key])
   }
 
   const body = [
     COLUMNS.join(','),
-    ...rows.map(r => [
+    ...staff.map(r => [
       r.email,
       r.full_name,
       r.role,
@@ -88,7 +80,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       'Content-Disposition': `attachment; filename="${filename}"`,
     },
   })
-}
+})
 
 interface ImportRow {
   email?: string
@@ -97,16 +89,15 @@ interface ImportRow {
   permissions?: string
 }
 
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+
+export const POST = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const check = await requirePlatformAdmin()
   if (!check.ok) {
     return Response.json({ error: check.error }, { status: check.status })
   }
 
-  const { service } = check
-
-  const { data: tmc } = await service.from('tmcs').select('id, name').eq('id', id).maybeSingle()
+  const tmc = await tmcs.tmc(db, id)
   if (!tmc) {
     return Response.json({ error: 'TMC not found' }, { status: 404 })
   }
@@ -120,13 +111,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return Response.json({ error: `Maximum ${MAX_ROWS} rows per upload` }, { status: 400 })
   }
 
-  const { data: existing } = await service
-    .from('employees')
-    .select('email')
-    .eq('tmc_id', id)
-    .in('role', ['tmc_admin', 'tc'])
-
-  const known = new Set((existing ?? []).map(e => e.email.toLowerCase()))
+  const known = new Set((await employees.staffOfTmc(db, id)).map(e => e.email.toLowerCase()))
+  const auth = createServiceClient().auth.admin
 
   const errors: { row: number; email: string; error: string }[] = []
   let created = 0
@@ -179,40 +165,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     let authUserId: string | null = null
 
     try {
-      const { data: authData, error: inviteError } =
-        await service.auth.admin.inviteUserByEmail(email, {
-          redirectTo: inviteRedirectUrl(),
-          data: { full_name: fullName, tmc_id: id, role: 'tc' },
-        })
-
-      if (inviteError) throw new Error(inviteError.message)
-      authUserId = authData.user.id
-
-      const { error: employeeError } = await service.from('employees').insert({
-        id: authUserId,
-        auth_user_id: authUserId,
-        tmc_id: id,
-        client_id: null,
-        full_name: fullName,
-        email,
-        role: 'tc',
-        status: 'invited',
+      const { data: authData, error: inviteError } = await auth.inviteUserByEmail(email, {
+        redirectTo: inviteRedirectUrl(),
+        data: { full_name: fullName, tmc_id: id, role: 'tc' },
       })
-      if (employeeError) throw new Error(employeeError.message)
 
-      if (requested.length > 0) {
-        const { error: permError } = await service.from('employee_permissions').insert(
-          // granted_by is null, not the platform admin's id: that column is a
-          // foreign key to `employees`, and a platform admin has no employees
-          // row by design — they are Amadeus staff, not a member of any TMC.
-          requested.map(p => ({
-            employee_id: authUserId,
-            permission_key: p,
-            granted_by: null,
-          }))
-        )
-        if (permError) throw new Error(permError.message)
-      }
+      if (inviteError) throw new InviteRefused(inviteError.message)
+      const userId = authData.user.id
+      authUserId = userId
+
+      // The person and their permissions together: a row that fails half way
+      // no longer leaves a counsellor with none of the access they were given.
+      // granted_by is null: that column is a foreign key to `employees`, and a
+      // platform admin has no employees row by design.
+      await transaction(async (tx) => {
+        await employees.insertCounsellor(tx, { id: userId, tmc_id: id, full_name: fullName, email })
+        await employees.grantPermissions(tx, userId, requested, null)
+      }, { tenantId: id })
 
       known.add(email)
       created++
@@ -220,13 +189,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       // Compensating rollback for this row only — same reasoning as onboardTmc:
       // the auth user is not inside any database transaction, so it has to be
       // undone explicitly or it becomes an account nothing in the app can see.
-      if (authUserId) await service.auth.admin.deleteUser(authUserId)
+      if (authUserId) await auth.deleteUser(authUserId)
+      if (!(err instanceof InviteRefused)) console.error('[staff-csv] row failed', { rowNumber, err })
       errors.push({
         row: rowNumber, email,
-        error: err instanceof Error ? err.message : 'Could not create this account',
+        error: err instanceof InviteRefused ? err.message : 'Could not create this account',
       })
     }
   }
 
   return Response.json({ ok: true, created, skipped, errors })
-}
+})
+
+// The auth service refused the invite; its message is shown for the row.
+class InviteRefused extends Error {}
