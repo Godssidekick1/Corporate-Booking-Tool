@@ -1,7 +1,8 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
+import * as dealCodes from '@/app/lib/repositories/dealCodes'
+import { route } from '@/app/lib/http/handler'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
-import { db } from '@/app/lib/db'
+import { db, transaction } from '@/app/lib/db'
 
 // ── GET /api/tmc/deal-code-categories ────────────────────────────────────────
 // The TMC's airline categories, each with the code types it permits.
@@ -35,7 +36,7 @@ const DEFAULT_MATRIX: Record<string, Record<string, boolean>> = {
   INTAIRLCC: { TC: false, PF: false, DC: true, TR: true, PC: true },
 }
 
-export async function GET() {
+export const GET = route(async () => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -43,61 +44,25 @@ export async function GET() {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
   const auth = await requireTmcPermission(db, user.id, 'manage_deal_codes')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
+  const tmcId = auth.tmcId
 
-  let { data: categories } = await service
-    .from('deal_code_categories')
-    .select('id, code, label, active')
-    .eq('tmc_id', auth.tmcId)
-    .order('code')
+  let categories = await dealCodes.categories(db, tmcId)
 
-  // Seed on first read for a TMC created after the migration ran.
-  if (!categories || categories.length === 0) {
-    await service.from('deal_code_categories').insert(
-      DEFAULT_CATEGORIES.map(c => ({ tmc_id: auth.tmcId, code: c.code, label: c.label }))
-    )
-
-    const { data: seeded } = await service
-      .from('deal_code_categories')
-      .select('id, code, label, active')
-      .eq('tmc_id', auth.tmcId)
-      .order('code')
-
-    categories = seeded ?? []
-
-    const matrixRows = categories.flatMap(cat =>
-      Object.entries(DEFAULT_MATRIX[cat.code] ?? {}).map(([code_type, allowed]) => ({
-        category_id: cat.id,
-        code_type,
-        allowed,
-      }))
-    )
-
-    if (matrixRows.length > 0) {
-      await service.from('deal_code_category_types').insert(matrixRows)
-    }
+  // Seed on first read for a TMC created after the migration ran. One
+  // transaction, and idempotent: two first reads racing each other both
+  // succeed and seed once, where the old path could insert the set twice.
+  if (categories.length === 0) {
+    await transaction(tx => dealCodes.seedCategories(tx, tmcId, DEFAULT_CATEGORIES.map(c => ({
+      code: c.code, label: c.label, types: DEFAULT_MATRIX[c.code] ?? {},
+    }))), { tenantId: tmcId, userId: user.id })
+    categories = await dealCodes.categories(db, tmcId)
   }
 
-  const categoryIds = categories.map(c => c.id)
-
-  const { data: matrix } = categoryIds.length
-    ? await service
-        .from('deal_code_category_types')
-        .select('category_id, code_type, allowed')
-        .in('category_id', categoryIds)
-    : { data: [] }
-
-  const allowedByCategory = new Map<string, string[]>()
-  for (const row of matrix ?? []) {
-    if (!row.allowed) continue
-    const list = allowedByCategory.get(row.category_id)
-    if (list) list.push(row.code_type)
-    else allowedByCategory.set(row.category_id, [row.code_type])
-  }
+  const allowedByCategory = await dealCodes.allowedTypes(db, categories.map(c => c.id))
 
   return Response.json({
     ok: true,
@@ -106,4 +71,4 @@ export async function GET() {
       allowedTypes: allowedByCategory.get(c.id) ?? [],
     })),
   })
-}
+})

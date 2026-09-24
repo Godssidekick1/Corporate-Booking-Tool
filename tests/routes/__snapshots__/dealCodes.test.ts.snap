@@ -6,11 +6,11 @@ exports[`deal codes > categories: each with the code types it permits 1`] = `
     {
       "active": true,
       "allowedTypes": [
-        "PC",
-        "TR",
         "DC",
+        "PC",
         "PF",
         "TC",
+        "TR",
       ],
       "code": "DOMAIRBSP",
       "id": "51e6a8be-bff4-4822-86f4-50f8cf571c13",
@@ -19,9 +19,9 @@ exports[`deal codes > categories: each with the code types it permits 1`] = `
     {
       "active": true,
       "allowedTypes": [
+        "DC",
         "PC",
         "TR",
-        "DC",
       ],
       "code": "DOMAIRLCC",
       "id": "b296e0b7-dc34-4de5-95b2-6de153e71359",
@@ -30,11 +30,11 @@ exports[`deal codes > categories: each with the code types it permits 1`] = `
     {
       "active": true,
       "allowedTypes": [
-        "PC",
-        "TR",
         "DC",
+        "PC",
         "PF",
         "TC",
+        "TR",
       ],
       "code": "INTAIRBSP",
       "id": "9f57d26f-ef17-4b47-8104-e26189c7dc54",
@@ -43,9 +43,9 @@ exports[`deal codes > categories: each with the code types it permits 1`] = `
     {
       "active": true,
       "allowedTypes": [
+        "DC",
         "PC",
         "TR",
-        "DC",
       ],
       "code": "INTAIRLCC",
       "id": "3ae3f7b7-586c-4afe-875e-f99a50196697",

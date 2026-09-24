@@ -729,3 +729,56 @@ export async function approvalModes(
 ): Promise<Pick<Row<'clients'>, 'air_approval_mode' | 'hotel_approval_mode'> | null> {
   return maybeOne(db, sql`select air_approval_mode, hotel_approval_mode from clients where id = ${clientId}`)
 }
+
+// ═══ Assignment targets ═════════════════════════════════════════════════════
+// Deal codes and forms of payment are assigned to a client, a client group or
+// a bucket. Those are plain FKs, so an id borrowed from another tenant would
+// satisfy them -- every target is checked against the TMC first.
+
+export type TargetKind = 'client' | 'client_group' | 'bucket'
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+const TARGET_TABLE: Record<TargetKind, Sql> = {
+  client: sql`clients`,
+  client_group: sql`client_groups`,
+  bucket: sql`buckets`,
+}
+
+export function targetKey(kind: TargetKind, id: string): string {
+  return `${kind}:${id}`
+}
+
+// Which of these targets are this TMC's, as targetKey()s: one query per kind
+// present, rather than one per target.
+export async function targetIdsInTmc(
+  db: Queryable,
+  tmcId: string,
+  targets: readonly { kind: TargetKind; id: string }[]
+): Promise<Set<string>> {
+  // A malformed id cannot be anyone's, and must not fail the uuid cast.
+  const wellFormed = targets.filter(t => UUID.test(t.id))
+  const kinds = [...new Set(wellFormed.map(t => t.kind))]
+  const found = await Promise.all(kinds.map(kind => many<{ id: string }>(db, sql`
+    select id from ${TARGET_TABLE[kind]}
+    where tmc_id = ${tmcId} and id = any(${wellFormed.filter(t => t.kind === kind).map(t => t.id)}::uuid[])`)))
+  return new Set(kinds.flatMap((kind, i) => found[i].map(r => targetKey(kind, r.id))))
+}
+
+export type CoverageClient = Pick<Row<'clients'>, 'id' | 'name' | 'client_group_id'>
+
+// The clients a coverage screen resolves for: this TMC's, narrowed to what the
+// caller may see (null = everything) and optionally to one client.
+export async function coverageClients(
+  db: Queryable,
+  tmcId: string,
+  accessibleIds: readonly string[] | null,
+  onlyClientId?: string | null
+): Promise<CoverageClient[]> {
+  return many<CoverageClient>(db, sql`
+    select id, name, client_group_id from clients
+    where tmc_id = ${tmcId}
+    ${accessibleIds ? sql`and id = any(${[...accessibleIds]})` : empty}
+    ${onlyClientId ? sql`and id = ${onlyClientId}` : empty}
+    order by name, id`)
+}

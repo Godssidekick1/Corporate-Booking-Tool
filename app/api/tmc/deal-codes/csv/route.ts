@@ -1,5 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
+import * as dealCodes from '@/app/lib/repositories/dealCodes'
+import type { NewDealCode } from '@/app/lib/repositories/dealCodes'
+import { route } from '@/app/lib/http/handler'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { validateFlightSpec } from '@/app/lib/deal-codes/flightSpec'
 import { CODE_TYPES, CODE_TYPE_LABELS, type CodeType } from '../route'
@@ -36,7 +38,7 @@ function escapeCell(value: unknown): string {
   return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
 }
 
-export async function GET() {
+export const GET = route(async () => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -44,31 +46,18 @@ export async function GET() {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
   const auth = await requireTmcPermission(db, user.id, 'manage_deal_codes')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
 
-  const [{ data: deals }, { data: categories }] = await Promise.all([
-    service
-      .from('deal_codes')
-      .select(
-        'code, code_type, airline_code, category_id, flight_spec, sales_from, sales_to, travel_from, travel_to, active, notes'
-      )
-      .eq('tmc_id', auth.tmcId)
-      .order('airline_code')
-      .order('code'),
-    service.from('deal_code_categories').select('id, code').eq('tmc_id', auth.tmcId),
-  ])
+  // The category's code comes back joined, in place of its id.
+  const deals = await dealCodes.csvRows(db, auth.tmcId)
 
-  const categoryCode = new Map((categories ?? []).map(c => [c.id, c.code]))
-
-  const rows = (deals ?? []).map(d =>
+  const rows = deals.map(d =>
     COLUMNS.map(col => {
-      if (col === 'category') return escapeCell(categoryCode.get(d.category_id))
       if (col === 'active') return escapeCell(d.active ? 'yes' : 'no')
-      return escapeCell(d[col as keyof typeof d])
+      return escapeCell(d[col])
     }).join(',')
   )
 
@@ -80,7 +69,7 @@ export async function GET() {
       'Content-Disposition': 'attachment; filename="deal-codes.csv"',
     },
   })
-}
+})
 
 interface ImportRow {
   [key: string]: string | undefined
@@ -108,7 +97,7 @@ function parseDate(value: string | undefined): string | null {
   return /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? trimmed : 'INVALID'
 }
 
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -116,7 +105,6 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
   const auth = await requireTmcPermission(db, user.id, 'manage_deal_codes')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
@@ -131,27 +119,16 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Maximum 1000 rows per upload' }, { status: 400 })
   }
 
-  const { data: categories } = await service
-    .from('deal_code_categories')
-    .select('id, code')
-    .eq('tmc_id', auth.tmcId)
-
-  const categoryByCode = new Map((categories ?? []).map(c => [c.code.toUpperCase(), c.id]))
-  const categoryIds = (categories ?? []).map(c => c.id)
-
-  const { data: matrix } = categoryIds.length
-    ? await service
-        .from('deal_code_category_types')
-        .select('category_id, code_type, allowed')
-        .in('category_id', categoryIds)
-    : { data: [] }
+  const categories = await dealCodes.categoriesForTmc(db, auth.tmcId)
+  const categoryByCode = new Map(categories.map(c => [c.code.toUpperCase(), c.id]))
+  const matrix = await dealCodes.allowedTypes(db, categories.map(c => c.id))
 
   const allowed = new Set(
-    (matrix ?? []).filter(m => m.allowed).map(m => `${m.category_id}::${m.code_type}`)
+    [...matrix].flatMap(([categoryId, types]) => types.map(t => `${categoryId}::${t}`))
   )
 
   const verdicts: RowVerdict[] = []
-  const inserts: Record<string, unknown>[] = []
+  const inserts: NewDealCode[] = []
 
   for (const [i, row] of body.rows.entries()) {
     // +1 for the header, +1 because humans count from one.
@@ -251,12 +228,8 @@ export async function POST(req: NextRequest) {
     return Response.json({ ok: true, dryRun: true, accepted, rejected, verdicts })
   }
 
-  if (inserts.length > 0) {
-    const { error } = await service.from('deal_codes').insert(inserts)
-    if (error) {
-      return Response.json({ error: error.message }, { status: 500 })
-    }
-  }
+  // One statement: the accepted rows land together or not at all.
+  await dealCodes.insertDeals(db, inserts)
 
   return Response.json({ ok: true, imported: accepted, rejected, verdicts })
-}
+})
