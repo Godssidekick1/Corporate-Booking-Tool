@@ -1,19 +1,14 @@
 import { createHash } from 'node:crypto'
+import type { AuthAdmin } from '@/utils/supabase/admin'
 
 // ── A fake GoTrue admin API ──────────────────────────────────────────────────
-// Routes that create people call service.auth.admin.inviteUserByEmail /
-// createUser / deleteUser. Against the real Supabase project a test would
-// create REAL accounts and send REAL invite emails -- so any test touching such
-// a route mocks '@/utils/supabase/service' with this in place of `.auth`, and
-// keeps the real data path:
-//
-//   vi.mock('@/utils/supabase/service', async (orig) => {
-//     const actual = await orig<typeof import('@/utils/supabase/service')>()
-//     const { fakeAuth } = await import('../harness/authAdmin')
-//     return { ...actual, createServiceClient: () => ({ ...actual.createServiceClient(), auth: fakeAuth }) }
-//   })
+// Routes that create people call authAdmin() (utils/supabase/admin.ts):
+// inviteUserByEmail, createUser, deleteUser, resetPasswordForEmail. Against the
+// real Supabase project a test would create REAL accounts and send REAL invite
+// emails -- so tests/setup/auth.ts replaces that module with this one for every
+// test file. Nothing here needs mocking per file; a test reads `authCalls` to
+// see what was asked for, and `failNextAuthWith` to make the next call fail.
 // ─────────────────────────────────────────────────────────────────────────────
-
 export interface AuthCall {
   method: 'createUser' | 'inviteUserByEmail' | 'deleteUser' | 'resetPasswordForEmail'
   args: unknown[]
@@ -45,23 +40,23 @@ function created(email: string) {
   return { data: { user: { id: idFor(email), email } }, error: null }
 }
 
-export const fakeAuth = {
-  admin: {
-    createUser: async (opts: { email: string }) => {
-      authCalls.push({ method: 'createUser', args: [opts] })
-      return created(opts.email)
-    },
-    inviteUserByEmail: async (email: string, opts?: unknown) => {
-      authCalls.push({ method: 'inviteUserByEmail', args: [email, opts] })
-      return created(email)
-    },
-    deleteUser: async (id: string) => {
-      authCalls.push({ method: 'deleteUser', args: [id] })
-      return { data: {}, error: null }
-    },
+// Shaped like AuthAdmin, and cast to it: the real return types carry far more
+// than any route reads, and the fake returns only what they do read.
+export const fakeAuthAdmin = {
+  createUser: async (opts: { email: string }) => {
+    authCalls.push({ method: 'createUser', args: [opts] })
+    return created(opts.email)
+  },
+  inviteUserByEmail: async (email: string, opts?: unknown) => {
+    authCalls.push({ method: 'inviteUserByEmail', args: [email, opts] })
+    return created(email)
+  },
+  deleteUser: async (id: string) => {
+    authCalls.push({ method: 'deleteUser', args: [id] })
+    return { data: {}, error: null }
   },
   resetPasswordForEmail: async (email: string, opts?: unknown) => {
     authCalls.push({ method: 'resetPasswordForEmail', args: [email, opts] })
     return { data: {}, error: null }
   },
-}
+} as unknown as AuthAdmin

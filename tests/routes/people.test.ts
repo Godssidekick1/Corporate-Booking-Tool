@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, vi } from 'vitest'
+import { describe, it, expect, beforeAll } from 'vitest'
 import { GET as tmcProfileGet, PATCH as tmcProfilePatch } from '@/app/api/tmc/profile/route'
 import { GET as meGet, PATCH as mePatch } from '@/app/api/employees/me/route'
 import { POST as createEmployee } from '@/app/api/employees/route'
@@ -21,12 +21,6 @@ import { sql, many, maybeOne, exec } from '@/app/lib/db/sql'
 // faked here -- against the real project a test would create real users and
 // send real invite emails. Data calls go through untouched.
 // ─────────────────────────────────────────────────────────────────────────────
-
-vi.mock('@/utils/supabase/service', async orig => {
-  const actual = await orig<typeof import('@/utils/supabase/service')>()
-  const { fakeAuth } = await import('../harness/authAdmin')
-  return { ...actual, createServiceClient: () => ({ ...actual.createServiceClient(), auth: fakeAuth }) }
-})
 
 const HAS_DB = Boolean(process.env.DATABASE_URL)
 const d = HAS_DB ? describe : describe.skip

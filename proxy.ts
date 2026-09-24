@@ -164,8 +164,8 @@ export async function proxy(request: NextRequest) {
   ) {
     // Through the repository, not the anon Supabase client. This was the one
     // PostgREST call the Stage 1 shim never covered: it ran on the anon key
-    // with RLS, on page navigation, so even on DB_DRIVER=pg every signed-in
-    // page load still made an HTTP round trip to Supabase. Next 16 runs proxy
+    // with RLS, on page navigation, so even with the data layer on PostgreSQL
+    // every signed-in page load still made an HTTP round trip to Supabase. Next 16 runs proxy
     // on the Node.js runtime, so node-postgres works here.
     //
     // The id is the one from the VERIFIED session above, so reading with the

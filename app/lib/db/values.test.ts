@@ -108,4 +108,30 @@ d('value contract', () => {
     const id = '6f9619ff-8b86-d011-b42d-00c04fc964ff'
     expect(await roundTrip('u', 'uuid', id)).toBe(id)
   })
+
+  it('int2 and int4 are numbers', async () => {
+    expect(await roundTrip('s', 'int2', '7')).toBe(7)
+    expect(await roundTrip('i', 'int4', '2147483647')).toBe(2147483647)
+  })
+
+  it('char(n) comes back space-padded to its length', async () => {
+    // clients.currency is char(3). A shorter value is padded by PostgreSQL, so
+    // 'IN' reads back as 'IN ' -- worth knowing before comparing one.
+    expect(await roundTrip('c', 'char(3)', 'INR')).toBe('INR')
+    expect(await roundTrip('c', 'char(3)', 'IN')).toBe('IN ')
+  })
+
+  // Every type the schema uses must have a case above. A new column type is a
+  // decision for typeParsers.ts and the type generator -- this makes it fail
+  // here rather than arrive as the next untested value bug. (Ported from the
+  // shim's roundTrip test, which read the shim's generated column map.)
+  const COVERED = new Set(['numeric', 'int2', 'int4', 'int8', 'timestamptz', 'date', 'jsonb', '_text',
+    'text', 'bpchar', 'bool', 'uuid'])
+
+  it('every column type in the schema has a round trip here', async () => {
+    const { rows } = await transaction(tx => tx.query(`
+      select distinct udt_name from information_schema.columns where table_schema = 'public'`))
+    const unexpected = (rows as { udt_name: string }[]).map(r => r.udt_name).filter(t => !COVERED.has(t)).sort()
+    expect(unexpected, `column types with no round trip: ${unexpected.join(', ')}`).toEqual([])
+  })
 })

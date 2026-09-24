@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, vi } from 'vitest'
+import { describe, it, expect, beforeAll } from 'vitest'
 import { GET as tcsGet, POST as tcsPost } from '@/app/api/tmc/tcs/route'
 import { PATCH as tcPatch } from '@/app/api/tmc/tcs/[id]/route'
 import { GET as branchesGet, POST as branchesPost } from '@/app/api/tmc/branches/route'
@@ -22,12 +22,6 @@ import { sql, many, maybeOne, one, exec } from '@/app/lib/db/sql'
 // POST /api/tmc/tcs invites through GoTrue's admin API, faked here -- a real
 // call would create a real account and send a real email.
 // ─────────────────────────────────────────────────────────────────────────────
-
-vi.mock('@/utils/supabase/service', async orig => {
-  const actual = await orig<typeof import('@/utils/supabase/service')>()
-  const { fakeAuth } = await import('../harness/authAdmin')
-  return { ...actual, createServiceClient: () => ({ ...actual.createServiceClient(), auth: fakeAuth }) }
-})
 
 const HAS_DB = Boolean(process.env.DATABASE_URL)
 const d = HAS_DB ? describe : describe.skip

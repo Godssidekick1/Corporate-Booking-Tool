@@ -1,5 +1,5 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
+import { authAdmin } from '@/utils/supabase/admin'
 import { onboardClient, OnboardClientInput } from '@/app/lib/onboarding/onboardClient'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
@@ -110,7 +110,7 @@ export const POST = route(async (req: NextRequest) => {
   // ── Step 3: create each employee, sequentially ──────────────────────────────
   // One at a time: for SBT each row is an invite, an API call that can fail on
   // its own, and one bad row must not take the rest of the file down with it.
-  const authAdmin = createServiceClient().auth.admin
+  const gotrue = authAdmin()
   const employeeResults: EmployeeResult[] = []
 
   for (const row of employeeRows) {
@@ -170,7 +170,7 @@ export const POST = route(async (req: NextRequest) => {
     // ── SBT / hybrid client: real account, real invite email ────────────────
     let authUserId: string | null = null
     try {
-      const { data: authData, error: inviteError } = await authAdmin.inviteUserByEmail(email, {
+      const { data: authData, error: inviteError } = await gotrue.inviteUserByEmail(email, {
         redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/auth/set-password`,
         data: { full_name: fullName, client_id: clientId, role, band_code: band.code },
       })
@@ -186,7 +186,7 @@ export const POST = route(async (req: NextRequest) => {
       })
       employeeResults.push({ email, status: 'created' })
     } catch (err) {
-      if (authUserId) await authAdmin.deleteUser(authUserId)
+      if (authUserId) await gotrue.deleteUser(authUserId)
       employeeResults.push({ email, status: 'failed', error: rowError(err) })
     }
   }

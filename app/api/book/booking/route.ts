@@ -27,7 +27,7 @@ interface BookBody {
 
 // ── NO TRANSACTION HERE, DELIBERATELY ───────────────────────────────────────
 // Every other multi-write route in this codebase has been wrapped in
-// withTransaction. This one has not, and should not be.
+// transaction(). This one has not, and should not be.
 //
 // The writes below are single-row status updates on `bookings`, and each is
 // separated from the next by a network call to Amadeus — price, addPassenger,

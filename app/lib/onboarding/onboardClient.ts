@@ -1,4 +1,4 @@
-import { createServiceClient } from '@/utils/supabase/service'
+import { authAdmin } from '@/utils/supabase/admin'
 import { db, transaction } from '@/app/lib/db'
 import * as clients from '@/app/lib/repositories/clients'
 import * as employees from '@/app/lib/repositories/employees'
@@ -174,7 +174,7 @@ export async function onboardClient(
   }
 
   const email = adminEmail.trim().toLowerCase()
-  const auth = createServiceClient().auth.admin
+  const auth = authAdmin()
   let authUserId: string | null = null
 
   try {

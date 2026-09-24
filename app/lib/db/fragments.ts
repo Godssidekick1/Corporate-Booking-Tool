@@ -21,7 +21,7 @@ function escapeLike(term: string): string {
 // PostgREST a search for "50%" was a wildcard and matched everything.
 //
 // Returns `and (…)` ready to append to a WHERE clause, or nothing at all when
-// there is no usable term -- mirroring ilikeAcross returning null.
+// there is no usable term, so a blank search box filters nothing.
 export function searchAcross(columns: readonly Sql[], term: string | null | undefined): Sql {
   const cleaned = (term ?? '').replace(/[,()\\*]/g, '').trim()
   if (!cleaned) return empty

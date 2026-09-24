@@ -2,7 +2,7 @@ import { requirePlatformAdmin } from '@/app/lib/permissions/requirePlatformAdmin
 import { inviteRedirectUrl } from '@/app/lib/onboarding/onboardTmc'
 import { PERMISSION_KEYS, isPermissionKey } from '@/app/lib/permissions/permissionKeys'
 import { NextRequest } from 'next/server'
-import { createServiceClient } from '@/utils/supabase/service'
+import { authAdmin } from '@/utils/supabase/admin'
 import { db, transaction } from '@/app/lib/db'
 import * as tmcs from '@/app/lib/repositories/tmcs'
 import * as employees from '@/app/lib/repositories/employees'
@@ -112,7 +112,7 @@ export const POST = route(async (req: NextRequest, { params }: Ctx) => {
   }
 
   const known = new Set((await employees.staffOfTmc(db, id)).map(e => e.email.toLowerCase()))
-  const auth = createServiceClient().auth.admin
+  const auth = authAdmin()
 
   const errors: { row: number; email: string; error: string }[] = []
   let created = 0

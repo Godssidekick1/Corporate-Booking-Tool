@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, vi } from 'vitest'
+import { describe, it, expect, beforeAll } from 'vitest'
 import { GET as clientsGet } from '@/app/api/tmc/clients/route'
 import { GET as clientGet, PATCH as clientPatch, DELETE as clientDelete } from '@/app/api/tmc/clients/[id]/route'
 import { GET as adminsGet, POST as adminReset } from '@/app/api/tmc/clients/[id]/admin-access/route'
@@ -26,12 +26,6 @@ import { sql, many, maybeOne, one, exec } from '@/app/lib/db/sql'
 //
 // admin-access sends password resets through GoTrue, faked here.
 // ─────────────────────────────────────────────────────────────────────────────
-
-vi.mock('@/utils/supabase/service', async orig => {
-  const actual = await orig<typeof import('@/utils/supabase/service')>()
-  const { fakeAuth } = await import('../harness/authAdmin')
-  return { ...actual, createServiceClient: () => ({ ...actual.createServiceClient(), auth: fakeAuth }) }
-})
 
 const HAS_DB = Boolean(process.env.DATABASE_URL)
 const d = HAS_DB ? describe : describe.skip

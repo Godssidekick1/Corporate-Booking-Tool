@@ -1,5 +1,5 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
+import { authAdmin } from '@/utils/supabase/admin'
 import { NextRequest } from 'next/server'
 import { db, isConstraint } from '@/app/lib/db'
 import * as employees from '@/app/lib/repositories/employees'
@@ -52,7 +52,7 @@ export const POST = route(async (req: NextRequest) => {
 
   // Only for GoTrue: accounts are created and rolled back through the auth
   // admin API. Every table read and write below goes through repositories.
-  const service = createServiceClient()
+  const auth = authAdmin()
 
   const caller = await employees.clientScope(db, user.id)
 
@@ -137,7 +137,7 @@ export const POST = route(async (req: NextRequest) => {
       // must_set_password forces a change on first sign-in (enforced in
       // proxy.ts). Without it the admin would permanently know the
       // employee's password, and could sign in as them.
-      const { data: authData, error: createError } = await service.auth.admin.createUser({
+      const { data: authData, error: createError } = await auth.createUser({
         email: normalizedEmail,
         password,
         email_confirm: true,
@@ -150,7 +150,7 @@ export const POST = route(async (req: NextRequest) => {
 
       authUserId = authData.user.id
     } else {
-      const { data: authData, error: inviteError } = await service.auth.admin.inviteUserByEmail(
+      const { data: authData, error: inviteError } = await auth.inviteUserByEmail(
         normalizedEmail,
         {
           redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/auth/set-password`,
@@ -198,7 +198,7 @@ export const POST = route(async (req: NextRequest) => {
     // account, or it is a login that belongs to nobody. The database's error
     // text is logged, not returned -- it names constraints and columns.
     if (authUserId) {
-      await service.auth.admin.deleteUser(authUserId)
+      await auth.deleteUser(authUserId)
     }
     // Two admins adding the same person at once: both pass the existence
     // check above, and the unique constraint decides. Same answer as the check.

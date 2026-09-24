@@ -1,5 +1,5 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
+import { authAdmin } from '@/utils/supabase/admin'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { inviteRedirectUrl } from '@/app/lib/onboarding/onboardTmc'
 import { NextRequest } from 'next/server'
@@ -98,8 +98,8 @@ export const POST = route(async (req: NextRequest, { params }: Ctx) => {
   // server-side code exchange and is exempt from the proxy rule that bounces an
   // authenticated user away from /login before any client code runs.
   //
-  // GoTrue only -- the service client is used for nothing else here.
-  const { error: resetError } = await createServiceClient().auth.resetPasswordForEmail(
+  // GoTrue only: an auth call, not a data call.
+  const { error: resetError } = await authAdmin().resetPasswordForEmail(
     admin.email,
     { redirectTo: inviteRedirectUrl() }
   )

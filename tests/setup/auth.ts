@@ -18,5 +18,14 @@ vi.mock('@/utils/supabase/server', async () => {
   }
 })
 
+// The GoTrue admin API, faked for EVERY file rather than per file. It creates
+// real accounts and sends real emails, and .env.local holds real keys -- so a
+// test file that forgot to mock it would do exactly that. Global, it cannot be
+// forgotten. Tests inspect what was called through harness/authAdmin.
+vi.mock('@/utils/supabase/admin', async () => {
+  const { fakeAuthAdmin } = await import('../harness/authAdmin')
+  return { authAdmin: () => fakeAuthAdmin }
+})
+
 // Signed out unless a test says otherwise, so no test inherits another's user.
 beforeEach(() => resetAuth())

@@ -1,4 +1,4 @@
-import { createServiceClient } from '@/utils/supabase/service'
+import { authAdmin } from '@/utils/supabase/admin'
 import { db, transaction } from '@/app/lib/db'
 import * as tmcs from '@/app/lib/repositories/tmcs'
 import * as employees from '@/app/lib/repositories/employees'
@@ -68,7 +68,7 @@ export async function onboardTmc(input: OnboardTmcInput): Promise<OnboardTmcResu
     return { ok: false, status: 409, error: `A TMC named "${tmcName}" already exists.` }
   }
 
-  const auth = createServiceClient().auth.admin
+  const auth = authAdmin()
   let authUserId: string | null = null
 
   try {
@@ -125,7 +125,7 @@ export async function inviteTmcAdmin(
     return { ok: false, status: 409, error: 'Someone with that email is already at this TMC.' }
   }
 
-  const auth = createServiceClient().auth.admin
+  const auth = authAdmin()
   let authUserId: string | null = null
 
   try {

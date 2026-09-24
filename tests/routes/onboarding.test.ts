@@ -20,12 +20,6 @@ import { sql, many, one, maybeOne } from '@/app/lib/db/sql'
 // created and no email is sent. The fake's ids are derived from the email.
 // ─────────────────────────────────────────────────────────────────────────────
 
-vi.mock('@/utils/supabase/service', async orig => {
-  const actual = await orig<typeof import('@/utils/supabase/service')>()
-  const { fakeAuth } = await import('../harness/authAdmin')
-  return { ...actual, createServiceClient: () => ({ ...actual.createServiceClient(), auth: fakeAuth }) }
-})
-
 const HAS_DB = Boolean(process.env.DATABASE_URL)
 const d = HAS_DB ? describe : describe.skip
 

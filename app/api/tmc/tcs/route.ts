@@ -1,5 +1,5 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
+import { authAdmin } from '@/utils/supabase/admin'
 import { isPermissionKey } from '@/app/lib/permissions/permissionKeys'
 import { parsePageParams, pagedResponse } from '@/app/lib/pagination'
 import { NextRequest } from 'next/server'
@@ -128,9 +128,9 @@ export const POST = route(async (req: NextRequest) => {
 
   // Only for GoTrue: the account is invited, and rolled back, through the auth
   // admin API. Table writes go through repositories.
-  const service = createServiceClient()
+  const auth = authAdmin()
 
-  const { data: authData, error: inviteError } = await service.auth.admin.inviteUserByEmail(
+  const { data: authData, error: inviteError } = await auth.inviteUserByEmail(
     normalizedEmail,
     {
       redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/auth/set-password`,
@@ -163,7 +163,7 @@ export const POST = route(async (req: NextRequest) => {
     }, { status: 201 })
 
   } catch (err) {
-    await service.auth.admin.deleteUser(employeeId)
+    await auth.deleteUser(employeeId)
     console.error('[tmc/tcs] create failed', err)
     return Response.json({ error: 'Failed to create TC' }, { status: 500 })
   }

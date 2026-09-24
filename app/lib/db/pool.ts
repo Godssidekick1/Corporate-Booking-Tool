@@ -30,18 +30,25 @@ export function getPool(): Pool {
 
   const connectionString = process.env.DATABASE_URL
   if (!connectionString) {
-    // DbConfigurationError, not a plain Error: the builder re-throws this kind
-    // rather than folding it into { data: null, error }, so a database that is
-    // not configured surfaces as a 500 naming the variable instead of as a
-    // per-route guess at what a null row means. See errors.ts.
+    // There is no fallback: every data read and write goes through this pool.
+    // A 500 naming the variable, not a per-route guess at what a null row
+    // means. See errors.ts.
     throw new DbConfigurationError(
-      '[db] DB_DRIVER is "pg" but DATABASE_URL is not set.\n' +
-      '  Local:  DATABASE_URL=postgresql://postgres:<password>@localhost:5432/cbt_local\n' +
-      '  Deployed: set DATABASE_URL, or set DB_DRIVER=postgrest to stay on Supabase.'
+      '[db] DATABASE_URL is not set, and the application has no other data path.\n' +
+      '  Local:    DATABASE_URL=postgresql://postgres:<password>@localhost:5432/cbt_local\n' +
+      '  Deployed: the Supabase transaction pooler (port 6543).'
     )
   }
 
   const serverless = Boolean(process.env.VERCEL)
+
+  // One line per process saying where data goes. A misconfigured deployment
+  // once looked healthy until some route misreported the first failed query;
+  // this names the target in the boot log instead. Host and database only --
+  // never the user or password.
+  const target = new URL(connectionString)
+  console.info(`[db] data -> PostgreSQL ${target.hostname}:${target.port || 5432}${target.pathname}` +
+    ` (pool max ${serverless ? 3 : 10}); auth -> Supabase GoTrue`)
 
   pool = new Pool({
     connectionString,

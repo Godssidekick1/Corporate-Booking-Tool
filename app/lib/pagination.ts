@@ -70,29 +70,6 @@ export function pagedResponse<T>(items: T[], total: number | null, params: PageP
   }
 }
 
-// ── escapeFilterValue ────────────────────────────────────────────────────────
-// PostgREST parses the string handed to .or() — commas separate conditions and
-// parentheses group them. A search box containing "Smith, John" would therefore
-// change the SHAPE of the filter rather than being matched literally, and a
-// stray backslash or bracket can make the whole query fail.
-//
-// Stripped rather than escaped: PostgREST has no reliable escape for these
-// inside an .or() list, and dropping them degrades the match instead of
-// breaking the request.
-// ─────────────────────────────────────────────────────────────────────────────
-export function escapeFilterValue(value: string): string {
-  return value.replace(/[,()\\*]/g, '').trim()
-}
-
-// Builds an `or` filter across several text columns for one search term.
-// Returns null when there is nothing usable to search for, so callers can skip
-// applying a filter rather than applying an empty one that matches nothing.
-export function ilikeAcross(columns: string[], search: string): string | null {
-  const safe = escapeFilterValue(search)
-  if (!safe) return null
-  return columns.map(col => `${col}.ilike.%${safe}%`).join(',')
-}
-
 // ── paginateInMemory ─────────────────────────────────────────────────────────
 // For the few endpoints whose rows cannot be produced by a single query —
 // deal-code coverage resolves per client in memory, and booking status is
