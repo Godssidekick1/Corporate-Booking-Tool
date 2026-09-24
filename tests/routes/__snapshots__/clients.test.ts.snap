@@ -1,0 +1,672 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`tmc/buckets and tmc/client-groups > bucket [id] DELETE: refused while anything is assigned to it; an unused one goes 1`] = `
+{
+  "error": "1 deal code and 1 form of payment are assigned to "Corps with vibes". Remove those assignments before deleting it.",
+}
+`;
+
+exports[`tmc/buckets and tmc/client-groups > bucket [id]: another TMC cannot see it; members and the codes it hands out 1`] = `
+{
+  "bucket": {
+    "code": "VIBES12",
+    "description": "AssigningDealCodes",
+    "id": "6f7ba956-97a4-4f1a-8f49-6d20fca39332",
+    "name": "Corps with vibes",
+    "tmc_id": "426e0538-f739-4563-872f-f01b3d327c7c",
+  },
+  "clients": [
+    {
+      "id": "2dbeb834-8151-46b7-b73c-775c9ca359d9",
+      "name": "Arjun K",
+      "status": "inactive",
+    },
+    {
+      "id": "b5005d4e-b813-4f10-ae59-1b0f5257357e",
+      "name": "BCG",
+      "status": "active",
+    },
+    {
+      "id": "911a4f7f-b278-4918-9136-972a0c4da47c",
+      "name": "Lenskart",
+      "status": "active",
+    },
+  ],
+  "dealCodes": [
+    {
+      "airline_code": "AI",
+      "code": "IN456787",
+      "code_type": "PF",
+      "id": "abc50b26-092b-4fb6-9580-11aad201aedd",
+    },
+  ],
+  "ok": true,
+}
+`;
+
+exports[`tmc/buckets and tmc/client-groups > buckets: with client and deal-code counts 1`] = `
+{
+  "items": [
+    {
+      "clientCount": 3,
+      "code": "VIBES12",
+      "created_at": "2026-09-03T08:30:54.755Z",
+      "dealCodeCount": 1,
+      "description": "AssigningDealCodes",
+      "id": "6f7ba956-97a4-4f1a-8f49-6d20fca39332",
+      "name": "Corps with vibes",
+    },
+    {
+      "clientCount": 2,
+      "code": null,
+      "created_at": "2026-09-09T07:19:15.539Z",
+      "dealCodeCount": 0,
+      "description": null,
+      "id": "4fa30930-0973-4d12-a158-a4e606e0fcc5",
+      "name": "kj",
+    },
+    {
+      "clientCount": 3,
+      "code": "213",
+      "created_at": "2026-09-08T09:55:03.227Z",
+      "dealCodeCount": 1,
+      "description": "SMEs FOPs",
+      "id": "327db3fc-c62d-4c94-81d8-0916227e7558",
+      "name": "SMEs",
+    },
+  ],
+  "ok": true,
+  "page": 1,
+  "pageSize": 10,
+  "total": 3,
+  "totalPages": 1,
+}
+`;
+
+exports[`tmc/buckets and tmc/client-groups > client-groups POST: permission, validation, create, duplicate code 1`] = `
+{
+  "bill_to_address_1": null,
+  "bill_to_address_2": null,
+  "bill_to_pincode": null,
+  "bill_to_state": null,
+  "city": "Pune",
+  "contact_email": "ops@example.test",
+  "contact_first_name": null,
+  "contact_last_name": null,
+  "contact_mobile": null,
+  "country": null,
+  "group_code": "ACME",
+  "name": "Acme Group",
+}
+`;
+
+exports[`tmc/buckets and tmc/client-groups > client-groups: a corporate user is refused; the list and search 1`] = `
+{
+  "items": [
+    {
+      "bill_to_address_1": null,
+      "bill_to_address_2": null,
+      "bill_to_pincode": null,
+      "bill_to_state": null,
+      "city": "Amritsar",
+      "contact_email": null,
+      "contact_first_name": null,
+      "contact_last_name": null,
+      "contact_mobile": null,
+      "country": "India",
+      "created_at": "2026-07-15T08:27:19.612Z",
+      "group_code": null,
+      "id": "fc1af7e6-3ff5-41c3-9497-1127971547d7",
+      "name": "AMEX",
+    },
+    {
+      "bill_to_address_1": null,
+      "bill_to_address_2": null,
+      "bill_to_pincode": null,
+      "bill_to_state": null,
+      "city": "Bihar",
+      "contact_email": null,
+      "contact_first_name": null,
+      "contact_last_name": null,
+      "contact_mobile": null,
+      "country": "India",
+      "created_at": "2026-07-15T12:09:44.720Z",
+      "group_code": null,
+      "id": "76d62669-6373-443e-a860-60785a43eb35",
+      "name": "Decathalon",
+    },
+    {
+      "bill_to_address_1": null,
+      "bill_to_address_2": null,
+      "bill_to_pincode": null,
+      "bill_to_state": null,
+      "city": null,
+      "contact_email": null,
+      "contact_first_name": null,
+      "contact_last_name": null,
+      "contact_mobile": null,
+      "country": null,
+      "created_at": "2026-08-27T11:52:08.748Z",
+      "group_code": null,
+      "id": "13882716-ef6c-47d6-930f-6b53277267e2",
+      "name": "dssd",
+    },
+    {
+      "bill_to_address_1": null,
+      "bill_to_address_2": null,
+      "bill_to_pincode": null,
+      "bill_to_state": null,
+      "city": null,
+      "contact_email": null,
+      "contact_first_name": null,
+      "contact_last_name": null,
+      "contact_mobile": null,
+      "country": "India",
+      "created_at": "2026-08-27T11:51:47.055Z",
+      "group_code": null,
+      "id": "d1fb8177-a239-4c47-8fbb-93373058e322",
+      "name": "sdcsdc",
+    },
+  ],
+  "ok": true,
+  "page": 1,
+  "pageSize": 10,
+  "total": 4,
+  "totalPages": 1,
+}
+`;
+
+exports[`tmc/clients > PATCH: saves, normalises, and returns the same shape as GET 1`] = `
+{
+  "client": {
+    "address_1": null,
+    "address_2": null,
+    "agency_fop_allowed": true,
+    "air_approval_mode": "before_booking",
+    "booking_activation": true,
+    "booking_mode": "both",
+    "branch_id": null,
+    "bta_cta_allowed": true,
+    "bta_cta_manual_allowed": false,
+    "city": "Gurugram",
+    "client_code": "BCG01",
+    "client_group_id": "fc1af7e6-3ff5-41c3-9497-1127971547d7",
+    "collections_email": null,
+    "collections_mobile": null,
+    "collections_name": null,
+    "corporate_fop_allowed": true,
+    "country": "India",
+    "created_at": "2026-07-09T05:44:47.988Z",
+    "currency": "INR",
+    "discount_active": true,
+    "dom_ticketing": true,
+    "email": null,
+    "fop_priority": [
+      "corporate",
+      "agency",
+      "bta_cta",
+      "bta_cta_manual",
+    ],
+    "hold_activation": true,
+    "hold_auto_issue": false,
+    "hotel_approval_mode": "before_booking",
+    "id": "b5005d4e-b813-4f10-ae59-1b0f5257357e",
+    "industry": null,
+    "intl_ticketing": true,
+    "managed_by": "2669257f-ab87-4031-ab47-76e4af8e271b",
+    "markup_active": false,
+    "name": "BCG",
+    "personal_bookings_allowed": false,
+    "phone": null,
+    "pincode": null,
+    "policy_controlling": true,
+    "primary_contact_phone": null,
+    "processing_fee_active": true,
+    "registered_address": null,
+    "sap_customer_code": null,
+    "sap_group_code": null,
+    "sbt_ticketing": true,
+    "setup_completed": false,
+    "size": "51-200",
+    "state": null,
+    "status": "active",
+    "timezone": "Asia/Kolkata",
+  },
+  "ok": true,
+}
+`;
+
+exports[`tmc/clients > admin-access: lists the corporate admins 1`] = `
+{
+  "admins": [
+    {
+      "created_at": "2026-07-09T05:44:50.954Z",
+      "email": "employee.4ae427@example.test",
+      "full_name": "Employee 4ae427",
+      "id": "c0fc26d8-292b-4e90-9716-3b4d4f890838",
+      "status": "active",
+    },
+  ],
+  "ok": true,
+}
+`;
+
+exports[`tmc/clients > allocations: deal codes and forms of payment, with how they arrive 1`] = `
+{
+  "bucketSizes": {
+    "6f7ba956-97a4-4f1a-8f49-6d20fca39332": 3,
+  },
+  "dealCodes": [
+    {
+      "assignmentId": "0f0fdea5-8936-4275-bc76-5a816a1e05bb",
+      "code": "IN456787",
+      "id": "abc50b26-092b-4fb6-9580-11aad201aedd",
+      "label": "AI · PF",
+      "source": "bucket",
+      "sourceId": "6f7ba956-97a4-4f1a-8f49-6d20fca39332",
+      "sourceName": "Corps with vibes",
+    },
+  ],
+  "formsOfPayment": [
+    {
+      "assignmentId": "60f9536e-2f63-45b4-aa66-8ce5d0d519a8",
+      "code": "2",
+      "id": "e0e0a41c-7bb3-42eb-9ab6-2cd44a608f2d",
+      "isActive": true,
+      "label": "Credit AMEX · agency · card",
+      "source": "bucket",
+      "sourceId": "6f7ba956-97a4-4f1a-8f49-6d20fca39332",
+      "sourceName": "Corps with vibes",
+    },
+  ],
+  "ok": true,
+}
+`;
+
+exports[`tmc/clients > commercials: the rules in force, and the client switches 1`] = `
+{
+  "effective": [
+    {
+      "ambiguous": false,
+      "beat": [],
+      "kind": "markup",
+      "label": "Markup",
+      "ruleId": "e538b45f-c7e2-48d5-8cde-26ffaf04bfe9",
+      "source": "bucket",
+      "sourceName": "Corps with vibes",
+      "summary": "20% of BF — AI · class Y",
+      "via": "Bucket · Corps with vibes",
+    },
+    {
+      "ambiguous": false,
+      "beat": [
+        {
+          "ruleId": "103617f9-382c-4919-80a7-f7cc5b9113b4",
+          "via": "Direct assignment",
+        },
+      ],
+      "kind": "discount",
+      "label": "Discount",
+      "ruleId": "1a4a51e9-289d-4d18-bff3-38c5251e63f1",
+      "source": "client",
+      "sourceName": null,
+      "summary": "10% of TF — all airlines",
+      "via": "Direct assignment",
+    },
+    {
+      "ambiguous": false,
+      "beat": [],
+      "kind": "processing_fee",
+      "label": "Processing fee",
+      "ruleId": "2d4e5674-4eb4-46b7-bd69-6b237571e8dd",
+      "source": "bucket",
+      "sourceName": "Corps with vibes",
+      "summary": "₹1200 per sector — 6E",
+      "via": "Bucket · Corps with vibes",
+    },
+  ],
+  "enabled": {
+    "discount": true,
+    "markup": false,
+    "processing_fee": true,
+  },
+  "ok": true,
+}
+`;
+
+exports[`tmc/clients > detail: the full Corporate Settings record 1`] = `
+{
+  "client": {
+    "address_1": null,
+    "address_2": null,
+    "agency_fop_allowed": true,
+    "air_approval_mode": "before_booking",
+    "booking_activation": true,
+    "booking_mode": "sbt",
+    "branch_id": null,
+    "bta_cta_allowed": true,
+    "bta_cta_manual_allowed": false,
+    "city": null,
+    "client_code": null,
+    "client_group_id": "fc1af7e6-3ff5-41c3-9497-1127971547d7",
+    "collections_email": null,
+    "collections_mobile": null,
+    "collections_name": null,
+    "corporate_fop_allowed": true,
+    "country": "India",
+    "created_at": "2026-07-09T05:44:47.988Z",
+    "currency": "INR",
+    "discount_active": true,
+    "dom_ticketing": true,
+    "email": null,
+    "fop_priority": [
+      "corporate",
+      "agency",
+      "bta_cta",
+      "bta_cta_manual",
+    ],
+    "hold_activation": true,
+    "hold_auto_issue": false,
+    "hotel_approval_mode": "before_booking",
+    "id": "b5005d4e-b813-4f10-ae59-1b0f5257357e",
+    "industry": null,
+    "intl_ticketing": true,
+    "managed_by": null,
+    "markup_active": true,
+    "name": "BCG",
+    "personal_bookings_allowed": false,
+    "phone": null,
+    "pincode": null,
+    "policy_controlling": true,
+    "primary_contact_phone": null,
+    "processing_fee_active": true,
+    "registered_address": null,
+    "sap_customer_code": null,
+    "sap_group_code": null,
+    "sbt_ticketing": true,
+    "setup_completed": false,
+    "size": null,
+    "state": null,
+    "status": "active",
+    "timezone": "Asia/Kolkata",
+  },
+  "ok": true,
+}
+`;
+
+exports[`tmc/clients > list: active clients with group, branch and headcount 1`] = `
+{
+  "items": [
+    {
+      "booking_mode": "both",
+      "branch_id": null,
+      "branches": null,
+      "city": null,
+      "client_code": null,
+      "client_group_id": null,
+      "client_groups": null,
+      "country": null,
+      "created_at": "2026-09-14T18:13:48.128Z",
+      "email": null,
+      "employeeCount": 1,
+      "id": "52f419af-d730-4928-8714-a74e8e362f52",
+      "name": "Arjun K",
+      "primary_contact_phone": "9999999999",
+      "setup_completed": false,
+      "status": "active",
+    },
+    {
+      "booking_mode": "sbt",
+      "branch_id": null,
+      "branches": null,
+      "city": null,
+      "client_code": null,
+      "client_group_id": null,
+      "client_groups": null,
+      "country": null,
+      "created_at": "2026-08-31T05:49:43.086Z",
+      "email": null,
+      "employeeCount": 1,
+      "id": "51e2569a-91b8-4844-afd8-1a725450a8fc",
+      "name": "ekjd",
+      "primary_contact_phone": "9999999999",
+      "setup_completed": false,
+      "status": "active",
+    },
+    {
+      "booking_mode": "both",
+      "branch_id": null,
+      "branches": null,
+      "city": null,
+      "client_code": null,
+      "client_group_id": "76d62669-6373-443e-a860-60785a43eb35",
+      "client_groups": {
+        "city": "Bihar",
+        "group_code": null,
+        "id": "76d62669-6373-443e-a860-60785a43eb35",
+        "name": "Decathalon",
+      },
+      "country": null,
+      "created_at": "2026-08-13T07:14:30.336Z",
+      "email": null,
+      "employeeCount": 1,
+      "id": "e28889b2-7718-4ed2-bc50-c4a5bd7024e9",
+      "name": "X",
+      "primary_contact_phone": "9999999999",
+      "setup_completed": false,
+      "status": "active",
+    },
+    {
+      "booking_mode": "both",
+      "branch_id": null,
+      "branches": null,
+      "city": null,
+      "client_code": null,
+      "client_group_id": "fc1af7e6-3ff5-41c3-9497-1127971547d7",
+      "client_groups": {
+        "city": "Amritsar",
+        "group_code": null,
+        "id": "fc1af7e6-3ff5-41c3-9497-1127971547d7",
+        "name": "AMEX",
+      },
+      "country": "India",
+      "created_at": "2026-08-10T08:16:55.170Z",
+      "email": null,
+      "employeeCount": 1,
+      "id": "a908acf4-31d1-45e9-abcd-f0eba6c26c83",
+      "name": "Micron",
+      "primary_contact_phone": "9999999999",
+      "setup_completed": false,
+      "status": "active",
+    },
+    {
+      "booking_mode": "sbt",
+      "branch_id": null,
+      "branches": null,
+      "city": null,
+      "client_code": null,
+      "client_group_id": "76d62669-6373-443e-a860-60785a43eb35",
+      "client_groups": {
+        "city": "Bihar",
+        "group_code": null,
+        "id": "76d62669-6373-443e-a860-60785a43eb35",
+        "name": "Decathalon",
+      },
+      "country": "",
+      "created_at": "2026-07-15T12:13:10.093Z",
+      "email": null,
+      "employeeCount": 1,
+      "id": "d9e1cc42-e3fe-41c3-b2c4-6c1ba14ba062",
+      "name": "wd",
+      "primary_contact_phone": "9999999999",
+      "setup_completed": false,
+      "status": "active",
+    },
+    {
+      "booking_mode": "both",
+      "branch_id": null,
+      "branches": null,
+      "city": null,
+      "client_code": null,
+      "client_group_id": null,
+      "client_groups": null,
+      "country": "India",
+      "created_at": "2026-07-14T08:06:46.013Z",
+      "email": null,
+      "employeeCount": 1,
+      "id": "5f73d5e1-afcd-494c-b172-8a2de53cc9c9",
+      "name": "Flip",
+      "primary_contact_phone": "9999999999",
+      "setup_completed": false,
+      "status": "active",
+    },
+    {
+      "booking_mode": "both",
+      "branch_id": null,
+      "branches": null,
+      "city": null,
+      "client_code": null,
+      "client_group_id": "fc1af7e6-3ff5-41c3-9497-1127971547d7",
+      "client_groups": {
+        "city": "Amritsar",
+        "group_code": null,
+        "id": "fc1af7e6-3ff5-41c3-9497-1127971547d7",
+        "name": "AMEX",
+      },
+      "country": "India",
+      "created_at": "2026-07-10T11:04:35.293Z",
+      "email": null,
+      "employeeCount": 2,
+      "id": "911a4f7f-b278-4918-9136-972a0c4da47c",
+      "name": "Lenskart",
+      "primary_contact_phone": null,
+      "setup_completed": true,
+      "status": "active",
+    },
+    {
+      "booking_mode": "sbt",
+      "branch_id": null,
+      "branches": null,
+      "city": null,
+      "client_code": null,
+      "client_group_id": "fc1af7e6-3ff5-41c3-9497-1127971547d7",
+      "client_groups": {
+        "city": "Amritsar",
+        "group_code": null,
+        "id": "fc1af7e6-3ff5-41c3-9497-1127971547d7",
+        "name": "AMEX",
+      },
+      "country": "India",
+      "created_at": "2026-07-09T05:44:47.988Z",
+      "email": null,
+      "employeeCount": 4,
+      "id": "b5005d4e-b813-4f10-ae59-1b0f5257357e",
+      "name": "BCG",
+      "primary_contact_phone": null,
+      "setup_completed": false,
+      "status": "active",
+    },
+  ],
+  "ok": true,
+  "page": 1,
+  "pageSize": 10,
+  "total": 8,
+  "totalPages": 1,
+}
+`;
+
+exports[`tmc/clients/[id] configuration > buckets: the ones this client is in 1`] = `
+{
+  "buckets": [
+    {
+      "code": "VIBES12",
+      "id": "6f7ba956-97a4-4f1a-8f49-6d20fca39332",
+      "name": "Corps with vibes",
+    },
+  ],
+  "ok": true,
+}
+`;
+
+exports[`tmc/clients/[id] configuration > gst POST: saves with a finding for a malformed number; overlaps and duplicates are 409 1`] = `
+{
+  "finding": "This GSTIN starts 27, which is Maharashtra — but the state is set to Karnataka. One of the two is wrong.",
+  "ok": true,
+  "registration": {
+    "address_1": null,
+    "address_2": null,
+    "city": null,
+    "client_id": "b5005d4e-b813-4f10-ae59-1b0f5257357e",
+    "contact": null,
+    "cost_centre_id": null,
+    "country": null,
+    "email": null,
+    "gst_holder": "BCG India",
+    "gstin": "27ABCDE1234F1Z5",
+    "is_primary": true,
+    "registration_date": null,
+    "state": "Karnataka",
+    "valid_from": "2026-01-01",
+    "valid_to": "2026-12-31",
+    "zip": null,
+  },
+}
+`;
+
+exports[`tmc/clients/[id] configuration > gst: the registrations on file 1`] = `
+{
+  "ok": true,
+  "registrations": [
+    {
+      "address_1": "Test Address",
+      "address_2": null,
+      "city": "Gurugram",
+      "client_id": "b5005d4e-b813-4f10-ae59-1b0f5257357e",
+      "contact": "9999999999",
+      "cost_centre_id": null,
+      "country": "India",
+      "created_at": "2026-09-11T10:13:26.038Z",
+      "email": "gst@example.test",
+      "gst_holder": "Abhilash",
+      "gstin": "29ABCDE1234F1Z5",
+      "id": "cc9f8656-7782-4fe5-89e6-c854e94b581c",
+      "is_primary": true,
+      "registration_date": "2026-10-07",
+      "state": "Haryana",
+      "valid_from": "2026-09-11",
+      "valid_to": "2027-01-04",
+      "zip": "122009",
+    },
+  ],
+}
+`;
+
+exports[`tmc/clients/[id] configuration > mandatory-info: create, re-save by code, list, delete 1`] = `
+{
+  "code": "EMP ID",
+  "description": "Employee ID",
+  "gds_entry": "RM*EMPID",
+  "is_mandatory": true,
+  "type": null,
+  "value_prefix": null,
+}
+`;
+
+exports[`tmc/cost-centres > GET: centres with headcount, departments in use, and unlisted codes 1`] = `
+{
+  "costCentres": [
+    {
+      "code": "IT101G",
+      "created_at": "2026-08-27T11:42:03.506Z",
+      "employees": 4,
+      "id": "14bbfd23-a4ad-4552-8191-92733c00af40",
+      "name": "Info Tech Amadeus",
+    },
+  ],
+  "departments": [
+    "IT",
+  ],
+  "ok": true,
+  "unlisted": [],
+}
+`;
