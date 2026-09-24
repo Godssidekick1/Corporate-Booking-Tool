@@ -60,8 +60,8 @@ const initialForm = {
 }
 
 // A starting point only — the TMC edits these to match whatever the client
-// actually calls its bands. Not a shared default: TMC-created clients define
-// their own ladder, and only self-registration falls back to a fixed one.
+// actually calls its bands. Not a shared default: every client's ladder is
+// defined by its TMC.
 const initialBands: BandDraft[] = [
   { code: 'L1', label: 'Junior',    rank: 1 },
   { code: 'L2', label: 'Associate', rank: 2 },

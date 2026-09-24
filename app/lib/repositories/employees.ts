@@ -992,16 +992,14 @@ export interface NewClientAdmin {
   band: BandRow
   full_name: string
   email: string
-  status: 'invited' | 'active'
-  onboarding_method: 'invite' | 'self_register'
 }
 
-// band_code and band_rank are denormalised from bands so profile reads need
-// no join.
+// A client's first admin, invited at onboarding. band_code and band_rank are
+// denormalised from bands so profile reads need no join.
 export async function insertClientAdmin(db: Queryable, a: NewClientAdmin): Promise<void> {
   await exec(db, sql`
     insert into employees (id, auth_user_id, client_id, tmc_id, band_id, band_code, band_rank,
                            full_name, email, role, status, onboarding_method)
     values (${a.id}, ${a.id}, ${a.client_id}, null, ${a.band.id}, ${a.band.code}, ${a.band.rank},
-            ${a.full_name}, ${a.email}, 'admin', ${a.status}, ${a.onboarding_method})`)
+            ${a.full_name}, ${a.email}, 'admin', 'invited', 'invite')`)
 }

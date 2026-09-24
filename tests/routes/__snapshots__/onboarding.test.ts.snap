@@ -140,42 +140,6 @@ exports[`onboarding > platform: one TMC, with its desk 1`] = `
 }
 `;
 
-exports[`onboarding > register company: the client, the default bands, and an active admin on the top one 1`] = `
-[
-  {
-    "code": "L1",
-    "rank": 1,
-  },
-  {
-    "code": "L2",
-    "rank": 2,
-  },
-  {
-    "code": "L3",
-    "rank": 3,
-  },
-  {
-    "code": "L4",
-    "rank": 4,
-  },
-  {
-    "code": "L5",
-    "rank": 5,
-  },
-]
-`;
-
-exports[`onboarding > register company: the client, the default bands, and an active admin on the top one 2`] = `
-[
-  {
-    "band_code": "L5",
-    "email": "sam.self@example.test",
-    "role": "admin",
-    "status": "active",
-  },
-]
-`;
-
 exports[`onboarding > staff csv: the download is the template 1`] = `
 "email,full_name,role,status,permissions
 employee.281282@example.test,Employee 281282,tmc_admin,active,

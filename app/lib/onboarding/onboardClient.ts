@@ -3,7 +3,7 @@ import { db, transaction } from '@/app/lib/db'
 import * as clients from '@/app/lib/repositories/clients'
 import * as employees from '@/app/lib/repositories/employees'
 import * as policy from '@/app/lib/repositories/policy'
-import { mostSeniorBand } from './defaultBands'
+import { mostSeniorBand } from './mostSeniorBand'
 
 export interface BandInput {
   code: string
@@ -228,8 +228,6 @@ export async function onboardClient(
         band: adminBand,
         full_name: adminName.trim(),
         email,
-        status: 'invited',
-        onboarding_method: 'invite',
       })
 
       return id

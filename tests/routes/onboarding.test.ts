@@ -4,7 +4,6 @@ import { GET as tmcGet, POST as tmcInvite, PATCH as tmcPatch } from '@/app/api/p
 import { GET as staffCsvGet, POST as staffCsvPost } from '@/app/api/platform/tmcs/[id]/staff-csv/route'
 import { POST as internalCreateTmc } from '@/app/api/internal/create-tmc/route'
 import { POST as createCorporate } from '@/app/api/tmc/create-corporate/bulk/route'
-import { POST as registerCompany } from '@/app/api/auth/register-company/route'
 import { call } from '../harness/call'
 import { actors, type Actors } from '../harness/actors'
 import { resetDatabase } from '../harness/db'
@@ -14,8 +13,8 @@ import { sql, many, one, maybeOne } from '@/app/lib/db/sql'
 
 // ── Bringing tenants into existence ──────────────────────────────────────────
 // The platform surface (TMCs, their admins, their counsellor roster by CSV),
-// the Postman fallback that onboards a TMC, a TMC onboarding a client with its
-// roster, and a company registering itself.
+// the Postman fallback that onboards a TMC, and a TMC onboarding a client with
+// its roster.
 //
 // Every one of these creates accounts, so GoTrue is FAKED: no real user is
 // created and no email is sent. The fake's ids are derived from the email.
@@ -331,33 +330,5 @@ d('onboarding', () => {
     })
     expect(res).toEqual({ status: 400, json: { error: 'Email rate limit exceeded' } })
     expect(await maybeOne(db, sql`select id from clients where name = 'Vandelay'`)).toBeNull()
-  })
-
-  // ── A company registering itself ──────────────────────────────────────────
-
-  it('register company: required fields', async () => {
-    expect(await call(registerCompany, { method: 'POST', url: '/x', body: { clientName: 'X' } })).toEqual({
-      status: 400, json: { error: 'clientName, fullName, email, and password are required' } })
-  })
-
-  it('register company: the client, the default bands, and an active admin on the top one', async () => {
-    const res = await call(registerCompany, { method: 'POST', url: '/x',
-      body: { clientName: 'Self Serve Co', fullName: 'Sam Self', email: 'sam.self@example.test', password: 'pw-not-real' } })
-    expect(res.status).toBe(201)
-    const clientId = (res.json as { clientId: string }).clientId
-    expect(await one(db, sql`select name, status, tmc_id from clients where id = ${clientId}`))
-      .toEqual({ name: 'Self Serve Co', status: 'active', tmc_id: null })
-    expect(await many(db, sql`select code, rank from bands where client_id = ${clientId} order by rank`)).toMatchSnapshot()
-    expect(await many(db, sql`select email, role, status, band_code from employees where client_id = ${clientId}`))
-      .toMatchSnapshot()
-    expect(authCalls.map(c => c.method)).toEqual(['createUser'])
-  })
-
-  it('register company: a rejected sign-up creates nothing', async () => {
-    failNextAuthWith('Password should be at least 6 characters')
-    const res = await call(registerCompany, { method: 'POST', url: '/x',
-      body: { clientName: 'Weak Co', fullName: 'W', email: 'w@weak.example', password: 'x' } })
-    expect(res).toEqual({ status: 400, json: { error: 'Password should be at least 6 characters' } })
-    expect(await maybeOne(db, sql`select id from clients where name = 'Weak Co'`)).toBeNull()
   })
 })
