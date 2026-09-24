@@ -203,6 +203,26 @@ d('forms of payment', () => {
     expect((await patch(NO_SUCH_ID, { label: 'x' })).status).toBe(404)
   })
 
+  it('edit: an owner must belong to this TMC, exactly as on create', async () => {
+    // Plain FKs: another tenant's client or traveller satisfies the constraint,
+    // so without the check an edit could hang this TMC's card on them.
+    const otherTmc = a.otherTmcAdmin!.tmc_id
+    const client = (await one<{ id: string }>(db, sql`
+      insert into clients (tmc_id, name) values (${otherTmc}, 'Elsewhere Co') returning id`)).id
+    const person = (await one<{ id: string }>(db, sql`
+      insert into employees (id, client_id, full_name, email, role, status)
+      values (gen_random_uuid(), ${client}, 'Else Where', 'else.where@example.test', 'employee', 'active')
+      returning id`)).id
+    const before = await one(db, sql`select payer, owner_client_id, owner_employee_id from forms_of_payment where id = ${fresh}`)
+
+    expect(await patch(fresh, { payer: 'corporate', owner_client_id: client }))
+      .toEqual({ status: 422, json: { error: 'That client does not belong to your TMC' } })
+    expect(await patch(fresh, { payer: 'traveller', owner_employee_id: person }))
+      .toEqual({ status: 422, json: { error: 'That traveller does not belong to your TMC' } })
+    expect(await one(db, sql`select payer, owner_client_id, owner_employee_id from forms_of_payment where id = ${fresh}`))
+      .toEqual(before)
+  })
+
   // ── Mappings ───────────────────────────────────────────────────────────────
 
   const map = (body: unknown) => call(mappingsPost, { as: a.tmcAdmin, method: 'POST', url: '/api/tmc/fop-assignments', body })

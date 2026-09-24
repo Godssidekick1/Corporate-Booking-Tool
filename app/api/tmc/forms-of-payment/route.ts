@@ -259,6 +259,46 @@ export async function deriveFopType<T extends Partial<CreateBody>>(
   return { body: next }
 }
 
+// ── checkReferences ──────────────────────────────────────────────────────────
+// Every referenced row is checked against this TMC. branch_id, owner_client_id
+// and owner_employee_id are plain FKs, so another tenant's id would satisfy
+// the constraint and quietly attach their branch or their client's card.
+//
+// Shared by POST and PATCH. PATCH used to check the branch alone, so an edit
+// could hang this TMC's card on another tenant's client or traveller.
+// Returns the error to report, or null.
+export async function checkReferences(
+  service: ReturnType<typeof createServiceClient>,
+  tmcId: string,
+  body: Partial<CreateBody>
+): Promise<string | null> {
+  for (const [column, table] of [
+    ['branch_id', 'branches'],
+    ['owner_client_id', 'clients'],
+  ] as const) {
+    const id = body[column]
+    if (!id) continue
+    const { data: found } = await service
+      .from(table).select('id').eq('id', id).eq('tmc_id', tmcId).maybeSingle()
+    if (!found) return `That ${table.slice(0, -1)} does not belong to your TMC`
+  }
+
+  if (body.owner_employee_id) {
+    // An employee belongs to a client, which belongs to the TMC — so the check
+    // goes one hop further than the two above.
+    const { data: owner } = await service
+      .from('employees')
+      .select('id, client_id, clients!inner(tmc_id)')
+      .eq('id', body.owner_employee_id)
+      .maybeSingle()
+
+    const ownerTmc = (owner as { clients?: { tmc_id?: string } } | null)?.clients?.tmc_id
+    if (!owner || ownerTmc !== tmcId) return 'That traveller does not belong to your TMC'
+  }
+
+  return null
+}
+
 // ── normaliseFop ─────────────────────────────────────────────────────────────
 // Clears the fields the chosen type and payer make meaningless, so a stale
 // value left behind by a form the user has since switched cannot fail a save.
@@ -392,35 +432,9 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: validationError }, { status: 400 })
   }
 
-  // Every referenced row is checked against this TMC. branch_id, owner_client_id
-  // and owner_employee_id are plain FKs, so another tenant's id would satisfy
-  // the constraint and quietly attach their branch or their client's card.
-  for (const [column, table] of [
-    ['branch_id', 'branches'],
-    ['owner_client_id', 'clients'],
-  ] as const) {
-    const id = body[column]
-    if (!id) continue
-    const { data: found } = await service
-      .from(table).select('id').eq('id', id).eq('tmc_id', auth.tmcId).maybeSingle()
-    if (!found) {
-      return Response.json({ error: `That ${table.slice(0, -1)} does not belong to your TMC` }, { status: 422 })
-    }
-  }
-
-  if (body.owner_employee_id) {
-    // An employee belongs to a client, which belongs to the TMC — so the check
-    // goes one hop further than the two above.
-    const { data: owner } = await service
-      .from('employees')
-      .select('id, client_id, clients!inner(tmc_id)')
-      .eq('id', body.owner_employee_id)
-      .maybeSingle()
-
-    const ownerTmc = (owner as { clients?: { tmc_id?: string } } | null)?.clients?.tmc_id
-    if (!owner || ownerTmc !== auth.tmcId) {
-      return Response.json({ error: 'That traveller does not belong to your TMC' }, { status: 422 })
-    }
+  const foreign = await checkReferences(service, auth.tmcId, body)
+  if (foreign) {
+    return Response.json({ error: foreign }, { status: 422 })
   }
 
   if (body.is_default) await claimDefault(service, auth.tmcId)

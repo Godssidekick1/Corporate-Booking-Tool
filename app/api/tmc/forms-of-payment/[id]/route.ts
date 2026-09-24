@@ -2,7 +2,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { fopStatus, describeFop } from '@/app/lib/fop/fopStatus'
-import { FOP_COLUMNS, validateFop, normaliseFop, deriveFopType, claimDefault } from '../route'
+import { FOP_COLUMNS, validateFop, normaliseFop, deriveFopType, claimDefault, checkReferences } from '../route'
 import { NextRequest } from 'next/server'
 import { db } from '@/app/lib/db'
 
@@ -135,12 +135,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return Response.json({ error: validationError }, { status: 400 })
   }
 
-  if (merged.branch_id) {
-    const { data: branch } = await service
-      .from('branches').select('id').eq('id', merged.branch_id).eq('tmc_id', tmcId).maybeSingle()
-    if (!branch) {
-      return Response.json({ error: 'That branch does not belong to your TMC' }, { status: 422 })
-    }
+  // The same tenancy checks as create: branch, owner client AND owner
+  // traveller. This used to check the branch alone.
+  const foreign = await checkReferences(service, tmcId, merged)
+  if (foreign) {
+    return Response.json({ error: foreign }, { status: 422 })
   }
 
   const update: Record<string, unknown> = { updated_at: new Date().toISOString() }
