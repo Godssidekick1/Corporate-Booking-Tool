@@ -1,7 +1,6 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
-import { parsePageParams, paginateInMemory, escapeFilterValue } from '@/app/lib/pagination'
+import { parsePageParams, paginateInMemory } from '@/app/lib/pagination'
 import { commercialStatus, type CommercialStatus } from '@/app/lib/commercials/commercialStatus'
 import { validateRbdSpec } from '@/app/lib/fop/rbdSpec'
 import { validateAirlineCode } from '@/app/lib/reference/airlineCode'
@@ -13,6 +12,9 @@ import {
 } from '@/app/lib/commercials/calcOnByKind'
 import { NextRequest } from 'next/server'
 import { db } from '@/app/lib/db'
+import * as commercials from '@/app/lib/repositories/commercials'
+import * as dealCodes from '@/app/lib/repositories/dealCodes'
+import { route } from '@/app/lib/http/handler'
 
 // ── /api/tmc/commercial-rules ────────────────────────────────────────────────
 // Markup, discount and processing fee. One table, one route, `?kind=` to
@@ -24,41 +26,7 @@ import { db } from '@/app/lib/db'
 // different thing to trust somebody with.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const RULE_COLUMNS =
-  'id, kind, category_id, airline_code, cabin, rbd_spec, fare_type, ' +
-  'calc_type, calc_on, rate, calc_basis, exclude_tax_codes, include_ssr, ' +
-  'active, valid_from, valid_to, notes, created_by, created_at, updated_at'
-
-// Declared rather than inferred, and every read of RULE_COLUMNS casts to it.
-//
-// Supabase derives a row type from the select STRING LITERAL. The constant above
-// is a concatenation, which is plain `string` to the compiler, so inference
-// gives up and hands back GenericStringError — at which point every property
-// access downstream is a type error. The alternative is one unreadable
-// 250-character line; stating the shape is more honest anyway, since these
-// columns are read by five call sites and the compiler should know them.
-export interface CommercialRuleRow {
-  id: string
-  kind: CommercialKind
-  category_id: string
-  airline_code: string | null
-  cabin: string | null
-  rbd_spec: string | null
-  fare_type: string
-  calc_type: string
-  calc_on: string
-  rate: number
-  calc_basis: string | null
-  exclude_tax_codes: string[] | null
-  include_ssr: boolean | null
-  active: boolean
-  valid_from: string | null
-  valid_to: string | null
-  notes: string | null
-  created_by: string | null
-  created_at: string
-  updated_at: string
-}
+// The rule row is commercials.RuleRecord, typed from the schema.
 
 export interface RuleBody {
   kind?: string
@@ -147,7 +115,7 @@ export function validateRule(kind: CommercialKind, body: RuleBody): string | nul
   return null
 }
 
-export async function GET(req: NextRequest) {
+export const GET = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -155,60 +123,32 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
   const auth = await requireTmcPermission(db, user.id, 'manage_commercials')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
 
-  const query_ = req.nextUrl.searchParams
-  const params = parsePageParams(query_)
-  const kind = query_.get('kind')
-  const categoryId = query_.get('categoryId')
-  const status = query_.get('status') as CommercialStatus | null
-
-  let query = service
-    .from('commercial_rules')
-    .select(RULE_COLUMNS)
-    .eq('tmc_id', auth.tmcId)
-    .order('created_at', { ascending: false })
-
-  if (kind) query = query.eq('kind', kind)
-  if (categoryId) query = query.eq('category_id', categoryId)
-
-  if (params.search) {
-    // Escaped before interpolation: PostgREST parses this string, and a comma or
-    // parenthesis in the search box would otherwise change the filter's shape
-    // rather than being matched literally.
-    const safe = escapeFilterValue(params.search)
-    if (safe) query = query.or(`airline_code.ilike.%${safe}%,notes.ilike.%${safe}%`)
-  }
-
-  const { data: rawRules, error } = await query
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
-
-  const rules = (rawRules ?? []) as unknown as CommercialRuleRow[]
+  const query = req.nextUrl.searchParams
+  const params = parsePageParams(query)
+  const status = query.get('status') as CommercialStatus | null
 
   // Status is derived from `active` plus a date window, so it cannot be filtered
   // or paged in SQL without writing that rule a second time as a predicate and
   // having the two drift. Enriched and filtered here, then paged in memory —
   // the same trade the deal code master makes, bounded by rules per TMC.
-  const [{ data: categories }, { data: assignments }] = await Promise.all([
-    service.from('deal_code_categories').select('id, code, label').eq('tmc_id', auth.tmcId),
-    service.from('commercial_rule_assignments').select('rule_id, kind').eq('tmc_id', auth.tmcId),
+  const [rules, categories, targetCount] = await Promise.all([
+    commercials.listRules(db, auth.tmcId, {
+      kind: query.get('kind'),
+      categoryId: query.get('categoryId'),
+      search: params.search,
+    }),
+    dealCodes.categoriesForTmc(db, auth.tmcId),
+    // How many targets each rule reaches — blast radius before somebody edits
+    // something shared.
+    commercials.targetCounts(db, auth.tmcId),
   ])
 
-  const categoryById = new Map((categories ?? []).map(c => [c.id, c]))
-
-  // How many targets each rule reaches — blast radius before somebody edits
-  // something shared.
-  const targetCount = new Map<string, number>()
-  for (const a of assignments ?? []) {
-    targetCount.set(a.rule_id, (targetCount.get(a.rule_id) ?? 0) + 1)
-  }
+  const categoryById = new Map(categories.map(c => [c.id, c]))
 
   const enriched = rules.map(r => ({
     ...r,
@@ -221,9 +161,9 @@ export async function GET(req: NextRequest) {
   const filtered = status ? enriched.filter(r => r.status === status) : enriched
 
   return Response.json(paginateInMemory(filtered, params))
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -231,7 +171,6 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
   const auth = await requireTmcPermission(db, user.id, 'manage_commercials')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
@@ -251,14 +190,7 @@ export async function POST(req: NextRequest) {
 
   // The category must belong to this TMC, so an id from another tenant cannot be
   // borrowed — the same check loadCategory makes for deal codes.
-  const { data: category } = await service
-    .from('deal_code_categories')
-    .select('id')
-    .eq('id', body.category_id)
-    .eq('tmc_id', auth.tmcId)
-    .maybeSingle()
-
-  if (!category) {
+  if (!(await dealCodes.categoryInTmc(db, body.category_id, auth.tmcId))) {
     return Response.json({ error: 'Category not found for this TMC' }, { status: 422 })
   }
 
@@ -269,38 +201,27 @@ export async function POST(req: NextRequest) {
 
   const isFee = body.kind === 'processing_fee'
 
-  const { data: rawRule, error } = await service
-    .from('commercial_rules')
-    .insert({
-      tmc_id: auth.tmcId,
-      kind: body.kind,
-      category_id: body.category_id,
-      airline_code: body.airline_code?.trim().toUpperCase() || null,
-      cabin: body.cabin || null,
-      rbd_spec: body.rbd_spec?.trim() || null,
-      fare_type: body.fare_type ?? 'all',
-      calc_type: body.calc_type ?? 'percent',
-      calc_on: body.calc_on ?? 'bf',
-      rate: body.rate,
-      // Present for a fee, NULL for the other two. The database enforces this as
-      // well; sending the wrong shape here is a constraint violation, not a
-      // silently-ignored field.
-      calc_basis: isFee ? (body.calc_basis ?? 'per_transaction') : null,
-      exclude_tax_codes: isFee ? (body.exclude_tax_codes ?? []) : null,
-      include_ssr: isFee ? (body.include_ssr ?? false) : null,
-      valid_from: body.valid_from || null,
-      valid_to: body.valid_to || null,
-      active: body.active ?? true,
-      notes: body.notes?.trim() || null,
-      created_by: user.id,
-    })
-    .select(RULE_COLUMNS)
-    .single()
+  const rule = await commercials.insertRule(db, auth.tmcId, user.id, {
+    kind: body.kind,
+    category_id: body.category_id,
+    airline_code: body.airline_code?.trim().toUpperCase() || null,
+    cabin: body.cabin || null,
+    rbd_spec: body.rbd_spec?.trim() || null,
+    fare_type: body.fare_type ?? 'all',
+    calc_type: body.calc_type ?? 'percent',
+    calc_on: body.calc_on ?? 'bf',
+    rate: body.rate,
+    // Present for a fee, NULL for the other two. The database enforces this as
+    // well; sending the wrong shape here is a constraint violation, not a
+    // silently-ignored field.
+    calc_basis: isFee ? (body.calc_basis ?? 'per_transaction') : null,
+    exclude_tax_codes: isFee ? (body.exclude_tax_codes ?? []) : null,
+    include_ssr: isFee ? (body.include_ssr ?? false) : null,
+    valid_from: body.valid_from || null,
+    valid_to: body.valid_to || null,
+    active: body.active ?? true,
+    notes: body.notes?.trim() || null,
+  })
 
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
-
-  const rule = rawRule as unknown as CommercialRuleRow
   return Response.json({ ok: true, rule: { ...rule, status: commercialStatus(rule), targetCount: 0 } })
-}
+})

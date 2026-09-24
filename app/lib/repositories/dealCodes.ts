@@ -1,4 +1,4 @@
-import { sql, many, one, type Queryable } from '@/app/lib/db/sql'
+import { sql, many, maybeOne, one, type Queryable } from '@/app/lib/db/sql'
 import type { Row } from '@/app/lib/db/types.generated'
 import type { ResolvableDeal } from '@/app/lib/deal-codes/resolveDealCodes'
 
@@ -75,4 +75,19 @@ export async function categoryIdsByCode(db: Queryable, tmcId: string): Promise<M
   const rows = await many<{ id: string; code: string }>(db, sql`
     select id, code from deal_code_categories where tmc_id = ${tmcId} order by created_at, id`)
   return new Map(rows.map(r => [r.code, r.id]))
+}
+
+export type CategoryLabel = Pick<Row<'deal_code_categories'>, 'id' | 'code' | 'label'>
+
+export async function categoriesForTmc(db: Queryable, tmcId: string): Promise<CategoryLabel[]> {
+  return many<CategoryLabel>(db, sql`
+    select id, code, label from deal_code_categories where tmc_id = ${tmcId} order by code, id`)
+}
+
+// Only if it is this TMC's -- a category id from another tenant must not be
+// borrowable by a rule filed here.
+export async function categoryInTmc(db: Queryable, categoryId: string, tmcId: string): Promise<boolean> {
+  const row = await maybeOne<{ ok: boolean }>(db, sql`
+    select true as ok from deal_code_categories where id = ${categoryId} and tmc_id = ${tmcId}`)
+  return row !== null
 }

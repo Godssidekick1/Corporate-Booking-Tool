@@ -676,3 +676,48 @@ export async function stampProfile(db: Queryable, clientId: string): Promise<Sta
   return maybeOne<StampProfile>(db, sql`
     select id, tmc_id, client_group_id, branch_id from clients where id = ${clientId}`)
 }
+
+// ═══ Commercial coverage ════════════════════════════════════════════════════
+
+export type CommercialSwitches = Pick<Row<'clients'>,
+  'id' | 'name' | 'client_group_id' | 'markup_active' | 'discount_active' | 'processing_fee_active'>
+
+// A TMC's clients with their commercial switches, optionally narrowed to a
+// counsellor's grants (null = every client).
+export async function commercialSwitches(
+  db: Queryable,
+  tmcId: string,
+  accessibleIds: readonly string[] | null
+): Promise<CommercialSwitches[]> {
+  if (accessibleIds !== null && accessibleIds.length === 0) return []
+  return many<CommercialSwitches>(db, sql`
+    select id, name, client_group_id, markup_active, discount_active, processing_fee_active
+    from clients
+    where tmc_id = ${tmcId}
+    ${accessibleIds !== null ? sql`and id = any(${[...accessibleIds]})` : empty}
+    order by name, id`)
+}
+
+export async function memberships(
+  db: Queryable,
+  clientIds: readonly string[]
+): Promise<Pick<Row<'bucket_clients'>, 'bucket_id' | 'client_id'>[]> {
+  if (clientIds.length === 0) return []
+  return many(db, sql`
+    select bucket_id, client_id from bucket_clients
+    where client_id = any(${[...clientIds]})
+    order by client_id, bucket_id`)
+}
+
+export async function groupNamesForTmc(db: Queryable, tmcId: string): Promise<Map<string, string>> {
+  const rows = await many<{ id: string; name: string }>(db, sql`
+    select id, name from client_groups where tmc_id = ${tmcId}`)
+  return new Map(rows.map(r => [r.id, r.name]))
+}
+
+export async function clientNames(db: Queryable, clientIds: readonly string[]): Promise<Map<string, string>> {
+  if (clientIds.length === 0) return new Map()
+  const rows = await many<{ id: string; name: string }>(db, sql`
+    select id, name from clients where id = any(${[...clientIds]})`)
+  return new Map(rows.map(r => [r.id, r.name]))
+}

@@ -1,17 +1,17 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission, getAccessibleClientIds } from '@/app/lib/permissions/requireTmcPermission'
 import { parsePageParams, paginateInMemory } from '@/app/lib/pagination'
 import {
   resolveCommercials,
-  type ResolvableRule,
   type ResolvableAssignment,
   type ResolvedRule,
 } from '@/app/lib/commercials/resolveCommercials'
 import { KIND_LABELS, type CommercialKind } from '@/app/lib/commercials/calcOnByKind'
-import { RULE_COLUMNS } from '../route'
 import { NextRequest } from 'next/server'
 import { db } from '@/app/lib/db'
+import * as clients from '@/app/lib/repositories/clients'
+import * as commercials from '@/app/lib/repositories/commercials'
+import { route } from '@/app/lib/http/handler'
 
 // ── GET /api/tmc/commercial-rules/effective ──────────────────────────────────
 // What each client actually ends up with: one row per client, carrying the
@@ -74,7 +74,7 @@ function describeRule(resolved: ResolvedRule | null): string | null {
   return `${amount}${basis}${per}`
 }
 
-export async function GET(req: NextRequest) {
+export const GET = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -82,7 +82,6 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
   const auth = await requireTmcPermission(db, user.id, 'manage_commercials')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
@@ -94,45 +93,28 @@ export async function GET(req: NextRequest) {
 
   const accessibleIds = await getAccessibleClientIds(db, user.id, auth.role ?? '')
 
-  let clientQuery = service
-    .from('clients')
-    .select('id, name, client_group_id, markup_active, discount_active, processing_fee_active')
-    .eq('tmc_id', tmcId)
-    .order('name')
-
-  if (accessibleIds !== null) {
-    if (accessibleIds.length === 0) return Response.json(paginateInMemory([], params))
-    clientQuery = clientQuery.in('id', accessibleIds)
+  if (accessibleIds !== null && accessibleIds.length === 0) {
+    return Response.json(paginateInMemory([], params))
   }
 
-  const [{ data: clients }, { data: memberships }, { data: assignmentRows }, { data: ruleRows }] =
-    await Promise.all([
-      clientQuery,
-      service.from('bucket_clients').select('bucket_id, client_id'),
-      service
-        .from('commercial_rule_assignments')
-        .select('rule_id, kind, client_id, client_group_id, bucket_id')
-        .eq('tmc_id', tmcId),
-      service.from('commercial_rules').select(RULE_COLUMNS).eq('tmc_id', tmcId),
-    ])
-
-  const rules = (ruleRows ?? []) as unknown as ResolvableRule[]
-
-  // Names for the `via` labels, read once for the whole TMC rather than per
-  // client — the alternative is a query inside the loop below.
-  const usedBucketIds = [...new Set((assignmentRows ?? []).map(a => a.bucket_id).filter(Boolean) as string[])]
-  const [{ data: buckets }, { data: groups }] = await Promise.all([
-    usedBucketIds.length
-      ? service.from('buckets').select('id, name').in('id', usedBucketIds)
-      : Promise.resolve({ data: [] as { id: string; name: string }[] }),
-    service.from('client_groups').select('id, name').eq('tmc_id', tmcId),
+  const [clientRows, assignmentRows, rules] = await Promise.all([
+    clients.commercialSwitches(db, tmcId, accessibleIds),
+    commercials.assignmentsForTmc(db, tmcId),
+    commercials.rulesForTmc(db, tmcId),
   ])
 
-  const bucketName = new Map((buckets ?? []).map(b => [b.id, b.name]))
-  const groupName = new Map((groups ?? []).map(g => [g.id, g.name]))
+  // Names for the `via` labels, read once for the whole TMC rather than per
+  // client — the alternative is a query inside the loop below. Memberships
+  // are read for these clients only.
+  const usedBucketIds = [...new Set(assignmentRows.map(a => a.bucket_id).filter((b): b is string => Boolean(b)))]
+  const [memberships, buckets, groupName] = await Promise.all([
+    clients.memberships(db, clientRows.map(c => c.id)),
+    clients.bucketLabels(db, usedBucketIds),
+    clients.groupNamesForTmc(db, tmcId),
+  ])
 
   const bucketsByClient = new Map<string, string[]>()
-  for (const m of memberships ?? []) {
+  for (const m of memberships) {
     const list = bucketsByClient.get(m.client_id)
     if (list) list.push(m.bucket_id)
     else bucketsByClient.set(m.client_id, [m.bucket_id])
@@ -166,10 +148,10 @@ export async function GET(req: NextRequest) {
     return categories.size > 1
   }
 
-  const rows: CoverageRow[] = (clients ?? []).map(client => {
+  const rows: CoverageRow[] = clientRows.map(client => {
     const bucketIds = bucketsByClient.get(client.id) ?? []
 
-    const reaching = (assignmentRows ?? []).filter(a => {
+    const reaching = assignmentRows.filter(a => {
       if (a.kind === 'client') return a.client_id === client.id
       if (a.kind === 'bucket') return a.bucket_id !== null && bucketIds.includes(a.bucket_id)
       return a.client_group_id !== null && a.client_group_id === client.client_group_id
@@ -177,10 +159,10 @@ export async function GET(req: NextRequest) {
 
     const assignments: ResolvableAssignment[] = reaching.map(a => ({
       rule_id: a.rule_id,
-      kind: a.kind,
+      kind: a.kind as ResolvableAssignment['kind'],
       via_name:
         a.kind === 'bucket'
-          ? bucketName.get(a.bucket_id!) ?? null
+          ? buckets.get(a.bucket_id!)?.name ?? null
           : a.kind === 'client_group'
             ? groupName.get(a.client_group_id!) ?? null
             : null,
@@ -303,4 +285,4 @@ export async function GET(req: NextRequest) {
     lossMakingCount: rows.filter(r => r.lossMaking).length,
     kindLabels: KIND_LABELS,
   })
-}
+})
