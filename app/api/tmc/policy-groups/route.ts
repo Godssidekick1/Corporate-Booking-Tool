@@ -79,10 +79,11 @@ export const GET = route(async (req: NextRequest) => {
   return Response.json({ ok: true, groups: enriched })
 })
 
-// Name and code are each unique per TMC. The code rule is enforced by TWO
-// identical partial indexes (schema drift: idx_policy_groups_code_per_tmc
-// predates policy_groups_tmc_id_code_key), and PostgreSQL reports whichever
-// it checks first -- so either name means "that code is taken".
+// Name and code are each unique per TMC. The code rule was enforced by TWO
+// identical partial indexes (idx_policy_groups_code_per_tmc predated
+// policy_groups_tmc_id_code_key), and PostgreSQL reports whichever it checks
+// first. 20260924000000_drop_duplicate_indexes removes the old one; both names
+// stay accepted so this answers correctly on a database either side of it.
 export const NAME_TAKEN = 'policy_groups_tmc_id_name_key'
 const CODE_INDEXES = ['policy_groups_tmc_id_code_key', 'idx_policy_groups_code_per_tmc']
 
