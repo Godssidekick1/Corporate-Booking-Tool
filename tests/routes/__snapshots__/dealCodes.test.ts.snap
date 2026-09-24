@@ -1,0 +1,326 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`deal codes > categories: each with the code types it permits 1`] = `
+{
+  "categories": [
+    {
+      "active": true,
+      "allowedTypes": [
+        "PC",
+        "TR",
+        "DC",
+        "PF",
+        "TC",
+      ],
+      "code": "DOMAIRBSP",
+      "id": "51e6a8be-bff4-4822-86f4-50f8cf571c13",
+      "label": "Domestic - BSP settled",
+    },
+    {
+      "active": true,
+      "allowedTypes": [
+        "PC",
+        "TR",
+        "DC",
+      ],
+      "code": "DOMAIRLCC",
+      "id": "b296e0b7-dc34-4de5-95b2-6de153e71359",
+      "label": "Domestic - LCC direct connect",
+    },
+    {
+      "active": true,
+      "allowedTypes": [
+        "PC",
+        "TR",
+        "DC",
+        "PF",
+        "TC",
+      ],
+      "code": "INTAIRBSP",
+      "id": "9f57d26f-ef17-4b47-8104-e26189c7dc54",
+      "label": "International - BSP settled",
+    },
+    {
+      "active": true,
+      "allowedTypes": [
+        "PC",
+        "TR",
+        "DC",
+      ],
+      "code": "INTAIRLCC",
+      "id": "3ae3f7b7-586c-4afe-875e-f99a50196697",
+      "label": "International - LCC direct connect",
+    },
+  ],
+  "ok": true,
+}
+`;
+
+exports[`deal codes > coverage: which code wins for each client, and why 1`] = `
+{
+  "items": [
+    {
+      "airline": "AA",
+      "ambiguous": false,
+      "beat": [],
+      "clientId": "2dbeb834-8151-46b7-b73c-775c9ca359d9",
+      "clientName": "Arjun K",
+      "code": "AA876303",
+      "codeType": "DC",
+      "via": "Bucket · SMEs",
+    },
+    {
+      "airline": "AI",
+      "ambiguous": false,
+      "beat": [],
+      "clientId": "2dbeb834-8151-46b7-b73c-775c9ca359d9",
+      "clientName": "Arjun K",
+      "code": "IN456787",
+      "codeType": "PF",
+      "via": "Bucket · Corps with vibes",
+    },
+    {
+      "airline": "AI",
+      "ambiguous": false,
+      "beat": [],
+      "clientId": "b5005d4e-b813-4f10-ae59-1b0f5257357e",
+      "clientName": "BCG",
+      "code": "IN456787",
+      "codeType": "PF",
+      "via": "Bucket · Corps with vibes",
+    },
+    {
+      "airline": "AA",
+      "ambiguous": false,
+      "beat": [],
+      "clientId": "51e2569a-91b8-4844-afd8-1a725450a8fc",
+      "clientName": "ekjd",
+      "code": "AA876303",
+      "codeType": "DC",
+      "via": "Bucket · SMEs",
+    },
+    {
+      "airline": "AA",
+      "ambiguous": false,
+      "beat": [],
+      "clientId": "5f73d5e1-afcd-494c-b172-8a2de53cc9c9",
+      "clientName": "Flip",
+      "code": "AA876303",
+      "codeType": "DC",
+      "via": "Bucket · SMEs",
+    },
+    {
+      "airline": "AI",
+      "ambiguous": false,
+      "beat": [],
+      "clientId": "911a4f7f-b278-4918-9136-972a0c4da47c",
+      "clientName": "Lenskart",
+      "code": "IN456787",
+      "codeType": "PF",
+      "via": "Bucket · Corps with vibes",
+    },
+  ],
+  "ok": true,
+  "page": 1,
+  "pageSize": 10,
+  "total": 6,
+  "totalPages": 1,
+}
+`;
+
+exports[`deal codes > create: uppercased, active by default, reaching nobody yet 1`] = `
+{
+  "dealCode": {
+    "active": true,
+    "airline_code": "AI",
+    "category_id": "51e6a8be-bff4-4822-86f4-50f8cf571c13",
+    "code": "TC123",
+    "code_type": "TC",
+    "created_at": "<db time>",
+    "created_by": "f425dc71-960b-4164-b87a-b4616d86406f",
+    "flight_spec": null,
+    "id": "<fresh deal>",
+    "notes": "keep",
+    "sales_from": null,
+    "sales_to": null,
+    "status": "active",
+    "targetCount": 0,
+    "travel_from": null,
+    "travel_to": "2027-01-31",
+  },
+  "ok": true,
+}
+`;
+
+exports[`deal codes > csv: a dry run reports every row and writes nothing; the real run writes the good ones 1`] = `
+{
+  "accepted": 2,
+  "dryRun": true,
+  "ok": true,
+  "rejected": 7,
+  "verdicts": [
+    {
+      "code": "IMP1",
+      "row": 2,
+      "valid": true,
+    },
+    {
+      "code": "",
+      "error": "Missing code",
+      "row": 3,
+      "valid": false,
+    },
+    {
+      "code": "X2",
+      "error": "Missing airline code",
+      "row": 4,
+      "valid": false,
+    },
+    {
+      "code": "X3",
+      "error": "Unknown code type 'ZZ'",
+      "row": 5,
+      "valid": false,
+    },
+    {
+      "code": "X4",
+      "error": "Unknown category 'NOPE'",
+      "row": 6,
+      "valid": false,
+    },
+    {
+      "code": "X5",
+      "error": "Tour code is not valid for DOMAIRLCC",
+      "row": 7,
+      "valid": false,
+    },
+    {
+      "code": "X6",
+      "error": "Dates must be formatted YYYY-MM-DD",
+      "row": 8,
+      "valid": false,
+    },
+    {
+      "code": "X7",
+      "error": "Travel to is before travel from",
+      "row": 9,
+      "valid": false,
+    },
+    {
+      "code": "IMP2",
+      "row": 10,
+      "valid": true,
+    },
+  ],
+}
+`;
+
+exports[`deal codes > csv: the download is the template 1`] = `
+"code,code_type,airline_code,category,flight_spec,sales_from,sales_to,travel_from,travel_to,active,notes
+AA876303,DC,AA,DOMAIRLCC,,2026-09-08,2032-07-22,2026-09-08,2030-09-07,yes,
+IN%345678,TC,AI,INTAIRBSP,,2026-09-10,2029-05-10,2026-09-10,2028-05-30,yes,
+IN456787,PF,AI,DOMAIRBSP,,2026-09-03,2034-06-23,2026-09-03,2030-07-27,yes,La cerveza"
+`;
+
+exports[`deal codes > list: the TMC's deals, enriched with category, status and reach 1`] = `
+{
+  "items": [
+    {
+      "active": true,
+      "airline_code": "AA",
+      "categoryCode": "DOMAIRLCC",
+      "categoryLabel": "Domestic - LCC direct connect",
+      "category_id": "b296e0b7-dc34-4de5-95b2-6de153e71359",
+      "code": "AA876303",
+      "code_type": "DC",
+      "created_at": "2026-09-08T09:56:59.240Z",
+      "created_by": "f425dc71-960b-4164-b87a-b4616d86406f",
+      "flight_spec": null,
+      "id": "8731f46f-9d9b-4dbd-b87f-cc5df801120c",
+      "notes": null,
+      "sales_from": "2026-09-08",
+      "sales_to": "2032-07-22",
+      "status": "active",
+      "targetCount": 1,
+      "travel_from": "2026-09-08",
+      "travel_to": "2030-09-07",
+    },
+    {
+      "active": true,
+      "airline_code": "AI",
+      "categoryCode": "INTAIRBSP",
+      "categoryLabel": "International - BSP settled",
+      "category_id": "9f57d26f-ef17-4b47-8104-e26189c7dc54",
+      "code": "IN%345678",
+      "code_type": "TC",
+      "created_at": "2026-09-10T10:21:26.216Z",
+      "created_by": "f425dc71-960b-4164-b87a-b4616d86406f",
+      "flight_spec": null,
+      "id": "8d43719f-3e9e-4dde-a675-91102a9c310b",
+      "notes": null,
+      "sales_from": "2026-09-10",
+      "sales_to": "2029-05-10",
+      "status": "active",
+      "targetCount": 0,
+      "travel_from": "2026-09-10",
+      "travel_to": "2028-05-30",
+    },
+    {
+      "active": true,
+      "airline_code": "AI",
+      "categoryCode": "DOMAIRBSP",
+      "categoryLabel": "Domestic - BSP settled",
+      "category_id": "51e6a8be-bff4-4822-86f4-50f8cf571c13",
+      "code": "IN456787",
+      "code_type": "PF",
+      "created_at": "2026-09-03T08:29:42.989Z",
+      "created_by": "f425dc71-960b-4164-b87a-b4616d86406f",
+      "flight_spec": null,
+      "id": "abc50b26-092b-4fb6-9580-11aad201aedd",
+      "notes": "La cerveza",
+      "sales_from": "2026-09-03",
+      "sales_to": "2034-06-23",
+      "status": "active",
+      "targetCount": 1,
+      "travel_from": "2026-09-03",
+      "travel_to": "2030-07-27",
+    },
+  ],
+  "ok": true,
+  "page": 1,
+  "pageSize": 10,
+  "total": 3,
+  "totalPages": 1,
+}
+`;
+
+exports[`deal codes > one: with its assignments named; another TMC cannot see it 1`] = `
+{
+  "assignments": [
+    {
+      "id": "0f0fdea5-8936-4275-bc76-5a816a1e05bb",
+      "kind": "bucket",
+      "targetId": "6f7ba956-97a4-4f1a-8f49-6d20fca39332",
+      "targetName": "Corps with vibes",
+    },
+  ],
+  "dealCode": {
+    "active": true,
+    "airline_code": "AI",
+    "category_id": "51e6a8be-bff4-4822-86f4-50f8cf571c13",
+    "code": "IN456787",
+    "code_type": "PF",
+    "created_at": "2026-09-03T08:29:42.989Z",
+    "created_by": "f425dc71-960b-4164-b87a-b4616d86406f",
+    "flight_spec": null,
+    "id": "abc50b26-092b-4fb6-9580-11aad201aedd",
+    "notes": "La cerveza",
+    "sales_from": "2026-09-03",
+    "sales_to": "2034-06-23",
+    "status": "active",
+    "travel_from": "2026-09-03",
+    "travel_to": "2030-07-27",
+  },
+  "ok": true,
+}
+`;
