@@ -1,7 +1,10 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { NextRequest } from 'next/server'
 import { travellerItinerary, travellerFareBreakdown } from '@/app/lib/book/travellerView'
+import { db } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
+import * as bookingsRepo from '@/app/lib/repositories/bookings'
+import { route } from '@/app/lib/http/handler'
 
 // ── GET /api/bookings/recent ─────────────────────────────────────────────────
 // Feeds the dashboard's "Recent bookings" widget. Distinct from
@@ -18,7 +21,7 @@ import { travellerItinerary, travellerFareBreakdown } from '@/app/lib/book/trave
 // not a detail view.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function GET(req: NextRequest) {
+export const GET = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -26,12 +29,7 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-  const { data: employee } = await service
-    .from('employees')
-    .select('id, role, client_id')
-    .eq('id', user.id)
-    .maybeSingle()
+  const employee = await employees.scope(db, user.id)
 
   if (!employee) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
@@ -44,17 +42,9 @@ export async function GET(req: NextRequest) {
   let employeeIds: string[]
 
   if (employee.role === 'admin') {
-    const { data: clientEmployees } = await service
-      .from('employees')
-      .select('id')
-      .eq('client_id', employee.client_id)
-    employeeIds = (clientEmployees ?? []).map(e => e.id)
+    employeeIds = await employees.idsInClient(db, employee.client_id)
   } else if (employee.role === 'manager' || employee.role === 'finance') {
-    const { data: directReports } = await service
-      .from('employees')
-      .select('id')
-      .eq('manager_id', employee.id)
-    employeeIds = [employee.id, ...(directReports ?? []).map(e => e.id)]
+    employeeIds = [employee.id, ...(await employees.directReportIds(db, employee.id))]
   } else {
     employeeIds = [employee.id]
   }
@@ -63,38 +53,22 @@ export async function GET(req: NextRequest) {
     return Response.json({ ok: true, bookings: [] })
   }
 
-  const { data: bookings, error } = await service
-    .from('bookings')
-    .select('id, employee_id, status, pnr, total_cost, sell_total, itinerary, fare_breakdown, created_at')
-    .in('employee_id', employeeIds)
-    .order('created_at', { ascending: false })
-    .limit(limit)
-
-  if (error) {
-    console.error('Recent bookings error:', error)
-    return Response.json({ error: 'Could not load recent bookings' }, { status: 500 })
-  }
+  const bookings = await bookingsRepo.recentFor(db, employeeIds, limit)
 
   // Traveler names for display — only fetch the employees actually present
   // in this page of results, not the whole employeeIds scope (which for
   // admin could be the entire client).
-  const travelerIds = Array.from(new Set((bookings ?? []).map(b => b.employee_id)))
-  const { data: travelers } = await service
-    .from('employees')
-    .select('id, full_name')
-    .in('id', travelerIds)
+  const nameById = await employees.namesByIds(db, Array.from(new Set(bookings.map(b => b.employee_id))))
 
-  const nameById = new Map((travelers ?? []).map(t => [t.id, t.full_name]))
-
-  const result = (bookings ?? []).map(b => ({
+  const result = bookings.map(b => ({
     id: b.id,
     status: b.status,
     pnr: b.pnr,
-    // What the company is invoiced, not what the airline charges. The airline
-    // figure is dropped here rather than sent and ignored — a markup visible in
-    // a network response is not hidden. Falls back for pre-commercials bookings.
-    totalCost: b.sell_total ?? b.total_cost,
-    // Projected: both carry airline figures. See app/lib/book/travellerView.
+    // Already the sell figure: the repository never selects the airline one
+    // for a traveller (see bookings.recentFor).
+    totalCost: b.total_cost,
+    // Projected: the breakdown's per-passenger split is the airline's and
+    // would expose a markup. See app/lib/book/travellerView.
     itinerary: travellerItinerary(b.itinerary),
     fareBreakdown: travellerFareBreakdown(b.fare_breakdown),
     createdAt: b.created_at,
@@ -103,4 +77,4 @@ export async function GET(req: NextRequest) {
   }))
 
   return Response.json({ ok: true, bookings: result })
-}
+})

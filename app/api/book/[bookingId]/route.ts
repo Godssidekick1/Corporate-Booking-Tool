@@ -1,6 +1,10 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic, CustomerInfo } from '@/app/lib/amadeus/client'
+import { db } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
+import * as bookingsRepo from '@/app/lib/repositories/bookings'
+import * as approvals from '@/app/lib/repositories/approvals'
+import { route } from '@/app/lib/http/handler'
 import { visibleLines, ADJUSTMENT_LABELS } from '@/app/lib/commercials/adjustment'
 import { round2 } from '@/app/lib/commercials/fareComponents'
 import type { CommercialsRecord } from '@/app/lib/commercials/composeSellPrice'
@@ -32,10 +36,10 @@ interface PaxFare {
 // fare/itinerary are untouched by this endpoint.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function GET(
+export const GET = route(async (
   req: NextRequest,
   { params }: { params: Promise<{ bookingId: string }> }
-) {
+) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -45,12 +49,7 @@ export async function GET(
 
   const { bookingId } = await params
 
-  const service = createServiceClient()
-  const { data: employee } = await service
-    .from('employees')
-    .select('id')
-    .eq('id', user.id)
-    .maybeSingle()
+  const employee = await employees.traveller(db, user.id)
 
   if (!employee) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
@@ -69,14 +68,8 @@ export async function GET(
   // pricing_key, result_index and search_key are provider session credentials,
   // and client_id is tenancy. None of them has any business in a browser.
   //
-  // Kept as a literal string so PostgREST's type inference survives — a
-  // concatenation collapses to `string` and every property access below
-  // becomes a GenericStringError.
-  const { data: booking } = await service
-    .from('bookings')
-    .select('id, status, booking_type, provider, provider_order_id, pnr, ticket_numbers, sell_total, total_cost, commercials, itinerary, traveler_snapshot, fare_breakdown, policy_status, policy_verdict, policy_verdict_detail, employee_id, trip_id, is_ndc, created_at, updated_at')
-    .eq('id', bookingId)
-    .maybeSingle()
+  // The column list lives in bookings.detail.
+  const booking = await bookingsRepo.detail(db, bookingId)
 
   if (!booking) {
     return Response.json({ error: 'Booking not found' }, { status: 404 })
@@ -91,28 +84,14 @@ export async function GET(
   // tier descending: for a multi-tier chain the traveler cares about
   // whichever tier is currently active (pending) or was decided last, not
   // the first tier that happened to be created first.
-  const { data: latestApprovalRow } = await service
-    .from('approvals')
-    .select('id, tier, status, reason, decision_note, approver_id')
-    .eq('booking_id', bookingId)
-    .order('tier', { ascending: false })
-    .limit(1)
-    .maybeSingle()
+  const latestApprovalRow = await approvals.latestForBooking(db, bookingId)
 
   let latestApproval = null
 
   if (latestApprovalRow) {
-    let approverName: string | null = null
-
-    if (latestApprovalRow.approver_id) {
-      const { data: approver } = await service
-        .from('employees')
-        .select('full_name')
-        .eq('id', latestApprovalRow.approver_id)
-        .maybeSingle()
-
-      approverName = approver?.full_name ?? null
-    }
+    const approverName = latestApprovalRow.approver_id
+      ? await employees.fullName(db, latestApprovalRow.approver_id)
+      : null
 
     latestApproval = {
       id: latestApprovalRow.id,
@@ -135,9 +114,8 @@ export async function GET(
   // enough.
   // total_cost comes out with commercials. It is the airline's own grand total
   // and it is the other half of the subtraction that reveals the markup.
-  const { commercials, total_cost, ...safeBooking } = booking as typeof booking & {
-    commercials: CommercialsRecord | null
-  }
+  const { commercials: storedCommercials, total_cost, ...safeBooking } = booking
+  const commercials = storedCommercials as unknown as CommercialsRecord | null
 
   const sellTotal = booking.sell_total ?? total_cost ?? 0
   const seatFees = (booking.fare_breakdown as { seatFees?: number } | null)?.seatFees ?? 0
@@ -234,16 +212,16 @@ export async function GET(
     },
     latestApproval,
   })
-}
+})
 
 interface PatchBody {
   customerInfo: CustomerInfo
 }
 
-export async function PATCH(
+export const PATCH = route(async (
   req: NextRequest,
   { params }: { params: Promise<{ bookingId: string }> }
-) {
+) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -253,22 +231,13 @@ export async function PATCH(
 
   const { bookingId } = await params
 
-  const service = createServiceClient()
-  const { data: employee } = await service
-    .from('employees')
-    .select('id')
-    .eq('id', user.id)
-    .maybeSingle()
+  const employee = await employees.traveller(db, user.id)
 
   if (!employee) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
   }
 
-  const { data: booking } = await service
-    .from('bookings')
-    .select('id, employee_id, status, provider, provider_order_id, amadeus_key, total_cost')
-    .eq('id', bookingId)
-    .maybeSingle()
+  const booking = await bookingsRepo.passengerEditTarget(db, bookingId)
 
   if (!booking) {
     return Response.json({ error: 'Booking not found' }, { status: 404 })
@@ -296,21 +265,30 @@ export async function PATCH(
     return Response.json({ error: 'customerInfo.PassengerDetails must include at least one passenger' }, { status: 400 })
   }
 
+  // The correction is re-sent against the priced session. Without its key or
+  // reference there is nothing to send it to -- the provider could only reject
+  // it, and the traveller would read that as a problem with their details.
+  const { amadeus_key: resultKey, provider_order_id: referenceNo } = booking
+  if (!resultKey || !referenceNo) {
+    return Response.json({
+      error: 'This booking has no airline session to correct. Please start the booking again.',
+    }, { status: 409 })
+  }
+
   try {
     await amadeus.addPassenger(
-      booking.amadeus_key,
-      booking.provider_order_id,
+      resultKey,
+      referenceNo,
       customerInfo,
       String(booking.total_cost),
       String(booking.total_cost)
     )
 
-    const { error: updateError } = await service
-      .from('bookings')
-      .update({ traveler_snapshot: customerInfo })
-      .eq('id', bookingId)
-
-    if (updateError) {
+    // The airline has the correction now. A failure to save it here gets its
+    // own message: the traveller must know the two have diverged.
+    try {
+      await bookingsRepo.saveTravellerSnapshot(db, bookingId, customerInfo)
+    } catch (updateError) {
       console.error('Failed to persist corrected passenger details', updateError)
       return Response.json({
         error: 'The airline system accepted the correction, but we could not save it. Please try again.',
@@ -337,4 +315,4 @@ export async function PATCH(
     console.error('AddPassenger (edit) error:', err)
     return Response.json({ error: 'Could not save passenger details' }, { status: 500 })
   }
-}
+})

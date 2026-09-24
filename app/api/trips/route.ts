@@ -1,6 +1,9 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
+import * as trips from '@/app/lib/repositories/trips'
+import { route } from '@/app/lib/http/handler'
 
 // ── /api/trips ──────────────────────────────────────────────────────────────
 // A trip is a named container an employee creates to group everything for
@@ -19,7 +22,7 @@ interface CreateTripBody {
   name: string
 }
 
-export async function GET() {
+export const GET = route(async () => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -27,34 +30,16 @@ export async function GET() {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-  const { data: employee } = await service
-    .from('employees')
-    .select('id, client_id')
-    .eq('id', user.id)
-    .maybeSingle()
+  const employee = await employees.traveller(db, user.id)
 
   if (!employee) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
   }
 
-  const { data: trips, error } = await service
-    .from('trips')
-    .select('id, name, status, travel_date, created_at, updated_at')
-    .eq('client_id', employee.client_id)
-    .eq('created_by', employee.id)
-    .neq('status', 'deleted')
-    .order('updated_at', { ascending: false })
+  return Response.json({ ok: true, trips: await trips.mine(db, employee.client_id, employee.id) })
+})
 
-  if (error) {
-    console.error('Failed to list trips', error)
-    return Response.json({ error: 'Could not load trips' }, { status: 500 })
-  }
-
-  return Response.json({ ok: true, trips })
-}
-
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -62,12 +47,7 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-  const { data: employee } = await service
-    .from('employees')
-    .select('id, client_id')
-    .eq('id', user.id)
-    .maybeSingle()
+  const employee = await employees.traveller(db, user.id)
 
   if (!employee) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
@@ -80,21 +60,12 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Trip name is required' }, { status: 400 })
   }
 
-  const { data: trip, error } = await service
-    .from('trips')
-    .insert({
-      client_id: employee.client_id,
-      created_by: employee.id,
-      name,
-      status: 'open',
-    })
-    .select('id, name, status')
-    .single()
-
-  if (error || !trip) {
-    console.error('Failed to create trip', error)
+  // A trip belongs to a client; TMC staff have none and cannot hold one.
+  if (!employee.client_id) {
     return Response.json({ error: 'Could not create trip' }, { status: 500 })
   }
 
+  const trip = await trips.create(db, { client_id: employee.client_id, created_by: employee.id, name })
+
   return Response.json({ ok: true, trip })
-}
+})

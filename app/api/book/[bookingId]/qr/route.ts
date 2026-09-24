@@ -1,7 +1,9 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import QRCode from 'qrcode'
 import { NextRequest } from 'next/server'
+import { db } from '@/app/lib/db'
+import * as bookingsRepo from '@/app/lib/repositories/bookings'
+import { route } from '@/app/lib/http/handler'
 
 // ── GET /api/book/[bookingId]/qr ─────────────────────────────────────────────
 // The QR for a ticket, as a PNG data URI.
@@ -20,10 +22,10 @@ import { NextRequest } from 'next/server'
 // for someone else's QR is asking for their share link.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function GET(
+export const GET = route(async (
   req: NextRequest,
   { params }: { params: Promise<{ bookingId: string }> }
-) {
+) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -32,13 +34,8 @@ export async function GET(
   }
 
   const { bookingId } = await params
-  const service = createServiceClient()
 
-  const { data: booking } = await service
-    .from('bookings')
-    .select('id, employee_id, status, share_token')
-    .eq('id', bookingId)
-    .maybeSingle()
+  const booking = await bookingsRepo.shareInfo(db, bookingId)
 
   if (!booking) {
     return Response.json({ error: 'Booking not found' }, { status: 404 })
@@ -73,4 +70,4 @@ export async function GET(
     console.error('[qr] could not generate', err, { bookingId })
     return Response.json({ ok: true, qr: null, url })
   }
-}
+})

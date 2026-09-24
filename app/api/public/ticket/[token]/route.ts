@@ -1,5 +1,7 @@
-import { createServiceClient } from '@/utils/supabase/service'
 import { round2 } from '@/app/lib/commercials/fareComponents'
+import { db } from '@/app/lib/db'
+import * as bookingsRepo from '@/app/lib/repositories/bookings'
+import { route } from '@/app/lib/http/handler'
 import { visibleLines, ADJUSTMENT_LABELS } from '@/app/lib/commercials/adjustment'
 import type { CommercialsRecord } from '@/app/lib/commercials/composeSellPrice'
 import { travellerItinerary } from '@/app/lib/book/travellerView'
@@ -57,10 +59,10 @@ function maskPassport(value: string | undefined): string | null {
   return `••••${trimmed.slice(-4)}`
 }
 
-export async function GET(
+export const GET = route(async (
   req: NextRequest,
   { params }: { params: Promise<{ token: string }> }
-) {
+) => {
   const { token } = await params
 
   // Length-checked before it reaches the database. A token is 32 hex
@@ -70,12 +72,7 @@ export async function GET(
     return Response.json({ error: 'Ticket not found' }, { status: 404 })
   }
 
-  const service = createServiceClient()
-  const { data: booking } = await service
-    .from('bookings')
-    .select('id, status, pnr, ticket_numbers, provider_order_id, sell_total, commercials, itinerary, traveler_snapshot, fare_breakdown')
-    .eq('share_token', token)
-    .maybeSingle()
+  const booking = await bookingsRepo.byShareToken(db, token)
 
   // Only a ticketed booking has a ticket. A cancelled or failed one keeps its
   // token — revoking is a deliberate act, not a side effect of a status change —
@@ -84,7 +81,7 @@ export async function GET(
     return Response.json({ error: 'Ticket not found' }, { status: 404 })
   }
 
-  const commercials = booking.commercials as CommercialsRecord | null
+  const commercials = booking.commercials as unknown as CommercialsRecord | null
   const airline = commercials?.airline
   const markup = airline ? round2(commercials!.displayedFare - airline.total) : 0
   const taxTotal = airline
@@ -107,8 +104,8 @@ export async function GET(
     ticket: {
       pnr: booking.pnr,
       reference: booking.provider_order_id,
-      // Projected: the frozen itinerary carries the airline's fares, and this
-      // page needs no login. See app/lib/book/travellerView.
+      // Projected: the frozen itinerary carries provider session keys, and
+      // this page needs no login. See app/lib/book/travellerView.
       itinerary: travellerItinerary(booking.itinerary),
       passengers: (snapshot?.PassengerDetails ?? []).map((p, i) => ({
         title: p.Title,
@@ -145,4 +142,4 @@ export async function GET(
       },
     },
   })
-}
+})

@@ -813,3 +813,42 @@ export async function policySubject(
 ): Promise<Pick<Row<'employees'>, 'client_id' | 'band_code'> | null> {
   return maybeOne(db, sql`select client_id, band_code from employees where id = ${employeeId}`)
 }
+
+// ═══ Whose bookings a person may see ════════════════════════════════════════
+
+export type EmployeeScope = Pick<Row<'employees'>, 'id' | 'role' | 'client_id'>
+
+export async function scope(db: Queryable, employeeId: string): Promise<EmployeeScope | null> {
+  return maybeOne<EmployeeScope>(db, sql`select id, role, client_id from employees where id = ${employeeId}`)
+}
+
+export async function idsInClient(db: Queryable, clientId: string | null): Promise<string[]> {
+  if (!clientId) return []
+  const rows = await many<{ id: string }>(db, sql`
+    select id from employees where client_id = ${clientId} order by id`)
+  return rows.map(r => r.id)
+}
+
+export async function directReportIds(db: Queryable, managerId: string): Promise<string[]> {
+  const rows = await many<{ id: string }>(db, sql`
+    select id from employees where manager_id = ${managerId} order by id`)
+  return rows.map(r => r.id)
+}
+
+export async function namesByIds(db: Queryable, employeeIds: readonly string[]): Promise<Map<string, string>> {
+  if (employeeIds.length === 0) return new Map()
+  const rows = await many<{ id: string; full_name: string }>(db, sql`
+    select id, full_name from employees where id = any(${[...employeeIds]})`)
+  return new Map(rows.map(r => [r.id, r.full_name]))
+}
+
+export async function fullName(db: Queryable, employeeId: string): Promise<string | null> {
+  return (await maybeOne<{ full_name: string }>(db, sql`
+    select full_name from employees where id = ${employeeId}`))?.full_name ?? null
+}
+
+// The signed-in traveller: their id and company. Null when they have no
+// employees row.
+export async function traveller(db: Queryable, employeeId: string): Promise<Pick<Row<'employees'>, 'id' | 'client_id'> | null> {
+  return maybeOne(db, sql`select id, client_id from employees where id = ${employeeId}`)
+}

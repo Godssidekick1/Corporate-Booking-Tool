@@ -1,76 +1,66 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { NextRequest } from 'next/server'
 import { travellerItinerary } from '@/app/lib/book/travellerView'
+import { db } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
+import * as trips from '@/app/lib/repositories/trips'
+import * as bookingsRepo from '@/app/lib/repositories/bookings'
+import { route } from '@/app/lib/http/handler'
 
 // GET /api/trips/[tripId] — one trip's workspace: the trip itself, every
 // booking attached to it (flights, and hotels/cabs once those exist), and
 // every misc expense logged against it.
 
-export async function GET(
-  req: NextRequest,
-  { params }: { params: Promise<{ tripId: string }> }
-) {
-  const { tripId } = await params
+type Ctx = { params: Promise<{ tripId: string }> }
 
+// The caller and the trip, with the ownership check every verb shares.
+async function ownTrip(tripId: string, verb: string) {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
   if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
+    return { error: Response.json({ error: 'Not authenticated' }, { status: 401 }) }
   }
 
-  const service = createServiceClient()
-  const { data: employee } = await service
-    .from('employees')
-    .select('id, client_id')
-    .eq('id', user.id)
-    .maybeSingle()
+  const employee = await employees.traveller(db, user.id)
 
   if (!employee) {
-    return Response.json({ error: 'Employee record not found' }, { status: 404 })
+    return { error: Response.json({ error: 'Employee record not found' }, { status: 404 }) }
   }
 
-  const { data: trip } = await service
-    .from('trips')
-    .select('id, name, status, travel_date, created_by, client_id, created_at')
-    .eq('id', tripId)
-    .maybeSingle()
+  const trip = await trips.trip(db, tripId)
 
   if (!trip) {
-    return Response.json({ error: 'Trip not found' }, { status: 404 })
+    return { error: Response.json({ error: 'Trip not found' }, { status: 404 }) }
   }
 
   // Same-owner-only for now, matching the list route's scoping.
   if (trip.created_by !== employee.id) {
-    return Response.json({ error: 'Not authorized to view this trip' }, { status: 403 })
+    return { error: Response.json({ error: `Not authorized to ${verb} this trip` }, { status: 403 }) }
   }
 
-  const { data: bookings } = await service
-    .from('bookings')
-    .select('id, booking_type, status, total_cost, sell_total, provider_order_id, pnr, itinerary, created_at')
-    .eq('trip_id', tripId)
-    .order('created_at', { ascending: true })
+  return { trip }
+}
 
-  const { data: expenses } = await service
-    .from('trip_expenses')
-    .select('id, expense_type, amount, currency, description, expense_date, created_at')
-    .eq('trip_id', tripId)
-    .order('created_at', { ascending: true })
+export const GET = route(async (req: NextRequest, { params }: Ctx) => {
+  const { tripId } = await params
+  const own = await ownTrip(tripId, 'view')
+  if (own.error) return own.error
+
+  const [bookings, expenses] = await Promise.all([
+    bookingsRepo.forTrip(db, tripId),
+    trips.expenses(db, tripId),
+  ])
 
   return Response.json({
     ok: true,
-    trip,
-    // The sell figure, never the airline one — see /api/bookings for why the
-    // airline total is dropped rather than sent alongside.
-    // The itinerary is projected too: frozen, it carries the airline's fares.
-    bookings: (bookings ?? []).map(b => {
-      const { sell_total, ...rest } = b
-      return { ...rest, total_cost: sell_total ?? b.total_cost, itinerary: travellerItinerary(b.itinerary) }
-    }),
-    expenses: expenses ?? [],
+    trip: own.trip,
+    // total_cost is already the sell figure, never the airline one (see
+    // bookings.forTrip). The itinerary is projected: it carries provider keys.
+    bookings: bookings.map(b => ({ ...b, itinerary: travellerItinerary(b.itinerary) })),
+    expenses,
   })
-}
+})
 
 // ── PATCH /api/trips/[tripId] ─────────────────────────────────────────────
 // Updates a trip's status. Currently only used to mark a trip complete once
@@ -86,43 +76,10 @@ interface PatchTripBody {
   status: typeof PATCHABLE_STATUSES[number]
 }
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: Promise<{ tripId: string }> }
-) {
+export const PATCH = route(async (req: NextRequest, { params }: Ctx) => {
   const { tripId } = await params
-
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
-
-  const service = createServiceClient()
-  const { data: employee } = await service
-    .from('employees')
-    .select('id')
-    .eq('id', user.id)
-    .maybeSingle()
-
-  if (!employee) {
-    return Response.json({ error: 'Employee record not found' }, { status: 404 })
-  }
-
-  const { data: trip } = await service
-    .from('trips')
-    .select('id, created_by, status')
-    .eq('id', tripId)
-    .maybeSingle()
-
-  if (!trip) {
-    return Response.json({ error: 'Trip not found' }, { status: 404 })
-  }
-
-  if (trip.created_by !== employee.id) {
-    return Response.json({ error: 'Not authorized to edit this trip' }, { status: 403 })
-  }
+  const own = await ownTrip(tripId, 'edit')
+  if (own.error) return own.error
 
   const body: PatchTripBody = await req.json()
 
@@ -130,24 +87,18 @@ export async function PATCH(
     return Response.json({ error: `status must be one of: ${PATCHABLE_STATUSES.join(', ')}` }, { status: 400 })
   }
 
-  if (trip.status === 'deleted' || trip.status === 'cancelled') {
-    return Response.json({ error: `This trip is ${trip.status} and can't be marked complete.` }, { status: 409 })
+  if (own.trip.status === 'deleted' || own.trip.status === 'cancelled') {
+    return Response.json({ error: `This trip is ${own.trip.status} and can't be marked complete.` }, { status: 409 })
   }
 
-  const { data: updated, error } = await service
-    .from('trips')
-    .update({ status: body.status })
-    .eq('id', tripId)
-    .select('id, status')
-    .single()
+  const updated = await trips.setStatus(db, tripId, body.status)
 
-  if (error || !updated) {
-    console.error('Failed to update trip status', error, { tripId, status: body.status })
-    return Response.json({ error: 'Could not update this trip.' }, { status: 500 })
+  if (!updated) {
+    return Response.json({ error: 'Trip not found' }, { status: 404 })
   }
 
   return Response.json({ ok: true, trip: updated })
-}
+})
 
 // ── DELETE /api/trips/[tripId] ────────────────────────────────────────────
 // Soft-delete only — sets status: 'deleted' rather than removing the row.
@@ -159,59 +110,20 @@ export async function PATCH(
 // separable in reporting later. The list route filters status: 'deleted'
 // out by default.
 
-export async function DELETE(
-  req: NextRequest,
-  { params }: { params: Promise<{ tripId: string }> }
-) {
+export const DELETE = route(async (req: NextRequest, { params }: Ctx) => {
   const { tripId } = await params
+  const own = await ownTrip(tripId, 'delete')
+  if (own.error) return own.error
 
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
+  if (own.trip.status === 'deleted') {
+    return Response.json({ ok: true, trip: { id: own.trip.id, status: 'deleted' } })
   }
 
-  const service = createServiceClient()
-  const { data: employee } = await service
-    .from('employees')
-    .select('id')
-    .eq('id', user.id)
-    .maybeSingle()
+  const updated = await trips.setStatus(db, tripId, 'deleted')
 
-  if (!employee) {
-    return Response.json({ error: 'Employee record not found' }, { status: 404 })
-  }
-
-  const { data: trip } = await service
-    .from('trips')
-    .select('id, created_by, status')
-    .eq('id', tripId)
-    .maybeSingle()
-
-  if (!trip) {
+  if (!updated) {
     return Response.json({ error: 'Trip not found' }, { status: 404 })
   }
 
-  if (trip.created_by !== employee.id) {
-    return Response.json({ error: 'Not authorized to delete this trip' }, { status: 403 })
-  }
-
-  if (trip.status === 'deleted') {
-    return Response.json({ ok: true, trip: { id: trip.id, status: 'deleted' } })
-  }
-
-  const { data: updated, error } = await service
-    .from('trips')
-    .update({ status: 'deleted' })
-    .eq('id', tripId)
-    .select('id, status')
-    .single()
-
-  if (error || !updated) {
-    console.error('Failed to delete trip', error)
-    return Response.json({ error: 'Could not delete trip' }, { status: 500 })
-  }
-
   return Response.json({ ok: true, trip: updated })
-}
+})

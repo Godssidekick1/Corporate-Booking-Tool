@@ -1,6 +1,9 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { travellerItinerary } from '@/app/lib/book/travellerView'
+import { db } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
+import * as bookingsRepo from '@/app/lib/repositories/bookings'
+import { route } from '@/app/lib/http/handler'
 
 // ── GET /api/bookings/actionable ─────────────────────────────────────────
 // For the employee dashboard's "you have a booking to finish" banner —
@@ -15,7 +18,7 @@ import { travellerItinerary } from '@/app/lib/book/travellerView'
 
 const ACTIONABLE_STATUSES = ['approved', 'pending_approval', 'rejected', 'approval_misconfigured']
 
-export async function GET() {
+export const GET = route(async () => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -23,38 +26,24 @@ export async function GET() {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-  const { data: employee } = await service
-    .from('employees')
-    .select('id')
-    .eq('id', user.id)
-    .maybeSingle()
+  const employee = await employees.traveller(db, user.id)
 
   if (!employee) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
   }
 
-  const { data: bookings, error } = await service
-    .from('bookings')
-    .select('id, status, total_cost, sell_total, itinerary, updated_at')
-    .eq('employee_id', employee.id)
-    .in('status', ACTIONABLE_STATUSES)
-    .order('updated_at', { ascending: false })
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
+  const bookings = await bookingsRepo.actionableFor(db, employee.id, ACTIONABLE_STATUSES)
 
   return Response.json({
     ok: true,
-    bookings: (bookings ?? []).map(b => ({
+    bookings: bookings.map(b => ({
       id: b.id,
       status: b.status,
-      // The sell figure, never the airline one — see /api/bookings for why.
-      totalCost: b.sell_total ?? b.total_cost,
-      // Projected: the frozen itinerary carries airline figures.
+      // Already the sell figure (see bookings.actionableFor).
+      totalCost: b.total_cost,
+      // Projected: the frozen itinerary carries provider keys.
       itinerary: travellerItinerary(b.itinerary),
       updatedAt: b.updated_at,
     })),
   })
-}
+})

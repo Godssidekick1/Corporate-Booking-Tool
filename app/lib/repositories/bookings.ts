@@ -1,4 +1,4 @@
-import { sql, many, one, type Queryable } from '@/app/lib/db/sql'
+import { sql, many, one, maybeOne, exec, json, type Queryable } from '@/app/lib/db/sql'
 import type { Row } from '@/app/lib/db/types.generated'
 
 // ── Bookings and price quotes ────────────────────────────────────────────────
@@ -41,4 +41,119 @@ export async function tripCounts(
     where client_id = ${clientId} and employee_id = any(${[...employeeIds]})
     group by employee_id`)
   return new Map(rows.map(r => [r.employee_id, r.n]))
+}
+
+// ═══ The traveller's own bookings ═══════════════════════════════════════════
+// THE MARKUP RULE: a traveller is shown what the company is charged
+// (sell_total), never what the airline charged (total_cost). These reads
+// return `total_cost` already set to the sell figure -- coalesce(sell_total,
+// total_cost), the fallback covering bookings made before commercials existed,
+// on which the two are the same number. The airline figure is never selected,
+// so no route can send it by mistake.
+//
+// itinerary and fare_breakdown still carry fields a traveller may not see;
+// routes project them through app/lib/book/travellerView.
+
+const SELL_TOTAL = sql`coalesce(sell_total, total_cost)`
+
+export type TravellerBookingSummary = Pick<Row<'bookings'>,
+  'id' | 'status' | 'pnr' | 'total_cost' | 'itinerary' | 'traveler_snapshot' | 'fare_breakdown' | 'trip_id' | 'created_at'>
+
+export async function forTraveller(db: Queryable, employeeId: string, limit: number): Promise<TravellerBookingSummary[]> {
+  return many<TravellerBookingSummary>(db, sql`
+    select id, status, pnr, ${SELL_TOTAL} as total_cost, itinerary, traveler_snapshot, fare_breakdown,
+           trip_id, created_at
+    from bookings where employee_id = ${employeeId}
+    order by created_at desc, id
+    limit ${limit}`)
+}
+
+export type RecentBooking = Pick<Row<'bookings'>,
+  'id' | 'employee_id' | 'status' | 'pnr' | 'total_cost' | 'itinerary' | 'fare_breakdown' | 'created_at'>
+
+export async function recentFor(db: Queryable, employeeIds: readonly string[], limit: number): Promise<RecentBooking[]> {
+  if (employeeIds.length === 0) return []
+  return many<RecentBooking>(db, sql`
+    select id, employee_id, status, pnr, ${SELL_TOTAL} as total_cost, itinerary, fare_breakdown, created_at
+    from bookings where employee_id = any(${[...employeeIds]})
+    order by created_at desc, id
+    limit ${limit}`)
+}
+
+export type ActionableBooking = Pick<Row<'bookings'>, 'id' | 'status' | 'total_cost' | 'itinerary' | 'updated_at'>
+
+export async function actionableFor(
+  db: Queryable,
+  employeeId: string,
+  statuses: readonly string[]
+): Promise<ActionableBooking[]> {
+  return many<ActionableBooking>(db, sql`
+    select id, status, ${SELL_TOTAL} as total_cost, itinerary, updated_at
+    from bookings where employee_id = ${employeeId} and status = any(${[...statuses]})
+    order by updated_at desc, id`)
+}
+
+export type TripBooking = Pick<Row<'bookings'>,
+  'id' | 'booking_type' | 'status' | 'total_cost' | 'provider_order_id' | 'pnr' | 'itinerary' | 'created_at'>
+
+export async function forTrip(db: Queryable, tripId: string): Promise<TripBooking[]> {
+  return many<TripBooking>(db, sql`
+    select id, booking_type, status, ${SELL_TOTAL} as total_cost, provider_order_id, pnr, itinerary, created_at
+    from bookings where trip_id = ${tripId}
+    order by created_at, id`)
+}
+
+// ═══ One booking, internally ════════════════════════════════════════════════
+// These DO carry the airline figure and the commercial record: the routes
+// derive the sell-side breakdown from them and strip them before responding.
+// Never return one of these rows to a browser as it stands.
+
+export type BookingDetail = Pick<Row<'bookings'>,
+  | 'id' | 'status' | 'booking_type' | 'provider' | 'provider_order_id' | 'pnr' | 'ticket_numbers'
+  | 'sell_total' | 'total_cost' | 'commercials' | 'itinerary' | 'traveler_snapshot' | 'fare_breakdown'
+  | 'policy_status' | 'policy_verdict' | 'policy_verdict_detail' | 'employee_id' | 'trip_id' | 'is_ndc'
+  | 'created_at' | 'updated_at'
+>
+
+export async function detail(db: Queryable, bookingId: string): Promise<BookingDetail | null> {
+  return maybeOne<BookingDetail>(db, sql`
+    select id, status, booking_type, provider, provider_order_id, pnr, ticket_numbers, sell_total,
+           total_cost, commercials, itinerary, traveler_snapshot, fare_breakdown, policy_status,
+           policy_verdict, policy_verdict_detail, employee_id, trip_id, is_ndc, created_at, updated_at
+    from bookings where id = ${bookingId}`)
+}
+
+export type PublicTicketRow = Pick<Row<'bookings'>,
+  | 'id' | 'status' | 'pnr' | 'ticket_numbers' | 'provider_order_id' | 'sell_total' | 'commercials'
+  | 'itinerary' | 'traveler_snapshot' | 'fare_breakdown'
+>
+
+// By the unguessable share token -- the ONLY lookup an unauthenticated caller
+// can make. Callers validate the token's shape before asking.
+export async function byShareToken(db: Queryable, token: string): Promise<PublicTicketRow | null> {
+  return maybeOne<PublicTicketRow>(db, sql`
+    select id, status, pnr, ticket_numbers, provider_order_id, sell_total, commercials, itinerary,
+           traveler_snapshot, fare_breakdown
+    from bookings where share_token = ${token}`)
+}
+
+export type ShareInfo = Pick<Row<'bookings'>, 'id' | 'employee_id' | 'status' | 'share_token'>
+
+export async function shareInfo(db: Queryable, bookingId: string): Promise<ShareInfo | null> {
+  return maybeOne<ShareInfo>(db, sql`
+    select id, employee_id, status, share_token from bookings where id = ${bookingId}`)
+}
+
+// The provider keys a passenger-details correction is re-sent with.
+export type PassengerEditTarget = Pick<Row<'bookings'>,
+  'id' | 'employee_id' | 'status' | 'provider' | 'provider_order_id' | 'amadeus_key' | 'total_cost'>
+
+export async function passengerEditTarget(db: Queryable, bookingId: string): Promise<PassengerEditTarget | null> {
+  return maybeOne<PassengerEditTarget>(db, sql`
+    select id, employee_id, status, provider, provider_order_id, amadeus_key, total_cost
+    from bookings where id = ${bookingId}`)
+}
+
+export async function saveTravellerSnapshot(db: Queryable, bookingId: string, snapshot: unknown): Promise<void> {
+  await exec(db, sql`update bookings set traveler_snapshot = ${json(snapshot)} where id = ${bookingId}`)
 }

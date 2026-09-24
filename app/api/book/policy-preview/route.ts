@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { db } from '@/app/lib/db'
-import { createServiceClient } from '@/utils/supabase/service'
+import * as employees from '@/app/lib/repositories/employees'
+import { route } from '@/app/lib/http/handler'
 import { NextRequest } from 'next/server'
 import { checkBookingAgainstPolicy } from '@/app/lib/rule-engine/checkBookingAgainstPolicy'
 import { buildPolicyInputsFromFlight } from '@/app/lib/rule-engine/buildPolicyInputs'
@@ -27,7 +28,7 @@ interface PreviewBody {
   selectedSeatFees?: string[]
 }
 
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -35,12 +36,7 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-  const { data: employee } = await service
-    .from('employees')
-    .select('id')
-    .eq('id', user.id)
-    .maybeSingle()
+  const employee = await employees.traveller(db, user.id)
 
   if (!employee) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
@@ -76,4 +72,4 @@ export async function POST(req: NextRequest) {
     costTier: result.costTier,
     reason: buildReason(result.breaches, result.costTier, totalFare),
   })
-}
+})
