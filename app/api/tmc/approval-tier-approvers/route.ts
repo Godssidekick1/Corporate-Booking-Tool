@@ -101,7 +101,7 @@ export async function GET(req: NextRequest) {
   // can tell a bound step from an unbound one without a second request.
   const { data: template } = await service
     .from('approval_chain_templates')
-    .select('id, name, category, mode, quorum, tiers')
+    .select('id, name, mode, quorum, tiers')
     .eq('id', templateId)
     .single()
 

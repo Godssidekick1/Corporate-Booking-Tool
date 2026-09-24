@@ -54,6 +54,17 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }
 
+  // A tmc_admin passes the check above for any client, so the traveller's
+  // client must be this TMC's -- or any TMC could read anyone's policy by
+  // employee id. Answered like a missing employee.
+  const { data: client } = employee.client_id
+    ? await service.from('clients').select('tmc_id').eq('id', employee.client_id).maybeSingle()
+    : { data: null }
+
+  if (!client || client.tmc_id !== auth.tmcId) {
+    return Response.json({ error: 'Employee not found' }, { status: 404 })
+  }
+
   const result = await checkBookingAgainstPolicy(db, {
     employeeId,
     travelType,

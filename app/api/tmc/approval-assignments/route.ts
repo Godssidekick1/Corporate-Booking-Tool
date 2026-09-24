@@ -367,6 +367,20 @@ export async function DELETE(req: NextRequest) {
   }
 
   if (employeeId) {
+    // The employee must work at THIS client. The rest of this handler is
+    // scoped by clientId; this branch keyed only on employee_id, so an admin
+    // of one TMC could clear another tenant's routing by guessing an id.
+    const { data: employee } = await service
+      .from('employees')
+      .select('id')
+      .eq('id', employeeId)
+      .eq('client_id', clientId)
+      .maybeSingle()
+
+    if (!employee) {
+      return Response.json({ error: 'Employee not found at this client' }, { status: 404 })
+    }
+
     const { error } = await service
       .from('employee_approval_templates')
       .delete()

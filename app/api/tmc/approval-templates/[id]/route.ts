@@ -123,7 +123,7 @@ export async function PATCH(
     .from('approval_chain_templates')
     .update(fields)
     .eq('id', id)
-    .select('id, name, code, description, category, mode, quorum, tiers, version, created_at, client_id')
+    .select('id, name, code, description, mode, quorum, tiers, version, created_at, client_id')
     .single()
 
   if (updateError) {
@@ -190,6 +190,20 @@ export async function DELETE(
   if (defaultCount && defaultCount > 0) {
     return Response.json({
       error: `"${template.name}" is the default for ${defaultCount} client${defaultCount > 1 ? 's' : ''}. Change their default before deleting.`,
+    }, { status: 409 })
+  }
+
+  // Band routing too. band_approval_templates cascades on delete, so without
+  // this check deleting a template silently removed every band's routing
+  // through it -- the two checks above only ever looked at the other rungs.
+  const { count: bandCount } = await service
+    .from('band_approval_templates')
+    .select('client_id', { count: 'exact', head: true })
+    .eq('template_id', id)
+
+  if (bandCount && bandCount > 0) {
+    return Response.json({
+      error: `"${template.name}" is assigned to ${bandCount} band${bandCount > 1 ? 's' : ''}. Reassign ${bandCount > 1 ? 'them' : 'it'} before deleting.`,
     }, { status: 409 })
   }
 

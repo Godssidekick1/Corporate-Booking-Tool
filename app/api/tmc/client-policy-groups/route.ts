@@ -36,6 +36,23 @@ function sharedRanks(a: number[], b: number[]): number[] {
   return a.filter(rank => bSet.has(rank))
 }
 
+// A tmc_admin passes requireTmcPermission for ANY clientId, so the client must
+// be checked against their TMC explicitly. POST always did this; GET and
+// DELETE did not, which let another TMC's admin read -- and unlink -- a
+// client's policy groups by id.
+async function clientIsTmcs(
+  service: ReturnType<typeof createServiceClient>,
+  clientId: string,
+  tmcId: string | null | undefined
+): Promise<boolean> {
+  const { data: client } = await service
+    .from('clients')
+    .select('id, tmc_id')
+    .eq('id', clientId)
+    .maybeSingle()
+  return Boolean(client && tmcId && client.tmc_id === tmcId)
+}
+
 export async function GET(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -53,6 +70,10 @@ export async function GET(req: NextRequest) {
   const auth = await requireTmcPermission(db, user.id, 'manage_policy', clientId)
   if (!auth.authorized) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
+  }
+
+  if (!(await clientIsTmcs(service, clientId, auth.tmcId))) {
+    return Response.json({ error: 'Client not found for this TMC' }, { status: 404 })
   }
 
   const { data: links, error } = await service
@@ -226,6 +247,10 @@ export async function DELETE(req: NextRequest) {
   const auth = await requireTmcPermission(db, user.id, 'manage_policy', clientId)
   if (!auth.authorized) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
+  }
+
+  if (!(await clientIsTmcs(service, clientId, auth.tmcId))) {
+    return Response.json({ error: 'Client not found for this TMC' }, { status: 404 })
   }
 
   const { error } = await service

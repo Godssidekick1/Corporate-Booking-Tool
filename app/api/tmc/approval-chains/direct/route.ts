@@ -295,7 +295,6 @@ export async function POST(req: NextRequest) {
             tmc_id: access.tmcId,
             client_id: clientId,
             name,
-            category,
             mode,
             quorum,
             tiers,

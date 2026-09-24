@@ -117,18 +117,12 @@ export async function PATCH(
         )
       }
 
-      // Rules authored at a rank the group no longer covers are unreachable —
-      // resolveEffectivePolicy only looks at ranks in the set. Soft-delete them
-      // so the version history stays intact but they stop being served.
-      if (toRemove.length > 0) {
-        await orAbort(
-          tx.from('policy_rules')
-            .update({ deleted_at: new Date().toISOString() })
-            .eq('policy_group_id', id)
-            .in('band_rank', toRemove)
-            .is('deleted_at', null)
-        )
-      }
+      // Nothing to retire when a rank leaves the set. Rules belong to the
+      // GROUP, not to a rank within it (see resolveEffectivePolicy): the
+      // remaining ranks keep the same limits. This used to soft-delete rules
+      // "at the removed rank" by policy_rules.band_rank -- a column that no
+      // longer exists -- so every PATCH that removed a rank failed and rolled
+      // back.
     }
   })
 

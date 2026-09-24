@@ -6,6 +6,7 @@ import {
   mergeTiers,
   type ChainMode,
   type ChainQuorum,
+  type TemplateTier,
 } from './linkedApprovalTemplates'
 
 // Data access only -- narrowed from the full service client with Pick so that
@@ -642,12 +643,19 @@ export async function advanceApprovalChain(
     return { requiresApproval: false }
   }
 
+  // Structure from the template, identity from this client's bindings --
+  // exactly as resolveChainForEmployee builds it. The stored tiers carry NO
+  // approver: read raw, every step after the first had approver_type
+  // undefined, resolved to nobody, and the booking was auto-approved with the
+  // remaining steps silently skipped.
+  const approvers = await getTierApprovers(service, clientId, template.id)
+
   const chain: ResolvedChain = {
     templateId: template.id,
     name: template.name,
     mode: template.mode as ChainMode,
     quorum: template.quorum as ChainQuorum,
-    tiers: (template.tiers as ChainTier[] | null) ?? [],
+    tiers: mergeTiers((template.tiers as TemplateTier[] | null) ?? [], approvers),
   }
 
   if (chain.mode === 'parallel') {
