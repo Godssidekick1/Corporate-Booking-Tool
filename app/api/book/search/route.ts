@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { db } from '@/app/lib/db'
-import { createServiceClient } from '@/utils/supabase/service'
+import * as employees from '@/app/lib/repositories/employees'
+import { route } from '@/app/lib/http/handler'
 import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic } from '@/app/lib/amadeus/client'
 import { harvestAirlines } from '@/app/lib/reference/harvestAirlines'
 import {
@@ -181,7 +182,7 @@ function isValidTravelDate(value: string): boolean {
   return date >= today
 }
 
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -189,12 +190,7 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-  const { data: employee } = await service
-    .from('employees')
-    .select('id, client_id')
-    .eq('id', user.id)
-    .maybeSingle()
+  const employee = await employees.traveller(db, user.id)
 
   if (!employee) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
@@ -553,4 +549,4 @@ export async function POST(req: NextRequest) {
     console.error('Flight search error:', err)
     return Response.json({ error: 'Flight search failed' }, { status: 500 })
   }
-}
+})

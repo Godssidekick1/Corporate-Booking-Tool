@@ -1,6 +1,8 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic, CustomerInfo } from '@/app/lib/amadeus/client'
+import * as employees from '@/app/lib/repositories/employees'
+import * as bookingsRepo from '@/app/lib/repositories/bookings'
+import { route } from '@/app/lib/http/handler'
 import { loadClientGates } from '@/app/lib/clients/clientGates'
 import { NextRequest } from 'next/server'
 import util from 'util'
@@ -46,7 +48,6 @@ interface BookBody {
 // silent re-price/re-AddPassenger recovery (see the session-expiry catch
 // below) — same persistence logic either way.
 async function finalizeHeld(
-  service: ReturnType<typeof createServiceClient>,
   bookingId: string,
   result: Awaited<ReturnType<typeof amadeus.booking>>
 ) {
@@ -56,14 +57,12 @@ async function finalizeHeld(
   // authoritative source), so this is a best-effort early capture.
   const pnr = result.AirBookingResponse?.[0]?.PNR ?? null
 
-  const { error: updateError } = await service
-    .from('bookings')
-    .update({
-      status: 'held',
-      pnr,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', bookingId)
+  let updateError: unknown = null
+  try {
+    await bookingsRepo.markHeld(db, bookingId, pnr)
+  } catch (err) {
+    updateError = err
+  }
 
   if (updateError) {
     // The airline has confirmed the booking — this is a persistence
@@ -88,15 +87,13 @@ async function finalizeHeld(
   })
 }
 
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
   if (authError || !user) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
-
-  const service = createServiceClient()
 
   // Body first, so the booking id is available to overlap its read with the
   // employee lookup. The two are independent and cost ~200ms each against this
@@ -107,13 +104,9 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'bookingId is required' }, { status: 400 })
   }
 
-  const [{ data: employee }, { data: booking }] = await Promise.all([
-    service.from('employees').select('id, client_id').eq('id', user.id).maybeSingle(),
-    service
-      .from('bookings')
-      .select('id, employee_id, client_id, status, provider, provider_order_id, amadeus_key, pricing_key, search_key, result_index, total_cost, traveler_snapshot')
-      .eq('id', bookingId)
-      .maybeSingle(),
+  const [employee, booking] = await Promise.all([
+    employees.traveller(db, user.id),
+    bookingsRepo.holdTarget(db, bookingId),
   ])
 
   if (!employee) {
@@ -176,7 +169,7 @@ export async function POST(req: NextRequest) {
     }, { status: 409 })
   }
 
-  if (!booking.amadeus_key || !booking.provider_order_id) {
+  if (!booking.amadeus_key || !booking.provider_order_id || !booking.provider) {
     // Shouldn't happen for a booking that reached 'approved' (both are set
     // at AddPassenger time, before pending_approval/approved is possible),
     // but fail with a clear message rather than calling Booking with a
@@ -187,13 +180,15 @@ export async function POST(req: NextRequest) {
     }, { status: 500 })
   }
 
+  const provider = booking.provider
+
   try {
     let bookingKey: string = booking.amadeus_key
     let bookingReferenceNo: string = booking.provider_order_id
 
     try {
-      const result = await amadeus.booking(bookingKey, bookingReferenceNo, booking.provider)
-      return await finalizeHeld(service, bookingId, result)
+      const result = await amadeus.booking(bookingKey, bookingReferenceNo, provider)
+      return await finalizeHeld(bookingId, result)
     } catch (err) {
       // A booking that sat in pending_approval for a while can outlive the
       // GDS-side session tied to its stored amadeus_key/provider_order_id —
@@ -237,7 +232,7 @@ export async function POST(req: NextRequest) {
         freshPricing = await amadeus.pricing(
           booking.search_key,
           booking.pricing_key,
-          booking.provider,
+          provider,
           booking.result_index
         )
       } catch (pricingErr) {
@@ -261,11 +256,9 @@ export async function POST(req: NextRequest) {
             searchKey: booking.search_key,
             bookingCreatedRelativeToNow: 'unknown — check bookings.created_at for this bookingId',
           })
-          const { error: staleUpdateError } = await service
-            .from('bookings')
-            .update({ status: 'failed', updated_at: new Date().toISOString() })
-            .eq('id', bookingId)
-          if (staleUpdateError) {
+          try {
+            await bookingsRepo.markFailed(db, bookingId)
+          } catch (staleUpdateError) {
             console.error('Failed to mark booking as failed after unrecoverable stale search', staleUpdateError, { bookingId })
           }
           return Response.json({
@@ -279,7 +272,7 @@ export async function POST(req: NextRequest) {
       const freshAddPassenger = await amadeus.addPassenger(
         freshPricing.Key,
         freshPricing.ReferenceNo,
-        booking.traveler_snapshot as CustomerInfo,
+        booking.traveler_snapshot as unknown as CustomerInfo,
         String(booking.total_cost),
         String(booking.total_cost)
       )
@@ -287,21 +280,14 @@ export async function POST(req: NextRequest) {
       bookingKey = freshPricing.Key
       bookingReferenceNo = freshAddPassenger.ReferenceNo ?? freshPricing.ReferenceNo
 
-      const { error: refreshError } = await service
-        .from('bookings')
-        .update({
-          amadeus_key: bookingKey,
-          provider_order_id: bookingReferenceNo,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', bookingId)
-
-      if (refreshError) {
+      try {
+        await bookingsRepo.refreshProviderSession(db, bookingId, bookingKey, bookingReferenceNo)
+      } catch (refreshError) {
         console.error('Re-priced booking successfully but failed to save refreshed key/reference', refreshError, { bookingId })
       }
 
-      const retryResult = await amadeus.booking(bookingKey, bookingReferenceNo, booking.provider)
-      return await finalizeHeld(service, bookingId, retryResult)
+      const retryResult = await amadeus.booking(bookingKey, bookingReferenceNo, provider)
+      return await finalizeHeld(bookingId, retryResult)
     }
   } catch (err) {
     if (err instanceof AmadeusError) {
@@ -318,10 +304,12 @@ export async function POST(req: NextRequest) {
       // failure reason inside AirBookingResponse[0] is visible.
       console.error('Booking error (full, untruncated raw):', util.inspect(sanitizeAmadeusDiagnostic(err.raw), { depth: null, colors: false }))
 
-      await service
-        .from('bookings')
-        .update({ status: 'failed', updated_at: new Date().toISOString() })
-        .eq('id', bookingId)
+      // Recording the failure must not replace the airline's error with ours.
+      try {
+        await bookingsRepo.markFailed(db, bookingId)
+      } catch (failError) {
+        console.error('Failed to mark booking as failed after an airline error', failError, { bookingId })
+      }
 
       return Response.json({
         error: err.message,
@@ -333,4 +321,4 @@ export async function POST(req: NextRequest) {
     console.error('Booking error:', err)
     return Response.json({ error: 'Could not complete booking' }, { status: 500 })
   }
-}
+})

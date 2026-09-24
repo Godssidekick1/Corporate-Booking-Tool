@@ -1,6 +1,8 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic } from '@/app/lib/amadeus/client'
+import * as employees from '@/app/lib/repositories/employees'
+import * as bookingsRepo from '@/app/lib/repositories/bookings'
+import { route } from '@/app/lib/http/handler'
 import { loadClientGates } from '@/app/lib/clients/clientGates'
 import { classifyFlight } from '@/app/lib/rule-engine/classifyTrip'
 import { NextRequest } from 'next/server'
@@ -32,15 +34,13 @@ interface TicketBody {
   bookingId: string
 }
 
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
   if (authError || !user) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
-
-  const service = createServiceClient()
 
   // The body is read BEFORE the employee lookup so the booking id is in hand and
   // the two reads can overlap. They are independent — one is keyed on the user,
@@ -56,13 +56,9 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'bookingId is required' }, { status: 400 })
   }
 
-  const [{ data: employee }, { data: booking }] = await Promise.all([
-    service.from('employees').select('id, client_id').eq('id', user.id).maybeSingle(),
-    service
-      .from('bookings')
-      .select('id, employee_id, status, provider, provider_order_id, amadeus_key, pricing_key, pnr, itinerary, share_token')
-      .eq('id', bookingId)
-      .maybeSingle(),
+  const [employee, booking] = await Promise.all([
+    employees.traveller(db, user.id),
+    bookingsRepo.ticketTarget(db, bookingId),
   ])
 
   if (!employee) {
@@ -118,14 +114,19 @@ export async function POST(req: NextRequest) {
     }, { status: 409 })
   }
 
+  // A held booking always has these -- they were set when passenger details
+  // reached the airline. Checked rather than assumed so a damaged row fails
+  // clearly here instead of as an unreadable provider error.
+  const { amadeus_key: resultKey, provider_order_id: referenceNo, pricing_key: pricingKey, provider } = booking
+  if (!resultKey || !referenceNo || !pricingKey || !provider) {
+    console.error('Booking is held but missing provider keys', { bookingId })
+    return Response.json({
+      error: 'This booking is missing required data and cannot be ticketed. Please contact support.',
+    }, { status: 500 })
+  }
+
   try {
-    const result = await amadeus.ticket(
-      booking.amadeus_key,
-      booking.provider_order_id,
-      booking.pricing_key,
-      booking.provider,
-      booking.pnr ?? ''
-    )
+    const result = await amadeus.ticket(resultKey, referenceNo, pricingKey, provider, booking.pnr ?? '')
 
     const flightResult = result.AirBookingResponse?.[0]
     const pnr = flightResult?.PNR ?? booking.pnr
@@ -162,16 +163,14 @@ export async function POST(req: NextRequest) {
     // traveller has already sent to someone.
     const shareToken = booking.share_token ?? crypto.randomUUID().replace(/-/g, '')
 
-    const { error: updateError } = await service
-      .from('bookings')
-      .update({
-        status: 'ticketed',
-        pnr,
-        ticket_numbers: ticketNumbers,
-        share_token: shareToken,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', bookingId)
+    // The ticket exists at the airline now. A failure to record it gets its
+    // own answer, carrying the ticket numbers -- not the generic error path.
+    let updateError: unknown = null
+    try {
+      await bookingsRepo.markTicketed(db, bookingId, { pnr, ticketNumbers, shareToken })
+    } catch (err) {
+      updateError = err
+    }
 
     if (updateError) {
       console.error('Ticket issued but failed to save', updateError, { bookingId, ticketNumbers })
@@ -212,4 +211,4 @@ export async function POST(req: NextRequest) {
     console.error('Ticket error:', err)
     return Response.json({ error: 'Could not issue ticket' }, { status: 500 })
   }
-}
+})

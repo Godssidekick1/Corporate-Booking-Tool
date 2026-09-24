@@ -157,3 +157,93 @@ export async function passengerEditTarget(db: Queryable, bookingId: string): Pro
 export async function saveTravellerSnapshot(db: Queryable, bookingId: string, snapshot: unknown): Promise<void> {
   await exec(db, sql`update bookings set traveler_snapshot = ${json(snapshot)} where id = ${bookingId}`)
 }
+
+// ═══ The price quote ════════════════════════════════════════════════════════
+// The server's own record of what an itinerary was priced at, for this
+// client -- airline components AND the sell side. It is what takes price
+// authority away from the browser, which is never told the airline figure.
+
+// The two jsonb columns take the domain objects as they are (FareComponents,
+// CommercialsRecord); they are JSON-encoded on the way in.
+export type NewQuote = Pick<Row<'price_quotes'>,
+  | 'client_id' | 'employee_id' | 'amadeus_key' | 'reference_no' | 'pricing_key' | 'provider'
+  | 'result_index' | 'sell_total' | 'expires_at'
+> & { airline_components: unknown; commercials: unknown }
+
+// Re-pricing the same itinerary is normal; the newest quote is the one that
+// counts, so the pair (amadeus_key, reference_no) is upserted.
+export async function saveQuote(db: Queryable, q: NewQuote): Promise<void> {
+  await exec(db, sql`
+    insert into price_quotes (client_id, employee_id, amadeus_key, reference_no, pricing_key, provider,
+                              result_index, airline_components, commercials, sell_total, expires_at)
+    values (${q.client_id}, ${q.employee_id}, ${q.amadeus_key}, ${q.reference_no}, ${q.pricing_key},
+            ${q.provider}, ${q.result_index}, ${json(q.airline_components)}, ${json(q.commercials)},
+            ${q.sell_total}, ${q.expires_at})
+    on conflict (amadeus_key, reference_no) do update set
+      client_id = excluded.client_id, employee_id = excluded.employee_id,
+      pricing_key = excluded.pricing_key, provider = excluded.provider,
+      result_index = excluded.result_index, airline_components = excluded.airline_components,
+      commercials = excluded.commercials, sell_total = excluded.sell_total,
+      expires_at = excluded.expires_at`)
+}
+
+// ═══ Confirming with the airline ════════════════════════════════════════════
+// Every write below follows a GDS call, and none runs in a transaction on
+// purpose: holding one open across a provider round trip would take a row
+// lock hostage to a third party's latency. Each is one row, one statement.
+
+export type HoldTarget = Pick<Row<'bookings'>,
+  | 'id' | 'employee_id' | 'client_id' | 'status' | 'provider' | 'provider_order_id' | 'amadeus_key'
+  | 'pricing_key' | 'search_key' | 'result_index' | 'total_cost' | 'traveler_snapshot'
+>
+
+export async function holdTarget(db: Queryable, bookingId: string): Promise<HoldTarget | null> {
+  return maybeOne<HoldTarget>(db, sql`
+    select id, employee_id, client_id, status, provider, provider_order_id, amadeus_key, pricing_key,
+           search_key, result_index, total_cost, traveler_snapshot
+    from bookings where id = ${bookingId}`)
+}
+
+export async function markHeld(db: Queryable, bookingId: string, pnr: string | null): Promise<void> {
+  await exec(db, sql`
+    update bookings set status = 'held', pnr = ${pnr}, updated_at = now() where id = ${bookingId}`)
+}
+
+export async function markFailed(db: Queryable, bookingId: string): Promise<void> {
+  await exec(db, sql`update bookings set status = 'failed', updated_at = now() where id = ${bookingId}`)
+}
+
+// A re-priced session's key and reference, replacing expired ones.
+export async function refreshProviderSession(
+  db: Queryable,
+  bookingId: string,
+  amadeusKey: string,
+  referenceNo: string
+): Promise<void> {
+  await exec(db, sql`
+    update bookings set amadeus_key = ${amadeusKey}, provider_order_id = ${referenceNo}, updated_at = now()
+    where id = ${bookingId}`)
+}
+
+export type TicketTarget = Pick<Row<'bookings'>,
+  | 'id' | 'employee_id' | 'status' | 'provider' | 'provider_order_id' | 'amadeus_key' | 'pricing_key'
+  | 'pnr' | 'itinerary' | 'share_token'
+>
+
+export async function ticketTarget(db: Queryable, bookingId: string): Promise<TicketTarget | null> {
+  return maybeOne<TicketTarget>(db, sql`
+    select id, employee_id, status, provider, provider_order_id, amadeus_key, pricing_key, pnr,
+           itinerary, share_token
+    from bookings where id = ${bookingId}`)
+}
+
+export async function markTicketed(
+  db: Queryable,
+  bookingId: string,
+  t: { pnr: string | null; ticketNumbers: (string | null)[]; shareToken: string }
+): Promise<void> {
+  await exec(db, sql`
+    update bookings set status = 'ticketed', pnr = ${t.pnr}, ticket_numbers = ${t.ticketNumbers},
+      share_token = ${t.shareToken}, updated_at = now()
+    where id = ${bookingId}`)
+}

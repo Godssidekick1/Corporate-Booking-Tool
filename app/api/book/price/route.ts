@@ -1,7 +1,9 @@
 import { createClient } from '@/utils/supabase/server'
 import { db } from '@/app/lib/db'
-import { createServiceClient } from '@/utils/supabase/service'
-import { amadeus, type PricingResponse } from '@/app/lib/amadeus/client'
+import * as employees from '@/app/lib/repositories/employees'
+import * as bookingsRepo from '@/app/lib/repositories/bookings'
+import { route } from '@/app/lib/http/handler'
+import { amadeus, AmadeusError, type PricingResponse } from '@/app/lib/amadeus/client'
 import { stampCommercials } from '@/app/lib/commercials/stampCommercials'
 import { emptyCommercials, type CommercialsRecord } from '@/app/lib/commercials/composeSellPrice'
 import { round2, type FareComponents } from '@/app/lib/commercials/fareComponents'
@@ -134,7 +136,7 @@ function logCommercialDecision(
   console.info(lines.join('\n'))
 }
 
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -166,12 +168,7 @@ if (!key || !pricingKey || !provider || !resultIndex) {
     // Deliberately not Promise.all: pricing is the one that can fail in an
     // interesting way, and awaiting it first keeps the existing catch handling
     // (fare_not_found, AmadeusError) exactly as it was.
-    const service = createServiceClient()
-    const employeePromise = service
-      .from('employees')
-      .select('id, client_id')
-      .eq('id', user.id)
-      .maybeSingle()
+    const employeePromise = employees.traveller(db, user.id)
 
     const pricing = await amadeus.pricing(key, pricingKey, provider, resultIndex)
     const details = extractPricingDetails(pricing)
@@ -190,7 +187,7 @@ if (!key || !pricingKey || !provider || !resultIndex) {
     //
     // This route used to do auth.getUser() and nothing else. It needs the
     // employee's client now, because a price is a price FOR SOMEBODY.
-    const { data: employee } = await employeePromise
+    const employee = await employeePromise
 
     const components: FareComponents = {
       base: details.baseFare ?? 0,
@@ -241,24 +238,24 @@ if (!key || !pricingKey || !provider || !resultIndex) {
     // Upserted on (amadeus_key, reference_no): re-pricing the same itinerary is
     // a normal thing to do, and the newest quote is the one that counts.
     if (employee?.client_id) {
-      const { error: quoteError } = await service.from('price_quotes').upsert({
-        client_id: employee.client_id,
-        employee_id: employee.id,
-        amadeus_key: details.key,
-        reference_no: details.referenceNo,
-        pricing_key: pricingKey,
-        provider,
-        result_index: resultIndex,
-        airline_components: components,
-        commercials: record,
-        sell_total: record.sellTotal,
-        // Comfortably longer than a booking flow and shorter than a fare's own
-        // life. A missing quote is recoverable — add-passenger falls back to
-        // re-pricing — so an aggressive TTL costs latency, not correctness.
-        expires_at: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
-      }, { onConflict: 'amadeus_key,reference_no' })
-
-      if (quoteError) {
+      try {
+        await bookingsRepo.saveQuote(db, {
+          client_id: employee.client_id,
+          employee_id: employee.id,
+          amadeus_key: details.key,
+          reference_no: details.referenceNo,
+          pricing_key: pricingKey,
+          provider,
+          result_index: resultIndex,
+          airline_components: components,
+          commercials: record,
+          sell_total: record.sellTotal,
+          // Comfortably longer than a booking flow and shorter than a fare's own
+          // life. A missing quote is recoverable — add-passenger falls back to
+          // re-pricing — so an aggressive TTL costs latency, not correctness.
+          expires_at: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
+        })
+      } catch (quoteError) {
         // Not fatal. The traveller can still be quoted; add-passenger will
         // re-price rather than trust the browser.
         console.error('[price] could not persist the quote', quoteError)
@@ -332,6 +329,13 @@ if (!key || !pricingKey || !provider || !resultIndex) {
       }, { status: 200 })
     }
 
-    return Response.json({ ok: false, error: message }, { status: 500 })
+    // The provider's message is passed on as it always was. Anything else --
+    // a database failure, now that repositories throw -- is logged, not
+    // echoed: its text names tables and constraints.
+    if (err instanceof AmadeusError) {
+      return Response.json({ ok: false, error: message }, { status: 500 })
+    }
+    console.error('[price] failed', err)
+    return Response.json({ ok: false, error: 'Pricing failed' }, { status: 500 })
   }
-}
+})
