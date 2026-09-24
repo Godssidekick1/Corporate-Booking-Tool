@@ -1,7 +1,8 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
+import * as fops from '@/app/lib/repositories/fop'
+import { route } from '@/app/lib/http/handler'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
-import { db } from '@/app/lib/db'
+import { db, transaction } from '@/app/lib/db'
 
 // ── GET /api/tmc/fop-codes ───────────────────────────────────────────────────
 // The two code lists a form of payment is built from.
@@ -33,7 +34,7 @@ const DEFAULT_PAYMENT_TYPES = [
   { code: 'CL', label: 'Credit limit', requires_card: false },
 ] as const
 
-export async function GET() {
+export const GET = route(async () => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -41,41 +42,23 @@ export async function GET() {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
   const auth = await requireTmcPermission(db, user.id, 'manage_fops')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
+  const tmcId = auth.tmcId
 
-  let [{ data: gdsEntries }, { data: paymentTypes }] = await Promise.all([
-    service.from('fop_gds_entries').select('id, code, label, active').eq('tmc_id', auth.tmcId).order('code'),
-    service.from('fop_payment_types').select('id, code, label, requires_card, active').eq('tmc_id', auth.tmcId).order('code'),
-  ])
+  let [gdsEntries, paymentTypes] = await Promise.all([fops.gdsEntries(db, tmcId), fops.paymentTypes(db, tmcId)])
 
-  // Seed on first read for a TMC created after the migration ran.
-  if (!gdsEntries || gdsEntries.length === 0) {
-    await service.from('fop_gds_entries').insert(
-      DEFAULT_GDS_ENTRIES.map(e => ({ tmc_id: auth.tmcId, code: e.code, label: e.label }))
-    )
-    const { data } = await service
-      .from('fop_gds_entries').select('id, code, label, active').eq('tmc_id', auth.tmcId).order('code')
-    gdsEntries = data ?? []
+  // Seed on first read for a TMC created after the migration ran. Each list is
+  // seeded only when it is the empty one, in one idempotent transaction.
+  if (gdsEntries.length === 0 || paymentTypes.length === 0) {
+    await transaction(tx => fops.seedCodes(tx, tmcId,
+      gdsEntries.length === 0 ? DEFAULT_GDS_ENTRIES : [],
+      paymentTypes.length === 0 ? DEFAULT_PAYMENT_TYPES : [],
+    ), { tenantId: tmcId, userId: user.id })
+    ;[gdsEntries, paymentTypes] = await Promise.all([fops.gdsEntries(db, tmcId), fops.paymentTypes(db, tmcId)])
   }
 
-  if (!paymentTypes || paymentTypes.length === 0) {
-    await service.from('fop_payment_types').insert(
-      DEFAULT_PAYMENT_TYPES.map(p => ({
-        tmc_id: auth.tmcId, code: p.code, label: p.label, requires_card: p.requires_card,
-      }))
-    )
-    const { data } = await service
-      .from('fop_payment_types').select('id, code, label, requires_card, active').eq('tmc_id', auth.tmcId).order('code')
-    paymentTypes = data ?? []
-  }
-
-  return Response.json({
-    ok: true,
-    gdsEntries: gdsEntries ?? [],
-    paymentTypes: paymentTypes ?? [],
-  })
-}
+  return Response.json({ ok: true, gdsEntries, paymentTypes })
+})

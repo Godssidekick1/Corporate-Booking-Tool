@@ -930,3 +930,19 @@ export async function travellerCards(db: Queryable, employeeIds: readonly string
   return many<TravellerCard>(db, sql`
     select id, full_name, email, department from employees where id = any(${[...employeeIds]}) order by id`)
 }
+
+// ═══ Forms of payment ═══════════════════════════════════════════════════════
+
+export type Identity = Pick<Row<'employees'>, 'id' | 'role' | 'tmc_id' | 'client_id' | 'status'>
+
+// Who is asking, on both sides of the TMC/corporate line.
+export async function identity(db: Queryable, employeeId: string): Promise<Identity | null> {
+  return maybeOne<Identity>(db, sql`select id, role, tmc_id, client_id, status from employees where id = ${employeeId}`)
+}
+
+// The TMC a traveller belongs to, through their client. Null for someone at no
+// client -- or for no one at all.
+export async function tmcOfTraveller(db: Queryable, employeeId: string): Promise<string | null> {
+  return (await maybeOne<{ tmc_id: string }>(db, sql`
+    select c.tmc_id from employees e join clients c on c.id = e.client_id where e.id = ${employeeId}`))?.tmc_id ?? null
+}

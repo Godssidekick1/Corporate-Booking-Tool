@@ -255,6 +255,25 @@ d('forms of payment', () => {
     expect((one_fop.json as Paged<{ fop_id: string }>).items.every(i => i.fop_id === fresh)).toBe(true)
   })
 
+  it('mappings: search spans both sides of a mapping', async () => {
+    // On the shim this 500'd outright: its .or() had no `in` operator, and
+    // the search was built as an `in` list per id column.
+    const search = (term: string) =>
+      call(mappingsGet, { as: a.tmcAdmin, url: `/api/tmc/fop-assignments?search=${encodeURIComponent(term)}` })
+    const byFop = (await search('road')).json as Paged<{ fop_label: string }>
+    expect(byFop.items.length).toBeGreaterThan(0)
+    expect(byFop.items.every(i => i.fop_label === 'Road warrior')).toBe(true)
+    const byTarget = (await search('bcg')).json as Paged<{ target_name: string; fop_label: string }>
+    expect(byTarget.items.length).toBeGreaterThan(0)
+    expect(byTarget.items.every(i => /bcg/i.test(i.target_name) || /bcg/i.test(i.fop_label))).toBe(true)
+    expect((await search('zzzznothing')).json).toMatchObject({ items: [], total: 0 })
+  })
+
+  it('a code already in use is a 409 that says so, not a raw database error', async () => {
+    const res = await create({ label: 'Clash', fop_code: 'cd9' })
+    expect(res).toEqual({ status: 409, json: { error: 'Another form of payment already uses the code "CD9"' } })
+  })
+
   it('mappings: one switched off, then removed; tenancy holds', async () => {
     const [first] = await many<{ id: string }>(db, sql`select id from fop_assignments where fop_id = ${fresh} order by id`)
     const toggle = (as: { id: string }, body: unknown) =>

@@ -1,12 +1,16 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
+import * as fops from '@/app/lib/repositories/fop'
+import * as clients from '@/app/lib/repositories/clients'
+import * as employees from '@/app/lib/repositories/employees'
+import * as tmcs from '@/app/lib/repositories/tmcs'
+import { route } from '@/app/lib/http/handler'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
-import { parsePageParams, paginateInMemory, escapeFilterValue } from '@/app/lib/pagination'
+import { parsePageParams, paginateInMemory } from '@/app/lib/pagination'
 import { validateRbdSpec } from '@/app/lib/fop/rbdSpec'
 import { fopStatus, describeFop, type FopStatus } from '@/app/lib/fop/fopStatus'
 import { validateAirlineCode } from '@/app/lib/reference/airlineCode'
 import { NextRequest } from 'next/server'
-import { db } from '@/app/lib/db'
+import { db, transaction, isConstraint } from '@/app/lib/db'
 
 // ── GET /api/tmc/forms-of-payment ────────────────────────────────────────────
 // The TMC's payment methods, filtered by who is asking.
@@ -31,65 +35,11 @@ import { db } from '@/app/lib/db'
 // the rules that decide when they are used.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const FOP_COLUMNS =
-  'id, fop_code, label, fop_type, payer, gds_entry_id, payment_type_id, card_type, last4, expiry_month, expiry_year, gds_alias, branch_id, owner_client_id, owner_employee_id, airline_code, rbd_spec, active, is_default, notes, created_at'
-
-// ── claimDefault ─────────────────────────────────────────────────────────────
-// Clears the TMC's existing default before a new one is set.
-//
-// A partial unique index enforces one-per-TMC, and without this the second
-// person to tick the box gets a raw "duplicate key value violates unique
-// constraint fop_one_default_per_tmc" — which tells them nothing about what to
-// do. Marking a second default is a SWAP, which is what anyone ticking the box
-// means, so the swap happens here rather than being reported as a conflict.
-//
-// `exceptId` is the row about to be written; skipping it keeps a save that does
-// not change the flag from pointlessly clearing and re-setting it.
-export async function claimDefault(
-  service: ReturnType<typeof createServiceClient>,
-  tmcId: string,
-  exceptId?: string
-) {
-  let query = service
-    .from('forms_of_payment')
-    .update({ is_default: false })
-    .eq('tmc_id', tmcId)
-    .eq('is_default', true)
-
-  if (exceptId) query = query.neq('id', exceptId)
-
-  await query
-}
-
 export const FOP_TYPES = ['card', 'cash'] as const
 export const PAYERS = ['agency', 'corporate', 'traveller'] as const
 export const CARD_TYPES = ['AX', 'VI', 'CA', 'DC'] as const
 
-interface Caller {
-  id: string
-  role: string
-  tmc_id: string | null
-  client_id: string | null
-}
-
-// Resolves who is asking before deciding what they may see. Deliberately does
-// NOT go through requireTmcPermission first: a corporate admin is a legitimate
-// caller here, and gating on a TMC permission would 403 them.
-async function loadCaller(
-  service: ReturnType<typeof createServiceClient>,
-  userId: string
-): Promise<Caller | null> {
-  const { data } = await service
-    .from('employees')
-    .select('id, role, tmc_id, client_id, status')
-    .eq('id', userId)
-    .maybeSingle()
-
-  if (!data || data.status === 'deactivated') return null
-  return data
-}
-
-export async function GET(req: NextRequest) {
+export const GET = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -97,9 +47,11 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-  const caller = await loadCaller(service, user.id)
-  if (!caller) {
+  // Resolves who is asking before deciding what they may see. Deliberately does
+  // NOT go through requireTmcPermission first: a corporate admin is a legitimate
+  // caller here, and gating on a TMC permission would 403 them.
+  const caller = await employees.identity(db, user.id)
+  if (!caller || caller.status === 'deactivated') {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
   }
 
@@ -114,9 +66,6 @@ export async function GET(req: NextRequest) {
 
   const query_ = req.nextUrl.searchParams
   const params = parsePageParams(query_)
-  const ids = query_.get('ids')?.split(',').filter(Boolean) ?? []
-  const filterType = query_.get('type')
-  const filterPayer = query_.get('payer')
   const filterStatus = query_.get('status') as FopStatus | null
 
   // A corporate caller's TMC comes from their client, since employees on the
@@ -126,59 +75,31 @@ export async function GET(req: NextRequest) {
     if (!caller.client_id) {
       return Response.json({ error: 'Forbidden' }, { status: 403 })
     }
-    const { data: client } = await service
-      .from('clients')
-      .select('tmc_id')
-      .eq('id', caller.client_id)
-      .maybeSingle()
-    tmcId = client?.tmc_id ?? null
+    tmcId = (await clients.tenancy(db, caller.client_id))?.tmc_id ?? null
   }
 
   if (!tmcId) {
     return Response.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  let query = service
-    .from('forms_of_payment')
-    .select(FOP_COLUMNS)
-    .eq('tmc_id', tmcId)
-    .order('label')
-
-  if (ids.length > 0) {
-    query = query.in('id', ids)
-  } else {
-    if (filterType) query = query.eq('fop_type', filterType)
-    if (filterPayer) query = query.eq('payer', filterPayer)
-
+  const rows = await fops.listForTmc(db, tmcId, {
+    ids: query_.get('ids')?.split(',').filter(Boolean),
+    type: query_.get('type'),
+    payer: query_.get('payer'),
     // Corporate Settings shows the cards one client owns. Filtered in SQL
     // rather than in the browser because this list is paged at ten — filtering
     // a page would show "no cards" for a client whose card happens to sit on
     // page two, which is worse than showing nothing at all.
-    const ownerClientId = query_.get('ownerClientId')
-    if (ownerClientId) query = query.eq('owner_client_id', ownerClientId)
-
-    if (params.search) {
-      const safe = escapeFilterValue(params.search)
-      // fop_code included: it is the short identifier a counsellor actually
-      // says out loud, so it is the first thing anyone searches by.
-      if (safe) {
-        query = query.or(
-          `fop_code.ilike.%${safe}%,label.ilike.%${safe}%,airline_code.ilike.%${safe}%,last4.ilike.%${safe}%`
-        )
-      }
-    }
-  }
-
-  const { data: rows, error } = await query
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
+    ownerClientId: query_.get('ownerClientId'),
+    // fop_code included: it is the short identifier a counsellor actually
+    // says out loud, so it is the first thing anyone searches by.
+    search: params.search,
+  })
 
   // The visibility rules, applied after the fetch because they are about
   // ownership rather than tenancy and read more clearly as one predicate than
   // as three query branches.
-  const visible = (rows ?? []).filter(fop => {
+  const visible = rows.filter(fop => {
     if (isTmcSide) return true
     if (caller.role === 'admin') {
       // A corporate admin sees their company's own cards and their own.
@@ -196,7 +117,7 @@ export async function GET(req: NextRequest) {
   const filtered = filterStatus ? enriched.filter(f => f.status === filterStatus) : enriched
 
   return Response.json(paginateInMemory(filtered, params))
-}
+})
 
 interface CreateBody {
   fop_code?: string | null
@@ -231,28 +152,18 @@ interface CreateBody {
 // given: the field is optional, and refusing to save without it would make the
 // code lists mandatory rather than useful.
 export async function deriveFopType<T extends Partial<CreateBody>>(
-  service: ReturnType<typeof createServiceClient>,
   tmcId: string,
   body: T
 ): Promise<{ body: T } | { error: string; status: number }> {
   const next = { ...body }
 
-  if (next.gds_entry_id) {
-    const { data: entry } = await service
-      .from('fop_gds_entries').select('id').eq('id', next.gds_entry_id).eq('tmc_id', tmcId).maybeSingle()
-    if (!entry) return { error: 'That GDS entry does not belong to your TMC', status: 422 }
+  if (next.gds_entry_id && !(await fops.gdsEntryInTmc(db, next.gds_entry_id, tmcId))) {
+    return { error: 'That GDS entry does not belong to your TMC', status: 422 }
   }
 
   if (next.payment_type_id) {
-    const { data: paymentType } = await service
-      .from('fop_payment_types')
-      .select('id, requires_card')
-      .eq('id', next.payment_type_id)
-      .eq('tmc_id', tmcId)
-      .maybeSingle()
-
+    const paymentType = await fops.paymentTypeInTmc(db, next.payment_type_id, tmcId)
     if (!paymentType) return { error: 'That payment type does not belong to your TMC', status: 422 }
-
     next.fop_type = paymentType.requires_card ? 'card' : 'cash'
   }
 
@@ -267,37 +178,23 @@ export async function deriveFopType<T extends Partial<CreateBody>>(
 // Shared by POST and PATCH. PATCH used to check the branch alone, so an edit
 // could hang this TMC's card on another tenant's client or traveller.
 // Returns the error to report, or null.
-export async function checkReferences(
-  service: ReturnType<typeof createServiceClient>,
-  tmcId: string,
-  body: Partial<CreateBody>
-): Promise<string | null> {
-  for (const [column, table] of [
-    ['branch_id', 'branches'],
-    ['owner_client_id', 'clients'],
-  ] as const) {
-    const id = body[column]
-    if (!id) continue
-    const { data: found } = await service
-      .from(table).select('id').eq('id', id).eq('tmc_id', tmcId).maybeSingle()
-    if (!found) return `That ${table.slice(0, -1)} does not belong to your TMC`
+export async function checkReferences(tmcId: string, body: Partial<CreateBody>): Promise<string | null> {
+  if (body.branch_id && !(await tmcs.branchInTmc(db, body.branch_id, tmcId))) {
+    return 'That branch does not belong to your TMC'
   }
-
-  if (body.owner_employee_id) {
-    // An employee belongs to a client, which belongs to the TMC — so the check
-    // goes one hop further than the two above.
-    const { data: owner } = await service
-      .from('employees')
-      .select('id, client_id, clients!inner(tmc_id)')
-      .eq('id', body.owner_employee_id)
-      .maybeSingle()
-
-    const ownerTmc = (owner as { clients?: { tmc_id?: string } } | null)?.clients?.tmc_id
-    if (!owner || ownerTmc !== tmcId) return 'That traveller does not belong to your TMC'
+  if (body.owner_client_id && (await clients.tenancy(db, body.owner_client_id))?.tmc_id !== tmcId) {
+    return 'That client does not belong to your TMC'
   }
-
+  // An employee belongs to a client, which belongs to the TMC — so the check
+  // goes one hop further than the two above.
+  if (body.owner_employee_id && (await employees.tmcOfTraveller(db, body.owner_employee_id)) !== tmcId) {
+    return 'That traveller does not belong to your TMC'
+  }
   return null
 }
+
+// fop_code is unique per TMC. A clash is the user's to fix, not a fault.
+export const FOP_CODE_TAKEN = 'fop_code_uniq'
 
 // ── normaliseFop ─────────────────────────────────────────────────────────────
 // Clears the fields the chosen type and payer make meaningless, so a stale
@@ -399,7 +296,7 @@ export function validateFop(body: Partial<CreateBody>): string | null {
   return validateRbdSpec(body.rbd_spec)
 }
 
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -407,11 +304,11 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
   const auth = await requireTmcPermission(db, user.id, 'manage_fops')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
+  const tmcId = auth.tmcId
 
   const raw = (await req.json()) as CreateBody
 
@@ -420,7 +317,7 @@ export async function POST(req: NextRequest) {
   // up disagreeing — a CC payment type on a cash FOP. The payment type's
   // requires_card flag is the one source of truth; this reads it and normalise
   // then clears the card fields if it says no.
-  const derived = await deriveFopType(service, auth.tmcId, raw)
+  const derived = await deriveFopType(tmcId, raw)
   if ('error' in derived) {
     return Response.json({ error: derived.error }, { status: derived.status })
   }
@@ -432,47 +329,56 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: validationError }, { status: 400 })
   }
 
-  const foreign = await checkReferences(service, auth.tmcId, body)
+  const foreign = await checkReferences(tmcId, body)
   if (foreign) {
     return Response.json({ error: foreign }, { status: 422 })
   }
 
-  if (body.is_default) await claimDefault(service, auth.tmcId)
+  const isCard = body.fop_type === 'card'
 
-  const { data: created, error } = await service
-    .from('forms_of_payment')
-    .insert({
-      tmc_id: auth.tmcId,
-      fop_code: body.fop_code?.trim().toUpperCase() || null,
-      label: body.label.trim(),
-      gds_entry_id: body.gds_entry_id || null,
-      payment_type_id: body.payment_type_id || null,
-      fop_type: body.fop_type,
-      payer: body.payer,
-      card_type: body.fop_type === 'card' ? body.card_type : null,
-      last4: body.fop_type === 'card' ? body.last4 || null : null,
-      expiry_month: body.fop_type === 'card' ? body.expiry_month ?? null : null,
-      expiry_year: body.fop_type === 'card' ? body.expiry_year ?? null : null,
-      gds_alias: body.gds_alias?.trim() || null,
-      branch_id: body.branch_id || null,
-      owner_client_id: body.owner_client_id || null,
-      owner_employee_id: body.owner_employee_id || null,
-      airline_code: body.airline_code?.trim().toUpperCase() || null,
-      rbd_spec: body.rbd_spec?.trim().toUpperCase() || null,
-      active: body.active ?? true,
-      is_default: body.is_default ?? false,
-      notes: body.notes?.trim() || null,
-      created_by: user.id,
+  // Ticking default is a SWAP, which is what anyone ticking the box means: the
+  // old holder is cleared first, in the SAME transaction, so the one-per-TMC
+  // index never rejects the write -- and a write that fails for any other
+  // reason no longer leaves the TMC with no default at all.
+  try {
+    const created = await transaction(async (tx) => {
+      if (body.is_default) await fops.clearDefault(tx, tmcId)
+      return fops.insertFop(tx, {
+        tmc_id: tmcId,
+        fop_code: body.fop_code?.trim().toUpperCase() || null,
+        label: body.label.trim(),
+        gds_entry_id: body.gds_entry_id || null,
+        payment_type_id: body.payment_type_id || null,
+        fop_type: body.fop_type,
+        payer: body.payer,
+        card_type: isCard ? body.card_type ?? null : null,
+        last4: isCard ? body.last4 || null : null,
+        expiry_month: isCard ? body.expiry_month ?? null : null,
+        expiry_year: isCard ? body.expiry_year ?? null : null,
+        gds_alias: body.gds_alias?.trim() || null,
+        branch_id: body.branch_id || null,
+        owner_client_id: body.owner_client_id || null,
+        owner_employee_id: body.owner_employee_id || null,
+        airline_code: body.airline_code?.trim().toUpperCase() || null,
+        rbd_spec: body.rbd_spec?.trim().toUpperCase() || null,
+        active: body.active ?? true,
+        is_default: body.is_default ?? false,
+        notes: body.notes?.trim() || null,
+        created_by: user.id,
+      })
+    }, { tenantId: tmcId, userId: user.id })
+
+    return Response.json({
+      ok: true,
+      fop: { ...created, status: fopStatus(created), description: describeFop(created) },
     })
-    .select(FOP_COLUMNS)
-    .single()
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
+  } catch (err) {
+    if (isConstraint(err, 'unique', FOP_CODE_TAKEN)) {
+      return Response.json(
+        { error: `Another form of payment already uses the code "${body.fop_code?.trim().toUpperCase()}"` },
+        { status: 409 }
+      )
+    }
+    throw err
   }
-
-  return Response.json({
-    ok: true,
-    fop: { ...created, status: fopStatus(created), description: describeFop(created) },
-  })
-}
+})

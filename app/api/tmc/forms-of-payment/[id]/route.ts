@@ -1,10 +1,11 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { fopStatus, describeFop } from '@/app/lib/fop/fopStatus'
-import { FOP_COLUMNS, validateFop, normaliseFop, deriveFopType, claimDefault, checkReferences } from '../route'
+import { validateFop, normaliseFop, deriveFopType, checkReferences, FOP_CODE_TAKEN } from '../route'
 import { NextRequest } from 'next/server'
-import { db } from '@/app/lib/db'
+import { db, transaction, isConstraint } from '@/app/lib/db'
+import * as fops from '@/app/lib/repositories/fop'
+import { route } from '@/app/lib/http/handler'
 
 // ── /api/tmc/forms-of-payment/[id] ───────────────────────────────────────────
 // GET     one, with its assignments resolved to names
@@ -15,29 +16,25 @@ import { db } from '@/app/lib/db'
 // cards but does not edit the rules deciding when they apply.
 // ─────────────────────────────────────────────────────────────────────────────
 
+type Ctx = { params: Promise<{ id: string }> }
+
 async function authorise(userId: string, id: string) {
-  const service = createServiceClient()
   const auth = await requireTmcPermission(db, userId, 'manage_fops')
 
   if (!auth.authorized || !auth.tmcId) {
-    return { ok: false as const, service, error: auth.error ?? 'Forbidden', status: auth.status ?? 403 }
+    return { ok: false as const, error: auth.error ?? 'Forbidden', status: auth.status ?? 403 }
   }
 
-  const { data: fop } = await service
-    .from('forms_of_payment')
-    .select('id, tmc_id, label')
-    .eq('id', id)
-    .eq('tmc_id', auth.tmcId)
-    .maybeSingle()
+  const fop = await fops.fopInTmc(db, id, auth.tmcId)
 
   if (!fop) {
-    return { ok: false as const, service, error: 'Form of payment not found', status: 404 }
+    return { ok: false as const, error: 'Form of payment not found', status: 404 }
   }
 
-  return { ok: true as const, service, tmcId: auth.tmcId, fop }
+  return { ok: true as const, tmcId: auth.tmcId, fop }
 }
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const GET = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -51,50 +48,28 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return Response.json({ error: check.error }, { status: check.status })
   }
 
-  const { service } = check
-
-  const [{ data: fop }, { data: assignments }] = await Promise.all([
-    service.from('forms_of_payment').select(FOP_COLUMNS).eq('id', id).single(),
-    service
-      .from('fop_assignments')
-      // is_active included: the editor renders a checkbox bound to it, and
-      // without the column every mapping came back undefined and drew as
-      // suspended regardless of what the row actually said.
-      .select('id, kind, client_id, client_group_id, bucket_id, is_active')
-      .eq('fop_id', id),
-  ])
-
-  const clientIds = (assignments ?? []).map(a => a.client_id).filter(Boolean) as string[]
-  const groupIds = (assignments ?? []).map(a => a.client_group_id).filter(Boolean) as string[]
-  const bucketIds = (assignments ?? []).map(a => a.bucket_id).filter(Boolean) as string[]
-
-  const [{ data: clients }, { data: groups }, { data: buckets }] = await Promise.all([
-    clientIds.length ? service.from('clients').select('id, name').in('id', clientIds) : Promise.resolve({ data: [] }),
-    groupIds.length ? service.from('client_groups').select('id, name').in('id', groupIds) : Promise.resolve({ data: [] }),
-    bucketIds.length ? service.from('buckets').select('id, name').in('id', bucketIds) : Promise.resolve({ data: [] }),
-  ])
-
-  const nameOf = new Map<string, string>([
-    ...(clients ?? []).map(c => [c.id, c.name] as [string, string]),
-    ...(groups ?? []).map(g => [g.id, g.name] as [string, string]),
-    ...(buckets ?? []).map(b => [b.id, b.name] as [string, string]),
+  // is_active comes with each mapping: the editor renders a checkbox bound to
+  // it. Target names are joined in rather than looked up per table.
+  const [fop, assignments] = await Promise.all([
+    fops.fop(db, id),
+    fops.namedAssignments(db, id),
   ])
 
   return Response.json({
     ok: true,
     fop: { ...fop, status: fopStatus(fop!), description: describeFop(fop!) },
-    assignments: (assignments ?? []).map(a => {
-      const targetId = a.client_id ?? a.client_group_id ?? a.bucket_id!
-      return {
-        id: a.id, kind: a.kind, targetId,
-        targetName: nameOf.get(targetId) ?? 'Unknown',
-        is_active: a.is_active,
-      }
-    }),
+    assignments,
   })
-}
+})
 
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+const EDITABLE = [
+  'fop_code', 'label', 'gds_entry_id', 'payment_type_id',
+  'fop_type', 'payer', 'card_type', 'last4', 'expiry_month', 'expiry_year',
+  'gds_alias', 'branch_id', 'owner_client_id', 'owner_employee_id',
+  'airline_code', 'rbd_spec', 'active', 'is_default', 'notes',
+] as const
+
+export const PATCH = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -108,22 +83,18 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return Response.json({ error: check.error }, { status: check.status })
   }
 
-  const { service, tmcId } = check
+  const { tmcId } = check
   const body = await req.json()
 
   // Validate against what will END UP stored, not just the fields that arrived.
   // Switching a card to cash without clearing the card fields, or changing the
   // payer without moving the owner, both pass a fields-present check and fail
   // the DB constraint.
-  const { data: current } = await service
-    .from('forms_of_payment')
-    .select('fop_code, fop_type, payer, gds_entry_id, payment_type_id, card_type, last4, expiry_month, expiry_year, owner_client_id, owner_employee_id, rbd_spec, airline_code, is_default')
-    .eq('id', id)
-    .single()
+  const current = (await fops.fop(db, id))!
 
   // Normalised through the shared helpers rather than a copy of the same rules,
   // which is how POST and PATCH drifted apart in the first place.
-  const derived = await deriveFopType(service, tmcId, { ...current, ...body })
+  const derived = await deriveFopType(tmcId, { ...current, ...body })
   if ('error' in derived) {
     return Response.json({ error: derived.error }, { status: derived.status })
   }
@@ -136,22 +107,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
 
   // The same tenancy checks as create: branch, owner client AND owner
-  // traveller. This used to check the branch alone.
-  const foreign = await checkReferences(service, tmcId, merged)
+  // traveller.
+  const foreign = await checkReferences(tmcId, merged)
   if (foreign) {
     return Response.json({ error: foreign }, { status: 422 })
   }
 
-  const update: Record<string, unknown> = { updated_at: new Date().toISOString() }
-  const editable = [
-    'fop_code', 'label', 'gds_entry_id', 'payment_type_id',
-    'fop_type', 'payer', 'card_type', 'last4', 'expiry_month', 'expiry_year',
-    'gds_alias', 'branch_id', 'owner_client_id', 'owner_employee_id',
-    'airline_code', 'rbd_spec', 'active', 'is_default', 'notes',
-  ] as const
-
-  for (const field of editable) {
-    if (field in body || merged[field] !== current?.[field as keyof typeof current]) {
+  // What was sent, plus whatever normalising changed (a cleared card field).
+  const update: Record<string, unknown> = {}
+  for (const field of EDITABLE) {
+    if (field in body || merged[field] !== current[field]) {
       update[field] = merged[field] ?? null
     }
   }
@@ -162,29 +127,31 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (typeof update.rbd_spec === 'string') update.rbd_spec = update.rbd_spec.trim().toUpperCase() || null
 
   // Ticking default on a second form of payment is a swap, not a conflict —
-  // the previous holder is cleared first so the partial unique index never has
-  // to reject the write. Skips this row, so a save that leaves the flag alone
-  // does not clear and re-set it.
-  if (update.is_default === true) await claimDefault(service, tmcId, id)
+  // the previous holder is cleared in the same transaction, so the partial
+  // unique index never has to reject the write. Skips this row, so a save that
+  // leaves the flag alone does not clear and re-set it.
+  try {
+    const updated = await transaction(async (tx) => {
+      if (update.is_default === true) await fops.clearDefault(tx, tmcId, id)
+      return fops.updateFop(tx, id, update as fops.FopEdit)
+    }, { tenantId: tmcId, userId: user.id })
 
-  const { data: updated, error } = await service
-    .from('forms_of_payment')
-    .update(update)
-    .eq('id', id)
-    .select(FOP_COLUMNS)
-    .single()
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
+    return Response.json({
+      ok: true,
+      fop: { ...updated, status: fopStatus(updated), description: describeFop(updated) },
+    })
+  } catch (err) {
+    if (isConstraint(err, 'unique', FOP_CODE_TAKEN)) {
+      return Response.json(
+        { error: `Another form of payment already uses the code "${update.fop_code}"` },
+        { status: 409 }
+      )
+    }
+    throw err
   }
+})
 
-  return Response.json({
-    ok: true,
-    fop: { ...updated, status: fopStatus(updated), description: describeFop(updated) },
-  })
-}
-
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const DELETE = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -198,30 +165,21 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     return Response.json({ error: check.error }, { status: check.status })
   }
 
-  const { service, fop } = check
-
   // The FK cascades, so deleting would silently remove every assignment with it
   // and change how bookings settle for whoever was on it. Refused instead —
   // same rule as buckets and deal codes.
-  const { count } = await service
-    .from('fop_assignments')
-    .select('id', { count: 'exact', head: true })
-    .eq('fop_id', id)
+  const count = await fops.countForFop(db, id)
 
-  if (count && count > 0) {
+  if (count > 0) {
     return Response.json(
       {
-        error: `"${fop.label}" is assigned to ${count} target${count > 1 ? 's' : ''}. Remove the assignments first, or set it inactive to stop it applying.`,
+        error: `"${check.fop.label}" is assigned to ${count} target${count > 1 ? 's' : ''}. Remove the assignments first, or set it inactive to stop it applying.`,
       },
       { status: 409 }
     )
   }
 
-  const { error } = await service.from('forms_of_payment').delete().eq('id', id)
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
+  await fops.deleteFop(db, id)
 
   return Response.json({ ok: true })
-}
+})
