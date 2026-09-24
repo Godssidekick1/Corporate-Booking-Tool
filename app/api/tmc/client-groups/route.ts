@@ -1,9 +1,11 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
-import { parsePageParams, pagedResponse, ilikeAcross } from '@/app/lib/pagination'
+import { parsePageParams, pagedResponse } from '@/app/lib/pagination'
 import { NextRequest } from 'next/server'
-import { db } from '@/app/lib/db'
+import { db, isConstraint } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
+import * as clients from '@/app/lib/repositories/clients'
+import { route } from '@/app/lib/http/handler'
 
 // ── GET /api/tmc/client-groups ────────────────────────────────────────────────
 // List all client groups for this TMC. Any TMC-side caller can view.
@@ -21,13 +23,6 @@ import { db } from '@/app/lib/db'
 // `clients`, which is the entity that contracts, and a second copy here would
 // simply be a second answer that could disagree.
 // ─────────────────────────────────────────────────────────────────────────────
-
-// One list, so GET, POST and PATCH cannot return different shapes of the same
-// row — which is how a field ends up editable but invisible.
-export const CLIENT_GROUP_COLUMNS =
-  'id, name, group_code, city, country, ' +
-  'contact_first_name, contact_last_name, contact_email, contact_mobile, ' +
-  'bill_to_address_1, bill_to_address_2, bill_to_state, bill_to_pincode, created_at'
 
 // Every free-text field, with the trim-or-null treatment applied uniformly.
 // Empty string is stored as NULL rather than '': a blank contact should read as
@@ -47,8 +42,8 @@ export type ClientGroupBody = { name?: string } & Partial<Record<ClientGroupText
 // Trims, uppercases the code, and turns blanks into NULL. Shared by POST and
 // PATCH so create and edit cannot disagree — the exact drift that produced the
 // "Cash settlement cannot carry card details" bug on forms of payment.
-export function normaliseClientGroup(body: ClientGroupBody): Record<string, string | null> {
-  const update: Record<string, string | null> = {}
+export function normaliseClientGroup(body: ClientGroupBody): clients.ClientGroupFields {
+  const update: clients.ClientGroupFields = {}
 
   for (const field of CLIENT_GROUP_TEXT_FIELDS) {
     if (body[field] === undefined) continue
@@ -78,11 +73,20 @@ export function validateClientGroup(body: ClientGroupBody): string | null {
   return null
 }
 
+// The partial unique index on (tmc_id, group_code) surfaces as a raw
+// constraint name otherwise, which tells the user nothing about what to fix.
+export function duplicateCode(code: string | null | undefined): Response {
+  return Response.json(
+    { error: `Group code "${code}" is already used by another group.` },
+    { status: 409 }
+  )
+}
+
 interface CreateClientGroupBody extends ClientGroupBody {
   name: string
 }
 
-export async function GET(req: NextRequest) {
+export const GET = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -90,13 +94,7 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-
-  const { data: caller } = await service
-    .from('employees')
-    .select('role, tmc_id')
-    .eq('id', user.id)
-    .single()
+  const caller = await employees.accessProfile(db, user.id)
 
   if (!caller || !caller.tmc_id || (caller.role !== 'tmc_admin' && caller.role !== 'tc')) {
     return Response.json({ error: 'Forbidden' }, { status: 403 })
@@ -105,32 +103,18 @@ export async function GET(req: NextRequest) {
   const params = parsePageParams(req.nextUrl.searchParams)
   const ids = req.nextUrl.searchParams.get('ids')?.split(',').filter(Boolean) ?? []
 
-  let query = service
-    .from('client_groups')
-    .select(CLIENT_GROUP_COLUMNS, { count: 'exact' })
-    .eq('tmc_id', caller.tmc_id)
-    .order('name')
+  // group_code is searched too: it is the short reference people actually use,
+  // so it is the first thing anyone searches by.
+  const { rows, total } = await clients.groupsForTmc(
+    db,
+    caller.tmc_id,
+    ids.length > 0 ? { ids } : { search: params.search, page: params }
+  )
 
-  if (ids.length > 0) {
-    query = query.in('id', ids)
-  } else {
-    // group_code included: it is the short reference people actually use, so it
-    // is the first thing anyone searches by.
-    const filter = ilikeAcross(['name', 'group_code', 'city'], params.search)
-    if (filter) query = query.or(filter)
-    query = query.range(params.from, params.to)
-  }
+  return Response.json(pagedResponse(rows, total, params))
+})
 
-  const { data: clientGroups, error, count } = await query
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
-
-  return Response.json(pagedResponse(clientGroups ?? [], count ?? null, params))
-}
-
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -138,10 +122,8 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-
   const auth = await requireTmcPermission(db, user.id, 'manage_client_groups')
-  if (!auth.authorized) {
+  if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }
 
@@ -156,27 +138,14 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: validationError }, { status: 400 })
   }
 
-  const { data: clientGroup, error } = await service
-    .from('client_groups')
-    .insert({
-      tmc_id: auth.tmcId,
+  try {
+    const clientGroup = await clients.insertGroup(db, auth.tmcId, {
       name: body.name.trim(),
       ...normaliseClientGroup(body),
     })
-    .select(CLIENT_GROUP_COLUMNS)
-    .single()
-
-  if (error) {
-    // The partial unique index on (tmc_id, group_code) surfaces as a raw
-    // constraint name otherwise, which tells the user nothing about what to fix.
-    if (error.code === '23505') {
-      return Response.json(
-        { error: `Group code "${body.group_code}" is already used by another group.` },
-        { status: 409 }
-      )
-    }
-    return Response.json({ error: error.message }, { status: 500 })
+    return Response.json({ ok: true, clientGroup }, { status: 201 })
+  } catch (err) {
+    if (isConstraint(err, 'unique')) return duplicateCode(body.group_code)
+    throw err
   }
-
-  return Response.json({ ok: true, clientGroup }, { status: 201 })
-}
+})

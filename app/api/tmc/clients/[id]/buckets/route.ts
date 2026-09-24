@@ -1,8 +1,9 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
-import { db } from '@/app/lib/db'
+import { db, transaction } from '@/app/lib/db'
+import * as clients from '@/app/lib/repositories/clients'
+import { route } from '@/app/lib/http/handler'
 
 // ── GET / PUT /api/tmc/clients/[id]/buckets ──────────────────────────────────
 // Which buckets this client belongs to, edited from the client's own screen.
@@ -22,6 +23,8 @@ interface Body {
   bucketIds?: string[]
 }
 
+type Ctx = { params: Promise<{ id: string }> }
+
 // Both verbs need the same three answers: is this a TMC user, may they manage
 // this client, and does the client exist under their TMC.
 async function authorise(clientId: string) {
@@ -31,61 +34,32 @@ async function authorise(clientId: string) {
     return { error: Response.json({ error: 'Not authenticated' }, { status: 401 }) }
   }
 
-  const service = createServiceClient()
   const check = await requireTmcPermission(db, user.id, 'manage_clients', clientId)
   if (!check.authorized || !check.tmcId) {
     return { error: Response.json({ error: check.error ?? 'Forbidden' }, { status: check.status ?? 403 }) }
   }
   const tmcId = check.tmcId
 
-  const { data: client } = await service
-    .from('clients')
-    .select('id, tmc_id')
-    .eq('id', clientId)
-    .eq('tmc_id', tmcId)
-    .maybeSingle()
-
-  if (!client) {
+  if (!(await clients.statusInTmc(db, clientId, tmcId))) {
     return { error: Response.json({ error: 'Client not found' }, { status: 404 }) }
   }
 
-  return { service, tmcId }
+  return { tmcId, userId: user.id }
 }
 
-export async function GET(
-  _req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export const GET = route(async (_req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const auth = await authorise(id)
   if (auth.error) return auth.error
-  const { service } = auth
 
-  const { data: rows, error } = await service
-    .from('bucket_clients')
-    .select('bucket_id, buckets ( id, name, code )')
-    .eq('client_id', id)
+  return Response.json({ ok: true, buckets: await clients.bucketsOfClient(db, id) })
+})
 
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
-
-  const buckets = (rows ?? [])
-    .map(r => r.buckets)
-    .filter(Boolean)
-    .flat()
-
-  return Response.json({ ok: true, buckets })
-}
-
-export async function PUT(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export const PUT = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const auth = await authorise(id)
   if (auth.error) return auth.error
-  const { service, tmcId } = auth
+  const { tmcId, userId } = auth
 
   let body: Body
   try {
@@ -105,42 +79,16 @@ export async function PUT(
   // constraint perfectly well and quietly attach their curated client set to
   // this client's commercial arrangement.
   if (bucketIds.length > 0) {
-    const { data: owned } = await service
-      .from('buckets')
-      .select('id')
-      .eq('tmc_id', tmcId)
-      .in('id', bucketIds)
-
-    if ((owned?.length ?? 0) !== bucketIds.length) {
+    const owned = await clients.bucketIdsInTmc(db, tmcId, bucketIds)
+    if (owned.length !== bucketIds.length) {
       return Response.json({ error: 'Bucket not found for this TMC' }, { status: 422 })
     }
   }
 
-  const { error: clearError } = await service
-    .from('bucket_clients')
-    .delete()
-    .eq('client_id', id)
+  // Delete-then-insert, together: a failed insert must not leave the client
+  // in no buckets at all -- which silently removes every deal code and form of
+  // payment that reached them through one.
+  await transaction(tx => clients.replaceBucketsOfClient(tx, id, bucketIds), { tenantId: tmcId, userId })
 
-  if (clearError) {
-    return Response.json({ error: clearError.message }, { status: 500 })
-  }
-
-  if (bucketIds.length > 0) {
-    const { error: insertError } = await service
-      .from('bucket_clients')
-      .insert(bucketIds.map(bucket_id => ({ bucket_id, client_id: id })))
-
-    if (insertError) {
-      return Response.json({ error: insertError.message }, { status: 500 })
-    }
-  }
-
-  const { data: rows } = await service
-    .from('bucket_clients')
-    .select('bucket_id, buckets ( id, name, code )')
-    .eq('client_id', id)
-
-  const buckets = (rows ?? []).map(r => r.buckets).filter(Boolean).flat()
-
-  return Response.json({ ok: true, buckets })
-}
+  return Response.json({ ok: true, buckets: await clients.bucketsOfClient(db, id) })
+})

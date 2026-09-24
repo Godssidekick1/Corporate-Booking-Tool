@@ -1,9 +1,10 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { gstinFinding } from '@/app/lib/data/gstin'
 import { NextRequest } from 'next/server'
-import { db } from '@/app/lib/db'
+import { db, transaction, isConstraint } from '@/app/lib/db'
+import * as clients from '@/app/lib/repositories/clients'
+import { route } from '@/app/lib/http/handler'
 
 // ── /api/tmc/clients/[id]/gst ────────────────────────────────────────────────
 // The GST registrations a client bills under.
@@ -23,11 +24,6 @@ import { db } from '@/app/lib/db'
 // in a spreadsheet until the number arrives.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const COLUMNS =
-  'id, client_id, gstin, gst_holder, email, contact, ' +
-  'address_1, address_2, city, state, country, zip, ' +
-  'registration_date, valid_from, valid_to, cost_centre_id, is_primary, created_at'
-
 const TEXT_FIELDS = [
   'gst_holder', 'email', 'contact',
   'address_1', 'address_2', 'city', 'state', 'country', 'zip',
@@ -42,6 +38,8 @@ interface Body {
   is_primary?: boolean
 }
 
+type Ctx = { params: Promise<{ id: string }> }
+
 async function authorise(clientId: string) {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -49,53 +47,38 @@ async function authorise(clientId: string) {
     return { error: Response.json({ error: 'Not authenticated' }, { status: 401 }) }
   }
 
-  const service = createServiceClient()
   const check = await requireTmcPermission(db, user.id, 'manage_clients', clientId)
   if (!check.authorized || !check.tmcId) {
     return { error: Response.json({ error: check.error ?? 'Forbidden' }, { status: check.status ?? 403 }) }
   }
 
-  const { data: client } = await service
-    .from('clients')
-    .select('id')
-    .eq('id', clientId)
-    .eq('tmc_id', check.tmcId)
-    .maybeSingle()
-
-  if (!client) {
+  if (!(await clients.statusInTmc(db, clientId, check.tmcId))) {
     return { error: Response.json({ error: 'Client not found' }, { status: 404 }) }
   }
 
-  return { service }
+  return { tmcId: check.tmcId, userId: user.id }
 }
-
-type Service = ReturnType<typeof createServiceClient>
 
 // Shared by POST and PATCH. Returns either the column updates or a Response to
 // send instead, so both verbs validate identically — a cost centre that may be
 // set on create but not on edit is the kind of gap nobody notices.
 async function buildUpdate(
-  service: Service,
   clientId: string,
   body: Record<string, unknown>
-): Promise<{ update: Record<string, unknown> } | { error: Response }> {
-  const update: Record<string, unknown> = {}
+): Promise<{ update: clients.GstFields } | { error: Response }> {
+  const update: clients.GstFields = {}
+  const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '') || null
 
   if (body.gstin !== undefined) {
-    const raw = typeof body.gstin === 'string' ? body.gstin.trim().toUpperCase() : ''
-    update.gstin = raw || null
+    update.gstin = (typeof body.gstin === 'string' ? body.gstin.trim().toUpperCase() : '') || null
   }
 
   for (const field of TEXT_FIELDS) {
-    if (body[field] === undefined) continue
-    const raw = typeof body[field] === 'string' ? (body[field] as string).trim() : ''
-    update[field] = raw || null
+    if (body[field] !== undefined) update[field] = text(body[field])
   }
 
   for (const field of DATE_FIELDS) {
-    if (body[field] === undefined) continue
-    const raw = typeof body[field] === 'string' ? (body[field] as string).trim() : ''
-    update[field] = raw || null
+    if (body[field] !== undefined) update[field] = text(body[field])
   }
 
   // The cost centre must belong to THIS client. cost_centres is a plain FK, so
@@ -106,14 +89,7 @@ async function buildUpdate(
     if (!value) {
       update.cost_centre_id = null
     } else {
-      const { data: centre } = await service
-        .from('cost_centres')
-        .select('id')
-        .eq('id', value as string)
-        .eq('client_id', clientId)
-        .maybeSingle()
-
-      if (!centre) {
+      if (typeof value !== 'string' || !(await clients.costCentreBelongs(db, value, clientId))) {
         return { error: Response.json({ error: 'Cost centre not found for this client' }, { status: 422 }) }
       }
       update.cost_centre_id = value
@@ -125,20 +101,6 @@ async function buildUpdate(
   }
 
   return { update }
-}
-
-// Only one registration per client may be primary, enforced by a partial unique
-// index. Clearing the others FIRST means the index never sees two at once —
-// setting the new one first would collide before the old one is cleared.
-async function clearOtherPrimaries(service: Service, clientId: string, keepId: string | null) {
-  let query = service
-    .from('client_gst_registrations')
-    .update({ is_primary: false })
-    .eq('client_id', clientId)
-    .eq('is_primary', true)
-
-  if (keepId) query = query.neq('id', keepId)
-  await query
 }
 
 // 23P01 is an exclusion-constraint violation — two registrations for the same
@@ -157,6 +119,8 @@ function overlapResponse(centred: boolean) {
   )
 }
 
+const DUPLICATE_GSTIN = { error: 'That GST number is already on file for this client' }
+
 // Half-open on both ends: a null valid_from reaches back forever, a null
 // valid_to runs forever. Mirrors daterange(valid_from, valid_to, '[]') so the
 // answer here and the answer the database gives cannot differ.
@@ -174,60 +138,35 @@ function windowsOverlap(
 // btree_gist was unavailable when the migration ran and the constraint was
 // skipped.
 async function findOverlap(
-  service: Service,
   clientId: string,
-  update: Record<string, unknown>,
+  window: Pick<clients.GstFields, 'valid_from' | 'valid_to' | 'cost_centre_id'>,
   excludeId: string | null
-): Promise<{ id: string } | null> {
-  const centreId = (update.cost_centre_id as string | null) ?? null
+): Promise<boolean> {
+  const siblings = await clients.gstSiblings(db, clientId, window.cost_centre_id ?? null, excludeId)
+  const from = window.valid_from ?? null
+  const to = window.valid_to ?? null
+  return siblings.some(row => windowsOverlap(from, to, row.valid_from, row.valid_to))
+}
 
-  let query = service
-    .from('client_gst_registrations')
-    .select('id, valid_from, valid_to, cost_centre_id')
-    .eq('client_id', clientId)
-
-  query = centreId ? query.eq('cost_centre_id', centreId) : query.is('cost_centre_id', null)
-  if (excludeId) query = query.neq('id', excludeId)
-
-  const { data: siblings } = await query
-
-  const from = (update.valid_from as string | null) ?? null
-  const to = (update.valid_to as string | null) ?? null
-
-  for (const row of siblings ?? []) {
-    if (windowsOverlap(from, to, row.valid_from, row.valid_to)) return { id: row.id }
-  }
+// Maps the two constraint violations a write here can hit to what they mean.
+function constraintResponse(err: unknown, centred: boolean): Response | null {
+  if (isConstraint(err, 'exclusion')) return overlapResponse(centred)
+  if (isConstraint(err, 'unique')) return Response.json(DUPLICATE_GSTIN, { status: 409 })
   return null
 }
 
-export async function GET(
-  _req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export const GET = route(async (_req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const auth = await authorise(id)
   if (auth.error) return auth.error
 
-  const { data, error } = await auth.service
-    .from('client_gst_registrations')
-    .select(COLUMNS)
-    .eq('client_id', id)
-    .order('is_primary', { ascending: false })
-    .order('valid_from', { ascending: false, nullsFirst: false })
+  return Response.json({ ok: true, registrations: await clients.gstRegistrations(db, id) })
+})
 
-  if (error) return Response.json({ error: error.message }, { status: 500 })
-
-  return Response.json({ ok: true, registrations: data ?? [] })
-}
-
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export const POST = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const auth = await authorise(id)
   if (auth.error) return auth.error
-  const { service } = auth
 
   let body: Body & Record<string, unknown>
   try {
@@ -236,44 +175,40 @@ export async function POST(
     return Response.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  const built = await buildUpdate(service, id, body)
+  const built = await buildUpdate(id, body)
   if ('error' in built) return built.error
+  const { update } = built
 
-  if (await findOverlap(service, id, built.update, null)) {
-    return overlapResponse(Boolean(built.update.cost_centre_id))
+  if (await findOverlap(id, update, null)) {
+    return overlapResponse(Boolean(update.cost_centre_id))
   }
 
-  if (body.is_primary === true) await clearOtherPrimaries(service, id, null)
+  try {
+    // Only one registration per client may be primary (partial unique index).
+    // Clearing the others FIRST means the index never sees two at once; doing
+    // both in one transaction means a rejected insert does not leave the client
+    // with no primary at all.
+    const registration = await transaction(async tx => {
+      if (body.is_primary === true) await clients.clearOtherPrimaries(tx, id, null)
+      return clients.insertGst(tx, id, update)
+    }, { tenantId: auth.tmcId, userId: auth.userId })
 
-  const { data, error } = await service
-    .from('client_gst_registrations')
-    .insert({ ...built.update, client_id: id })
-    .select(COLUMNS)
-    .single()
-
-  if (error) {
-    if (error.code === '23P01') return overlapResponse(Boolean(built.update.cost_centre_id))
-    if (error.code === '23505') {
-      return Response.json({ error: 'That GST number is already on file for this client' }, { status: 409 })
-    }
-    return Response.json({ error: error.message }, { status: 500 })
+    return Response.json({
+      ok: true,
+      registration,
+      finding: gstinFinding(update.gstin ?? null, update.state ?? null),
+    })
+  } catch (err) {
+    const answer = constraintResponse(err, Boolean(update.cost_centre_id))
+    if (answer) return answer
+    throw err
   }
+})
 
-  return Response.json({
-    ok: true,
-    registration: data,
-    finding: gstinFinding(built.update.gstin as string | null, built.update.state as string | null),
-  })
-}
-
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export const PATCH = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const auth = await authorise(id)
   if (auth.error) return auth.error
-  const { service } = auth
 
   let body: Body & Record<string, unknown>
   try {
@@ -282,60 +217,60 @@ export async function PATCH(
     return Response.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  if (!body.entryId) {
+  const entryId = body.entryId
+  if (!entryId) {
     return Response.json({ error: 'entryId is required' }, { status: 400 })
   }
 
-  const built = await buildUpdate(service, id, body)
+  const built = await buildUpdate(id, body)
   if ('error' in built) return built.error
+  const { update } = built
+
+  if (Object.keys(update).length === 0) {
+    return Response.json({ error: 'No fields to update' }, { status: 400 })
+  }
 
   // A PATCH may name only some fields, so the overlap has to be tested against
   // what the row WILL be — merging the update over the row as it stands. Testing
   // the update alone would read an omitted valid_to as "open-ended" and reject
   // edits that change nothing about the dates.
-  const { data: current } = await service
-    .from('client_gst_registrations')
-    .select('valid_from, valid_to, cost_centre_id')
-    .eq('id', body.entryId)
-    .eq('client_id', id)
-    .maybeSingle()
-
-  const merged = { ...(current ?? {}), ...built.update }
-  if (await findOverlap(service, id, merged, body.entryId)) {
+  const current = await clients.gstWindow(db, entryId, id)
+  const merged = {
+    valid_from: current?.valid_from ?? null,
+    valid_to: current?.valid_to ?? null,
+    cost_centre_id: current?.cost_centre_id ?? null,
+    ...update,
+  }
+  if (await findOverlap(id, merged, entryId)) {
     return overlapResponse(Boolean(merged.cost_centre_id))
   }
 
-  if (body.is_primary === true) await clearOtherPrimaries(service, id, body.entryId)
-
-  const { data, error } = await service
-    .from('client_gst_registrations')
-    .update(built.update)
-    .eq('id', body.entryId)
+  let registration: clients.GstRegistration | null
+  try {
     // Scoped to the client as well as the row id: an entry id from another
     // client would otherwise be editable by anyone holding this one.
-    .eq('client_id', id)
-    .select(COLUMNS)
-    .single()
+    registration = await transaction(async tx => {
+      if (body.is_primary === true) await clients.clearOtherPrimaries(tx, id, entryId)
+      return clients.updateGst(tx, entryId, id, update)
+    }, { tenantId: auth.tmcId, userId: auth.userId })
+  } catch (err) {
+    const answer = constraintResponse(err, Boolean(merged.cost_centre_id))
+    if (answer) return answer
+    throw err
+  }
 
-  if (error) {
-    if (error.code === '23P01') return overlapResponse(Boolean(merged.cost_centre_id))
-    if (error.code === '23505') {
-      return Response.json({ error: 'That GST number is already on file for this client' }, { status: 409 })
-    }
-    return Response.json({ error: error.message }, { status: 500 })
+  if (!registration) {
+    return Response.json({ error: 'Registration not found' }, { status: 404 })
   }
 
   return Response.json({
     ok: true,
-    registration: data,
-    finding: gstinFinding(built.update.gstin as string | null, built.update.state as string | null),
+    registration,
+    finding: gstinFinding(update.gstin ?? null, update.state ?? null),
   })
-}
+})
 
-export async function DELETE(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export const DELETE = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const auth = await authorise(id)
   if (auth.error) return auth.error
@@ -345,13 +280,7 @@ export async function DELETE(
     return Response.json({ error: 'entryId is required' }, { status: 400 })
   }
 
-  const { error } = await auth.service
-    .from('client_gst_registrations')
-    .delete()
-    .eq('id', entryId)
-    .eq('client_id', id)
-
-  if (error) return Response.json({ error: error.message }, { status: 500 })
+  await clients.deleteGst(db, entryId, id)
 
   return Response.json({ ok: true })
-}
+})

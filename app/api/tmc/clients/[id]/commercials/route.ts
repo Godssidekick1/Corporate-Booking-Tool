@@ -1,16 +1,16 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import {
   resolveCommercials,
-  type ResolvableRule,
   type ResolvableAssignment,
   type ResolvedRule,
 } from '@/app/lib/commercials/resolveCommercials'
 import { KIND_LABELS, type CommercialKind } from '@/app/lib/commercials/calcOnByKind'
-import { RULE_COLUMNS } from '@/app/api/tmc/commercial-rules/route'
 import { NextRequest } from 'next/server'
 import { db } from '@/app/lib/db'
+import * as clients from '@/app/lib/repositories/clients'
+import * as commercials from '@/app/lib/repositories/commercials'
+import { route } from '@/app/lib/http/handler'
 
 // ── GET /api/tmc/clients/[id]/commercials ────────────────────────────────────
 // The markup, discount and processing fee in force for ONE client, for
@@ -55,10 +55,10 @@ function summarise(resolved: ResolvedRule): string {
   return `${amount}${basis}${per} — ${scope}`
 }
 
-export async function GET(
+export const GET = route(async (
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
+) => {
   const { id } = await params
 
   const supabase = await createClient()
@@ -67,62 +67,43 @@ export async function GET(
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
   const check = await requireTmcPermission(db, user.id, 'manage_clients', id)
   if (!check.authorized || !check.tmcId) {
     return Response.json({ error: check.error ?? 'Forbidden' }, { status: check.status ?? 403 })
   }
   const tmcId = check.tmcId
 
-  const { data: client } = await service
-    .from('clients')
-    .select('id, client_group_id, markup_active, discount_active, processing_fee_active')
-    .eq('id', id)
-    .eq('tmc_id', tmcId)
-    .maybeSingle()
+  const client = await clients.reachProfile(db, id, tmcId)
 
   if (!client) {
     return Response.json({ error: 'Client not found' }, { status: 404 })
   }
 
-  const [{ data: ruleRows }, { data: memberships }, { data: assignmentRows }] = await Promise.all([
-    service.from('commercial_rules').select(RULE_COLUMNS).eq('tmc_id', tmcId),
-    service.from('bucket_clients').select('bucket_id').eq('client_id', id),
-    service
-      .from('commercial_rule_assignments')
-      .select('rule_id, kind, client_id, client_group_id, bucket_id')
-      .eq('tmc_id', tmcId),
+  const [rules, bucketIds, assignmentRows] = await Promise.all([
+    commercials.rulesForTmc(db, tmcId),
+    clients.bucketIdsOfClient(db, id),
+    commercials.assignmentsForTmc(db, tmcId),
   ])
 
-  const rules = (ruleRows ?? []) as unknown as ResolvableRule[]
-  const bucketIds = (memberships ?? []).map(m => m.bucket_id)
-
-  const reaching = (assignmentRows ?? []).filter(a => {
+  const reaching = assignmentRows.filter(a => {
     if (a.kind === 'client') return a.client_id === id
     if (a.kind === 'bucket') return a.bucket_id !== null && bucketIds.includes(a.bucket_id)
     return a.client_group_id !== null && a.client_group_id === client.client_group_id
   })
 
-  const usedBucketIds = [...new Set(reaching.map(a => a.bucket_id).filter(Boolean) as string[])]
+  const usedBucketIds = [...new Set(reaching.map(a => a.bucket_id).filter((b): b is string => Boolean(b)))]
 
-  const [{ data: buckets }, { data: groups }] = await Promise.all([
-    usedBucketIds.length
-      ? service.from('buckets').select('id, name').in('id', usedBucketIds)
-      : Promise.resolve({ data: [] as { id: string; name: string }[] }),
-    client.client_group_id
-      ? service.from('client_groups').select('id, name').eq('id', client.client_group_id)
-      : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+  const [buckets, groupName] = await Promise.all([
+    clients.bucketLabels(db, usedBucketIds),
+    clients.groupNames(db, client.client_group_id ? [client.client_group_id] : []),
   ])
-
-  const bucketName = new Map((buckets ?? []).map(b => [b.id, b.name]))
-  const groupName = new Map((groups ?? []).map(g => [g.id, g.name]))
 
   const assignments: ResolvableAssignment[] = reaching.map(a => ({
     rule_id: a.rule_id,
-    kind: a.kind,
+    kind: a.kind as ResolvableAssignment['kind'],
     via_name:
       a.kind === 'bucket'
-        ? bucketName.get(a.bucket_id!) ?? null
+        ? buckets.get(a.bucket_id!)?.name ?? null
         : a.kind === 'client_group'
           ? groupName.get(a.client_group_id!) ?? null
           : null,
@@ -159,4 +140,4 @@ export async function GET(
     .filter((r): r is EffectiveRule => r !== null)
 
   return Response.json({ ok: true, effective, enabled })
-}
+})

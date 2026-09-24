@@ -1,9 +1,12 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { PAYMENT_TYPES, type PaymentType } from '@/app/lib/fop/paymentTypes'
 import { NextRequest } from 'next/server'
-import { db } from '@/app/lib/db'
+import { db, isConstraint } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
+import * as clients from '@/app/lib/repositories/clients'
+import * as tmcs from '@/app/lib/repositories/tmcs'
+import { route } from '@/app/lib/http/handler'
 
 // ── GET /api/tmc/clients/[id] ─────────────────────────────────────────────
 // Full detail view of one client client. tmc_admin sees any of their
@@ -35,24 +38,11 @@ const ALLOWED_STATUSES = ['active', 'inactive'] as const
 const ALLOWED_APPROVAL_MODES = ['before_booking', 'not_required'] as const
 
 // ── The Corporate Settings surface ───────────────────────────────────────────
-// Every column this route reads and writes, in one place, so GET and PATCH
-// cannot disagree about what a client is. They already did: `size` was in the
-// PATCH's returning select but NOT in the GET's, so the detail screen loaded the
-// field blank and wrote that blank back on the next save. Anyone who had ever
-// set a client's size had since silently lost it.
-export const CLIENT_COLUMNS =
-  'id, name, status, setup_completed, timezone, currency, country, booking_mode, created_at, ' +
-  'client_group_id, managed_by, branch_id, ' +
-  'registered_address, industry, primary_contact_phone, size, ' +
-  'client_code, sap_customer_code, sap_group_code, email, phone, ' +
-  'address_1, address_2, city, state, pincode, ' +
-  'collections_name, collections_email, collections_mobile, ' +
-  'booking_activation, hold_activation, dom_ticketing, intl_ticketing, ' +
-  'hold_auto_issue, sbt_ticketing, policy_controlling, personal_bookings_allowed, ' +
-  'agency_fop_allowed, corporate_fop_allowed, ' +
-  'bta_cta_allowed, bta_cta_manual_allowed, fop_priority, ' +
-  'markup_active, discount_active, processing_fee_active, ' +
-  'air_approval_mode, hotel_approval_mode'
+// GET and PATCH return the same record (clients.ClientSettings, one column list
+// in the repository), so they cannot disagree about what a client is. They
+// once did: `size` was in the PATCH's returning select but NOT in the GET's, so
+// the detail screen loaded the field blank and wrote that blank back on the
+// next save.
 
 // Free text: trimmed, empty becomes NULL. A blank contact should read as "not
 // recorded", and every consumer already handles null.
@@ -67,7 +57,7 @@ const TEXT_FIELDS = [
 // copy would not match anything searched for later. GSTINs used to be here too;
 // they live on client_gst_registrations now, because a corporate bills through
 // several of them and one column could hold one.
-const UPPERCASE_FIELDS = new Set<string>(['client_code'])
+const UPPERCASE_FIELDS = ['client_code'] as const
 
 // The Corporate Settings toggles. Booleans only — anything not a boolean is
 // ignored rather than coerced, so a stray "false" string cannot switch booking
@@ -110,10 +100,9 @@ type UpdateClientBody = {
 } & Partial<Record<typeof TEXT_FIELDS[number], string | null>>
   & Partial<Record<typeof BOOLEAN_FIELDS[number], boolean>>
 
-export async function GET(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+type Ctx = { params: Promise<{ id: string }> }
+
+export const GET = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -122,49 +111,26 @@ export async function GET(
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-
-  const { data: caller } = await service
-    .from('employees')
-    .select('role, tmc_id')
-    .eq('id', user.id)
-    .single()
+  const caller = await employees.accessProfile(db, user.id)
 
   if (!caller || !caller.tmc_id || (caller.role !== 'tmc_admin' && caller.role !== 'tc')) {
     return Response.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  if (caller.role === 'tc') {
-    const { data: access } = await service
-      .from('employee_client_access')
-      .select('client_id')
-      .eq('employee_id', user.id)
-      .eq('client_id', id)
-      .maybeSingle()
-
-    if (!access) {
-      return Response.json({ error: 'No access to this client' }, { status: 403 })
-    }
+  if (caller.role === 'tc' && !(await employees.hasClientAccess(db, user.id, id))) {
+    return Response.json({ error: 'No access to this client' }, { status: 403 })
   }
 
-  const { data: client, error } = await service
-    .from('clients')
-    .select(CLIENT_COLUMNS)
-    .eq('id', id)
-    .eq('tmc_id', caller.tmc_id)
-    .single()
+  const client = await clients.settings(db, id, caller.tmc_id)
 
-  if (error || !client) {
+  if (!client) {
     return Response.json({ error: 'Client not found' }, { status: 404 })
   }
 
   return Response.json({ ok: true, client })
-}
+})
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export const PATCH = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -172,8 +138,6 @@ export async function PATCH(
   if (authError || !user) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
-
-  const service = createServiceClient()
 
   const auth = await requireTmcPermission(db, user.id, 'manage_clients', id)
   if (!auth.authorized) {
@@ -181,22 +145,14 @@ export async function PATCH(
   }
   const tmcId = auth.tmcId!
 
-  const { data: existing } = await service
-    .from('clients')
-    .select('id')
-    .eq('id', id)
-    .eq('tmc_id', tmcId)
-    .maybeSingle()
-
-  if (!existing) {
+  if (!(await clients.statusInTmc(db, id, tmcId))) {
     return Response.json({ error: 'Client not found' }, { status: 404 })
   }
 
   const body: UpdateClientBody = await req.json()
-  const { name, timezone, currency, country, booking_mode, client_group_id} = body
+  const { name, timezone, currency, country, booking_mode, client_group_id } = body
 
-  // string[] is here for fop_priority, the one column that is not a scalar.
-  const update: Record<string, string | boolean | string[] | null> = {}
+  const update: clients.ClientSettingsEdit = {}
 
   // Free text, uniformly. Empty clears rather than storing '' — a blank GST
   // field should read as "not recorded", and every consumer already handles
@@ -212,7 +168,8 @@ export async function PATCH(
   // booking off for a whole company on a type coercion is not a failure mode
   // worth allowing.
   for (const field of BOOLEAN_FIELDS) {
-    if (typeof body[field] === 'boolean') update[field] = body[field]
+    const value = body[field]
+    if (typeof value === 'boolean') update[field] = value
   }
 
   if (name !== undefined) {
@@ -243,17 +200,18 @@ export async function PATCH(
   }
 
   for (const field of UPPERCASE_FIELDS) {
-    const value = (body as Record<string, unknown>)[field]
+    const value: unknown = body[field]
     if (value === undefined) continue
     update[field] = (typeof value === 'string' ? value.trim().toUpperCase() : '') || null
   }
 
   for (const mode of ['air_approval_mode', 'hotel_approval_mode'] as const) {
-    if (body[mode] === undefined) continue
-    if (!ALLOWED_APPROVAL_MODES.includes(body[mode] as typeof ALLOWED_APPROVAL_MODES[number])) {
-      return Response.json({ error: `Invalid ${mode}: ${body[mode]}` }, { status: 400 })
+    const value = body[mode]
+    if (value === undefined) continue
+    if (!ALLOWED_APPROVAL_MODES.includes(value as typeof ALLOWED_APPROVAL_MODES[number])) {
+      return Response.json({ error: `Invalid ${mode}: ${value}` }, { status: 400 })
     }
-    update[mode] = body[mode]
+    update[mode] = value
   }
 
   if (body.size !== undefined) {
@@ -308,15 +266,7 @@ export async function PATCH(
       // Restricted to TMC-side staff at THIS TMC. managed_by is a plain FK to
       // employees, so a corporate employee's id would satisfy the constraint
       // and produce an account manager who doesn't work for the TMC.
-      const { data: manager } = await service
-        .from('employees')
-        .select('id, role, tmc_id')
-        .eq('id', body.managed_by)
-        .eq('tmc_id', tmcId)
-        .in('role', ['tmc_admin', 'tc'])
-        .maybeSingle()
-
-      if (!manager) {
+      if (!(await employees.isTmcStaff(db, body.managed_by, tmcId))) {
         return Response.json(
           { error: 'Account manager must be a member of your TMC' },
           { status: 422 }
@@ -333,14 +283,7 @@ export async function PATCH(
       // Verified against this TMC: branch_id is a plain FK, so another tenant's
       // branch would satisfy the constraint and silently drive this client's
       // form-of-payment resolution.
-      const { data: branch } = await service
-        .from('branches')
-        .select('id')
-        .eq('id', body.branch_id)
-        .eq('tmc_id', tmcId)
-        .maybeSingle()
-
-      if (!branch) {
+      if (!(await tmcs.branchInTmc(db, body.branch_id, tmcId))) {
         return Response.json({ error: 'Branch not found for this TMC' }, { status: 422 })
       }
       update.branch_id = body.branch_id
@@ -351,14 +294,7 @@ export async function PATCH(
     if (client_group_id === null || client_group_id === '') {
       update.client_group_id = null
     } else {
-      const { data: clientGroup } = await service
-        .from('client_groups')
-        .select('id')
-        .eq('id', client_group_id)
-        .eq('tmc_id', tmcId)
-        .maybeSingle()
-
-      if (!clientGroup) {
+      if (!(await clients.groupInTmc(db, client_group_id, tmcId))) {
         return Response.json({ error: 'Client group not found for this TMC' }, { status: 404 })
       }
       update.client_group_id = client_group_id
@@ -379,34 +315,30 @@ export async function PATCH(
     return Response.json({ error: 'No fields to update' }, { status: 400 })
   }
 
-  // The SAME column list the GET uses. These two having their own lists is what
-  // let `size` be returned by one and not the other, so the screen loaded it
-  // blank and wrote the blank back.
-  const { data: updated, error: updateError } = await service
-    .from('clients')
-    .update(update)
-    .eq('id', id)
-    // Scoped again here, not only by the existence check above. That check and
-    // this write are separate statements, so the tenancy guarantee currently
-    // depends on nobody reordering the function — which is not a guarantee.
-    .eq('tmc_id', tmcId)
-    .select(CLIENT_COLUMNS)
-    .single()
-
-  if (updateError) {
+  let updated: clients.ClientSettings | null
+  try {
+    // Scoped to the TMC in the write itself, not only by the check above: the
+    // two are separate statements.
+    updated = await clients.updateSettings(db, id, tmcId, update)
+  } catch (err) {
     // The partial unique index on (tmc_id, client_code) surfaces as a raw
     // constraint name otherwise, which says nothing about what to fix.
-    if (updateError.code === '23505') {
+    if (isConstraint(err, 'unique')) {
       return Response.json(
         { error: `Client code "${body.client_code}" is already used by another client.` },
         { status: 409 }
       )
     }
-    return Response.json({ error: updateError.message }, { status: 500 })
+    throw err
+  }
+
+  if (!updated) {
+    return Response.json({ error: 'Client not found' }, { status: 404 })
   }
 
   return Response.json({ ok: true, client: updated })
-}
+})
+
 // ── DELETE /api/tmc/clients/[id] ─────────────────────────────────────────────
 // Deactivates a client. It does NOT remove the row, and the method name is the
 // only thing about this that says "delete".
@@ -433,10 +365,7 @@ export async function PATCH(
 //     covers any session still open when the switch was thrown
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function DELETE(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export const DELETE = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -444,8 +373,6 @@ export async function DELETE(
   if (authError || !user) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
-
-  const service = createServiceClient()
 
   // manage_clients, matching PATCH. Deactivating a client is a bigger act than
   // editing one, so anything narrower would be wrong.
@@ -455,12 +382,7 @@ export async function DELETE(
   }
   const tmcId = auth.tmcId!
 
-  const { data: existing } = await service
-    .from('clients')
-    .select('id, name, status')
-    .eq('id', id)
-    .eq('tmc_id', tmcId)
-    .maybeSingle()
+  const existing = await clients.statusInTmc(db, id, tmcId)
 
   if (!existing) {
     return Response.json({ error: 'Client not found' }, { status: 404 })
@@ -472,18 +394,11 @@ export async function DELETE(
     return Response.json({ ok: true, client: { id: existing.id, status: 'inactive' } })
   }
 
-  const { data: updated, error: updateError } = await service
-    .from('clients')
-    .update({ status: 'inactive' })
-    .eq('id', id)
-    .eq('tmc_id', tmcId)
-    .select('id, name, status')
-    .single()
+  const updated = await clients.setStatus(db, id, tmcId, 'inactive')
 
-  if (updateError || !updated) {
-    console.error('Failed to deactivate client', updateError, { clientId: id })
-    return Response.json({ error: 'Could not deactivate this client.' }, { status: 500 })
+  if (!updated) {
+    return Response.json({ error: 'Client not found' }, { status: 404 })
   }
 
   return Response.json({ ok: true, client: updated })
-}
+})

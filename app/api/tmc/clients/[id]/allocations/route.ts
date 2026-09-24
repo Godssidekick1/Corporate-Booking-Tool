@@ -1,8 +1,11 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
 import { db } from '@/app/lib/db'
+import * as clients from '@/app/lib/repositories/clients'
+import * as dealCodes from '@/app/lib/repositories/dealCodes'
+import * as fop from '@/app/lib/repositories/fop'
+import { route } from '@/app/lib/http/handler'
 
 // ── GET /api/tmc/clients/[id]/allocations ────────────────────────────────────
 // Every deal code and form of payment that REACHES this client, and how.
@@ -29,7 +32,7 @@ const KIND_RANK: Record<Kind, number> = { client: 0, bucket: 1, client_group: 2 
 interface AllocationRow {
   assignmentId: string
   id: string
-  code: string
+  code: string | null
   label: string
   source: Kind
   sourceId: string | null
@@ -41,17 +44,17 @@ interface AllocationRow {
 
 interface AssignmentRow {
   id: string
-  kind: Kind
+  kind: string
   client_id: string | null
   client_group_id: string | null
   bucket_id: string | null
   is_active?: boolean
 }
 
-export async function GET(
+export const GET = route(async (
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
+) => {
   const { id } = await params
 
   const supabase = await createClient()
@@ -60,40 +63,22 @@ export async function GET(
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
   const check = await requireTmcPermission(db, user.id, 'manage_clients', id)
   if (!check.authorized || !check.tmcId) {
     return Response.json({ error: check.error ?? 'Forbidden' }, { status: check.status ?? 403 })
   }
   const tmcId = check.tmcId
 
-  const { data: client } = await service
-    .from('clients')
-    .select('id, client_group_id')
-    .eq('id', id)
-    .eq('tmc_id', tmcId)
-    .maybeSingle()
+  const client = await clients.reachProfile(db, id, tmcId)
 
   if (!client) {
     return Response.json({ error: 'Client not found' }, { status: 404 })
   }
 
-  const { data: memberRows } = await service
-    .from('bucket_clients')
-    .select('bucket_id')
-    .eq('client_id', id)
-
-  const bucketIds = (memberRows ?? []).map(r => r.bucket_id)
-
-  const [{ data: dealRows }, { data: fopRows }] = await Promise.all([
-    service
-      .from('deal_code_assignments')
-      .select('id, deal_code_id, kind, client_id, client_group_id, bucket_id')
-      .eq('tmc_id', tmcId),
-    service
-      .from('fop_assignments')
-      .select('id, fop_id, kind, client_id, client_group_id, bucket_id, is_active')
-      .eq('tmc_id', tmcId),
+  const [bucketIds, dealRows, fopRows] = await Promise.all([
+    clients.bucketIdsOfClient(db, id),
+    dealCodes.assignmentsForTmc(db, tmcId),
+    fop.assignmentsForTmc(db, tmcId),
   ])
 
   // Does this assignment row reach this client at all?
@@ -103,34 +88,27 @@ export async function GET(
     return a.client_group_id !== null && a.client_group_id === client!.client_group_id
   }
 
-  const deals = (dealRows ?? []).filter(reaches)
-  const fops = (fopRows ?? []).filter(reaches)
+  const deals = dealRows.filter(reaches)
+  const fops = fopRows.filter(reaches)
 
   // Names only for the routes that actually reached — no point fetching every
   // bucket in the TMC to label two of them.
-  const usedBuckets = [...new Set([...deals, ...fops].map(a => a.bucket_id).filter(Boolean) as string[])]
+  const usedBuckets = [...new Set([...deals, ...fops].map(a => a.bucket_id).filter((b): b is string => Boolean(b)))]
   const dealCodeIds = [...new Set(deals.map(a => a.deal_code_id))]
   const fopIds = [...new Set(fops.map(a => a.fop_id))]
 
-  const [{ data: buckets }, { data: groups }, { data: dealCodes }, { data: forms }] = await Promise.all([
-    usedBuckets.length
-      ? service.from('buckets').select('id, name, code').in('id', usedBuckets)
-      : Promise.resolve({ data: [] as { id: string; name: string; code: string | null }[] }),
-    client.client_group_id
-      ? service.from('client_groups').select('id, name').eq('id', client.client_group_id)
-      : Promise.resolve({ data: [] as { id: string; name: string }[] }),
-    dealCodeIds.length
-      ? service.from('deal_codes').select('id, code, code_type, airline_code').in('id', dealCodeIds)
-      : Promise.resolve({ data: [] as { id: string; code: string; code_type: string; airline_code: string | null }[] }),
-    fopIds.length
-      ? service.from('forms_of_payment').select('id, fop_code, label, payer, fop_type').in('id', fopIds)
-      : Promise.resolve({ data: [] as { id: string; fop_code: string; label: string; payer: string; fop_type: string }[] }),
+  const [bucketById, groupName, dealLabels, fopLabels, bucketSizeMap] = await Promise.all([
+    clients.bucketLabels(db, usedBuckets),
+    clients.groupNames(db, client.client_group_id ? [client.client_group_id] : []),
+    dealCodes.labels(db, dealCodeIds),
+    fop.labels(db, fopIds),
+    // How many clients each bucket governs, so the confirm dialog before
+    // removing an inherited mapping can say what else it affects.
+    clients.memberCounts(db, usedBuckets),
   ])
 
-  const bucketById = new Map((buckets ?? []).map(b => [b.id, b]))
-  const groupById = new Map((groups ?? []).map(g => [g.id, g]))
-  const dealById = new Map((dealCodes ?? []).map(d => [d.id, d]))
-  const fopById = new Map((forms ?? []).map(f => [f.id, f]))
+  const dealById = new Map(dealLabels.map(d => [d.id, d]))
+  const fopById = new Map(fopLabels.map(f => [f.id, f]))
 
   function source(a: AssignmentRow): { sourceId: string | null; sourceName: string | null } {
     if (a.kind === 'bucket') {
@@ -138,14 +116,13 @@ export async function GET(
       return { sourceId: a.bucket_id, sourceName: bucket?.name ?? null }
     }
     if (a.kind === 'client_group') {
-      const group = a.client_group_id ? groupById.get(a.client_group_id) : null
-      return { sourceId: a.client_group_id, sourceName: group?.name ?? null }
+      return { sourceId: a.client_group_id, sourceName: a.client_group_id ? groupName.get(a.client_group_id) ?? null : null }
     }
     return { sourceId: null, sourceName: null }
   }
 
   const byRank = (a: AllocationRow, b: AllocationRow) =>
-    KIND_RANK[a.source] - KIND_RANK[b.source] || a.code.localeCompare(b.code)
+    KIND_RANK[a.source] - KIND_RANK[b.source] || (a.code ?? '').localeCompare(b.code ?? '')
 
   const dealAllocations: AllocationRow[] = deals
     .map((a): AllocationRow | null => {
@@ -156,7 +133,7 @@ export async function GET(
         id: deal.id,
         code: deal.code,
         label: [deal.airline_code, deal.code_type].filter(Boolean).join(' · '),
-        source: a.kind,
+        source: a.kind as Kind,
         ...source(a),
       }
     })
@@ -165,14 +142,14 @@ export async function GET(
 
   const fopAllocations: AllocationRow[] = fops
     .map((a): AllocationRow | null => {
-      const fop = fopById.get(a.fop_id)
-      if (!fop) return null
+      const form = fopById.get(a.fop_id)
+      if (!form) return null
       return {
         assignmentId: a.id,
-        id: fop.id,
-        code: fop.fop_code,
-        label: [fop.label, fop.payer, fop.fop_type].filter(Boolean).join(' · '),
-        source: a.kind,
+        id: form.id,
+        code: form.fop_code,
+        label: [form.label, form.payer, form.fop_type].filter(Boolean).join(' · '),
+        source: a.kind as Kind,
         isActive: a.is_active !== false,
         ...source(a),
       }
@@ -180,24 +157,10 @@ export async function GET(
     .filter((r): r is AllocationRow => r !== null)
     .sort(byRank)
 
-  // How many other clients each bucket governs, so the confirm dialog before
-  // removing an inherited mapping can say what else it affects.
-  const bucketSizes: Record<string, number> = {}
-  if (usedBuckets.length) {
-    const { data: counts } = await service
-      .from('bucket_clients')
-      .select('bucket_id, client_id')
-      .in('bucket_id', usedBuckets)
-
-    for (const row of counts ?? []) {
-      bucketSizes[row.bucket_id] = (bucketSizes[row.bucket_id] ?? 0) + 1
-    }
-  }
-
   return Response.json({
     ok: true,
     dealCodes: dealAllocations,
     formsOfPayment: fopAllocations,
-    bucketSizes,
+    bucketSizes: Object.fromEntries(bucketSizeMap),
   })
-}
+})

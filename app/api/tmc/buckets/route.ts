@@ -1,9 +1,11 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
-import { parsePageParams, pagedResponse, ilikeAcross } from '@/app/lib/pagination'
+import { parsePageParams, pagedResponse } from '@/app/lib/pagination'
 import { NextRequest } from 'next/server'
-import { db } from '@/app/lib/db'
+import { db, isConstraint } from '@/app/lib/db'
+import * as clients from '@/app/lib/repositories/clients'
+import * as dealCodes from '@/app/lib/repositories/dealCodes'
+import { route } from '@/app/lib/http/handler'
 
 // ── /api/tmc/buckets ─────────────────────────────────────────────────────────
 // A bucket is a curated set of CLIENTS.
@@ -18,7 +20,7 @@ import { db } from '@/app/lib/db'
 // concept within months.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function GET(req: NextRequest) {
+export const GET = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -26,7 +28,6 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
   const auth = await requireTmcPermission(db, user.id, 'manage_deal_codes')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
@@ -35,62 +36,33 @@ export async function GET(req: NextRequest) {
   const params = parsePageParams(req.nextUrl.searchParams)
   const ids = req.nextUrl.searchParams.get('ids')?.split(',').filter(Boolean) ?? []
 
-  let query = service
-    .from('buckets')
-    .select('id, name, code, description, created_at', { count: 'exact' })
-    .eq('tmc_id', auth.tmcId)
-    .order('name')
+  const { rows, total } = await clients.bucketsForTmc(
+    db,
+    auth.tmcId,
+    ids.length > 0 ? { ids } : { search: params.search, page: params }
+  )
 
-  if (ids.length > 0) {
-    query = query.in('id', ids)
-  } else {
-    const filter = ilikeAcross(['name', 'code'], params.search)
-    if (filter) query = query.or(filter)
-    query = query.range(params.from, params.to)
-  }
+  const bucketIds = rows.map(b => b.id)
 
-  const { data: buckets, error, count } = await query
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
-
-  const bucketIds = (buckets ?? []).map(b => b.id)
-
-  const [{ data: members }, { data: assignments }] = await Promise.all([
-    bucketIds.length
-      ? service.from('bucket_clients').select('bucket_id, client_id').in('bucket_id', bucketIds)
-      : Promise.resolve({ data: [] }),
-    bucketIds.length
-      ? service.from('deal_code_assignments').select('bucket_id').in('bucket_id', bucketIds)
-      : Promise.resolve({ data: [] }),
-  ])
-
-  const clientCount = new Map<string, number>()
-  for (const m of members ?? []) {
-    clientCount.set(m.bucket_id, (clientCount.get(m.bucket_id) ?? 0) + 1)
-  }
-
-  // How many deal codes point at this bucket. Shown so the consequence of
+  // How many deal codes point at each bucket. Shown so the consequence of
   // adding a client to it is legible before you do it.
-  const dealCount = new Map<string, number>()
-  for (const a of assignments ?? []) {
-    if (!a.bucket_id) continue
-    dealCount.set(a.bucket_id, (dealCount.get(a.bucket_id) ?? 0) + 1)
-  }
+  const [clientCount, dealCount] = await Promise.all([
+    clients.memberCounts(db, bucketIds),
+    dealCodes.countByBucket(db, bucketIds),
+  ])
 
   return Response.json(
     pagedResponse(
-      (buckets ?? []).map(b => ({
+      rows.map(b => ({
         ...b,
         clientCount: clientCount.get(b.id) ?? 0,
         dealCodeCount: dealCount.get(b.id) ?? 0,
       })),
-      count ?? null,
+      total,
       params
     )
   )
-}
+})
 
 interface CreateBody {
   name: string
@@ -98,7 +70,9 @@ interface CreateBody {
   description?: string | null
 }
 
-export async function POST(req: NextRequest) {
+export const DUPLICATE_BUCKET = { error: 'A bucket with that name already exists' }
+
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -106,7 +80,6 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
   const auth = await requireTmcPermission(db, user.id, 'manage_deal_codes')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
@@ -118,24 +91,17 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Bucket name is required' }, { status: 400 })
   }
 
-  const { data: created, error } = await service
-    .from('buckets')
-    .insert({
+  try {
+    const created = await clients.insertBucket(db, {
       tmc_id: auth.tmcId,
       name: body.name.trim(),
       code: body.code?.trim().toUpperCase() || null,
       description: body.description?.trim() || null,
       created_by: user.id,
     })
-    .select('id, name, code, description, created_at')
-    .single()
-
-  if (error) {
-    if (error.code === '23505') {
-      return Response.json({ error: 'A bucket with that name already exists' }, { status: 409 })
-    }
-    return Response.json({ error: error.message }, { status: 500 })
+    return Response.json({ ok: true, bucket: { ...created, clientCount: 0, dealCodeCount: 0 } })
+  } catch (err) {
+    if (isConstraint(err, 'unique')) return Response.json(DUPLICATE_BUCKET, { status: 409 })
+    throw err
   }
-
-  return Response.json({ ok: true, bucket: { ...created, clientCount: 0, dealCodeCount: 0 } })
-}
+})

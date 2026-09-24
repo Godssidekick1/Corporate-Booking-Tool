@@ -4,6 +4,9 @@ import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission
 import { inviteRedirectUrl } from '@/app/lib/onboarding/onboardTmc'
 import { NextRequest } from 'next/server'
 import { db } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
+import * as clients from '@/app/lib/repositories/clients'
+import { route } from '@/app/lib/http/handler'
 
 // ── /api/tmc/clients/[id]/admin-access ───────────────────────────────────────
 // GET   the client's corporate admins, so the TMC can see who can let people in
@@ -24,28 +27,25 @@ import { db } from '@/app/lib/db'
 // alone is not enough, since a TC holds it for the clients assigned to them.
 // ─────────────────────────────────────────────────────────────────────────────
 
+type Ctx = { params: Promise<{ id: string }> }
+
 async function authorise(userId: string, clientId: string) {
-  const service = createServiceClient()
   const auth = await requireTmcPermission(db, userId, 'manage_clients', clientId)
 
   if (!auth.authorized || !auth.tmcId) {
     return { ok: false as const, error: auth.error ?? 'Forbidden', status: auth.status ?? 403 }
   }
 
-  const { data: client } = await service
-    .from('clients')
-    .select('id, name, tmc_id')
-    .eq('id', clientId)
-    .maybeSingle()
+  const client = await clients.tenancy(db, clientId)
 
   if (!client || client.tmc_id !== auth.tmcId) {
     return { ok: false as const, error: 'Client not found for this TMC', status: 404 }
   }
 
-  return { ok: true as const, service, client }
+  return { ok: true as const }
 }
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const GET = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -61,17 +61,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
   // Corporate admins only. A traveller's password is their own business and
   // nothing about this screen should invite a TMC to reach for it.
-  const { data: admins } = await check.service
-    .from('employees')
-    .select('id, full_name, email, status, created_at')
-    .eq('client_id', id)
-    .eq('role', 'admin')
-    .order('full_name')
+  return Response.json({ ok: true, admins: await employees.corporateAdmins(db, id) })
+})
 
-  return Response.json({ ok: true, admins: admins ?? [] })
-}
-
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const POST = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -95,13 +88,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // the address from the request would let anyone with this permission send a
   // password reset to an address of their choosing — a way to capture an account
   // rather than help someone back into theirs.
-  const { data: admin } = await check.service
-    .from('employees')
-    .select('id, full_name, email, role, client_id')
-    .eq('id', employeeId)
-    .eq('client_id', id)
-    .eq('role', 'admin')
-    .maybeSingle()
+  const admin = await employees.corporateAdmin(db, employeeId, id)
 
   if (!admin) {
     return Response.json({ error: 'That person is not an admin at this client' }, { status: 404 })
@@ -110,7 +97,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // Same destination as the reset flow on the login page: /auth/callback does a
   // server-side code exchange and is exempt from the proxy rule that bounces an
   // authenticated user away from /login before any client code runs.
-  const { error: resetError } = await check.service.auth.resetPasswordForEmail(
+  //
+  // GoTrue only -- the service client is used for nothing else here.
+  const { error: resetError } = await createServiceClient().auth.resetPasswordForEmail(
     admin.email,
     { redirectTo: inviteRedirectUrl() }
   )
@@ -126,4 +115,4 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     message: `Password reset sent to ${admin.email}.`,
     sentAt: new Date().toISOString(),
   })
-}
+})

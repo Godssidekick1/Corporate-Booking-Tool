@@ -1,7 +1,10 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { authoriseClient } from '../traveler-profiles/route'
 import { NextRequest } from 'next/server'
+import { db, transaction, isConstraint } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
+import * as clients from '@/app/lib/repositories/clients'
+import { route } from '@/app/lib/http/handler'
 
 // ── /api/tmc/cost-centres ────────────────────────────────────────────────────
 // A client's cost centres, with how many people sit in each.
@@ -13,8 +16,8 @@ import { NextRequest } from 'next/server'
 //
 // employees.cost_centre stores the code as text rather than a foreign key, so
 // renaming a code has to carry the employees with it — done here in the same
-// request, since leaving them pointing at a code that no longer exists is how
-// a cost centre quietly stops matching anything in a report.
+// transaction, since leaving them pointing at a code that no longer exists is
+// how a cost centre quietly stops matching anything in a report.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface CentreBody {
@@ -25,7 +28,10 @@ interface CentreBody {
   previousCode?: string
 }
 
-export async function GET(req: NextRequest) {
+const duplicate = (code: string) =>
+  Response.json({ error: `"${code}" already exists for this client` }, { status: 409 })
+
+export const GET = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -38,30 +44,18 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'clientId is required' }, { status: 400 })
   }
 
-  const service = createServiceClient()
   const access = await authoriseClient(user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
 
-  const [{ data: centres, error }, { data: employees }] = await Promise.all([
-    service
-      .from('cost_centres')
-      .select('id, code, name, created_at')
-      .eq('client_id', clientId)
-      .order('code'),
-    service
-      .from('employees')
-      .select('cost_centre, department')
-      .eq('client_id', clientId),
+  const [centres, people] = await Promise.all([
+    clients.costCentresWithDates(db, clientId),
+    employees.costCentreUsage(db, clientId),
   ])
 
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
-
   const headcount = new Map<string, number>()
-  for (const e of employees ?? []) {
+  for (const e of people) {
     if (!e.cost_centre) continue
     headcount.set(e.cost_centre, (headcount.get(e.cost_centre) ?? 0) + 1)
   }
@@ -70,22 +64,22 @@ export async function GET(req: NextRequest) {
   // set actually in use so the profile screen can offer them for picking
   // instead of everyone retyping "Engineering" slightly differently.
   const departments = Array.from(
-    new Set((employees ?? []).map(e => e.department?.trim()).filter(Boolean) as string[])
+    new Set(people.map(e => e.department?.trim()).filter((d): d is string => Boolean(d)))
   ).sort()
 
   return Response.json({
     ok: true,
-    costCentres: (centres ?? []).map(c => ({ ...c, employees: headcount.get(c.code) ?? 0 })),
+    costCentres: centres.map(c => ({ ...c, employees: headcount.get(c.code) ?? 0 })),
     departments,
     // People on a cost centre that isn't in the list — from a CSV import that
     // predates it, or data loaded before this screen existed.
     unlisted: Array.from(headcount.keys())
-      .filter(code => !(centres ?? []).some(c => c.code === code))
+      .filter(code => !centres.some(c => c.code === code))
       .map(code => ({ code, employees: headcount.get(code) ?? 0 })),
   })
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -102,29 +96,21 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'clientId and code are required' }, { status: 400 })
   }
 
-  const service = createServiceClient()
   const access = await authoriseClient(user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
 
-  const { data: centre, error } = await service
-    .from('cost_centres')
-    .insert({ client_id: clientId, code, name: name || code })
-    .select('id, code, name, created_at')
-    .single()
-
-  if (error) {
-    if (error.code === '23505') {
-      return Response.json({ error: `"${code}" already exists for this client` }, { status: 409 })
-    }
-    return Response.json({ error: error.message }, { status: 500 })
+  try {
+    const centre = await clients.insertCostCentre(db, { client_id: clientId, code, name: name || code })
+    return Response.json({ ok: true, costCentre: { ...centre, employees: 0 } }, { status: 201 })
+  } catch (err) {
+    if (isConstraint(err, 'unique')) return duplicate(code)
+    throw err
   }
+})
 
-  return Response.json({ ok: true, costCentre: { ...centre, employees: 0 } }, { status: 201 })
-}
-
-export async function PATCH(req: NextRequest) {
+export const PATCH = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -144,43 +130,31 @@ export async function PATCH(req: NextRequest) {
     )
   }
 
-  const service = createServiceClient()
   const access = await authoriseClient(user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
 
-  const { error } = await service
-    .from('cost_centres')
-    .update({ code, name: name || code })
-    .eq('client_id', clientId)
-    .eq('code', previousCode)
+  try {
+    // Rename, then carry the employees across, as one unit: a rejected rename
+    // (a duplicate code) leaves everyone where they were, and a failure moving
+    // them cannot leave the centre renamed with nobody on it.
+    //
+    // The people move even when previousCode has no cost_centres row -- that
+    // is how an "unlisted" code in use is renamed.
+    const moved = await transaction(async tx => {
+      await clients.renameCostCentre(tx, clientId, previousCode, { code, name: name || code })
+      return code !== previousCode ? employees.moveCostCentre(tx, clientId, previousCode, code) : 0
+    }, { tenantId: access.tmcId, userId: user.id })
 
-  if (error) {
-    if (error.code === '23505') {
-      return Response.json({ error: `"${code}" already exists for this client` }, { status: 409 })
-    }
-    return Response.json({ error: error.message }, { status: 500 })
+    return Response.json({ ok: true, moved })
+  } catch (err) {
+    if (isConstraint(err, 'unique')) return duplicate(code)
+    throw err
   }
+})
 
-  // Carry the employees across. Done after the rename rather than before so a
-  // rejected rename (a duplicate code) leaves everyone where they were.
-  let moved = 0
-  if (code !== previousCode) {
-    const { data: movedRows } = await service
-      .from('employees')
-      .update({ cost_centre: code })
-      .eq('client_id', clientId)
-      .eq('cost_centre', previousCode)
-      .select('id')
-
-    moved = movedRows?.length ?? 0
-  }
-
-  return Response.json({ ok: true, moved })
-}
-
-export async function DELETE(req: NextRequest) {
+export const DELETE = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -195,7 +169,6 @@ export async function DELETE(req: NextRequest) {
     return Response.json({ error: 'clientId and code are required' }, { status: 400 })
   }
 
-  const service = createServiceClient()
   const access = await authoriseClient(user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
@@ -203,27 +176,15 @@ export async function DELETE(req: NextRequest) {
 
   // Blocked rather than cascading: clearing the field on everyone silently
   // would lose which cost centre they were on, and there is no undo.
-  const { count } = await service
-    .from('employees')
-    .select('id', { count: 'exact', head: true })
-    .eq('client_id', clientId)
-    .eq('cost_centre', code)
+  const count = await employees.countOnCostCentre(db, clientId, code)
 
-  if (count && count > 0) {
+  if (count > 0) {
     return Response.json({
       error: `${count} employee${count > 1 ? 's are' : ' is'} on "${code}". Move them to another cost centre first.`,
     }, { status: 409 })
   }
 
-  const { error } = await service
-    .from('cost_centres')
-    .delete()
-    .eq('client_id', clientId)
-    .eq('code', code)
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
+  await clients.deleteCostCentre(db, clientId, code)
 
   return Response.json({ ok: true })
-}
+})

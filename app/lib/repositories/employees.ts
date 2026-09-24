@@ -736,3 +736,67 @@ export async function applyTravellerEdit(
     where id = ${employeeId}
     returning id, full_name, email, band_code, band_rank, department, cost_centre, designation, traveler_profile`)
 }
+
+// ═══ People, as the client screens count them ═══════════════════════════════
+
+// People per client, excluding deactivated -- "how big is this client", not
+// how many rows exist.
+export async function activeHeadcounts(db: Queryable, clientIds: readonly string[]): Promise<Map<string, number>> {
+  if (clientIds.length === 0) return new Map()
+  const rows = await many<{ client_id: string; n: number }>(db, sql`
+    select client_id, count(*)::int as n from employees
+    where client_id = any(${[...clientIds]}) and status <> 'deactivated'
+    group by client_id`)
+  return new Map(rows.map(r => [r.client_id, r.n]))
+}
+
+// TMC-side staff (tmc_admin or tc) at this TMC -- who may be a client's
+// account manager. A corporate employee's id satisfies the foreign key too.
+export async function isTmcStaff(db: Queryable, employeeId: string, tmcId: string): Promise<boolean> {
+  const row = await maybeOne<{ ok: boolean }>(db, sql`
+    select true as ok from employees
+    where id = ${employeeId} and tmc_id = ${tmcId} and role in ('tmc_admin', 'tc')`)
+  return row !== null
+}
+
+export type CorporateAdmin = Pick<Row<'employees'>, 'id' | 'full_name' | 'email' | 'status' | 'created_at'>
+
+export async function corporateAdmins(db: Queryable, clientId: string): Promise<CorporateAdmin[]> {
+  return many<CorporateAdmin>(db, sql`
+    select id, full_name, email, status, created_at from employees
+    where client_id = ${clientId} and role = 'admin'
+    order by full_name, id`)
+}
+
+// An admin of THIS client, re-read so a reset is only ever sent to the address
+// on file -- never to one a caller supplied.
+export async function corporateAdmin(
+  db: Queryable,
+  employeeId: string,
+  clientId: string
+): Promise<Pick<Row<'employees'>, 'id' | 'full_name' | 'email'> | null> {
+  return maybeOne(db, sql`
+    select id, full_name, email from employees
+    where id = ${employeeId} and client_id = ${clientId} and role = 'admin'`)
+}
+
+// ═══ Cost centres, as employees carry them ══════════════════════════════════
+// employees.cost_centre is the code as text, not a foreign key.
+
+export type CostCentreUsage = Pick<Row<'employees'>, 'cost_centre' | 'department'>
+
+export async function costCentreUsage(db: Queryable, clientId: string): Promise<CostCentreUsage[]> {
+  return many<CostCentreUsage>(db, sql`
+    select cost_centre, department from employees where client_id = ${clientId} order by id`)
+}
+
+export async function countOnCostCentre(db: Queryable, clientId: string, code: string): Promise<number> {
+  return (await one<{ n: number }>(db, sql`
+    select count(*)::int as n from employees where client_id = ${clientId} and cost_centre = ${code}`)).n
+}
+
+// Carries everyone on `from` to `to`; returns how many moved.
+export async function moveCostCentre(db: Queryable, clientId: string, from: string, to: string): Promise<number> {
+  return exec(db, sql`
+    update employees set cost_centre = ${to} where client_id = ${clientId} and cost_centre = ${from}`)
+}

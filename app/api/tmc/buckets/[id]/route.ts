@@ -1,8 +1,12 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
+import { DUPLICATE_BUCKET } from '../route'
 import { NextRequest } from 'next/server'
-import { db } from '@/app/lib/db'
+import { db, transaction, isConstraint } from '@/app/lib/db'
+import * as clients from '@/app/lib/repositories/clients'
+import * as dealCodes from '@/app/lib/repositories/dealCodes'
+import * as fop from '@/app/lib/repositories/fop'
+import { route } from '@/app/lib/http/handler'
 
 // ── /api/tmc/buckets/[id] ────────────────────────────────────────────────────
 // GET     the bucket, its client members, and which deal codes target it
@@ -10,29 +14,25 @@ import { db } from '@/app/lib/db'
 // DELETE  refused while any deal code targets it
 // ─────────────────────────────────────────────────────────────────────────────
 
+type Ctx = { params: Promise<{ id: string }> }
+
 async function authorise(userId: string, id: string) {
-  const service = createServiceClient()
   const auth = await requireTmcPermission(db, userId, 'manage_deal_codes')
 
   if (!auth.authorized || !auth.tmcId) {
-    return { ok: false as const, service, error: auth.error ?? 'Forbidden', status: auth.status ?? 403 }
+    return { ok: false as const, error: auth.error ?? 'Forbidden', status: auth.status ?? 403 }
   }
 
-  const { data: bucket } = await service
-    .from('buckets')
-    .select('id, tmc_id, name, code, description')
-    .eq('id', id)
-    .eq('tmc_id', auth.tmcId)
-    .maybeSingle()
+  const bucket = await clients.bucketInTmc(db, id, auth.tmcId)
 
   if (!bucket) {
-    return { ok: false as const, service, error: 'Bucket not found', status: 404 }
+    return { ok: false as const, error: 'Bucket not found', status: 404 }
   }
 
-  return { ok: true as const, service, tmcId: auth.tmcId, bucket }
+  return { ok: true as const, tmcId: auth.tmcId, bucket }
 }
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const GET = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -46,45 +46,26 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return Response.json({ error: check.error }, { status: check.status })
   }
 
-  const { service, bucket } = check
-
-  const { data: members } = await service
-    .from('bucket_clients')
-    .select('client_id')
-    .eq('bucket_id', id)
-
-  const memberIds = (members ?? []).map(m => m.client_id)
-
-  const [{ data: clients }, { data: assignments }] = await Promise.all([
-    memberIds.length
-      ? service.from('clients').select('id, name, status').in('id', memberIds).order('name')
-      : Promise.resolve({ data: [] }),
-    service
-      .from('deal_code_assignments')
-      .select('deal_code_id')
-      .eq('bucket_id', id),
+  const [memberIds, dealIds] = await Promise.all([
+    clients.memberIds(db, id),
+    dealCodes.idsForBucket(db, id),
   ])
-
-  const dealIds = (assignments ?? []).map(a => a.deal_code_id)
 
   // Which codes this bucket hands out. Read-only here — assignment is edited on
   // the deal, so there is one place that decides reach rather than two that can
   // disagree.
-  const { data: deals } = dealIds.length
-    ? await service
-        .from('deal_codes')
-        .select('id, code, code_type, airline_code')
-        .in('id', dealIds)
-        .order('airline_code')
-    : { data: [] }
+  const [members, deals] = await Promise.all([
+    clients.clientsByIds(db, memberIds),
+    dealCodes.labels(db, dealIds),
+  ])
 
   return Response.json({
     ok: true,
-    bucket,
-    clients: clients ?? [],
-    dealCodes: deals ?? [],
+    bucket: check.bucket,
+    clients: members,
+    dealCodes: deals,
   })
-}
+})
 
 interface UpdateBody {
   name?: string
@@ -96,7 +77,7 @@ interface UpdateBody {
   clientIds?: string[]
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const PATCH = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -110,10 +91,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return Response.json({ error: check.error }, { status: check.status })
   }
 
-  const { service, tmcId } = check
+  const { tmcId } = check
   const body: UpdateBody = await req.json()
 
-  const update: Record<string, unknown> = {}
+  const update: clients.BucketEdit = {}
   if (body.name !== undefined) {
     if (!body.name.trim()) {
       return Response.json({ error: 'Bucket name cannot be empty' }, { status: 400 })
@@ -124,27 +105,23 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (body.description !== undefined) update.description = body.description?.trim() || null
 
   if (Object.keys(update).length > 0) {
-    const { error } = await service.from('buckets').update(update).eq('id', id)
-    if (error) {
-      if (error.code === '23505') {
-        return Response.json({ error: 'A bucket with that name already exists' }, { status: 409 })
-      }
-      return Response.json({ error: error.message }, { status: 500 })
+    try {
+      await clients.updateBucket(db, id, update)
+    } catch (err) {
+      if (isConstraint(err, 'unique')) return Response.json(DUPLICATE_BUCKET, { status: 409 })
+      throw err
     }
   }
 
   if (body.clientIds !== undefined) {
+    const clientIds = body.clientIds
+
     // Every id checked against this TMC before anything is written: client_id is
     // a plain FK, so another tenant's client would satisfy it and silently join
     // a bucket that hands out negotiated fares.
-    if (body.clientIds.length > 0) {
-      const { data: valid } = await service
-        .from('clients')
-        .select('id')
-        .eq('tmc_id', tmcId)
-        .in('id', body.clientIds)
-
-      if ((valid ?? []).length !== body.clientIds.length) {
+    if (clientIds.length > 0) {
+      const valid = await clients.idsInTmc(db, tmcId, clientIds)
+      if (valid.length !== clientIds.length) {
         return Response.json(
           { error: 'One or more of those clients do not belong to your TMC' },
           { status: 422 }
@@ -154,24 +131,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     // Replace wholesale. Delete-then-insert rather than a diff: the list is
     // small, and a diff has more ways to be subtly wrong than this has to be
-    // slow.
-    await service.from('bucket_clients').delete().eq('bucket_id', id)
-
-    if (body.clientIds.length > 0) {
-      const { error } = await service
-        .from('bucket_clients')
-        .insert(body.clientIds.map(client_id => ({ bucket_id: id, client_id })))
-
-      if (error) {
-        return Response.json({ error: error.message }, { status: 500 })
-      }
-    }
+    // slow. In one transaction, so a failed insert does not leave the bucket
+    // empty -- which would silently revoke what it hands out from every member.
+    await transaction(tx => clients.replaceMembers(tx, id, clientIds), { tenantId: tmcId, userId: user.id })
   }
 
   return Response.json({ ok: true })
-}
+})
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const DELETE = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -185,7 +153,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     return Response.json({ error: check.error }, { status: check.status })
   }
 
-  const { service, bucket } = check
+  const { bucket } = check
 
   // Both assignment tables cascade on bucket_id, so deleting would silently
   // revoke everything this bucket hands out. Refused with the counts instead.
@@ -193,22 +161,16 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   // Forms of payment were missing from this check until buckets became the only
   // grouping mechanism: deal codes were guarded, FOP mappings were not, and
   // deleting a bucket quietly changed how other clients' tickets got paid for.
-  const [{ count: dealCount }, { count: fopCount }] = await Promise.all([
-    service
-      .from('deal_code_assignments')
-      .select('id', { count: 'exact', head: true })
-      .eq('bucket_id', id),
-    service
-      .from('fop_assignments')
-      .select('id', { count: 'exact', head: true })
-      .eq('bucket_id', id),
+  const [dealCount, fopCount] = await Promise.all([
+    dealCodes.countForBucket(db, id),
+    fop.countForBucket(db, id),
   ])
 
   const blockers: string[] = []
-  if (dealCount && dealCount > 0) {
+  if (dealCount > 0) {
     blockers.push(`${dealCount} deal code${dealCount > 1 ? 's' : ''}`)
   }
-  if (fopCount && fopCount > 0) {
+  if (fopCount > 0) {
     blockers.push(`${fopCount} form${fopCount > 1 ? 's' : ''} of payment`)
   }
 
@@ -221,11 +183,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     )
   }
 
-  const { error } = await service.from('buckets').delete().eq('id', id)
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
+  await clients.deleteBucket(db, id)
 
   return Response.json({ ok: true })
-}
+})

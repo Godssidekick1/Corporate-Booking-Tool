@@ -1,8 +1,9 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
 import { db } from '@/app/lib/db'
+import * as clients from '@/app/lib/repositories/clients'
+import { route } from '@/app/lib/http/handler'
 
 // ── /api/tmc/clients/[id]/mandatory-info ─────────────────────────────────────
 // The entries a booking for this client must carry, and the GDS command each
@@ -29,30 +30,25 @@ interface MandatoryInfoBody {
   is_mandatory?: boolean
 }
 
-const COLUMNS = 'id, code, description, type, gds_entry, value_prefix, is_mandatory, created_at'
+type Ctx = { params: Promise<{ id: string }> }
 
 async function authorise(userId: string, clientId: string) {
-  const service = createServiceClient()
   const auth = await requireTmcPermission(db, userId, 'manage_clients', clientId)
 
   if (!auth.authorized || !auth.tmcId) {
     return { ok: false as const, error: auth.error ?? 'Forbidden', status: auth.status ?? 403 }
   }
 
-  const { data: client } = await service
-    .from('clients')
-    .select('id, tmc_id')
-    .eq('id', clientId)
-    .maybeSingle()
+  const client = await clients.tenancy(db, clientId)
 
   if (!client || client.tmc_id !== auth.tmcId) {
     return { ok: false as const, error: 'Client not found for this TMC', status: 404 }
   }
 
-  return { ok: true as const, service }
+  return { ok: true as const }
 }
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const GET = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -66,20 +62,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     return Response.json({ error: check.error }, { status: check.status })
   }
 
-  const { data: entries, error } = await check.service
-    .from('client_mandatory_info')
-    .select(COLUMNS)
-    .eq('client_id', id)
-    .order('code')
+  return Response.json({ ok: true, entries: await clients.mandatoryInfo(db, id) })
+})
 
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
-
-  return Response.json({ ok: true, entries: entries ?? [] })
-}
-
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const POST = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -100,7 +86,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return Response.json({ error: 'A mandatory entry needs a code' }, { status: 400 })
   }
 
-  const row = {
+  // Saved on (client_id, code) so re-saving an entry edits it rather than
+  // failing on the unique constraint — the code IS the identity here, and
+  // making someone delete-then-recreate to fix a typo is friction with no
+  // safety in it.
+  const saved = await clients.saveMandatory(db, {
     client_id: id,
     code,
     description: body.description?.trim() || null,
@@ -110,26 +100,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     gds_entry: body.gds_entry?.trim().toUpperCase() || null,
     value_prefix: body.value_prefix?.trim() || null,
     is_mandatory: body.is_mandatory !== false,
-  }
-
-  // Upserted on (client_id, code) so re-saving an entry edits it rather than
-  // failing on the unique constraint — the code IS the identity here, and
-  // making someone delete-then-recreate to fix a typo is friction with no
-  // safety in it.
-  const { data: saved, error } = await check.service
-    .from('client_mandatory_info')
-    .upsert(row, { onConflict: 'client_id,code' })
-    .select(COLUMNS)
-    .single()
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
+  })
 
   return Response.json({ ok: true, entry: saved })
-}
+})
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export const DELETE = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -150,15 +126,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 
   // Scoped by client_id in the delete itself rather than checked first, so there
   // is no window between the check and the write.
-  const { error } = await check.service
-    .from('client_mandatory_info')
-    .delete()
-    .eq('id', entryId)
-    .eq('client_id', id)
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
+  await clients.deleteMandatory(db, entryId, id)
 
   return Response.json({ ok: true })
-}
+})
