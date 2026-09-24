@@ -664,3 +664,15 @@ export async function saveMandatory(
 export async function deleteMandatory(db: Queryable, entryId: string, clientId: string): Promise<void> {
   await exec(db, sql`delete from client_mandatory_info where id = ${entryId} and client_id = ${clientId}`)
 }
+
+// ═══ Booking stamps ═════════════════════════════════════════════════════════
+
+// What decides which masters reach a client at booking time: its TMC, group
+// and branch (bucket membership is read separately). Not tenant-filtered: the
+// caller already holds a client id it resolved from the signed-in traveller.
+export type StampProfile = Pick<Row<'clients'>, 'id' | 'tmc_id' | 'client_group_id' | 'branch_id'>
+
+export async function stampProfile(db: Queryable, clientId: string): Promise<StampProfile | null> {
+  return maybeOne<StampProfile>(db, sql`
+    select id, tmc_id, client_group_id, branch_id from clients where id = ${clientId}`)
+}

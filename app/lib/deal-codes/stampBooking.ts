@@ -1,8 +1,8 @@
-import { createServiceClient } from '@/utils/supabase/service'
 import { resolveDealCodes, describeVia, type ResolvableAssignment } from './resolveDealCodes'
 import type { FlatFlightResult } from '@/app/lib/book/types'
-
-type ServiceClient = ReturnType<typeof createServiceClient>
+import type { Queryable } from '@/app/lib/db'
+import * as clients from '@/app/lib/repositories/clients'
+import * as dealCodes from '@/app/lib/repositories/dealCodes'
 
 // ── stampDealCodes ───────────────────────────────────────────────────────────
 // Resolves the deal codes that apply to a booking and returns them for storage
@@ -38,32 +38,21 @@ export interface StampedDealCode {
 }
 
 export async function stampDealCodes(
-  service: ServiceClient,
+  db: Queryable,
   clientId: string,
   flight: FlatFlightResult | null
 ): Promise<StampedDealCode[] | null> {
   try {
-    const { data: client } = await service
-      .from('clients')
-      .select('id, tmc_id, client_group_id')
-      .eq('id', clientId)
-      .maybeSingle()
+    const client = await clients.stampProfile(db, clientId)
 
-    if (!client) return null
+    if (!client?.tmc_id) return null
 
-    const { data: bucketRows } = await service
-      .from('bucket_clients')
-      .select('bucket_id')
-      .eq('client_id', clientId)
+    const [bucketIds, assignmentRows] = await Promise.all([
+      clients.bucketIdsOfClient(db, clientId),
+      dealCodes.assignmentsForTmc(db, client.tmc_id),
+    ])
 
-    const bucketIds = (bucketRows ?? []).map(b => b.bucket_id)
-
-    const { data: assignmentRows } = await service
-      .from('deal_code_assignments')
-      .select('deal_code_id, kind, client_id, client_group_id, bucket_id')
-      .eq('tmc_id', client.tmc_id)
-
-    const reaching = (assignmentRows ?? []).filter(a => {
+    const reaching = assignmentRows.filter(a => {
       if (a.kind === 'client') return a.client_id === clientId
       if (a.kind === 'bucket') return a.bucket_id !== null && bucketIds.includes(a.bucket_id)
       return a.client_group_id !== null && a.client_group_id === client.client_group_id
@@ -73,30 +62,18 @@ export async function stampDealCodes(
 
     const dealIds = [...new Set(reaching.map(a => a.deal_code_id))]
 
-    const [{ data: deals }, { data: buckets }, { data: groups }] = await Promise.all([
-      service
-        .from('deal_codes')
-        .select(
-          'id, code, code_type, airline_code, flight_spec, active, sales_from, sales_to, travel_from, travel_to, created_at'
-        )
-        .in('id', dealIds),
-      bucketIds.length
-        ? service.from('buckets').select('id, name').in('id', bucketIds)
-        : Promise.resolve({ data: [] }),
-      client.client_group_id
-        ? service.from('client_groups').select('id, name').eq('id', client.client_group_id)
-        : Promise.resolve({ data: [] }),
+    const [deals, buckets, groupName] = await Promise.all([
+      dealCodes.forResolution(db, dealIds),
+      clients.bucketLabels(db, bucketIds),
+      clients.groupNames(db, client.client_group_id ? [client.client_group_id] : []),
     ])
-
-    const bucketName = new Map((buckets ?? []).map(b => [b.id, b.name]))
-    const groupName = new Map((groups ?? []).map(g => [g.id, g.name]))
 
     const assignments: ResolvableAssignment[] = reaching.map(a => ({
       deal_code_id: a.deal_code_id,
-      kind: a.kind,
+      kind: a.kind as ResolvableAssignment['kind'],
       via_name:
         a.kind === 'bucket'
-          ? bucketName.get(a.bucket_id!) ?? null
+          ? buckets.get(a.bucket_id!)?.name ?? null
           : a.kind === 'client_group'
             ? groupName.get(a.client_group_id!) ?? null
             : null,
@@ -150,7 +127,7 @@ export async function stampDealCodes(
 
     for (const run of runs) {
       const resolved = resolveDealCodes({
-        deals: deals ?? [],
+        deals,
         assignments,
         airlineCode: run.airline,
         flightNumber: run.flightNumber,

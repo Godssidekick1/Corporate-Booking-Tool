@@ -12,7 +12,6 @@ import { actors, type Actors } from '../harness/actors'
 import { resetDatabase } from '../harness/db'
 import { db } from '@/app/lib/db'
 import { sql, one, many, exec } from '@/app/lib/db/sql'
-import { createServiceClient } from '@/utils/supabase/service'
 
 // ── The booking stamps and the policy check ──────────────────────────────────
 // What every search, price and booking asks the database: which commercials,
@@ -28,7 +27,7 @@ const HAS_DB = Boolean(process.env.DATABASE_URL)
 const d = HAS_DB ? describe : describe.skip
 
 // The connection the modules under test are handed.
-const conn = createServiceClient()
+const conn = db
 
 function flight(airline: string, legs: { rbd: string; number: string }[], opts: { lcc?: boolean } = {}): FlatFlightResult {
   const origin = { code: 'DEL', name: 'Delhi', city: 'Delhi', dateTime: '2026-11-10T08:00:00' }

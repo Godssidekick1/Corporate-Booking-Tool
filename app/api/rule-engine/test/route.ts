@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }
 
-  const result = await checkBookingAgainstPolicy(service, {
+  const result = await checkBookingAgainstPolicy(db, {
     employeeId,
     travelType,
     totalCost,
@@ -64,4 +64,4 @@ export async function POST(req: NextRequest) {
   })
 
   return Response.json({ ok: true, result })
-}
+}

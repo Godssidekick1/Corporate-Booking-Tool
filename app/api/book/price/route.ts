@@ -1,4 +1,5 @@
 import { createClient } from '@/utils/supabase/server'
+import { db } from '@/app/lib/db'
 import { createServiceClient } from '@/utils/supabase/service'
 import { amadeus, type PricingResponse } from '@/app/lib/amadeus/client'
 import { stampCommercials } from '@/app/lib/commercials/stampCommercials'
@@ -202,7 +203,7 @@ if (!key || !pricingKey || !provider || !resultIndex) {
     const pax = Math.max(1, details.passengerBreakup?.length ?? 1)
 
     const stamped = employee?.client_id
-      ? await stampCommercials(service, {
+      ? await stampCommercials(db, {
           clientId: employee.client_id,
           flight: (itinerary as FlatFlightResult | null) ?? null,
           components,
@@ -333,4 +334,4 @@ if (!key || !pricingKey || !provider || !resultIndex) {
 
     return Response.json({ ok: false, error: message }, { status: 500 })
   }
-}
+}

@@ -800,3 +800,16 @@ export async function moveCostCentre(db: Queryable, clientId: string, from: stri
   return exec(db, sql`
     update employees set cost_centre = ${to} where client_id = ${clientId} and cost_centre = ${from}`)
 }
+
+// ═══ Policy subject ═════════════════════════════════════════════════════════
+
+// The traveller as the policy check sees them: their client and band code.
+// The band's RANK is read from the client's own bands row (bandByCode), not
+// from the denormalised band_rank here -- that is the lookup the policy has
+// always used.
+export async function policySubject(
+  db: Queryable,
+  employeeId: string
+): Promise<Pick<Row<'employees'>, 'client_id' | 'band_code'> | null> {
+  return maybeOne(db, sql`select client_id, band_code from employees where id = ${employeeId}`)
+}

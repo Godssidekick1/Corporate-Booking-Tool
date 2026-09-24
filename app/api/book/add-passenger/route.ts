@@ -1,4 +1,5 @@
 import { createClient } from '@/utils/supabase/server'
+import { db } from '@/app/lib/db'
 import { createServiceClient } from '@/utils/supabase/service'
 import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic, CustomerInfo } from '@/app/lib/amadeus/client'
 import { NextRequest } from 'next/server'
@@ -213,7 +214,7 @@ export async function POST(req: NextRequest) {
         flight, totalFare: sellGrandTotal, isRefundable, selectedSeatFees,
       })
       travelTypeForApproval = inputs.travelType
-      const ruleResult = await checkBookingAgainstPolicy(service, {
+      const ruleResult = await checkBookingAgainstPolicy(db, {
         employeeId: employee.id,
         travelType: inputs.travelType,
         totalCost: inputs.totalCost,
@@ -247,8 +248,8 @@ export async function POST(req: NextRequest) {
     // a tour code, and its Payment object's contract is undocumented. Resolved
     // in parallel since neither depends on the other.
     const [resolvedDealCodes, resolvedFop] = await Promise.all([
-      stampDealCodes(service, employee.client_id, flight ?? null),
-      stampFop(service, employee.client_id, flight ?? null),
+      stampDealCodes(db, employee.client_id, flight ?? null),
+      stampFop(db, employee.client_id, flight ?? null),
     ])
 
     // Insert immediately after a successful AddPassenger call — this is the
@@ -370,4 +371,4 @@ export async function POST(req: NextRequest) {
     console.error('AddPassenger error:', err)
     return Response.json({ error: 'Could not add passenger details' }, { status: 500 })
   }
-}
+}

@@ -1,4 +1,5 @@
 import { createClient } from '@/utils/supabase/server'
+import { db } from '@/app/lib/db'
 import { createServiceClient } from '@/utils/supabase/service'
 import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic } from '@/app/lib/amadeus/client'
 import { harvestAirlines } from '@/app/lib/reference/harvestAirlines'
@@ -268,7 +269,7 @@ export async function POST(req: NextRequest) {
     // No floating-promise risk: it is awaited unconditionally below, inside the
     // same try, so a rejection surfaces here like any other. loadCommercialContext
     // does not throw in any case — it returns an empty context on failure.
-    const contextPromise = loadCommercialContext(service, employee.client_id)
+    const contextPromise = loadCommercialContext(db, employee.client_id)
 
     const availability = await amadeus.searchFlights({
       segments: isReturn
@@ -552,4 +553,4 @@ export async function POST(req: NextRequest) {
     console.error('Flight search error:', err)
     return Response.json({ error: 'Flight search failed' }, { status: 500 })
   }
-}
+}

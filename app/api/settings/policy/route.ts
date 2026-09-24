@@ -1,4 +1,5 @@
 import { createClient } from '@/utils/supabase/server'
+import { db } from '@/app/lib/db'
 import { createServiceClient } from '@/utils/supabase/service'
 import { getLinkedPolicyGroups, groupsCoveringRank } from '@/app/lib/rule-engine/linkedPolicyGroups'
 
@@ -71,7 +72,7 @@ export async function GET() {
     .eq('client_id', clientId)
     .order('rank')
 
-  const groups = await getLinkedPolicyGroups(service, clientId)
+  const groups = await getLinkedPolicyGroups(db, clientId)
 
   if (groups.length === 0) {
     return Response.json({

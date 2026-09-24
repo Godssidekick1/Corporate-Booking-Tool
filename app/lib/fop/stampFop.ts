@@ -1,10 +1,9 @@
-import { createServiceClient } from '@/utils/supabase/service'
 import { resolveFop, type ResolvableFopAssignment, type ResolvedFop } from './resolveFop'
 import { loadClientGates } from '@/app/lib/clients/clientGates'
 import type { FlatFlightResult } from '@/app/lib/book/types'
-import { db } from '@/app/lib/db'
-
-type ServiceClient = ReturnType<typeof createServiceClient>
+import type { Queryable } from '@/app/lib/db'
+import * as clients from '@/app/lib/repositories/clients'
+import * as fopRepo from '@/app/lib/repositories/fop'
 
 // ── stampFop ─────────────────────────────────────────────────────────────────
 // Resolves the form of payment for a booking and returns it for storage.
@@ -36,45 +35,31 @@ export interface StampedFop extends ResolvedFop {
 }
 
 export async function stampFop(
-  service: ServiceClient,
+  db: Queryable,
   clientId: string,
   flight: FlatFlightResult | null
 ): Promise<StampedFop | null> {
   try {
-    const { data: client } = await service
-      .from('clients')
-      .select('id, tmc_id, branch_id, client_group_id')
-      .eq('id', clientId)
-      .maybeSingle()
+    const client = await clients.stampProfile(db, clientId)
 
-    if (!client) return null
+    if (!client?.tmc_id) return null
 
-    const [{ data: fops }, { data: bucketRows }, { data: assignmentRows }] = await Promise.all([
-      service
-        .from('forms_of_payment')
-        .select(
-          'id, label, fop_type, payer, card_type, last4, expiry_month, expiry_year, branch_id, airline_code, rbd_spec, active, is_default, created_at'
-        )
-        .eq('tmc_id', client.tmc_id),
-      service.from('bucket_clients').select('bucket_id').eq('client_id', clientId),
-      service
-        .from('fop_assignments')
-        .select('fop_id, kind, client_id, client_group_id, bucket_id, is_active')
-        .eq('tmc_id', client.tmc_id),
+    const [fops, bucketIds, assignmentRows] = await Promise.all([
+      fopRepo.forResolution(db, client.tmc_id),
+      clients.bucketIdsOfClient(db, clientId),
+      fopRepo.assignmentsForTmc(db, client.tmc_id),
     ])
 
-    if (!fops || fops.length === 0) return null
+    if (fops.length === 0) return null
 
     // Which payer types this client permits. Read here rather than inside
     // resolveFop so that function stays pure and testable without a database.
     const gates = await loadClientGates(db, clientId)
 
-    const bucketIds = (bucketRows ?? []).map(b => b.bucket_id)
-
     // A switched-off mapping does not reach this client. It no longer needs to
     // be tracked separately either: the fallback is now the form of payment
     // flagged is_default, so suspending a mapping cannot promote anything.
-    const reaching = (assignmentRows ?? []).filter(a => {
+    const reaching = assignmentRows.filter(a => {
       if (!a.is_active) return false
       if (a.kind === 'client') return a.client_id === clientId
       if (a.kind === 'bucket') return a.bucket_id !== null && bucketIds.includes(a.bucket_id)
@@ -83,26 +68,19 @@ export async function stampFop(
 
     // Names only for the routes that actually reached this client — no point
     // fetching every bucket in the TMC to label two of them.
-    const usedBucketIds = [...new Set(reaching.map(a => a.bucket_id).filter(Boolean) as string[])]
+    const usedBucketIds = [...new Set(reaching.map(a => a.bucket_id).filter((b): b is string => Boolean(b)))]
 
-    const [{ data: buckets }, { data: groups }] = await Promise.all([
-      usedBucketIds.length
-        ? service.from('buckets').select('id, name').in('id', usedBucketIds)
-        : Promise.resolve({ data: [] }),
-      client.client_group_id
-        ? service.from('client_groups').select('id, name').eq('id', client.client_group_id)
-        : Promise.resolve({ data: [] }),
+    const [buckets, groupName] = await Promise.all([
+      clients.bucketLabels(db, usedBucketIds),
+      clients.groupNames(db, client.client_group_id ? [client.client_group_id] : []),
     ])
-
-    const bucketName = new Map((buckets ?? []).map(b => [b.id, b.name]))
-    const groupName = new Map((groups ?? []).map(g => [g.id, g.name]))
 
     const assignments: ResolvableFopAssignment[] = reaching.map(a => ({
       fop_id: a.fop_id,
-      kind: a.kind,
+      kind: a.kind as ResolvableFopAssignment['kind'],
       via_name:
         a.kind === 'bucket'
-          ? bucketName.get(a.bucket_id!) ?? null
+          ? buckets.get(a.bucket_id!)?.name ?? null
           : a.kind === 'client_group'
             ? groupName.get(a.client_group_id!) ?? null
             : null,

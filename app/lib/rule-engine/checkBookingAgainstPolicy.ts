@@ -1,10 +1,8 @@
-import { createServiceClient } from '@/utils/supabase/service'
 import { resolveEffectivePolicy, PolicyBlocked } from './resolveEffectivePolicy'
 import { evaluateBooking, VerdictResult } from './evaluateBooking'
 import { loadClientGates } from '@/app/lib/clients/clientGates'
-import { db } from '@/app/lib/db'
-
-type ServiceClient = ReturnType<typeof createServiceClient>
+import type { Queryable } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
 
 export interface BookingCheckInput {
   employeeId: string
@@ -29,18 +27,14 @@ export type RuleEngineResult =
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function checkBookingAgainstPolicy(
-  service: ServiceClient,
+  db: Queryable,
   input: BookingCheckInput
 ): Promise<RuleEngineResult> {
   // Corporate Settings can switch policy control off for a client entirely.
   // Checked first: resolving a policy we are then going to ignore is work for
   // nobody, and it would report a configuration gap on a client that has
   // deliberately opted out of being checked.
-  const { data: employee } = await service
-    .from('employees')
-    .select('client_id')
-    .eq('id', input.employeeId)
-    .maybeSingle()
+  const employee = await employees.policySubject(db, input.employeeId)
 
   const gates = await loadClientGates(db, employee?.client_id)
 
@@ -52,7 +46,7 @@ export async function checkBookingAgainstPolicy(
     }
   }
 
-  const policy = await resolveEffectivePolicy(service, input.employeeId, input.travelType)
+  const policy = await resolveEffectivePolicy(db, input.employeeId, input.travelType)
 
   if (!policy.ok) {
     return { ok: false, reason: policy.reason, message: policy.message }

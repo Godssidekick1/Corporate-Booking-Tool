@@ -1,7 +1,14 @@
 import { createServiceClient } from '@/utils/supabase/service'
+import type { Queryable } from '@/app/lib/db'
+import * as policy from '@/app/lib/repositories/policy'
 
 // Data access only, so a transaction client satisfies it too. See the same
 // narrowing in the approval engine.
+//
+// ONLY getBandRanksByGroup still takes one: its callers (the policy master
+// routes) call it inside shim transactions, and handing them the pool instead
+// would read outside the transaction they are writing in. It moves with those
+// routes; the migrated path uses policy.bandRanksByGroup.
 type ServiceClient = Pick<ReturnType<typeof createServiceClient>, "from">
 
 export interface LinkedPolicyGroup {
@@ -52,10 +59,7 @@ export async function getBandRanksByGroup(
 // ── getLinkedPolicyGroups ────────────────────────────────────────────────────
 // Every policy group linked to a client, with the ranks it covers.
 //
-// Fetched as separate queries (link rows, then group rows, then ranks) rather
-// than a Supabase FK-embed — same reasoning used everywhere else in this
-// codebase: embed-alias inference isn't relied on elsewhere, so this stays
-// consistent rather than introducing untested syntax in a path this central.
+// Two queries: the linked groups (one join), then their ranks.
 //
 // Shared by resolveEffectivePolicy (one employee's rank) and the corporate
 // read-only policy view (every band the client has), so the two can never
@@ -63,26 +67,16 @@ export async function getBandRanksByGroup(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function getLinkedPolicyGroups(
-  service: ServiceClient,
+  db: Queryable,
   clientId: string
 ): Promise<LinkedPolicyGroup[]> {
-  const { data: links } = await service
-    .from('client_policy_groups')
-    .select('policy_group_id')
-    .eq('client_id', clientId)
+  const groups = await policy.linkedGroups(db, clientId)
 
-  const groupIds = (links ?? []).map(l => l.policy_group_id)
+  if (groups.length === 0) return []
 
-  if (groupIds.length === 0) return []
+  const ranksByGroup = await policy.bandRanksByGroup(db, groups.map(g => g.id))
 
-  const { data: groups } = await service
-    .from('policy_groups')
-    .select('id, name, code')
-    .in('id', groupIds)
-
-  const ranksByGroup = await getBandRanksByGroup(service, groupIds)
-
-  return (groups ?? []).map(g => ({
+  return groups.map(g => ({
     id: g.id,
     name: g.name,
     code: g.code,

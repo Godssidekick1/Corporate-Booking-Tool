@@ -1,4 +1,5 @@
 import { createClient } from '@/utils/supabase/server'
+import { db } from '@/app/lib/db'
 import { createServiceClient } from '@/utils/supabase/service'
 import { NextRequest } from 'next/server'
 import { amadeus, AmadeusError } from '@/app/lib/amadeus/client'
@@ -130,7 +131,7 @@ export async function POST(
     }
 
     const { record } = booking.client_id
-      ? await stampCommercials(service, {
+      ? await stampCommercials(db, {
           clientId: booking.client_id,
           flight: (flight as FlatFlightResult | null) ?? null,
           components,
@@ -157,7 +158,7 @@ export async function POST(
         selectedSeatFees: existingSeatFees ? [String(existingSeatFees)] : [],
       })
 
-      const ruleResult = await checkBookingAgainstPolicy(service, {
+      const ruleResult = await checkBookingAgainstPolicy(db, {
         employeeId: booking.employee_id,
         travelType: inputs.travelType,
         totalCost: inputs.totalCost,
@@ -238,4 +239,4 @@ export async function POST(
     console.error('Unexpected error refreshing fare', err)
     return Response.json({ error: 'Something went wrong refreshing this fare. Please try again.' }, { status: 500 })
   }
-}
+}

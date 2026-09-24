@@ -1,4 +1,3 @@
-import { createServiceClient } from '@/utils/supabase/service'
 import { loadClientGates } from '@/app/lib/clients/clientGates'
 import { classifyFlight } from '@/app/lib/rule-engine/classifyTrip'
 import {
@@ -12,9 +11,10 @@ import type { FareComponents } from './fareComponents'
 import type { FareType, CommercialKind } from './calcOnByKind'
 import type { FlatFlightResult } from '@/app/lib/book/types'
 import { cabinLetter } from '@/app/lib/book/cabin'
-import { db } from '@/app/lib/db'
-
-type ServiceClient = ReturnType<typeof createServiceClient>
+import type { Queryable } from '@/app/lib/db'
+import * as clients from '@/app/lib/repositories/clients'
+import * as commercials from '@/app/lib/repositories/commercials'
+import * as dealCodes from '@/app/lib/repositories/dealCodes'
 
 // ── stampCommercials ─────────────────────────────────────────────────────────
 // Price one itinerary for one client: resolve the rules that reach them, run the
@@ -32,25 +32,6 @@ type ServiceClient = ReturnType<typeof createServiceClient>
 // ONE QUERY FOR THE RULES, not one per kind — the whole reason markup, discount
 // and processing fee share a table.
 // ─────────────────────────────────────────────────────────────────────────────
-
-const RULE_COLUMNS =
-  'id, kind, category_id, airline_code, cabin, rbd_spec, fare_type, ' +
-  'calc_type, calc_on, rate, calc_basis, exclude_tax_codes, include_ssr, ' +
-  'active, valid_from, valid_to, created_at'
-
-// Declared rather than inferred: the constant above is a concatenation, and
-// Supabase derives its row type from the select STRING LITERAL. A concatenation
-// is plain `string` to the compiler, so inference gives up and every property
-// access downstream becomes an error.
-type RuleRow = ResolvableRule
-
-interface AssignmentRow {
-  rule_id: string
-  kind: 'client' | 'client_group' | 'bucket'
-  client_id: string | null
-  client_group_id: string | null
-  bucket_id: string | null
-}
 
 // ── categoryCodeForFlight ────────────────────────────────────────────────────
 // The booking's own category, derived rather than asked for.
@@ -125,41 +106,31 @@ const EMPTY_CONTEXT: CommercialContext = {
 }
 
 export async function loadCommercialContext(
-  service: ServiceClient,
+  db: Queryable,
   clientId: string | null | undefined
 ): Promise<CommercialContext> {
   if (!clientId) return EMPTY_CONTEXT
 
   try {
-    const { data: client } = await service
-      .from('clients')
-      .select('id, tmc_id, client_group_id')
-      .eq('id', clientId)
-      .maybeSingle()
+    const client = await clients.stampProfile(db, clientId)
 
-    if (!client) return EMPTY_CONTEXT
+    if (!client?.tmc_id) return EMPTY_CONTEXT
+    const tmcId = client.tmc_id
 
-    const [gates, { data: ruleRows }, { data: bucketRows }, { data: assignmentRows }, { data: categories }] =
-      await Promise.all([
-        loadClientGates(db, clientId),
-        service.from('commercial_rules').select(RULE_COLUMNS).eq('tmc_id', client.tmc_id),
-        service.from('bucket_clients').select('bucket_id').eq('client_id', clientId),
-        service
-          .from('commercial_rule_assignments')
-          .select('rule_id, kind, client_id, client_group_id, bucket_id')
-          .eq('tmc_id', client.tmc_id),
-        service.from('deal_code_categories').select('id, code').eq('tmc_id', client.tmc_id),
-      ])
+    const [gates, rules, bucketIds, assignmentRows, categoryIdByCode] = await Promise.all([
+      loadClientGates(db, clientId),
+      commercials.rulesForTmc(db, tmcId),
+      clients.bucketIdsOfClient(db, clientId),
+      commercials.assignmentsForTmc(db, tmcId),
+      dealCodes.categoryIdsByCode(db, tmcId),
+    ])
 
-    const rules = (ruleRows ?? []) as unknown as RuleRow[]
     if (rules.length === 0) return EMPTY_CONTEXT
-
-    const bucketIds = (bucketRows ?? []).map(b => b.bucket_id)
 
     // Which assignments actually reach this client. Same three-branch filter
     // stampFop and stampDealCodes use, kept identical on purpose: three copies
     // that agree are easier to trust than one abstraction nobody reads.
-    const reaching = ((assignmentRows ?? []) as AssignmentRow[]).filter(a => {
+    const reaching = assignmentRows.filter(a => {
       if (a.kind === 'client') return a.client_id === clientId
       if (a.kind === 'bucket') return a.bucket_id !== null && bucketIds.includes(a.bucket_id)
       return a.client_group_id !== null && a.client_group_id === client.client_group_id
@@ -169,26 +140,19 @@ export async function loadCommercialContext(
 
     // Names only for the routes that actually reached this client — no point
     // fetching every bucket in the TMC to label two of them.
-    const usedBucketIds = [...new Set(reaching.map(a => a.bucket_id).filter(Boolean) as string[])]
+    const usedBucketIds = [...new Set(reaching.map(a => a.bucket_id).filter((b): b is string => Boolean(b)))]
 
-    const [{ data: buckets }, { data: groups }] = await Promise.all([
-      usedBucketIds.length
-        ? service.from('buckets').select('id, name').in('id', usedBucketIds)
-        : Promise.resolve({ data: [] as { id: string; name: string }[] }),
-      client.client_group_id
-        ? service.from('client_groups').select('id, name').eq('id', client.client_group_id)
-        : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+    const [buckets, groupName] = await Promise.all([
+      clients.bucketLabels(db, usedBucketIds),
+      clients.groupNames(db, client.client_group_id ? [client.client_group_id] : []),
     ])
-
-    const bucketName = new Map((buckets ?? []).map(b => [b.id, b.name]))
-    const groupName = new Map((groups ?? []).map(g => [g.id, g.name]))
 
     const assignments: ResolvableAssignment[] = reaching.map(a => ({
       rule_id: a.rule_id,
-      kind: a.kind,
+      kind: a.kind as ResolvableAssignment['kind'],
       via_name:
         a.kind === 'bucket'
-          ? bucketName.get(a.bucket_id!) ?? null
+          ? buckets.get(a.bucket_id!)?.name ?? null
           : a.kind === 'client_group'
             ? groupName.get(a.client_group_id!) ?? null
             : null,
@@ -197,7 +161,7 @@ export async function loadCommercialContext(
     return {
       rules,
       assignments,
-      categoryIdByCode: new Map((categories ?? []).map(c => [c.code, c.id])),
+      categoryIdByCode,
       enabledKinds: gates.enabledCommercialKinds,
     }
   } catch (error) {
@@ -272,9 +236,9 @@ export function priceWithContext(
 // uses loadCommercialContext + priceWithContext instead.
 // ─────────────────────────────────────────────────────────────────────────────
 export async function stampCommercials(
-  service: ServiceClient,
+  db: Queryable,
   input: PriceInput & { clientId: string }
 ): Promise<StampedCommercials> {
-  const context = await loadCommercialContext(service, input.clientId)
+  const context = await loadCommercialContext(db, input.clientId)
   return priceWithContext(context, input)
 }

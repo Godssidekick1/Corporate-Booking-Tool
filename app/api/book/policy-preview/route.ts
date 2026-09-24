@@ -1,4 +1,5 @@
 import { createClient } from '@/utils/supabase/server'
+import { db } from '@/app/lib/db'
 import { createServiceClient } from '@/utils/supabase/service'
 import { NextRequest } from 'next/server'
 import { checkBookingAgainstPolicy } from '@/app/lib/rule-engine/checkBookingAgainstPolicy'
@@ -53,7 +54,7 @@ export async function POST(req: NextRequest) {
   }
 
   const inputs = buildPolicyInputsFromFlight({ flight, totalFare, isRefundable, selectedSeatFees })
-  const result = await checkBookingAgainstPolicy(service, {
+  const result = await checkBookingAgainstPolicy(db, {
     employeeId: employee.id,
     travelType: inputs.travelType,
     totalCost: inputs.totalCost,
@@ -75,4 +76,4 @@ export async function POST(req: NextRequest) {
     costTier: result.costTier,
     reason: buildReason(result.breaches, result.costTier, totalFare),
   })
-}
+}

@@ -1,7 +1,7 @@
-import { createServiceClient } from '@/utils/supabase/service'
 import { getLinkedPolicyGroups, groupsCoveringRank } from './linkedPolicyGroups'
-
-type ServiceClient = ReturnType<typeof createServiceClient>
+import type { Queryable } from '@/app/lib/db'
+import * as employees from '@/app/lib/repositories/employees'
+import * as policy from '@/app/lib/repositories/policy'
 
 export interface ResolvedPolicy {
   ok: true
@@ -62,15 +62,11 @@ function toStoredCategory(travelType: string): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function resolveEffectivePolicy(
-  service: ServiceClient,
+  db: Queryable,
   employeeId: string,
   travelType: string
 ): Promise<PolicyResolution> {
-  const { data: employee } = await service
-    .from('employees')
-    .select('client_id, band_code')
-    .eq('id', employeeId)
-    .single()
+  const employee = await employees.policySubject(db, employeeId)
 
   if (!employee || !employee.band_code) {
     return {
@@ -80,14 +76,10 @@ export async function resolveEffectivePolicy(
     }
   }
 
-  const { data: bandRow } = await service
-    .from('bands')
-    .select('rank')
-    .eq('client_id', employee.client_id)
-    .eq('code', employee.band_code)
-    .maybeSingle()
+  const clientId = employee.client_id
+  const bandRow = clientId ? await employees.bandByCode(db, clientId, employee.band_code) : null
 
-  if (!bandRow) {
+  if (!bandRow || !clientId) {
     return {
       ok: false,
       reason: 'no_band',
@@ -97,7 +89,7 @@ export async function resolveEffectivePolicy(
 
   const bandRank = bandRow.rank
 
-  const groups = await getLinkedPolicyGroups(service, employee.client_id)
+  const groups = await getLinkedPolicyGroups(db, clientId)
 
   if (groups.length === 0) {
     return {
@@ -152,16 +144,11 @@ export async function resolveEffectivePolicy(
   //
   // This reads every live version for the group and keeps the newest in
   // memory — a few dozen rows per save, so it stays small. If a group ever
-  // accumulates enough history to matter, the bounded form is a DISTINCT ON in
-  // a Postgres function, not a second round trip.
-  const { data: candidateRows } = await service
-    .from('policy_rules')
-    .select('version, travel_type, limit_key, limit_value, limit_bool')
-    .eq('policy_group_id', group.id)
-    .is('deleted_at', null)
-    .order('version', { ascending: false })
+  // accumulates enough history to matter, the bounded form is a filter on
+  // max(version) in the query, not a second round trip.
+  const candidateRows = await policy.liveRules(db, group.id)
 
-  if (!candidateRows || candidateRows.length === 0) {
+  if (candidateRows.length === 0) {
     return {
       ok: false,
       reason: 'no_policy_rules',
@@ -201,4 +188,4 @@ export async function resolveEffectivePolicy(
     version: latestVersion,
     limits,
   }
-}
+}
