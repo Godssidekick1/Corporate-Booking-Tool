@@ -721,3 +721,11 @@ export async function clientNames(db: Queryable, clientIds: readonly string[]): 
     select id, name from clients where id = any(${[...clientIds]})`)
   return new Map(rows.map(r => [r.id, r.name]))
 }
+
+// Corporate Settings: whether flights and hotels need approval at all.
+export async function approvalModes(
+  db: Queryable,
+  clientId: string
+): Promise<Pick<Row<'clients'>, 'air_approval_mode' | 'hotel_approval_mode'> | null> {
+  return maybeOne(db, sql`select air_approval_mode, hotel_approval_mode from clients where id = ${clientId}`)
+}

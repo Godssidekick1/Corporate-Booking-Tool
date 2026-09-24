@@ -1,11 +1,10 @@
-import { createServiceClient } from '@/utils/supabase/service'
+import type { Queryable } from '@/app/lib/db'
+import * as approvals from '@/app/lib/repositories/approvals'
+import * as employees from '@/app/lib/repositories/employees'
 import type { ApproverType, ChainTier } from './resolveApprovalTier'
 
-// Data access only -- narrowed from the full service client with Pick so that
-// a TRANSACTION client satisfies it too. Nothing in this file touches .auth,
-// and requiring the whole client would mean these functions could never run
-// inside withTransaction, which is where approval writes belong.
-type ServiceClient = Pick<ReturnType<typeof createServiceClient>, "from">
+// Every function here takes `db` -- the pool, or a transaction's connection,
+// so approval writes can run inside transaction() with the rest of a decision.
 
 export type ChainMode = 'sequential' | 'parallel'
 export type ChainQuorum = 'any' | 'all'
@@ -58,16 +57,14 @@ export interface ResolvedTemplate {
   source: TemplateSource
 }
 
-const TEMPLATE_COLUMNS = 'id, name, code, mode, quorum, tiers'
-
-function toTemplate(row: Record<string, unknown>): ApprovalTemplate {
+function toTemplate(row: approvals.TemplateRow): ApprovalTemplate {
   return {
-    id: row.id as string,
-    name: row.name as string,
-    code: (row.code as string | null) ?? null,
+    id: row.id,
+    name: row.name,
+    code: row.code ?? null,
     mode: row.mode as ChainMode,
     quorum: row.quorum as ChainQuorum,
-    tiers: (row.tiers as TemplateTier[] | null) ?? [],
+    tiers: row.tiers ?? [],
   }
 }
 
@@ -75,23 +72,17 @@ function toTemplate(row: Record<string, unknown>): ApprovalTemplate {
 // Who fills each step of one template at one client, keyed by step number.
 //
 // A step with no row here is unbound. Callers merge that into a tier carrying
-// approver_type 'unbound', which resolveApproverForTier returns null for — and
-// null already means "unresolvable approver" to raiseApprovals, which logs it
-// and flags the outcome. No separate handling needed.
+// approver_type 'unbound', which resolveApproverForTier returns unresolved for
+// — and raiseApprovals already logs that and flags the outcome.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function getTierApprovers(
-  service: ServiceClient,
+  db: Queryable,
   clientId: string,
   templateId: string
 ): Promise<Map<number, TierApprover>> {
-  const { data: rows } = await service
-    .from('approval_tier_approvers')
-    .select('tier, approver_type, approver_user_id, min_band_rank')
-    .eq('client_id', clientId)
-    .eq('template_id', templateId)
-
-  return new Map((rows ?? []).map(r => [r.tier as number, r as TierApprover]))
+  const rows = await approvals.bindings(db, clientId, templateId)
+  return new Map(rows.map(r => [r.tier, { ...r, approver_type: r.approver_type as ApproverType }]))
 }
 
 // ── mergeTiers ───────────────────────────────────────────────────────────────
@@ -136,41 +127,27 @@ export function mergeTiers(
 // from approval_tier_approvers and from the employee's own manager_id. Bands
 // choose the CHAIN, not the person — except 'any_manager_at', which is
 // explicitly rank-scoped and always was.
-//
-// Fetched as separate queries rather than a Supabase FK-embed, consistent with
-// the rest of this codebase: embed-alias inference isn't relied on anywhere
-// else, and this path decides whether a booking needs approval at all.
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function loadTemplate(
-  service: ServiceClient,
+  db: Queryable,
   templateId: string,
   source: TemplateSource
 ): Promise<ResolvedTemplate | null> {
-  const { data: template } = await service
-    .from('approval_chain_templates')
-    .select(TEMPLATE_COLUMNS)
-    .eq('id', templateId)
-    .maybeSingle()
-
-  return template ? { template: toTemplate(template), source } : null
+  const row = await approvals.template(db, templateId)
+  return row ? { template: toTemplate(row), source } : null
 }
 
 export async function resolveTemplateForEmployee(
-  service: ServiceClient,
+  db: Queryable,
   employeeId: string,
   clientId: string,
   category: string
 ): Promise<ResolvedTemplate | null> {
-  const { data: assignment } = await service
-    .from('employee_approval_templates')
-    .select('template_id')
-    .eq('employee_id', employeeId)
-    .eq('category', category)
-    .maybeSingle()
+  const assigned = await approvals.employeeTemplateId(db, employeeId, category)
 
-  if (assignment) {
-    const resolved = await loadTemplate(service, assignment.template_id, 'employee')
+  if (assigned) {
+    const resolved = await loadTemplate(db, assigned, 'employee')
     // A dangling template id falls THROUGH to the next rung rather than
     // resolving to nothing. The row exists but points at a template that is
     // gone; the employee still deserves whatever their band or client says.
@@ -180,37 +157,21 @@ export async function resolveTemplateForEmployee(
   // The band rung. Skipped entirely for an employee with no band — that is a
   // separate configuration gap, reported by the policy engine, and not
   // something to fail approval routing over.
-  const { data: employee } = await service
-    .from('employees')
-    .select('band_code')
-    .eq('id', employeeId)
-    .maybeSingle()
+  const bandCode = await employees.bandCode(db, employeeId)
 
-  if (employee?.band_code) {
-    const { data: bandAssignment } = await service
-      .from('band_approval_templates')
-      .select('template_id')
-      .eq('client_id', clientId)
-      .eq('band_code', employee.band_code)
-      .eq('category', category)
-      .maybeSingle()
-
-    if (bandAssignment) {
-      const resolved = await loadTemplate(service, bandAssignment.template_id, 'band')
+  if (bandCode) {
+    const byBand = await approvals.bandTemplateId(db, clientId, bandCode, category)
+    if (byBand) {
+      const resolved = await loadTemplate(db, byBand, 'band')
       if (resolved) return resolved
     }
   }
 
-  const { data: fallback } = await service
-    .from('client_default_approval_templates')
-    .select('template_id')
-    .eq('client_id', clientId)
-    .eq('category', category)
-    .maybeSingle()
+  const fallback = await approvals.defaultTemplateId(db, clientId, category)
 
   if (!fallback) return null
 
-  return loadTemplate(service, fallback.template_id, 'client_default')
+  return loadTemplate(db, fallback, 'client_default')
 }
 
 // ── getBandAssignmentsForClient ─────────────────────────────────────────────
@@ -220,15 +181,11 @@ export async function resolveTemplateForEmployee(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function getBandAssignmentsForClient(
-  service: ServiceClient,
+  db: Queryable,
   clientId: string
 ): Promise<Map<string, string>> {
-  const { data: rows } = await service
-    .from('band_approval_templates')
-    .select('band_code, category, template_id')
-    .eq('client_id', clientId)
-
-  return new Map((rows ?? []).map(r => [`${r.band_code}::${r.category}`, r.template_id]))
+  const rows = await approvals.bandAssignments(db, clientId)
+  return new Map(rows.map(r => [`${r.band_code}::${r.category}`, r.template_id]))
 }
 
 // ── getAssignmentsForClient ─────────────────────────────────────────────────
@@ -238,21 +195,9 @@ export async function getBandAssignmentsForClient(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function getAssignmentsForClient(
-  service: ServiceClient,
+  db: Queryable,
   employeeIds: string[]
 ): Promise<Map<string, string>> {
-  const byKey = new Map<string, string>()
-
-  if (employeeIds.length === 0) return byKey
-
-  const { data: rows } = await service
-    .from('employee_approval_templates')
-    .select('employee_id, category, template_id')
-    .in('employee_id', employeeIds)
-
-  for (const row of rows ?? []) {
-    byKey.set(`${row.employee_id}::${row.category}`, row.template_id)
-  }
-
-  return byKey
+  const rows = await approvals.employeeAssignments(db, employeeIds)
+  return new Map(rows.map(r => [`${r.employee_id}::${r.category}`, r.template_id]))
 }

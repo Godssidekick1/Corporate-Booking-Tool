@@ -1,8 +1,11 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { NextRequest } from 'next/server'
 import { advanceApprovalChain } from '@/app/lib/approval-engine/resolveApprovalTier'
-import { withTransaction, orAbort } from '@/app/lib/db/tx'
+import { db, transaction } from '@/app/lib/db'
+import * as approvals from '@/app/lib/repositories/approvals'
+import * as bookings from '@/app/lib/repositories/bookings'
+import * as employees from '@/app/lib/repositories/employees'
+import { route } from '@/app/lib/http/handler'
 import type { Verdict } from '@/app/lib/rule-engine/evaluateBooking'
 
 // ── PATCH /api/approvals/[approvalId] ────────────────────────────────────
@@ -24,10 +27,10 @@ interface DecisionBody {
   note?: string
 }
 
-export async function PATCH(
+export const PATCH = route(async (
   req: NextRequest,
   { params }: { params: Promise<{ approvalId: string }> }
-) {
+) => {
   const { approvalId } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -36,22 +39,13 @@ export async function PATCH(
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-  const { data: caller } = await service
-    .from('employees')
-    .select('id, client_id')
-    .eq('id', user.id)
-    .maybeSingle()
+  const caller = await employees.traveller(db, user.id)
 
   if (!caller) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
   }
 
-  const { data: approval } = await service
-    .from('approvals')
-    .select('id, booking_id, client_id, approver_id, tier, status, chain_template_id, verdict, reason')
-    .eq('id', approvalId)
-    .maybeSingle()
+  const approval = await approvals.forDecision(db, approvalId)
 
   if (!approval) {
     return Response.json({ error: 'Approval not found' }, { status: 404 })
@@ -72,11 +66,7 @@ export async function PATCH(
     return Response.json({ error: 'decision must be "approve" or "reject"' }, { status: 400 })
   }
 
-  const { data: booking } = await service
-    .from('bookings')
-    .select('id, employee_id, client_id, status')
-    .eq('id', approval.booking_id)
-    .maybeSingle()
+  const booking = await bookings.approvalTarget(db, approval.booking_id)
 
   if (!booking) {
     return Response.json({ error: 'Booking for this approval was not found' }, { status: 404 })
@@ -103,56 +93,45 @@ export async function PATCH(
   // advanceApprovalChain runs on the SAME connection, so the next tier's
   // approval row is part of the same commit. If raising it fails, the decision
   // is undone too and the approver can simply try again.
-  const { data: outcomeStatus, error: writeError } = await withTransaction(async (db) => {
-    await orAbort(
-      db.from('approvals')
-        .update({
-          status: decision === 'approve' ? 'approved' : 'rejected',
-          decision_note: note ?? null,
-          actioned_at: new Date().toISOString(),
-        })
-        .eq('id', approvalId)
-    )
+  let outcomeStatus: { bookingStatus: string; nextTier?: number }
+  try {
+    outcomeStatus = await transaction(async (tx) => {
+      await approvals.decide(tx, approvalId, decision === 'approve' ? 'approved' : 'rejected', note ?? null)
 
-    const setBooking = async (status: string) => {
-      await orAbort(
-        db.from('bookings')
-          .update({ status, updated_at: new Date().toISOString() })
-          .eq('id', booking.id)
-      )
-      return status
-    }
+      const setBooking = async (status: string) => {
+        await bookings.setStatus(tx, booking.id, status)
+        return status
+      }
 
-    if (decision === 'reject') return { bookingStatus: await setBooking('rejected') }
+      if (decision === 'reject') return { bookingStatus: await setBooking('rejected') }
 
-    // Approved — see if the chain has a next tier that this booking's stored
-    // verdict actually meets. chain_template_id/verdict were captured on the
-    // approval row itself when it was created, so no need to re-derive them.
-    if (!approval.chain_template_id) {
-      // Shouldn't happen in practice (every approval created by the engine
-      // sets chain_template_id), but fail toward finalizing rather than
-      // leaving the booking stuck if it somehow does.
-      return { bookingStatus: await setBooking('approved') }
-    }
+      // Approved — see if the chain has a next tier that this booking's stored
+      // verdict actually meets. chain_template_id/verdict were captured on the
+      // approval row itself when it was created, so no need to re-derive them.
+      if (!approval.chain_template_id) {
+        // Shouldn't happen in practice (every approval created by the engine
+        // sets chain_template_id), but fail toward finalizing rather than
+        // leaving the booking stuck if it somehow does.
+        return { bookingStatus: await setBooking('approved') }
+      }
 
-    const outcome = await advanceApprovalChain(db, {
-      bookingId: booking.id,
-      clientId: approval.client_id,
-      employeeId: booking.employee_id,
-      chainTemplateId: approval.chain_template_id,
-      completedTier: approval.tier,
-      verdict: (approval.verdict as Verdict) ?? 'green',
-      reason: approval.reason ?? 'Within policy',
-    })
+      const outcome = await advanceApprovalChain(tx, {
+        bookingId: booking.id,
+        clientId: approval.client_id,
+        employeeId: booking.employee_id,
+        chainTemplateId: approval.chain_template_id,
+        completedTier: approval.tier,
+        verdict: (approval.verdict as Verdict) ?? 'green',
+        reason: approval.reason ?? 'Within policy',
+      })
 
-    if (!outcome.requiresApproval) return { bookingStatus: await setBooking('approved') }
-    if (!outcome.approverId) return { bookingStatus: await setBooking('approval_misconfigured') }
+      if (!outcome.requiresApproval) return { bookingStatus: await setBooking('approved') }
+      if (!outcome.approverId) return { bookingStatus: await setBooking('approval_misconfigured') }
 
-    // Next tier's approval row was created — booking stays pending_approval.
-    return { bookingStatus: 'pending_approval', nextTier: outcome.tier }
-  })
-
-  if (writeError) {
+      // Next tier's approval row was created — booking stays pending_approval.
+      return { bookingStatus: 'pending_approval', nextTier: outcome.tier }
+    }, { userId: user.id })
+  } catch (writeError) {
     console.error('Approval decision rolled back', writeError, { approvalId, bookingId: booking.id })
     // Honest now, and actionable: nothing was recorded, so retrying is safe.
     return Response.json({
@@ -162,4 +141,4 @@ export async function PATCH(
   }
 
   return Response.json({ ok: true, ...outcomeStatus })
-}
+})

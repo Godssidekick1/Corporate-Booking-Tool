@@ -1,10 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { resolveApproverForTier, type ChainTier } from './resolveApprovalTier'
-import { fakeDb, type FakeTables } from './fakeDb'
+import { pickApprover, type ChainTier, type ApproverFacts } from './resolveApprovalTier'
 
-// ── resolveApproverForTier ───────────────────────────────────────────────────
+// ── pickApprover ─────────────────────────────────────────────────────────────
 // Who gets ASKED to approve someone else's spend. Every branch here decides
-// that, and this function has already been wrong in production twice:
+// that, and this logic has already been wrong in production twice:
 //
 //   * 'any_manager_at' embedded `bands:band_code(rank)` across a foreign key
 //     that does not exist. PostgREST answered 400 PGRST200, the caller
@@ -14,20 +13,10 @@ import { fakeDb, type FakeTables } from './fakeDb'
 //     resolution object. It type-checked only because the id came back as
 //     `any`, and at runtime inserted approver_id: undefined.
 //
-// Both were invisible to a route test that asserted a 200, because both
-// produced a plausible "no approver found" rather than a failure.
+// Pure: the facts are handed in. WHICH rows are candidates (active, at this
+// client, manager or admin, this client's bands) is the repository's SQL and
+// is tested against the database in tests/lib/approverCandidates.test.ts.
 // ─────────────────────────────────────────────────────────────────────────────
-
-type Service = Parameters<typeof resolveApproverForTier>[0]
-
-const CLIENT = 'client-1'
-
-function svc(tables: FakeTables): Service {
-  // Cast because QueryBuilder carries private fields and so cannot be matched
-  // structurally. The stand-in implements the surface this function uses, and
-  // throws on anything it does not.
-  return fakeDb(tables) as unknown as Service
-}
 
 function tier(overrides: Partial<ChainTier> = {}): ChainTier {
   return { tier: 1, approver_type: 'any_manager_at', min_verdict: 'amber', ...overrides }
@@ -35,173 +24,70 @@ function tier(overrides: Partial<ChainTier> = {}): ChainTier {
 
 // created_at is what breaks a rank tie, so it is explicit in every fixture
 // rather than defaulted to something the test does not show.
-function manager(
-  id: string,
-  band: string | null,
-  createdAt: string,
-  extra: Record<string, unknown> = {}
-) {
-  return {
-    id,
-    band_code: band,
-    created_at: createdAt,
-    client_id: CLIENT,
-    role: 'manager',
-    status: 'active',
-    ...extra,
-  }
+function manager(id: string, band: string | null, createdAt: string) {
+  return { id, band_code: band, created_at: createdAt }
 }
 
-const BANDS = [
-  { client_id: CLIENT, code: 'L1', rank: 1 },
-  { client_id: CLIENT, code: 'L2', rank: 2 },
-  { client_id: CLIENT, code: 'L4', rank: 4 },
-  { client_id: CLIENT, code: 'L5', rank: 5 },
-]
+const RANKS = new Map([['L1', 1], ['L2', 2], ['L4', 4], ['L5', 5]])
 
-describe('resolveApproverForTier — rank resolution', () => {
-  it('picks the LOWEST qualifying rank, not the most senior person', async () => {
+const ranked = (candidates: ReturnType<typeof manager>[]): ApproverFacts => ({ candidates, rankByCode: RANKS })
+
+describe('pickApprover — rank resolution', () => {
+  it('picks the LOWEST qualifying rank, not the most senior person', () => {
     // The stated design intent: the approver closest in seniority to the
     // traveller. Always escalating to the most senior person available would
     // put every booking in front of the same director.
-    const result = await resolveApproverForTier(
-      svc({
-        employees: [
-          manager('m-l5', 'L5', '2024-01-01'),
-          manager('m-l4', 'L4', '2024-01-01'),
-          manager('m-l2', 'L2', '2024-01-01'),
-        ],
-        bands: BANDS,
-      }),
-      tier({ min_band_rank: 2 }),
-      'traveller-1',
-      CLIENT
-    )
-
-    expect(result).toEqual({ kind: 'approver', approverId: 'm-l2' })
+    const facts = ranked([
+      manager('m-l5', 'L5', '2024-01-01'),
+      manager('m-l4', 'L4', '2024-01-01'),
+      manager('m-l2', 'L2', '2024-01-01'),
+    ])
+    expect(pickApprover(tier({ min_band_rank: 2 }), 'traveller-1', facts))
+      .toEqual({ kind: 'approver', approverId: 'm-l2' })
   })
 
-  it('excludes anyone below min_band_rank', async () => {
-    const result = await resolveApproverForTier(
-      svc({
-        employees: [manager('m-l1', 'L1', '2024-01-01'), manager('m-l4', 'L4', '2024-01-01')],
-        bands: BANDS,
-      }),
-      tier({ min_band_rank: 4 }),
-      'traveller-1',
-      CLIENT
-    )
-
-    expect(result).toEqual({ kind: 'approver', approverId: 'm-l4' })
+  it('excludes anyone below min_band_rank', () => {
+    const facts = ranked([manager('m-l1', 'L1', '2024-01-01'), manager('m-l4', 'L4', '2024-01-01')])
+    expect(pickApprover(tier({ min_band_rank: 4 }), 'traveller-1', facts))
+      .toEqual({ kind: 'approver', approverId: 'm-l4' })
   })
 
-  it('is unresolved when nobody meets the rank', async () => {
+  it('is unresolved when nobody meets the rank', () => {
     // Not an error, and not a free pass: the tier is real and the people are
     // not there. raiseApprovals decides what to do about that.
-    const result = await resolveApproverForTier(
-      svc({ employees: [manager('m-l1', 'L1', '2024-01-01')], bands: BANDS }),
-      tier({ min_band_rank: 5 }),
-      'traveller-1',
-      CLIENT
-    )
-
-    expect(result).toEqual({ kind: 'unresolved' })
+    expect(pickApprover(tier({ min_band_rank: 5 }), 'traveller-1', ranked([manager('m-l1', 'L1', '2024-01-01')])))
+      .toEqual({ kind: 'unresolved' })
   })
 
-  it('treats a missing min_band_rank as 0, so any ranked manager qualifies', async () => {
-    const result = await resolveApproverForTier(
-      svc({ employees: [manager('m-l1', 'L1', '2024-01-01')], bands: BANDS }),
-      tier({ min_band_rank: null }),
-      'traveller-1',
-      CLIENT
-    )
-
-    expect(result).toEqual({ kind: 'approver', approverId: 'm-l1' })
+  it('treats a missing min_band_rank as 0, so any ranked manager qualifies', () => {
+    expect(pickApprover(tier({ min_band_rank: null }), 'traveller-1', ranked([manager('m-l1', 'L1', '2024-01-01')])))
+      .toEqual({ kind: 'approver', approverId: 'm-l1' })
   })
 
-  it('EXCLUDES a manager whose band_code matches no band', async () => {
+  it('EXCLUDES a manager whose band_code matches no band', () => {
     // rank falls to -1, which fails `>= 0`. Excluding is the safe direction: a
     // manager whose band was renamed or deleted should not silently satisfy a
     // rank requirement they may no longer meet.
-    const result = await resolveApproverForTier(
-      svc({ employees: [manager('m-ghost', 'L9_DELETED', '2024-01-01')], bands: BANDS }),
-      tier({ min_band_rank: 0 }),
-      'traveller-1',
-      CLIENT
-    )
-
-    expect(result).toEqual({ kind: 'unresolved' })
+    expect(pickApprover(tier({ min_band_rank: 0 }), 'traveller-1', ranked([manager('m-ghost', 'L9_DELETED', '2024-01-01')])))
+      .toEqual({ kind: 'unresolved' })
   })
 
-  it('excludes a manager with no band at all', async () => {
-    const result = await resolveApproverForTier(
-      svc({ employees: [manager('m-none', null, '2024-01-01')], bands: BANDS }),
-      tier({ min_band_rank: 0 }),
-      'traveller-1',
-      CLIENT
-    )
-
-    expect(result).toEqual({ kind: 'unresolved' })
+  it('excludes a manager with no band at all', () => {
+    expect(pickApprover(tier({ min_band_rank: 0 }), 'traveller-1', ranked([manager('m-none', null, '2024-01-01')])))
+      .toEqual({ kind: 'unresolved' })
   })
 
-  it('counts admins as well as managers', async () => {
-    const result = await resolveApproverForTier(
-      svc({
-        employees: [manager('a-1', 'L4', '2024-01-01', { role: 'admin' })],
-        bands: BANDS,
-      }),
-      tier({ min_band_rank: 1 }),
-      'traveller-1',
-      CLIENT
-    )
-
-    expect(result).toEqual({ kind: 'approver', approverId: 'a-1' })
-  })
-
-  it('ignores inactive managers and other clients entirely', async () => {
-    const result = await resolveApproverForTier(
-      svc({
-        employees: [
-          manager('m-inactive', 'L2', '2024-01-01', { status: 'deactivated' }),
-          manager('m-other-client', 'L2', '2024-01-01', { client_id: 'client-2' }),
-          manager('m-ok', 'L4', '2024-01-01'),
-        ],
-        bands: BANDS,
-      }),
-      tier({ min_band_rank: 1 }),
-      'traveller-1',
-      CLIENT
-    )
-
-    // Both excluded rows carry a LOWER rank than m-ok, so if either leaked
-    // through the filters it would win the sort and be returned instead.
-    expect(result).toEqual({ kind: 'approver', approverId: 'm-ok' })
-  })
-
-  it('reads ranks from this client\'s bands, not another client\'s', async () => {
-    // band codes are per-client text. Two clients both having an "L4" that
-    // means different things is normal, and resolving rank from the wrong
-    // client would let a rank requirement be met by accident.
-    const result = await resolveApproverForTier(
-      svc({
-        employees: [manager('m-1', 'L4', '2024-01-01')],
-        bands: [{ client_id: 'client-2', code: 'L4', rank: 4 }],
-      }),
-      tier({ min_band_rank: 1 }),
-      'traveller-1',
-      CLIENT
-    )
-
-    expect(result).toEqual({ kind: 'unresolved' })
+  it('with no candidates or no bands at all, nobody', () => {
+    expect(pickApprover(tier({ min_band_rank: 0 }), 't', {})).toEqual({ kind: 'unresolved' })
+    expect(pickApprover(tier({ min_band_rank: 0 }), 't', { candidates: [manager('m', 'L4', '2024-01-01')] }))
+      .toEqual({ kind: 'unresolved' })
   })
 })
 
-describe('resolveApproverForTier — the tie-break', () => {
+describe('pickApprover — the tie-break', () => {
   // Rank alone is not a total order: two active managers commonly share a band.
-  // The query carries no ORDER BY, so rows arrive in whatever order PostgreSQL
-  // scans them, which changes after an UPDATE moves a row or a VACUUM repacks
-  // the page. Without a tie-break the chosen approver is arbitrary AND unstable
-  // over time, with no configuration having changed.
+  // Without a tie-break the chosen approver depends on the order rows arrive
+  // in, which is arbitrary AND unstable over time.
 
   const tied = [
     manager('m-newer', 'L4', '2024-06-01'),
@@ -209,227 +95,112 @@ describe('resolveApproverForTier — the tie-break', () => {
     manager('m-middle', 'L4', '2024-03-01'),
   ]
 
-  it('breaks a rank tie by longest-serving', async () => {
-    const result = await resolveApproverForTier(
-      svc({ employees: tied, bands: BANDS }),
-      tier({ min_band_rank: 1 }),
-      'traveller-1',
-      CLIENT
-    )
-
-    expect(result).toEqual({ kind: 'approver', approverId: 'm-older' })
+  it('breaks a rank tie by longest-serving', () => {
+    expect(pickApprover(tier({ min_band_rank: 1 }), 'traveller-1', ranked(tied)))
+      .toEqual({ kind: 'approver', approverId: 'm-older' })
   })
 
-  it('gives the SAME answer whatever order the rows arrive in', async () => {
-    // The property that actually matters. All six permutations of three tied
-    // managers, every one of which a sequential scan could legitimately hand
-    // back on a different day.
-    const permutations = [
-      [0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0],
-    ]
-
-    const answers = new Set<string>()
-    for (const order of permutations) {
-      const result = await resolveApproverForTier(
-        svc({ employees: order.map(i => tied[i]), bands: BANDS }),
-        tier({ min_band_rank: 1 }),
-        'traveller-1',
-        CLIENT
-      )
-      answers.add((result as { approverId: string }).approverId)
-    }
-
+  it('gives the SAME answer whatever order the rows arrive in', () => {
+    // All six permutations of three tied managers.
+    const permutations = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]]
+    const answers = new Set(permutations.map(order =>
+      (pickApprover(tier({ min_band_rank: 1 }), 'traveller-1', ranked(order.map(i => tied[i]))) as { approverId: string }).approverId))
     expect([...answers]).toEqual(['m-older'])
   })
 
-  it('falls through to id when rank AND created_at are identical', async () => {
-    // Two people onboarded in the same bulk import share a timestamp exactly,
-    // so created_at is not a total order either.
+  it('falls through to id when rank AND created_at are identical', () => {
+    // Two people onboarded in the same bulk import share a timestamp exactly.
     const sameInstant = [
       manager('m-bbb', 'L4', '2024-01-01T00:00:00.000Z'),
       manager('m-aaa', 'L4', '2024-01-01T00:00:00.000Z'),
     ]
-
-    const forwards = await resolveApproverForTier(
-      svc({ employees: sameInstant, bands: BANDS }), tier({ min_band_rank: 1 }), 't', CLIENT
-    )
-    const backwards = await resolveApproverForTier(
-      svc({ employees: [...sameInstant].reverse(), bands: BANDS }), tier({ min_band_rank: 1 }), 't', CLIENT
-    )
-
+    const forwards = pickApprover(tier({ min_band_rank: 1 }), 't', ranked(sameInstant))
+    const backwards = pickApprover(tier({ min_band_rank: 1 }), 't', ranked([...sameInstant].reverse()))
     expect(forwards).toEqual({ kind: 'approver', approverId: 'm-aaa' })
     expect(backwards).toEqual(forwards)
   })
 })
 
-describe('resolveApproverForTier — the other approver types', () => {
-  it('specific_user resolves to the named person', async () => {
-    const result = await resolveApproverForTier(
-      svc({}),
-      tier({ approver_type: 'specific_user', approver_user_id: 'u-7' }),
-      'traveller-1',
-      CLIENT
-    )
-
-    expect(result).toEqual({ kind: 'approver', approverId: 'u-7' })
+describe('pickApprover — the other approver types', () => {
+  it('specific_user resolves to the named person', () => {
+    expect(pickApprover(tier({ approver_type: 'specific_user', approver_user_id: 'u-7' }), 'traveller-1', {}))
+      .toEqual({ kind: 'approver', approverId: 'u-7' })
   })
 
-  it('specific_user with nobody named is unresolved, not a crash', async () => {
-    const result = await resolveApproverForTier(
-      svc({}),
-      tier({ approver_type: 'specific_user', approver_user_id: null }),
-      'traveller-1',
-      CLIENT
-    )
-
-    expect(result).toEqual({ kind: 'unresolved' })
+  it('specific_user with nobody named is unresolved, not a crash', () => {
+    expect(pickApprover(tier({ approver_type: 'specific_user', approver_user_id: null }), 'traveller-1', {}))
+      .toEqual({ kind: 'unresolved' })
   })
 
-  it('manager resolves to the traveller\'s own manager_id', async () => {
-    const result = await resolveApproverForTier(
-      svc({ employees: [{ id: 'traveller-1', manager_id: 'boss-1', top_of_hierarchy: false }] }),
-      tier({ approver_type: 'manager' }),
-      'traveller-1',
-      CLIENT
-    )
-
-    expect(result).toEqual({ kind: 'approver', approverId: 'boss-1' })
+  it('manager resolves to the traveller\'s own manager_id', () => {
+    expect(pickApprover(tier({ approver_type: 'manager' }), 'traveller-1', {
+      reporting: { manager_id: 'boss-1', top_of_hierarchy: false },
+    })).toEqual({ kind: 'approver', approverId: 'boss-1' })
   })
 
-  it('the person at the top of the hierarchy needs no approval, rather than being a misconfiguration', async () => {
+  it('the person at the top of the hierarchy needs no approval, rather than being a misconfiguration', () => {
     // The distinction the three-outcome type exists for. Reporting this as
     // unresolved would mean the owner of a client could never have a clean
     // approval setup; blocking would hold their bookings forever.
-    const result = await resolveApproverForTier(
-      svc({ employees: [{ id: 'ceo', manager_id: null, top_of_hierarchy: true }] }),
-      tier({ approver_type: 'manager' }),
-      'ceo',
-      CLIENT
-    )
-
-    expect(result).toEqual({
+    expect(pickApprover(tier({ approver_type: 'manager' }), 'ceo', {
+      reporting: { manager_id: null, top_of_hierarchy: true },
+    })).toEqual({
       kind: 'no_approval_needed',
       reason: 'no manager to approve — this employee is at the top of the hierarchy',
     })
   })
 
-  it('no manager and NOT top of hierarchy is a configuration gap', async () => {
-    const result = await resolveApproverForTier(
-      svc({ employees: [{ id: 'orphan', manager_id: null, top_of_hierarchy: false }] }),
-      tier({ approver_type: 'manager' }),
-      'orphan',
-      CLIENT
-    )
-
-    expect(result).toEqual({ kind: 'unresolved' })
+  it('no manager and NOT top of hierarchy is a configuration gap', () => {
+    expect(pickApprover(tier({ approver_type: 'manager' }), 'orphan', {
+      reporting: { manager_id: null, top_of_hierarchy: false },
+    })).toEqual({ kind: 'unresolved' })
+    // Nor is a traveller with no employee row at all.
+    expect(pickApprover(tier({ approver_type: 'manager' }), 'ghost', { reporting: null }))
+      .toEqual({ kind: 'unresolved' })
   })
 
-  it('finance_role picks the longest-serving active finance person', async () => {
-    const result = await resolveApproverForTier(
-      svc({
-        employees: [
-          { id: 'f-new', client_id: CLIENT, role: 'finance', status: 'active', created_at: '2024-06-01' },
-          { id: 'f-old', client_id: CLIENT, role: 'finance', status: 'active', created_at: '2024-01-01' },
-        ],
-      }),
-      tier({ approver_type: 'finance_role' }),
-      'traveller-1',
-      CLIENT
-    )
-
-    expect(result).toEqual({ kind: 'approver', approverId: 'f-old' })
+  it('finance_role and admin resolve to the role holder they are handed', () => {
+    expect(pickApprover(tier({ approver_type: 'finance_role' }), 't', { roleHolder: 'f-old' }))
+      .toEqual({ kind: 'approver', approverId: 'f-old' })
+    expect(pickApprover(tier({ approver_type: 'admin' }), 't', { roleHolder: null }))
+      .toEqual({ kind: 'unresolved' })
   })
 
-  it('admin resolves against role admin, not finance', async () => {
-    const result = await resolveApproverForTier(
-      svc({
-        employees: [
-          { id: 'f-1', client_id: CLIENT, role: 'finance', status: 'active', created_at: '2024-01-01' },
-          { id: 'a-1', client_id: CLIENT, role: 'admin', status: 'active', created_at: '2024-02-01' },
-        ],
-      }),
-      tier({ approver_type: 'admin' }),
-      'traveller-1',
-      CLIENT
-    )
-
-    expect(result).toEqual({ kind: 'approver', approverId: 'a-1' })
-  })
-
-  it('an unbound step is unresolved rather than silently approving', async () => {
+  it('an unbound step is unresolved rather than silently approving', () => {
     // 'unbound' is what a step becomes when this client has not said who fills
     // it. Falling through to no_approval_needed would let an unconfigured tier
     // wave spend through.
-    const result = await resolveApproverForTier(
-      svc({}), tier({ approver_type: 'unbound' }), 'traveller-1', CLIENT
-    )
-
-    expect(result).toEqual({ kind: 'unresolved' })
+    expect(pickApprover(tier({ approver_type: 'unbound' }), 'traveller-1', {}))
+      .toEqual({ kind: 'unresolved' })
   })
 })
 
-describe('resolveApproverForTier — the traveller qualifying against themselves', () => {
-  it('reports no_approval_needed rather than assigning the booking to its own traveller', async () => {
+describe('pickApprover — the traveller qualifying against themselves', () => {
+  it('reports no_approval_needed rather than assigning the booking to its own traveller', () => {
     // A manager at the minimum rank IS, by the rule, the approver closest in
     // seniority to themselves. Approving your own booking and needing no
     // approval are the same outcome, so it is reported as the latter.
-    //
-    // The behaviour this replaces was strictly worse: a PENDING approval
-    // assigned to the traveller, which blocks their own booking until they
-    // click approve on their own request.
-    const result = await resolveApproverForTier(
-      svc({ employees: [manager('traveller-1', 'L4', '2024-01-01')], bands: BANDS }),
-      tier({ min_band_rank: 1 }),
-      'traveller-1',
-      CLIENT
-    )
-
-    expect(result).toEqual({
-      kind: 'no_approval_needed',
-      reason: 'the traveller is themselves the closest qualifying approver at this rank',
-    })
+    expect(pickApprover(tier({ min_band_rank: 1 }), 'traveller-1', ranked([manager('traveller-1', 'L4', '2024-01-01')])))
+      .toEqual({
+        kind: 'no_approval_needed',
+        reason: 'the traveller is themselves the closest qualifying approver at this rank',
+      })
   })
 
-  it('still routes to someone else when a CLOSER qualifying approver exists', async () => {
-    // The traveller only wins when nobody qualifying sits below them. An L4
-    // traveller with an L2 manager available is approved by the L2 manager,
-    // exactly as before -- self-resolution is a consequence of the seniority
-    // rule, not a shortcut around it.
-    const result = await resolveApproverForTier(
-      svc({
-        employees: [
-          manager('traveller-1', 'L4', '2024-01-01'),
-          manager('m-l2', 'L2', '2024-01-01'),
-        ],
-        bands: BANDS,
-      }),
-      tier({ min_band_rank: 1 }),
-      'traveller-1',
-      CLIENT
-    )
-
-    expect(result).toEqual({ kind: 'approver', approverId: 'm-l2' })
+  it('still routes to someone else when a CLOSER qualifying approver exists', () => {
+    // Self-resolution is a consequence of the seniority rule, not a shortcut
+    // around it.
+    const facts = ranked([manager('traveller-1', 'L4', '2024-01-01'), manager('m-l2', 'L2', '2024-01-01')])
+    expect(pickApprover(tier({ min_band_rank: 1 }), 'traveller-1', facts))
+      .toEqual({ kind: 'approver', approverId: 'm-l2' })
   })
 
-  it('does not escalate UPWARD past the traveller', async () => {
-    // Documents the boundary of the change. An L2 traveller with only an L4
-    // manager above them needs no approval -- it does not escalate to the L4.
-    // If that is ever wanted it is a different rule ("someone other than the
-    // traveller"), not a bug in this one.
-    const result = await resolveApproverForTier(
-      svc({
-        employees: [
-          manager('traveller-1', 'L2', '2024-01-01'),
-          manager('m-l4', 'L4', '2024-01-01'),
-        ],
-        bands: BANDS,
-      }),
-      tier({ min_band_rank: 1 }),
-      'traveller-1',
-      CLIENT
-    )
-
-    expect(result).toEqual({
+  it('does not escalate UPWARD past the traveller', () => {
+    // An L2 traveller with only an L4 manager above them needs no approval --
+    // it does not escalate to the L4. If that is ever wanted it is a different
+    // rule ("someone other than the traveller"), not a bug in this one.
+    const facts = ranked([manager('traveller-1', 'L2', '2024-01-01'), manager('m-l4', 'L4', '2024-01-01')])
+    expect(pickApprover(tier({ min_band_rank: 1 }), 'traveller-1', facts)).toEqual({
       kind: 'no_approval_needed',
       reason: 'the traveller is themselves the closest qualifying approver at this rank',
     })

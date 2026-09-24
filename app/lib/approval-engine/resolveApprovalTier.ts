@@ -1,5 +1,8 @@
-import { createServiceClient } from '@/utils/supabase/service'
 import type { Verdict, VerdictBreach } from '@/app/lib/rule-engine/evaluateBooking'
+import type { Queryable } from '@/app/lib/db'
+import * as approvals from '@/app/lib/repositories/approvals'
+import * as employees from '@/app/lib/repositories/employees'
+import * as clients from '@/app/lib/repositories/clients'
 import {
   resolveTemplateForEmployee,
   getTierApprovers,
@@ -9,11 +12,9 @@ import {
   type TemplateTier,
 } from './linkedApprovalTemplates'
 
-// Data access only -- narrowed from the full service client with Pick so that
-// a TRANSACTION client satisfies it too. Nothing in this file touches .auth,
-// and requiring the whole client would mean these functions could never run
-// inside withTransaction, which is where approval writes belong.
-type ServiceClient = Pick<ReturnType<typeof createServiceClient>, "from">
+// Every function here takes `db` -- the pool, or a transaction's connection,
+// which is where approval writes belong: a decision, the booking's status and
+// the next step's approval commit together or not at all.
 
 // ── Approval Engine v3 ───────────────────────────────────────────────────
 // A chain is resolved for (employee, category) down a three-rung ladder —
@@ -193,19 +194,19 @@ export interface ResolvedChain {
 }
 
 async function resolveChainForEmployee(
-  service: ServiceClient,
+  db: Queryable,
   employeeId: string,
   clientId: string,
   travelType: string
 ): Promise<ResolvedChain | null> {
   const category = categoryForTravelType(travelType)
-  const resolved = await resolveTemplateForEmployee(service, employeeId, clientId, category)
+  const resolved = await resolveTemplateForEmployee(db, employeeId, clientId, category)
 
   if (!resolved) return null
 
   // Structure comes from the template, identity from this client's bindings.
   // Merged here so everything downstream keeps working in one tier shape.
-  const approvers = await getTierApprovers(service, clientId, resolved.template.id)
+  const approvers = await getTierApprovers(db, clientId, resolved.template.id)
 
   return {
     templateId: resolved.template.id,
@@ -227,11 +228,17 @@ function eligibleTiers(tiers: ChainTier[], verdict: Verdict): ChainTier[] {
     .filter(t => verdictRank(verdict) >= verdictRank(t.min_verdict))
 }
 
-// ── resolveApproverForTier ───────────────────────────────────────────────────
+// ── Choosing an approver ─────────────────────────────────────────────────────
 // Three outcomes, not two. "Nobody" splits into a configuration gap and a
 // legitimate absence — the person at the top of the hierarchy has no manager
 // by definition, and reporting that as a misconfiguration would mean the owner
 // of a client could never have a clean approval setup.
+//
+// Split in two: pickApprover DECIDES, from facts it is handed, and is pure --
+// every rank and tie-break rule is tested directly against it.
+// resolveApproverForTier fetches exactly the facts one step's approver type
+// needs and hands them over. Which rows count as candidates (active, at this
+// client, in the right role) is the repository's SQL; how they rank is here.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type ApproverResolution =
@@ -239,15 +246,17 @@ export type ApproverResolution =
   | { kind: 'unresolved' }
   | { kind: 'no_approval_needed'; reason: string }
 
-// Exported for tests. The rank arithmetic below decides who is ASKED to
-// approve someone else's spend, which makes it worth asserting directly rather
-// than only through the route that calls it.
-export async function resolveApproverForTier(
-  service: ServiceClient,
-  tier: ChainTier,
-  employeeId: string,
-  clientId: string
-): Promise<ApproverResolution> {
+export interface ApproverFacts {
+  // 'manager': the traveller's own reporting line.
+  reporting?: { manager_id: string | null; top_of_hierarchy: boolean } | null
+  // 'any_manager_at': the client's active managers and admins, and its bands.
+  candidates?: { id: string; band_code: string | null; created_at: string }[]
+  rankByCode?: Map<string, number>
+  // 'finance_role' / 'admin': the longest-serving active holder of the role.
+  roleHolder?: string | null
+}
+
+export function pickApprover(tier: ChainTier, employeeId: string, facts: ApproverFacts): ApproverResolution {
   if (tier.approver_type === 'specific_user') {
     return tier.approver_user_id
       ? { kind: 'approver', approverId: tier.approver_user_id }
@@ -255,19 +264,15 @@ export async function resolveApproverForTier(
   }
 
   if (tier.approver_type === 'manager') {
-    const { data: employee } = await service
-      .from('employees')
-      .select('manager_id, top_of_hierarchy')
-      .eq('id', employeeId)
-      .maybeSingle()
+    const line = facts.reporting
 
-    if (employee?.manager_id) {
-      return { kind: 'approver', approverId: employee.manager_id }
+    if (line?.manager_id) {
+      return { kind: 'approver', approverId: line.manager_id }
     }
 
     // Nobody above them, deliberately. Blocking the booking forever would be
     // worse than recording that this step had nobody to ask.
-    if (employee?.top_of_hierarchy) {
+    if (line?.top_of_hierarchy) {
       return {
         kind: 'no_approval_needed',
         reason: 'no manager to approve — this employee is at the top of the hierarchy',
@@ -286,73 +291,35 @@ export async function resolveApproverForTier(
   // always escalating to the most senior person available.
   if (tier.approver_type === 'any_manager_at') {
     const minRank = tier.min_band_rank ?? 0
-    const { data: candidates } = await service
-      .from('employees')
-      .select('id, band_code, created_at')
-      .eq('client_id', clientId)
-      .in('role', ['manager', 'admin'])
-      .eq('status', 'active')
+    const rankByCode = facts.rankByCode ?? new Map<string, number>()
 
-    // This used to select `bands:band_code(rank)` as well. There is no foreign
-    // key from employees.band_code to bands, so PostgREST could not resolve the
-    // relation and answered the whole request with 400 PGRST200 — verified
-    // against the live project. The error was discarded, `candidates` came back
-    // null, and every 'any_manager_at' tier fell through to 'unresolved': the
-    // "Any manager at rank…" approver type never resolved anybody.
-    //
-    // The embedded rank was never read in the first place. Rank is resolved by
-    // the manual query below, which is why dropping the embed restores the
-    // feature rather than changing its behaviour.
-    if (!candidates || candidates.length === 0) return { kind: 'unresolved' }
-
-    const { data: bandRanks } = await service
-      .from('bands')
-      .select('code, rank')
-      .eq('client_id', clientId)
-
-    const rankByCode = new Map((bandRanks ?? []).map(b => [b.code, b.rank]))
-    const qualifying = candidates
+    const chosen = (facts.candidates ?? [])
       .map(c => ({
-        id: c.id as string,
+        id: c.id,
         // An unrecognised band_code sorts to -1, below every real rank, so it
         // fails `>= minRank` for any minRank of 0 or more. Excluding rather
         // than defaulting is the safe direction: a manager whose band was
         // renamed should not silently satisfy a rank requirement.
-        rank: rankByCode.get((c as { band_code: string | null }).band_code ?? '') ?? -1,
-        createdAt: String((c as { created_at?: string }).created_at ?? ''),
+        rank: rankByCode.get(c.band_code ?? '') ?? -1,
+        createdAt: String(c.created_at ?? ''),
       }))
       .filter(c => c.rank >= minRank)
       // TIE-BREAK, AND IT MATTERS. Rank alone is not a total order: two active
-      // managers commonly share a band. The query has no ORDER BY, so the rows
-      // arrive in whatever physical order PostgreSQL happens to scan -- which
-      // changes after an UPDATE moves a row or a VACUUM repacks the page.
-      //
-      // Sorting on rank alone therefore picked an ARBITRARY one of the tied
-      // managers, and could pick a different one for the next booking with no
-      // configuration having changed. Longest-serving wins, then id, which
-      // makes the choice stable and matches how the finance_role and admin
-      // branch below already resolves its single candidate.
+      // managers commonly share a band. Longest-serving wins, then id, which
+      // makes the choice stable whatever order the candidates arrive in.
       .sort((a, b) => {
         if (a.rank !== b.rank) return a.rank < b.rank ? -1 : 1
         if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? -1 : 1
         return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
-      })
+      })[0]
 
-    const chosen = qualifying[0]
     if (!chosen) return { kind: 'unresolved' }
 
     // The traveller can qualify against their own booking: a manager at the
     // minimum rank is, by the rule, the approver closest in seniority to
     // themselves. Approving your own booking and needing no approval are the
-    // same outcome, so it is reported as the latter.
-    //
-    // This is not a loophole being closed or opened — it is the same decision
-    // stated honestly. raiseApprovals treats 'no_approval_needed' exactly as
-    // it treats the 'self' approver type: an approvals row written with
-    // status 'approved' and a reason saying no human reviewed it, so the
-    // booking still carries an audit trail. The alternative it replaces was
-    // strictly worse: a PENDING approval assigned to the traveller, which
-    // blocks the booking until they click approve on their own request.
+    // same outcome, so it is reported as the latter -- raiseApprovals logs it
+    // as an approved row with a reason, so the booking keeps an audit trail.
     if (chosen.id === employeeId) {
       return {
         kind: 'no_approval_needed',
@@ -360,33 +327,44 @@ export async function resolveApproverForTier(
       }
     }
 
-    // Returns the resolution object, not a bare id. It used to return
-    // `qualifying[0]?.id ?? null`, which type-checked only because the id came
-    // back as `any` from the query — so at runtime an 'any_manager_at' step
-    // produced a value with no `kind`, fell past both guards in raiseApprovals,
-    // and inserted approver_id: undefined, failing the NOT NULL constraint.
     return { kind: 'approver', approverId: chosen.id }
   }
 
   if (tier.approver_type === 'finance_role' || tier.approver_type === 'admin') {
-    const role = tier.approver_type === 'finance_role' ? 'finance' : 'admin'
-    const { data: candidate } = await service
-      .from('employees')
-      .select('id')
-      .eq('client_id', clientId)
-      .eq('role', role)
-      .eq('status', 'active')
-      .order('created_at', { ascending: true })
-      .limit(1)
-      .maybeSingle()
-    return candidate?.id
-      ? { kind: 'approver', approverId: candidate.id }
+    return facts.roleHolder
+      ? { kind: 'approver', approverId: facts.roleHolder }
       : { kind: 'unresolved' }
   }
 
   // Includes 'unbound' — a step this client has not said who fills — and any
   // approver type added to the union without a branch here.
   return { kind: 'unresolved' }
+}
+
+// Fetches what this step's approver type needs, and nothing else.
+export async function resolveApproverForTier(
+  db: Queryable,
+  tier: ChainTier,
+  employeeId: string,
+  clientId: string
+): Promise<ApproverResolution> {
+  const facts: ApproverFacts = {}
+
+  if (tier.approver_type === 'manager') {
+    facts.reporting = await employees.reportingLine(db, employeeId)
+  } else if (tier.approver_type === 'any_manager_at') {
+    const [candidates, rankByCode] = await Promise.all([
+      employees.rankedApprovers(db, clientId),
+      employees.bandRanks(db, clientId),
+    ])
+    facts.candidates = candidates
+    facts.rankByCode = rankByCode
+  } else if (tier.approver_type === 'finance_role' || tier.approver_type === 'admin') {
+    const role = tier.approver_type === 'finance_role' ? 'finance' : 'admin'
+    facts.roleHolder = await employees.longestServing(db, clientId, role)
+  }
+
+  return pickApprover(tier, employeeId, facts)
 }
 
 
@@ -409,7 +387,7 @@ interface RaiseContext {
 }
 
 async function raiseApprovals(
-  service: ServiceClient,
+  db: Queryable,
   chain: ResolvedChain,
   entries: ChainTier[],
   ctx: RaiseContext
@@ -418,40 +396,36 @@ async function raiseApprovals(
     ? Math.min(...entries.map(e => e.tier))
     : entries[0].tier
 
+  // A step that needs nobody, logged as already approved so the booking keeps
+  // an audit trail. approver_id is NOT NULL, so the traveller is recorded as
+  // their own approver and the reason makes clear no human reviewed it.
+  const loggedAsApproved = (reason: string): approvals.NewApproval => ({
+    client_id: ctx.clientId,
+    booking_id: ctx.bookingId,
+    approver_id: ctx.employeeId,
+    tier: groupTier,
+    status: 'approved',
+    reason,
+    chain_template_id: chain.templateId,
+    verdict: ctx.verdict,
+    actioned: true,
+  })
+
   const selfApprovalIds: string[] = []
   const pending: { approverId: string }[] = []
   let unresolved = false
 
   for (const entry of entries) {
     if (entry.approver_type === 'self') {
-      // Logged but never blocking. approver_id is NOT NULL, so the traveler
-      // is recorded as their own approver and the reason makes clear no human
-      // reviewed it.
-      const { data: logged, error } = await service
-        .from('approvals')
-        .insert({
-          client_id: ctx.clientId,
-          booking_id: ctx.bookingId,
-          approver_id: ctx.employeeId,
-          tier: groupTier,
-          status: 'approved',
-          reason: `Self-approved (this band requires no review): ${ctx.reason}`,
-          chain_template_id: chain.templateId,
-          verdict: ctx.verdict,
-          actioned_at: new Date().toISOString(),
-        })
-        .select('id')
-        .single()
-
-      if (error || !logged) {
-        throw new Error(`Failed to log self-approval record: ${error?.message ?? 'unknown error'}`)
-      }
-
-      selfApprovalIds.push(logged.id)
+      // Logged but never blocking.
+      const [row] = await approvals.raise(db, [
+        loggedAsApproved(`Self-approved (this band requires no review): ${ctx.reason}`),
+      ])
+      selfApprovalIds.push(row.id)
       continue
     }
 
-    const resolution = await resolveApproverForTier(service, entry, ctx.employeeId, ctx.clientId)
+    const resolution = await resolveApproverForTier(db, entry, ctx.employeeId, ctx.clientId)
     const stepName = entry.label ? `"${entry.label}"` : `step ${entry.tier}`
 
     // Nobody to ask, and that is correct — the traveller is at the top of the
@@ -459,27 +433,10 @@ async function raiseApprovals(
     // trail, but never blocking. Distinct from 'unresolved' below: this is not
     // a configuration gap and must not be reported as one.
     if (resolution.kind === 'no_approval_needed') {
-      const { data: logged, error } = await service
-        .from('approvals')
-        .insert({
-          client_id: ctx.clientId,
-          booking_id: ctx.bookingId,
-          approver_id: ctx.employeeId,
-          tier: groupTier,
-          status: 'approved',
-          reason: `Auto-approved at ${stepName} — ${resolution.reason}: ${ctx.reason}`,
-          chain_template_id: chain.templateId,
-          verdict: ctx.verdict,
-          actioned_at: new Date().toISOString(),
-        })
-        .select('id')
-        .single()
-
-      if (error || !logged) {
-        throw new Error(`Failed to log auto-approval record: ${error?.message ?? 'unknown error'}`)
-      }
-
-      selfApprovalIds.push(logged.id)
+      const [row] = await approvals.raise(db, [
+        loggedAsApproved(`Auto-approved at ${stepName} — ${resolution.reason}: ${ctx.reason}`),
+      ])
+      selfApprovalIds.push(row.id)
       continue
     }
 
@@ -518,23 +475,17 @@ async function raiseApprovals(
     }
   }
 
-  const { data: inserted, error } = await service
-    .from('approvals')
-    .insert(pending.map(p => ({
-      client_id: ctx.clientId,
-      booking_id: ctx.bookingId,
-      approver_id: p.approverId,
-      tier: groupTier,
-      status: 'pending',
-      reason: ctx.reason,
-      chain_template_id: chain.templateId,
-      verdict: ctx.verdict,
-    })))
-    .select('id, approver_id')
-
-  if (error || !inserted || inserted.length === 0) {
-    throw new Error(`Failed to create approval record: ${error?.message ?? 'unknown error'}`)
-  }
+  const inserted = await approvals.raise(db, pending.map((p): approvals.NewApproval => ({
+    client_id: ctx.clientId,
+    booking_id: ctx.bookingId,
+    approver_id: p.approverId,
+    tier: groupTier,
+    status: 'pending',
+    reason: ctx.reason,
+    chain_template_id: chain.templateId,
+    verdict: ctx.verdict,
+    actioned: false,
+  })))
 
   return {
     requiresApproval: true,
@@ -549,7 +500,7 @@ async function raiseApprovals(
 
 // ── startApprovalForBooking ───────────────────────────────────────────────────
 export async function startApprovalForBooking(
-  service: ServiceClient,
+  db: Queryable,
   params: {
     bookingId: string
     clientId: string
@@ -571,19 +522,14 @@ export async function startApprovalForBooking(
   // on does not mean rebuilding it.
   const category = categoryForTravelType(travelType)
   if (category === 'air' || category === 'hotel') {
-    const { data: client } = await service
-      .from('clients')
-      .select('air_approval_mode, hotel_approval_mode')
-      .eq('id', clientId)
-      .maybeSingle()
-
-    const mode = category === 'air' ? client?.air_approval_mode : client?.hotel_approval_mode
+    const modes = await clients.approvalModes(db, clientId)
+    const mode = category === 'air' ? modes?.air_approval_mode : modes?.hotel_approval_mode
     if (mode === 'not_required') {
       return { requiresApproval: false }
     }
   }
 
-  const chain = await resolveChainForEmployee(service, employeeId, clientId, travelType)
+  const chain = await resolveChainForEmployee(db, employeeId, clientId, travelType)
 
   if (!chain || chain.tiers.length === 0) {
     // No template covers this employee's band for this category, so there is
@@ -606,7 +552,7 @@ export async function startApprovalForBooking(
   // approval comes back. Parallel raises every triggered entry at once.
   const entries = chain.mode === 'parallel' ? eligible : [eligible[0]]
 
-  return raiseApprovals(service, chain, entries, {
+  return raiseApprovals(db, chain, entries, {
     bookingId, clientId, employeeId, verdict, reason,
   })
 }
@@ -618,7 +564,7 @@ export async function startApprovalForBooking(
 // runs, so anything still pending is genuinely outstanding.
 // ─────────────────────────────────────────────────────────────────────────────
 export async function advanceApprovalChain(
-  service: ServiceClient,
+  db: Queryable,
   params: {
     bookingId: string
     clientId: string
@@ -631,11 +577,7 @@ export async function advanceApprovalChain(
 ): Promise<TierOutcome> {
   const { bookingId, clientId, employeeId, chainTemplateId, completedTier, verdict, reason } = params
 
-  const { data: template } = await service
-    .from('approval_chain_templates')
-    .select('id, name, mode, quorum, tiers')
-    .eq('id', chainTemplateId)
-    .maybeSingle()
+  const template = await approvals.template(db, chainTemplateId)
 
   if (!template) {
     // The template was deleted mid-flight. Finalising is the safer failure
@@ -648,7 +590,7 @@ export async function advanceApprovalChain(
   // approver: read raw, every step after the first had approver_type
   // undefined, resolved to nobody, and the booking was auto-approved with the
   // remaining steps silently skipped.
-  const approvers = await getTierApprovers(service, clientId, template.id)
+  const approvers = await getTierApprovers(db, clientId, template.id)
 
   const chain: ResolvedChain = {
     templateId: template.id,
@@ -659,24 +601,12 @@ export async function advanceApprovalChain(
   }
 
   if (chain.mode === 'parallel') {
-    const { data: siblings } = await service
-      .from('approvals')
-      .select('id')
-      .eq('booking_id', bookingId)
-      .eq('tier', completedTier)
-      .eq('status', 'pending')
-
-    const outstanding = siblings ?? []
+    const outstanding = await approvals.pendingAtTier(db, bookingId, completedTier)
 
     if (chain.quorum === 'any') {
       // The first approval carries it. Retire the rest so they stop appearing
       // as live work in other approvers' queues.
-      if (outstanding.length > 0) {
-        await service
-          .from('approvals')
-          .update({ status: 'superseded', actioned_at: new Date().toISOString() })
-          .in('id', outstanding.map(s => s.id))
-      }
+      await approvals.supersede(db, outstanding)
       return { requiresApproval: false, tier: completedTier }
     }
 
@@ -693,7 +623,7 @@ export async function advanceApprovalChain(
     return { requiresApproval: false }
   }
 
-  return raiseApprovals(service, chain, [nextTier], {
+  return raiseApprovals(db, chain, [nextTier], {
     bookingId, clientId, employeeId, verdict, reason,
   })
 }

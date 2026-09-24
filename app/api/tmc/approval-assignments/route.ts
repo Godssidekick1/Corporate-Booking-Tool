@@ -1,5 +1,4 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import {
   getAssignmentsForClient,
@@ -8,6 +7,10 @@ import {
 import { APPROVAL_CATEGORIES } from '@/app/lib/approval-engine/resolveApprovalTier'
 import { NextRequest } from 'next/server'
 import { db } from '@/app/lib/db'
+import * as approvals from '@/app/lib/repositories/approvals'
+import * as clients from '@/app/lib/repositories/clients'
+import * as employees from '@/app/lib/repositories/employees'
+import { route } from '@/app/lib/http/handler'
 
 // ── GET /api/tmc/approval-assignments?clientId=<uuid> ───────────────────────
 // The whole client's approval routing in one payload — all three rungs of the
@@ -43,7 +46,6 @@ interface AssignBody {
 }
 
 async function authorise(
-  service: ReturnType<typeof createServiceClient>,
   userId: string,
   clientId: string
 ): Promise<{ ok: true; tmcId: string } | { ok: false; error: string; status: number }> {
@@ -54,11 +56,7 @@ async function authorise(
 
   // tmc_admin passes the permission check for any clientId, so the tenancy
   // boundary is checked explicitly.
-  const { data: client } = await service
-    .from('clients')
-    .select('id, tmc_id')
-    .eq('id', clientId)
-    .maybeSingle()
+  const client = await clients.tenancy(db, clientId)
 
   if (!client || client.tmc_id !== auth.tmcId) {
     return { ok: false, error: 'Client not found for this TMC', status: 404 }
@@ -67,7 +65,7 @@ async function authorise(
   return { ok: true, tmcId: auth.tmcId }
 }
 
-export async function GET(req: NextRequest) {
+export const GET = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -80,42 +78,23 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'clientId is required' }, { status: 400 })
   }
 
-  const service = createServiceClient()
-  const access = await authorise(service, user.id, clientId)
+  const access = await authorise(user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
 
-  const { data: employees, error } = await service
-    .from('employees')
-    .select('id, full_name, email, band_code, status')
-    .eq('client_id', clientId)
-    .order('full_name')
+  const roster = await employees.routingRoster(db, clientId)
 
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
-
-  const [assignments, bandAssignments] = await Promise.all([
-    getAssignmentsForClient(service, (employees ?? []).map(e => e.id)),
-    getBandAssignmentsForClient(service, clientId),
-  ])
-
-  const [{ data: defaults }, { data: bands }] = await Promise.all([
-    service
-      .from('client_default_approval_templates')
-      .select('category, template_id')
-      .eq('client_id', clientId),
-    service
-      .from('bands')
-      .select('code, label, rank')
-      .eq('client_id', clientId)
-      .order('rank'),
+  const [assignments, bandAssignments, defaults, bands] = await Promise.all([
+    getAssignmentsForClient(db, roster.map(e => e.id)),
+    getBandAssignmentsForClient(db, clientId),
+    approvals.defaultAssignments(db, clientId),
+    employees.bandsForClient(db, clientId),
   ])
 
   return Response.json({
     ok: true,
-    employees: (employees ?? []).map(e => ({
+    employees: roster.map(e => ({
       ...e,
       // null here means "inherited" — from their band if that band has an
       // assignment, otherwise from the client default. The UI shows which, so an
@@ -125,19 +104,21 @@ export async function GET(req: NextRequest) {
         CATEGORIES.map(c => [c, assignments.get(`${e.id}::${c}`) ?? null])
       ),
     })),
-    bands: (bands ?? []).map(b => ({
-      ...b,
+    bands: bands.map(b => ({
+      code: b.code,
+      label: b.label,
+      rank: b.rank,
       assignments: Object.fromEntries(
         CATEGORIES.map(c => [c, bandAssignments.get(`${b.code}::${c}`) ?? null])
       ),
     })),
     defaults: Object.fromEntries(
-      CATEGORIES.map(c => [c, (defaults ?? []).find(d => d.category === c)?.template_id ?? null])
+      CATEGORIES.map(c => [c, defaults.find(d => d.category === c)?.template_id ?? null])
     ),
   })
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -164,8 +145,7 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const service = createServiceClient()
-  const access = await authorise(service, user.id, clientId)
+  const access = await authorise(user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
@@ -179,70 +159,31 @@ export async function POST(req: NextRequest) {
   // one chain can now serve all three categories instead of being duplicated per
   // category and drifting the first time somebody edits one copy.
   if (templateId) {
-    const { data: template } = await service
-      .from('approval_chain_templates')
-      .select('id, tmc_id')
-      .eq('id', templateId)
-      .maybeSingle()
+    const template = await approvals.ownership(db, templateId)
 
     if (!template || template.tmc_id !== access.tmcId) {
       return Response.json({ error: 'Approval template not found for this TMC' }, { status: 404 })
     }
   }
 
-  const { data: caller } = await service
-    .from('employees')
-    .select('id')
-    .eq('id', user.id)
-    .maybeSingle()
+  const assignedBy = (await employees.traveller(db, user.id))?.id ?? null
 
   // ── Per-employee assignment (possibly bulk) ────────────────────────────────
   if (Array.isArray(employeeIds) && employeeIds.length > 0) {
     // Confirm every id actually belongs to this client before writing any of
     // them, so a forged id can't attach an assignment to someone else's staff.
-    const { data: verified } = await service
-      .from('employees')
-      .select('id')
-      .eq('client_id', clientId)
-      .in('id', employeeIds)
-
-    const verifiedIds = (verified ?? []).map(e => e.id)
+    const verifiedIds = await employees.idsInClientAmong(db, clientId, employeeIds)
 
     if (verifiedIds.length !== employeeIds.length) {
       return Response.json({ error: 'One or more employees do not belong to this client' }, { status: 400 })
     }
 
     if (templateId === null) {
-      const { error: clearError } = await service
-        .from('employee_approval_templates')
-        .delete()
-        .eq('category', category)
-        .in('employee_id', verifiedIds)
-
-      if (clearError) {
-        return Response.json({ error: clearError.message }, { status: 500 })
-      }
-
+      await approvals.clearEmployees(db, verifiedIds, category)
       return Response.json({ ok: true, cleared: verifiedIds.length })
     }
 
-    const { error: upsertError } = await service
-      .from('employee_approval_templates')
-      .upsert(
-        verifiedIds.map(employee_id => ({
-          employee_id,
-          category,
-          template_id: templateId,
-          assigned_by: caller?.id ?? null,
-          assigned_at: new Date().toISOString(),
-        })),
-        { onConflict: 'employee_id,category' }
-      )
-
-    if (upsertError) {
-      return Response.json({ error: upsertError.message }, { status: 500 })
-    }
-
+    await approvals.assignToEmployees(db, verifiedIds, category, templateId, assignedBy)
     return Response.json({ ok: true, assigned: verifiedIds.length })
   }
 
@@ -252,83 +193,32 @@ export async function POST(req: NextRequest) {
     // composite FK to bands only exists where the schema supports it, so an
     // unrecognised code would otherwise be accepted here and then match nobody
     // at resolution time — a routing rule that silently does nothing.
-    const { data: band } = await service
-      .from('bands')
-      .select('code')
-      .eq('client_id', clientId)
-      .eq('code', bandCode)
-      .maybeSingle()
+    const band = await employees.bandByCode(db, clientId, bandCode)
 
     if (!band) {
       return Response.json({ error: `"${bandCode}" is not a band at this client` }, { status: 400 })
     }
 
     if (templateId === null) {
-      const { error: clearError } = await service
-        .from('band_approval_templates')
-        .delete()
-        .eq('client_id', clientId)
-        .eq('band_code', bandCode)
-        .eq('category', category)
-
-      if (clearError) {
-        return Response.json({ error: clearError.message }, { status: 500 })
-      }
-
+      await approvals.clearBand(db, clientId, bandCode, category)
       return Response.json({ ok: true, bandCleared: true })
     }
 
-    const { error: bandError } = await service
-      .from('band_approval_templates')
-      .upsert({
-        client_id: clientId,
-        band_code: bandCode,
-        category,
-        template_id: templateId,
-        assigned_by: caller?.id ?? null,
-        assigned_at: new Date().toISOString(),
-      }, { onConflict: 'client_id,band_code,category' })
-
-    if (bandError) {
-      return Response.json({ error: bandError.message }, { status: 500 })
-    }
-
+    await approvals.assignToBand(db, clientId, bandCode, category, templateId, assignedBy)
     return Response.json({ ok: true, bandSet: true })
   }
 
   // ── Client default ────────────────────────────────────────────────────────
   if (templateId === null) {
-    const { error: clearError } = await service
-      .from('client_default_approval_templates')
-      .delete()
-      .eq('client_id', clientId)
-      .eq('category', category)
-
-    if (clearError) {
-      return Response.json({ error: clearError.message }, { status: 500 })
-    }
-
+    await approvals.clearDefault(db, clientId, category)
     return Response.json({ ok: true, defaultCleared: true })
   }
 
-  const { error: defaultError } = await service
-    .from('client_default_approval_templates')
-    .upsert({
-      client_id: clientId,
-      category,
-      template_id: templateId,
-      assigned_by: caller?.id ?? null,
-      assigned_at: new Date().toISOString(),
-    }, { onConflict: 'client_id,category' })
-
-  if (defaultError) {
-    return Response.json({ error: defaultError.message }, { status: 500 })
-  }
-
+  await approvals.assignDefault(db, clientId, category, templateId, assignedBy)
   return Response.json({ ok: true, defaultSet: true })
-}
+})
 
-export async function DELETE(req: NextRequest) {
+export const DELETE = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -345,24 +235,13 @@ export async function DELETE(req: NextRequest) {
     return Response.json({ error: 'clientId and category are required' }, { status: 400 })
   }
 
-  const service = createServiceClient()
-  const access = await authorise(service, user.id, clientId)
+  const access = await authorise(user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
 
   if (bandCode) {
-    const { error } = await service
-      .from('band_approval_templates')
-      .delete()
-      .eq('client_id', clientId)
-      .eq('band_code', bandCode)
-      .eq('category', category)
-
-    if (error) {
-      return Response.json({ error: error.message }, { status: 500 })
-    }
-
+    await approvals.clearBand(db, clientId, bandCode, category)
     return Response.json({ ok: true })
   }
 
@@ -370,39 +249,16 @@ export async function DELETE(req: NextRequest) {
     // The employee must work at THIS client. The rest of this handler is
     // scoped by clientId; this branch keyed only on employee_id, so an admin
     // of one TMC could clear another tenant's routing by guessing an id.
-    const { data: employee } = await service
-      .from('employees')
-      .select('id')
-      .eq('id', employeeId)
-      .eq('client_id', clientId)
-      .maybeSingle()
+    const [atClient] = await employees.idsInClientAmong(db, clientId, [employeeId])
 
-    if (!employee) {
+    if (!atClient) {
       return Response.json({ error: 'Employee not found at this client' }, { status: 404 })
     }
 
-    const { error } = await service
-      .from('employee_approval_templates')
-      .delete()
-      .eq('employee_id', employeeId)
-      .eq('category', category)
-
-    if (error) {
-      return Response.json({ error: error.message }, { status: 500 })
-    }
-
+    await approvals.clearEmployees(db, [employeeId], category)
     return Response.json({ ok: true })
   }
 
-  const { error } = await service
-    .from('client_default_approval_templates')
-    .delete()
-    .eq('client_id', clientId)
-    .eq('category', category)
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
-
+  await approvals.clearDefault(db, clientId, category)
   return Response.json({ ok: true })
-}
+})

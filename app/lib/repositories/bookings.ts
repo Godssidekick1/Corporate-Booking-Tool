@@ -187,6 +187,62 @@ export async function saveQuote(db: Queryable, q: NewQuote): Promise<void> {
       expires_at = excluded.expires_at`)
 }
 
+export type HeldQuote = Pick<Row<'price_quotes'>, 'airline_components' | 'commercials' | 'sell_total' | 'employee_id'>
+
+export async function heldQuote(db: Queryable, amadeusKey: string, referenceNo: string): Promise<HeldQuote | null> {
+  return maybeOne<HeldQuote>(db, sql`
+    select airline_components, commercials, sell_total, employee_id from price_quotes
+    where amadeus_key = ${amadeusKey} and reference_no = ${referenceNo}`)
+}
+
+// ═══ The booking row ════════════════════════════════════════════════════════
+
+// jsonb columns take domain objects as they are; JSON-encoded on the way in.
+export type NewBooking = Pick<Row<'bookings'>,
+  | 'client_id' | 'employee_id' | 'requested_for' | 'booking_type' | 'status' | 'total_cost' | 'sell_total'
+  | 'provider' | 'provider_order_id' | 'amadeus_key' | 'pricing_key' | 'result_index' | 'search_key'
+  | 'trip_id' | 'is_ndc' | 'policy_status' | 'policy_verdict'
+> & {
+  resolved_deal_codes: unknown
+  resolved_fop: unknown
+  commercials: unknown
+  itinerary: unknown
+  traveler_snapshot: unknown
+  fare_breakdown: unknown
+  policy_verdict_detail: unknown
+}
+
+// Written once, right after the airline accepts the passengers (add-passenger).
+export async function insert(db: Queryable, b: NewBooking): Promise<{ id: string }> {
+  return one<{ id: string }>(db, sql`
+    insert into bookings (
+      client_id, employee_id, requested_for, booking_type, status, total_cost, sell_total, provider,
+      provider_order_id, amadeus_key, pricing_key, result_index, search_key, trip_id, is_ndc,
+      policy_status, policy_verdict, resolved_deal_codes, resolved_fop, commercials, itinerary,
+      traveler_snapshot, fare_breakdown, policy_verdict_detail)
+    values (
+      ${b.client_id}, ${b.employee_id}, ${b.requested_for}, ${b.booking_type}, ${b.status}, ${b.total_cost},
+      ${b.sell_total}, ${b.provider}, ${b.provider_order_id}, ${b.amadeus_key}, ${b.pricing_key},
+      ${b.result_index}, ${b.search_key}, ${b.trip_id}, ${b.is_ndc}, ${b.policy_status}, ${b.policy_verdict},
+      ${json(b.resolved_deal_codes)}, ${json(b.resolved_fop)}, ${json(b.commercials)}, ${json(b.itinerary)},
+      ${json(b.traveler_snapshot)}, ${json(b.fare_breakdown)}, ${json(b.policy_verdict_detail)})
+    returning id`)
+}
+
+// ═══ Approval ═══════════════════════════════════════════════════════════════
+
+export type ApprovalTarget = Pick<Row<'bookings'>, 'id' | 'employee_id' | 'client_id' | 'status'>
+
+export async function approvalTarget(db: Queryable, bookingId: string): Promise<ApprovalTarget | null> {
+  return maybeOne<ApprovalTarget>(db, sql`
+    select id, employee_id, client_id, status from bookings where id = ${bookingId}`)
+}
+
+// Approval outcomes: approved, rejected, approval_misconfigured, pending_approval.
+export async function setStatus(db: Queryable, bookingId: string, status: string): Promise<void> {
+  await exec(db, sql`update bookings set status = ${status}, updated_at = now() where id = ${bookingId}`)
+}
+
 // ═══ Confirming with the airline ════════════════════════════════════════════
 // Every write below follows a GDS call, and none runs in a transaction on
 // purpose: holding one open across a provider round trip would take a row

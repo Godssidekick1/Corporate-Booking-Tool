@@ -852,3 +852,81 @@ export async function fullName(db: Queryable, employeeId: string): Promise<strin
 export async function traveller(db: Queryable, employeeId: string): Promise<Pick<Row<'employees'>, 'id' | 'client_id'> | null> {
   return maybeOne(db, sql`select id, client_id from employees where id = ${employeeId}`)
 }
+
+// ═══ Approver candidates ════════════════════════════════════════════════════
+// The raw facts pickApprover (app/lib/approval-engine) chooses from. Which
+// rows count as candidates lives HERE, in SQL: active, at this client, in the
+// right role. The ranking does not.
+
+export type ReportingLine = Pick<Row<'employees'>, 'manager_id' | 'top_of_hierarchy'>
+
+export async function reportingLine(db: Queryable, employeeId: string): Promise<ReportingLine | null> {
+  return maybeOne<ReportingLine>(db, sql`
+    select manager_id, top_of_hierarchy from employees where id = ${employeeId}`)
+}
+
+export type RankedCandidate = Pick<Row<'employees'>, 'id' | 'band_code' | 'created_at'>
+
+// Active managers and admins at the client, for a rank-scoped step.
+export async function rankedApprovers(db: Queryable, clientId: string): Promise<RankedCandidate[]> {
+  return many<RankedCandidate>(db, sql`
+    select id, band_code, created_at from employees
+    where client_id = ${clientId} and role in ('manager', 'admin') and status = 'active'
+    order by created_at, id`)
+}
+
+// The longest-serving active person in a role -- a finance or admin step.
+export async function longestServing(db: Queryable, clientId: string, role: string): Promise<string | null> {
+  return (await maybeOne<{ id: string }>(db, sql`
+    select id from employees
+    where client_id = ${clientId} and role = ${role} and status = 'active'
+    order by created_at, id
+    limit 1`))?.id ?? null
+}
+
+// Band code -> rank at this client.
+export async function bandRanks(db: Queryable, clientId: string): Promise<Map<string, number>> {
+  const rows = await many<{ code: string; rank: number }>(db, sql`
+    select code, rank from bands where client_id = ${clientId}`)
+  return new Map(rows.map(r => [r.code, r.rank]))
+}
+
+export type BandLabel = Pick<Row<'bands'>, 'code' | 'label' | 'rank'>
+
+export async function bandLabels(db: Queryable, clientId: string): Promise<BandLabel[]> {
+  return many<BandLabel>(db, sql`
+    select code, label, rank from bands where client_id = ${clientId} order by rank, id`)
+}
+
+export async function bandCode(db: Queryable, employeeId: string): Promise<string | null> {
+  return (await maybeOne<{ band_code: string | null }>(db, sql`
+    select band_code from employees where id = ${employeeId}`))?.band_code ?? null
+}
+
+export type RoutingRow = Pick<Row<'employees'>, 'id' | 'full_name' | 'email' | 'band_code' | 'status'>
+
+// A client's people for the approval-routing roster.
+export async function routingRoster(db: Queryable, clientId: string): Promise<RoutingRow[]> {
+  return many<RoutingRow>(db, sql`
+    select id, full_name, email, band_code, status from employees
+    where client_id = ${clientId} order by full_name, id`)
+}
+
+export async function idsInClientAmong(
+  db: Queryable,
+  clientId: string,
+  employeeIds: readonly string[]
+): Promise<string[]> {
+  if (employeeIds.length === 0) return []
+  const rows = await many<{ id: string }>(db, sql`
+    select id from employees where client_id = ${clientId} and id = any(${[...employeeIds]}) order by id`)
+  return rows.map(r => r.id)
+}
+
+export type TravellerCard = Pick<Row<'employees'>, 'id' | 'full_name' | 'email' | 'department'>
+
+export async function travellerCards(db: Queryable, employeeIds: readonly string[]): Promise<TravellerCard[]> {
+  if (employeeIds.length === 0) return []
+  return many<TravellerCard>(db, sql`
+    select id, full_name, email, department from employees where id = any(${[...employeeIds]}) order by id`)
+}

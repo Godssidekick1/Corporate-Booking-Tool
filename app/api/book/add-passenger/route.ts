@@ -1,6 +1,9 @@
 import { createClient } from '@/utils/supabase/server'
 import { db } from '@/app/lib/db'
-import { createServiceClient } from '@/utils/supabase/service'
+import * as employees from '@/app/lib/repositories/employees'
+import * as trips from '@/app/lib/repositories/trips'
+import * as bookings from '@/app/lib/repositories/bookings'
+import { route } from '@/app/lib/http/handler'
 import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic, CustomerInfo } from '@/app/lib/amadeus/client'
 import { NextRequest } from 'next/server'
 import { checkBookingAgainstPolicy, type RuleEngineResult } from '@/app/lib/rule-engine/checkBookingAgainstPolicy'
@@ -69,7 +72,7 @@ interface AddPassengerBody {
   customerInfo: CustomerInfo
 }
 
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -77,12 +80,7 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-  const { data: employee } = await service
-    .from('employees')
-    .select('id, client_id')
-    .eq('id', user.id)
-    .maybeSingle()
+  const employee = await employees.traveller(db, user.id)
 
   if (!employee) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
@@ -110,11 +108,7 @@ export async function POST(req: NextRequest) {
   // a crafted tripId could attach a booking (and its cost) to someone else's
   // trip.
   if (tripId) {
-    const { data: trip } = await service
-      .from('trips')
-      .select('id, created_by')
-      .eq('id', tripId)
-      .maybeSingle()
+    const trip = await trips.trip(db, tripId)
 
     if (!trip || trip.created_by !== employee.id) {
       return Response.json({ error: 'Trip not found or not owned by you' }, { status: 403 })
@@ -131,14 +125,12 @@ export async function POST(req: NextRequest) {
   // It is left in the payload rather than removed so an older client does not
   // 400 mid-deploy, and so the log below can show when the two disagree — which
   // is exactly the signal that markup is working.
-  const { data: quote } = await service
-    .from('price_quotes')
-    .select('airline_components, commercials, sell_total, employee_id')
-    .eq('amadeus_key', key)
-    .eq('reference_no', referenceNo)
-    .maybeSingle()
+  const quote = await bookings.heldQuote(db, key, referenceNo)
 
-  if (!quote || quote.employee_id !== employee.id) {
+  // No client, no quote: /api/book/price only holds one for a company's
+  // traveller. Checked here, BEFORE the airline sees the passenger.
+  const clientId = employee.client_id
+  if (!quote || quote.employee_id !== employee.id || !clientId) {
     // Refused rather than falling back to the browser's number. The fallback is
     // the bug: it would send a marked-up fare to the airline. Re-pricing is one
     // click and always correct.
@@ -261,20 +253,20 @@ export async function POST(req: NextRequest) {
     // a tour code, and its Payment object's contract is undocumented. Resolved
     // in parallel since neither depends on the other.
     const [resolvedDealCodes, resolvedFop] = await Promise.all([
-      stampDealCodes(db, employee.client_id, flight ?? null),
-      stampFop(db, employee.client_id, flight ?? null),
+      stampDealCodes(db, clientId, flight ?? null),
+      stampFop(db, clientId, flight ?? null),
     ])
 
     // Insert immediately after a successful AddPassenger call — this is the
     // first point in the flow where we have a real ReferenceNo tied to real
     // passenger data, so it's the right moment to start persisting state.
     // Booking/Ticket steps update this same row rather than inserting again.
-    const { data: booking, error: insertError } = await service
-      .from('bookings')
-      .insert({
+    let booking: { id: string }
+    try {
+      booking = await bookings.insert(db, {
         resolved_deal_codes: resolvedDealCodes,
         resolved_fop: resolvedFop,
-        client_id: employee.client_id,
+        client_id: clientId,
         employee_id: employee.id,
         requested_for: employee.id,
         booking_type: 'flight',
@@ -300,10 +292,7 @@ export async function POST(req: NextRequest) {
         policy_verdict: policyVerdict,
         policy_verdict_detail: policyVerdictDetail,
       })
-      .select('id')
-      .single()
-
-    if (insertError || !booking) {
+    } catch (insertError) {
       // The airline has the passenger data and we do not have a booking row.
       // This is the only failure in the flow where the two sides disagree about
       // whether something happened, and the reference number is the only thread
@@ -331,9 +320,9 @@ export async function POST(req: NextRequest) {
     // logged that as its own approvals row with status 'approved').
     let finalStatus = 'pending_approval'
     try {
-      const outcome = await startApprovalForBooking(service, {
+      const outcome = await startApprovalForBooking(db, {
         bookingId: booking.id,
-        clientId: employee.client_id,
+        clientId,
         employeeId: employee.id,
         travelType: travelTypeForApproval,
         verdict: (policyVerdict as 'green' | 'amber' | 'red') ?? 'green',
@@ -342,14 +331,14 @@ export async function POST(req: NextRequest) {
 
       if (!outcome.requiresApproval) {
         finalStatus = 'approved'
-        await service.from('bookings').update({ status: 'approved' }).eq('id', booking.id)
+        await bookings.setStatus(db, booking.id, 'approved')
       } else if (!outcome.approverId) {
         // Chain exists but couldn't resolve a real approver (no manager_id
         // set, or no finance-role employee in the client). Surface this as
         // its own status rather than silently stalling in 'pending_approval'
         // with no approvals row ever created for anyone to act on.
         finalStatus = 'approval_misconfigured'
-        await service.from('bookings').update({ status: 'approval_misconfigured' }).eq('id', booking.id)
+        await bookings.setStatus(db, booking.id, 'approval_misconfigured')
       }
     } catch (approvalErr) {
       console.error('Approval chain resolution failed after booking insert', approvalErr)
@@ -384,4 +373,4 @@ export async function POST(req: NextRequest) {
     console.error('AddPassenger error:', err)
     return Response.json({ error: 'Could not add passenger details' }, { status: 500 })
   }
-}
+})
