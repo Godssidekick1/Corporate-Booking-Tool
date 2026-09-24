@@ -1,0 +1,390 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`booking stamps > commercials: priced for an AI fare and a two-sector 6E fare 1`] = `
+{
+  "record": {
+    "adjustments": [
+      {
+        "amount": 1080,
+        "calcOn": "tf",
+        "calcType": "percent",
+        "rate": 10,
+        "ruleId": "1a4a51e9-289d-4d18-bff3-38c5251e63f1",
+        "sign": -1,
+        "source": "discount",
+        "via": "Direct assignment",
+        "visibility": "line",
+      },
+      {
+        "amount": 2000,
+        "calcOn": "bf",
+        "calcType": "percent",
+        "rate": 20,
+        "ruleId": "e538b45f-c7e2-48d5-8cde-26ffaf04bfe9",
+        "sign": 1,
+        "source": "markup",
+        "via": "Bucket · Corps with vibes",
+        "visibility": "embedded",
+      },
+    ],
+    "airline": {
+      "base": 10000,
+      "fuelSurcharge": 300,
+      "otherTax": 500,
+      "taxLines": [
+        {
+          "amount": 500,
+          "code": "K3",
+        },
+        {
+          "amount": 300,
+          "code": "YQ",
+        },
+      ],
+      "total": 10800,
+    },
+    "ambiguous": false,
+    "displayedFare": 12800,
+    "sellTotal": 11720,
+    "tmcCost": 10800,
+    "tmcMargin": 920,
+  },
+  "resolved": {
+    "discount": {
+      "ambiguous": false,
+      "beat": [],
+      "kind": "client",
+      "rule": {
+        "active": true,
+        "airline_code": null,
+        "cabin": null,
+        "calc_basis": null,
+        "calc_on": "tf",
+        "calc_type": "percent",
+        "category_id": "51e6a8be-bff4-4822-86f4-50f8cf571c13",
+        "created_at": "2026-09-17T11:39:06.788Z",
+        "exclude_tax_codes": null,
+        "fare_type": "all",
+        "id": "1a4a51e9-289d-4d18-bff3-38c5251e63f1",
+        "include_ssr": null,
+        "kind": "discount",
+        "rate": 10,
+        "rbd_spec": null,
+        "valid_from": "2026-09-17",
+        "valid_to": "2027-08-06",
+      },
+      "via": "Direct assignment",
+      "viaName": null,
+    },
+    "markup": {
+      "ambiguous": false,
+      "beat": [],
+      "kind": "bucket",
+      "rule": {
+        "active": true,
+        "airline_code": "AI",
+        "cabin": null,
+        "calc_basis": null,
+        "calc_on": "bf",
+        "calc_type": "percent",
+        "category_id": "51e6a8be-bff4-4822-86f4-50f8cf571c13",
+        "created_at": "2026-09-15T06:46:57.785Z",
+        "exclude_tax_codes": null,
+        "fare_type": "corporate",
+        "id": "e538b45f-c7e2-48d5-8cde-26ffaf04bfe9",
+        "include_ssr": null,
+        "kind": "markup",
+        "rate": 20,
+        "rbd_spec": "Y",
+        "valid_from": "2026-09-15",
+        "valid_to": "2027-07-22",
+      },
+      "via": "Bucket · Corps with vibes",
+      "viaName": "Corps with vibes",
+    },
+    "processing_fee": null,
+    "trace": [
+      {
+        "detail": "applied",
+        "kind": "markup",
+        "rejectedBy": null,
+        "ruleId": "e538b45f-c7e2-48d5-8cde-26ffaf04bfe9",
+        "via": "Bucket · Corps with vibes",
+        "won": true,
+      },
+      {
+        "detail": "rule wants 6E, flight is AI",
+        "kind": "processing_fee",
+        "rejectedBy": "airline",
+        "ruleId": "2d4e5674-4eb4-46b7-bd69-6b237571e8dd",
+        "via": "Bucket · Corps with vibes",
+        "won": false,
+      },
+      {
+        "detail": "rule is filed under a different category",
+        "kind": "discount",
+        "rejectedBy": "category",
+        "ruleId": "103617f9-382c-4919-80a7-f7cc5b9113b4",
+        "via": "Direct assignment",
+        "won": false,
+      },
+      {
+        "detail": "applied",
+        "kind": "discount",
+        "rejectedBy": null,
+        "ruleId": "1a4a51e9-289d-4d18-bff3-38c5251e63f1",
+        "via": "Direct assignment",
+        "won": true,
+      },
+    ],
+  },
+}
+`;
+
+exports[`booking stamps > commercials: priced for an AI fare and a two-sector 6E fare 2`] = `
+{
+  "record": {
+    "adjustments": [
+      {
+        "amount": 1080,
+        "calcOn": "tf",
+        "calcType": "percent",
+        "rate": 10,
+        "ruleId": "103617f9-382c-4919-80a7-f7cc5b9113b4",
+        "sign": -1,
+        "source": "discount",
+        "via": "Direct assignment",
+        "visibility": "line",
+      },
+    ],
+    "airline": {
+      "base": 10000,
+      "fuelSurcharge": 300,
+      "otherTax": 500,
+      "taxLines": [
+        {
+          "amount": 500,
+          "code": "K3",
+        },
+        {
+          "amount": 300,
+          "code": "YQ",
+        },
+      ],
+      "total": 10800,
+    },
+    "ambiguous": false,
+    "displayedFare": 10800,
+    "sellTotal": 9720,
+    "tmcCost": 10800,
+    "tmcMargin": -1080,
+  },
+  "resolved": {
+    "discount": {
+      "ambiguous": false,
+      "beat": [],
+      "kind": "client",
+      "rule": {
+        "active": true,
+        "airline_code": null,
+        "cabin": null,
+        "calc_basis": null,
+        "calc_on": "tf",
+        "calc_type": "percent",
+        "category_id": "b296e0b7-dc34-4de5-95b2-6de153e71359",
+        "created_at": "2026-09-17T11:35:11.953Z",
+        "exclude_tax_codes": null,
+        "fare_type": "all",
+        "id": "103617f9-382c-4919-80a7-f7cc5b9113b4",
+        "include_ssr": null,
+        "kind": "discount",
+        "rate": 10,
+        "rbd_spec": null,
+        "valid_from": "2026-09-17",
+        "valid_to": "2030-06-28",
+      },
+      "via": "Direct assignment",
+      "viaName": null,
+    },
+    "markup": null,
+    "processing_fee": null,
+    "trace": [
+      {
+        "detail": "rule is filed under a different category",
+        "kind": "markup",
+        "rejectedBy": "category",
+        "ruleId": "e538b45f-c7e2-48d5-8cde-26ffaf04bfe9",
+        "via": "Bucket · Corps with vibes",
+        "won": false,
+      },
+      {
+        "detail": "rule is filed under a different category",
+        "kind": "processing_fee",
+        "rejectedBy": "category",
+        "ruleId": "2d4e5674-4eb4-46b7-bd69-6b237571e8dd",
+        "via": "Bucket · Corps with vibes",
+        "won": false,
+      },
+      {
+        "detail": "applied",
+        "kind": "discount",
+        "rejectedBy": null,
+        "ruleId": "103617f9-382c-4919-80a7-f7cc5b9113b4",
+        "via": "Direct assignment",
+        "won": true,
+      },
+      {
+        "detail": "rule is filed under a different category",
+        "kind": "discount",
+        "rejectedBy": "category",
+        "ruleId": "1a4a51e9-289d-4d18-bff3-38c5251e63f1",
+        "via": "Direct assignment",
+        "won": false,
+      },
+    ],
+  },
+}
+`;
+
+exports[`booking stamps > commercials: the rules and assignments that reach the client 1`] = `
+{
+  "assignments": [
+    {
+      "kind": "client",
+      "rule_id": "103617f9-382c-4919-80a7-f7cc5b9113b4",
+      "via_name": null,
+    },
+    {
+      "kind": "client",
+      "rule_id": "1a4a51e9-289d-4d18-bff3-38c5251e63f1",
+      "via_name": null,
+    },
+    {
+      "kind": "bucket",
+      "rule_id": "2d4e5674-4eb4-46b7-bd69-6b237571e8dd",
+      "via_name": "Corps with vibes",
+    },
+    {
+      "kind": "bucket",
+      "rule_id": "e538b45f-c7e2-48d5-8cde-26ffaf04bfe9",
+      "via_name": "Corps with vibes",
+    },
+  ],
+  "categories": [
+    "DOMAIRBSP",
+    "DOMAIRLCC",
+    "INTAIRBSP",
+    "INTAIRLCC",
+  ],
+  "enabledKinds": [
+    "discount",
+    "markup",
+    "processing_fee",
+  ],
+  "rules": [
+    "103617f9-382c-4919-80a7-f7cc5b9113b4",
+    "1a4a51e9-289d-4d18-bff3-38c5251e63f1",
+    "2d4e5674-4eb4-46b7-bd69-6b237571e8dd",
+    "e538b45f-c7e2-48d5-8cde-26ffaf04bfe9",
+  ],
+}
+`;
+
+exports[`booking stamps > deal codes: stamped per airline flown; none for an airline without one 1`] = `
+[
+  {
+    "airline": "AI",
+    "ambiguous": false,
+    "code": "IN456787",
+    "codeType": "PF",
+    "flightRestricted": false,
+    "via": "Bucket · Corps with vibes",
+  },
+]
+`;
+
+exports[`booking stamps > form of payment: resolved against airline, RBD and the client's payer order 1`] = `null`;
+
+exports[`booking stamps > form of payment: resolved against airline, RBD and the client's payer order 2`] = `null`;
+
+exports[`booking stamps > form of payment: with the client on the cards' branch, one is chosen by payer order 1`] = `
+{
+  "ambiguous": false,
+  "beat": [],
+  "branchId": "8cd02caa-4e8e-4a62-9a33-797827a75f55",
+  "description": "Amex ···· 1111 · exp 08/29",
+  "fopId": "e0e0a41c-7bb3-42eb-9ab6-2cd44a608f2d",
+  "fopType": "card",
+  "label": "Credit AMEX",
+  "payer": "agency",
+  "via": "Bucket · Corps with vibes",
+}
+`;
+
+exports[`booking stamps > policy: a covered band is evaluated against its group's latest rules 1`] = `
+{
+  "bandCode": "L1",
+  "bandRank": 1,
+  "limits": {
+    "advance_booking_days": 5,
+    "baggage_extra_bags": 1,
+    "cabin_class_long_haul": 1,
+    "cabin_class_short_haul": 0,
+    "carrier_tier": 0,
+    "connecting_flights_allowed": true,
+    "max_fare_domestic": 7000,
+    "max_fare_intl": 11000,
+    "max_seat_selection_fee": 400,
+    "personal_trips_allowed": false,
+    "red_eye_restricted": false,
+    "refundable_fare_required": true,
+  },
+  "ok": true,
+  "policyGroupId": "ac33a703-6f77-49e5-974a-264606f6e66d",
+  "policyGroupName": "d",
+  "version": 1,
+}
+`;
+
+exports[`booking stamps > policy: a covered band is evaluated against its group's latest rules 2`] = `
+{
+  "bandCode": "L3",
+  "breaches": [
+    {
+      "actualValue": 14000,
+      "kind": "numeric",
+      "limit_key": "max_fare_domestic",
+      "policyValue": 7000,
+      "severity": "red",
+    },
+  ],
+  "costTier": "not_evaluated",
+  "ok": true,
+  "policyGroupName": "d",
+  "verdict": "red",
+}
+`;
+
+exports[`booking stamps > policy: the groups linked to the client and the ranks they cover 1`] = `
+[
+  {
+    "bandRanks": [
+      1,
+      2,
+      3,
+    ],
+    "code": null,
+    "id": "ac33a703-6f77-49e5-974a-264606f6e66d",
+    "name": "d",
+  },
+  {
+    "bandRanks": [
+      5,
+      6,
+    ],
+    "code": null,
+    "id": "835950da-a5f8-4455-a71b-fad5b340494d",
+    "name": "e",
+  },
+]
+`;
