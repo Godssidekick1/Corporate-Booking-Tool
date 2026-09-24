@@ -3,7 +3,7 @@ import { db } from '@/app/lib/db'
 import { createServiceClient } from '@/utils/supabase/service'
 import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic, CustomerInfo } from '@/app/lib/amadeus/client'
 import { NextRequest } from 'next/server'
-import { checkBookingAgainstPolicy } from '@/app/lib/rule-engine/checkBookingAgainstPolicy'
+import { checkBookingAgainstPolicy, type RuleEngineResult } from '@/app/lib/rule-engine/checkBookingAgainstPolicy'
 import { buildPolicyInputsFromFlight } from '@/app/lib/rule-engine/buildPolicyInputs'
 import { startApprovalForBooking, buildReason } from '@/app/lib/approval-engine/resolveApprovalTier'
 import { stampDealCodes } from '@/app/lib/deal-codes/stampBooking'
@@ -214,16 +214,29 @@ export async function POST(req: NextRequest) {
         flight, totalFare: sellGrandTotal, isRefundable, selectedSeatFees,
       })
       travelTypeForApproval = inputs.travelType
-      const ruleResult = await checkBookingAgainstPolicy(db, {
-        employeeId: employee.id,
-        travelType: inputs.travelType,
-        totalCost: inputs.totalCost,
-        numericValues: inputs.numericValues,
-        booleanValues: inputs.booleanValues,
-        tierValues: inputs.tierValues,
-      })
 
-      if (ruleResult.ok) {
+      // The passenger has ALREADY reached the airline at this point. A failure
+      // to check policy must not escape to the catch below, which would answer
+      // with a generic error and never write the booking row -- stranding the
+      // passenger at the airline with no record on our side. Treated as "not
+      // evaluated", exactly as an unconfigured policy is.
+      let ruleResult: RuleEngineResult | null = null
+      try {
+        ruleResult = await checkBookingAgainstPolicy(db, {
+          employeeId: employee.id,
+          travelType: inputs.travelType,
+          totalCost: inputs.totalCost,
+          numericValues: inputs.numericValues,
+          booleanValues: inputs.booleanValues,
+          tierValues: inputs.tierValues,
+        })
+      } catch (policyErr) {
+        console.error('[add-passenger] policy check failed; booking recorded as not evaluated', policyErr)
+      }
+
+      if (!ruleResult) {
+        // Left as 'not_evaluated' with the default reason.
+      } else if (ruleResult.ok) {
         policyStatus = 'evaluated'
         policyVerdict = ruleResult.verdict
         policyVerdictDetail = { breaches: ruleResult.breaches, costTier: ruleResult.costTier }
