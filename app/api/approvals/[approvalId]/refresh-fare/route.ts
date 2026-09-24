@@ -1,6 +1,9 @@
 import { createClient } from '@/utils/supabase/server'
 import { db } from '@/app/lib/db'
-import { createServiceClient } from '@/utils/supabase/service'
+import * as approvals from '@/app/lib/repositories/approvals'
+import * as bookings from '@/app/lib/repositories/bookings'
+import * as employees from '@/app/lib/repositories/employees'
+import { route } from '@/app/lib/http/handler'
 import { NextRequest } from 'next/server'
 import { amadeus, AmadeusError } from '@/app/lib/amadeus/client'
 import { extractPricingDetails } from '@/app/api/book/price/route'
@@ -31,10 +34,10 @@ import { travellerFareBreakdown } from '@/app/lib/book/travellerView'
 // themselves, same as before.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function POST(
+export const POST = route(async (
   req: NextRequest,
   { params }: { params: Promise<{ approvalId: string }> }
-) {
+) => {
   const { approvalId } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -43,22 +46,13 @@ export async function POST(
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-  const { data: caller } = await service
-    .from('employees')
-    .select('id, client_id')
-    .eq('id', user.id)
-    .maybeSingle()
+  const caller = await employees.traveller(db, user.id)
 
   if (!caller) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
   }
 
-  const { data: approval } = await service
-    .from('approvals')
-    .select('id, booking_id, approver_id, status')
-    .eq('id', approvalId)
-    .maybeSingle()
+  const approval = await approvals.forDecision(db, approvalId)
 
   if (!approval) {
     return Response.json({ error: 'Approval not found' }, { status: 404 })
@@ -72,11 +66,7 @@ export async function POST(
     return Response.json({ error: `This approval has already been ${approval.status} — nothing to refresh` }, { status: 409 })
   }
 
-  const { data: booking } = await service
-    .from('bookings')
-    .select('id, employee_id, client_id, status, provider, search_key, pricing_key, result_index, itinerary, fare_breakdown')
-    .eq('id', approval.booking_id)
-    .maybeSingle()
+  const booking = await bookings.refreshTarget(db, approval.booking_id)
 
   if (!booking) {
     return Response.json({ error: 'Booking not found' }, { status: 404 })
@@ -86,7 +76,7 @@ export async function POST(
     return Response.json({ error: `This booking is ${booking.status}, not pending approval — nothing to refresh` }, { status: 409 })
   }
 
-  if (!booking.search_key || !booking.pricing_key || !booking.result_index) {
+  if (!booking.search_key || !booking.pricing_key || !booking.result_index || !booking.provider) {
     return Response.json({
       error: 'This booking is missing the data needed to re-price it. Approve or reject based on the last known fare, or ask the traveler to re-search.',
     }, { status: 422 })
@@ -177,9 +167,9 @@ export async function POST(
       }
     }
 
-    const { data: updated, error: updateError } = await service
-      .from('bookings')
-      .update({
+    let updated: bookings.RefreshedBooking
+    try {
+      updated = await bookings.applyRefreshedFare(db, booking.id, {
         total_cost: newTotalFare,
         sell_total: newSellTotal,
         commercials: record,
@@ -194,13 +184,8 @@ export async function POST(
           passengerBreakup: details.passengerBreakup,
           seatFees: existingSeatFees,
         },
-        updated_at: new Date().toISOString(),
       })
-      .eq('id', booking.id)
-      .select('id, total_cost, policy_verdict, policy_verdict_detail, fare_breakdown')
-      .single()
-
-    if (updateError || !updated) {
+    } catch (updateError) {
       console.error('Refreshed fare successfully but failed to save it to the booking', updateError, { bookingId: booking.id })
       return Response.json({ error: 'Got a fresh price but could not save it — please try again.' }, { status: 500 })
     }
@@ -209,12 +194,9 @@ export async function POST(
     // approvals list (and history, once decided) reflects what was
     // actually acted on, not the stale value from when this approval was
     // first created.
-    const { error: approvalUpdateError } = await service
-      .from('approvals')
-      .update({ verdict: policyVerdict, reason })
-      .eq('id', approvalId)
-
-    if (approvalUpdateError) {
+    try {
+      await approvals.setVerdict(db, approvalId, policyVerdict, reason)
+    } catch (approvalUpdateError) {
       console.error('Refreshed fare but failed to update the approval row\'s cached verdict', approvalUpdateError, { approvalId })
     }
 
@@ -244,4 +226,4 @@ export async function POST(
     console.error('Unexpected error refreshing fare', err)
     return Response.json({ error: 'Something went wrong refreshing this fare. Please try again.' }, { status: 500 })
   }
-}
+})

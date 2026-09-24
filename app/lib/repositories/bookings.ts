@@ -238,6 +238,52 @@ export async function approvalTarget(db: Queryable, bookingId: string): Promise<
     select id, employee_id, client_id, status from bookings where id = ${bookingId}`)
 }
 
+// What an approver's queue shows of each booking: the SELL side, under the
+// name total_cost. The airline figure is not fetched at all.
+export type ApprovalSummary = Pick<Row<'bookings'>,
+  'id' | 'employee_id' | 'booking_type' | 'total_cost' | 'itinerary' | 'policy_verdict' | 'status'>
+
+export async function approvalSummaries(db: Queryable, bookingIds: readonly string[]): Promise<ApprovalSummary[]> {
+  if (bookingIds.length === 0) return []
+  return many<ApprovalSummary>(db, sql`
+    select id, employee_id, booking_type, ${SELL_TOTAL} as total_cost, itinerary, policy_verdict, status
+    from bookings where id = any(${[...bookingIds]}) order by id`)
+}
+
+export type RefreshTarget = Pick<Row<'bookings'>,
+  | 'id' | 'employee_id' | 'client_id' | 'status' | 'provider' | 'search_key' | 'pricing_key'
+  | 'result_index' | 'itinerary' | 'fare_breakdown'
+>
+
+export async function refreshTarget(db: Queryable, bookingId: string): Promise<RefreshTarget | null> {
+  return maybeOne<RefreshTarget>(db, sql`
+    select id, employee_id, client_id, status, provider, search_key, pricing_key, result_index, itinerary, fare_breakdown
+    from bookings where id = ${bookingId}`)
+}
+
+export interface RefreshedFare {
+  total_cost: number
+  sell_total: number
+  amadeus_key: string | null
+  policy_verdict: string | null
+  commercials: unknown
+  policy_verdict_detail: unknown
+  fare_breakdown: unknown
+}
+
+export type RefreshedBooking = Pick<Row<'bookings'>, 'policy_verdict' | 'policy_verdict_detail' | 'fare_breakdown'>
+
+// An approver's re-price becomes the booking's official price and key.
+export async function applyRefreshedFare(db: Queryable, bookingId: string, f: RefreshedFare): Promise<RefreshedBooking> {
+  return one<RefreshedBooking>(db, sql`
+    update bookings set total_cost = ${f.total_cost}, sell_total = ${f.sell_total},
+      commercials = ${json(f.commercials)}, amadeus_key = ${f.amadeus_key}, policy_verdict = ${f.policy_verdict},
+      policy_verdict_detail = ${json(f.policy_verdict_detail)}, fare_breakdown = ${json(f.fare_breakdown)},
+      updated_at = now()
+    where id = ${bookingId}
+    returning policy_verdict, policy_verdict_detail, fare_breakdown`)
+}
+
 // Approval outcomes: approved, rejected, approval_misconfigured, pending_approval.
 export async function setStatus(db: Queryable, bookingId: string, status: string): Promise<void> {
   await exec(db, sql`update bookings set status = ${status}, updated_at = now() where id = ${bookingId}`)

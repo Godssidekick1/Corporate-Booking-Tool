@@ -1,6 +1,11 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
+import { NextRequest } from 'next/server'
 import { travellerItinerary } from '@/app/lib/book/travellerView'
+import { db } from '@/app/lib/db'
+import * as approvals from '@/app/lib/repositories/approvals'
+import * as bookings from '@/app/lib/repositories/bookings'
+import * as employees from '@/app/lib/repositories/employees'
+import { route } from '@/app/lib/http/handler'
 
 // ── GET /api/approvals ───────────────────────────────────────────────────
 // Returns everything the logged-in employee needs to act on their approval
@@ -10,42 +15,16 @@ import { travellerItinerary } from '@/app/lib/book/travellerView'
 // traveler's name and the booking's route/cost/dates so the manager isn't
 // staring at a bare bookingId.
 //
-// Deliberately does two separate manual joins (traveler employee lookup,
-// then merge in JS) rather than a Supabase FK-embed — same reasoning as
-// elsewhere in this codebase: FK-alias inference isn't used anywhere else
-// here, so this stays consistent and avoids relying on untested embed
-// syntax for something a manager depends on to do their job.
+// An approver signs off what the COMPANY spends, which is the sell total —
+// and it is the figure policy was evaluated against, so showing the airline
+// figure here would put a number next to a verdict that was not computed from
+// it. bookings.approvalSummaries returns the sell total as total_cost and never
+// selects the airline figure: an approver is an ordinary employee, and a markup
+// they could read out of a network response is not hidden.
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface ApprovalRow {
-  id: string
-  booking_id: string
-  tier: number
-  status: string
-  reason: string | null
-  decision_note: string | null
-  verdict: string | null
-  actioned_at: string | null
-  created_at: string
-}
-
-interface BookingSummary {
-  id: string
-  employee_id: string
-  booking_type: string
-  total_cost: number
-  itinerary: {
-    origin?: { code: string; city: string; dateTime: string }
-    destination?: { code: string; city: string; dateTime: string }
-    airline?: { code: string; name: string }
-  } | null
-  policy_verdict: string | null
-  status: string
-}
-
-export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url)
-  const summaryOnly = searchParams.get('summary') === '1'
+export const GET = route(async (req: NextRequest) => {
+  const summaryOnly = req.nextUrl.searchParams.get('summary') === '1'
 
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -54,12 +33,7 @@ export async function GET(req: Request) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-  const { data: caller } = await service
-    .from('employees')
-    .select('id, client_id, full_name')
-    .eq('id', user.id)
-    .maybeSingle()
+  const caller = await employees.traveller(db, user.id)
 
   if (!caller) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
@@ -67,75 +41,30 @@ export async function GET(req: Request) {
 
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
 
-  const [pendingResult, historyResult] = await Promise.all([
-    service
-      .from('approvals')
-      .select('id, booking_id, tier, status, reason, decision_note, verdict, actioned_at, created_at')
-      .eq('approver_id', caller.id)
-      .eq('status', 'pending')
-      .order('created_at', { ascending: true }), // oldest-waiting-first — the ones that have sat longest surface at the top
+  const [pending, history] = await Promise.all([
+    // Oldest-waiting first — the ones that have sat longest surface at the top.
+    approvals.pendingFor(db, caller.id),
     // History is only needed for the full page, not the dashboard summary —
     // skip the query entirely rather than fetch and discard it.
-    summaryOnly
-      ? Promise.resolve({ data: [], error: null })
-      : service
-          .from('approvals')
-          .select('id, booking_id, tier, status, reason, decision_note, verdict, actioned_at, created_at')
-          .eq('approver_id', caller.id)
-          .in('status', ['approved', 'rejected'])
-          .gte('actioned_at', thirtyDaysAgo)
-          .order('actioned_at', { ascending: false }),
+    summaryOnly ? Promise.resolve([]) : approvals.decidedSince(db, caller.id, thirtyDaysAgo),
   ])
 
-  if (pendingResult.error || historyResult.error) {
-    return Response.json(
-      { error: pendingResult.error?.message ?? historyResult.error?.message ?? 'Could not load approvals' },
-      { status: 500 }
-    )
-  }
-
-  const allApprovals: ApprovalRow[] = [...(pendingResult.data ?? []), ...(historyResult.data ?? [])]
+  const allApprovals = [...pending, ...history]
 
   if (allApprovals.length === 0) {
     return Response.json(summaryOnly ? { ok: true, pendingCount: 0, oldestNames: [] } : { ok: true, pending: [], history: [] })
   }
 
-  const bookingIds = Array.from(new Set(allApprovals.map(a => a.booking_id)))
+  const summaries = await bookings.approvalSummaries(db, Array.from(new Set(allApprovals.map(a => a.booking_id))))
+  const bookingById = new Map(summaries.map(b => [b.id, b]))
 
-  const { data: bookings, error: bookingsError } = await service
-    .from('bookings')
-    .select('id, employee_id, booking_type, total_cost, sell_total, itinerary, policy_verdict, status')
-    .in('id', bookingIds)
-
-  if (bookingsError) {
-    return Response.json({ error: bookingsError.message }, { status: 500 })
-  }
-
-  // An approver signs off what the COMPANY spends, which is the sell total —
-  // and it is the figure policy was evaluated against, so showing the airline
-  // figure here would put a number next to a verdict that was not computed from
-  // it. The airline figure is dropped rather than sent alongside: an approver is
-  // an ordinary employee, and a markup they could read out of a network response
-  // is not hidden.
-  const bookingById = new Map<string, BookingSummary>(
-    (bookings ?? []).map(b => {
-      const { sell_total, ...rest } = b as BookingSummary & { sell_total: number | null }
-      return [b.id, { ...rest, total_cost: sell_total ?? b.total_cost } as BookingSummary]
-    })
-  )
-
-  const employeeIds = Array.from(new Set((bookings ?? []).map(b => b.employee_id)))
-  const { data: travelers } = await service
-    .from('employees')
-    .select('id, full_name, email, department')
-    .in('id', employeeIds)
-
-  const travelerById = new Map((travelers ?? []).map(t => [t.id, t]))
+  const travellers = await employees.travellerCards(db, Array.from(new Set(summaries.map(b => b.employee_id))))
+  const travelerById = new Map(travellers.map(t => [t.id, t]))
 
   if (summaryOnly) {
-    // Oldest 3 — pendingResult is already ordered ascending by created_at,
-    // so this is just the first 3 traveler names, not a re-sort.
-    const oldestNames = (pendingResult.data ?? [])
+    // Oldest 3 — pending is already ordered by created_at, so this is just the
+    // first 3 traveler names, not a re-sort.
+    const oldestNames = pending
       .slice(0, 3)
       .map(a => {
         const booking = bookingById.get(a.booking_id)
@@ -147,19 +76,19 @@ export async function GET(req: Request) {
     // here too so the dashboard summary can flag it before the approver
     // even opens the queue.
     const URGENT_MS = 10 * 60 * 60 * 1000
-    const urgentCount = (pendingResult.data ?? [])
+    const urgentCount = pending
       .filter(a => Date.now() - new Date(a.created_at).getTime() >= URGENT_MS)
       .length
 
     return Response.json({
       ok: true,
-      pendingCount: (pendingResult.data ?? []).length,
+      pendingCount: pending.length,
       urgentCount,
       oldestNames,
     })
   }
 
-  function enrich(a: ApprovalRow) {
+  function enrich(a: approvals.QueueRow) {
     const booking = bookingById.get(a.booking_id)
     const traveler = booking ? travelerById.get(booking.employee_id) : undefined
     return {
@@ -191,7 +120,7 @@ export async function GET(req: Request) {
 
   return Response.json({
     ok: true,
-    pending: (pendingResult.data ?? []).map(enrich),
-    history: (historyResult.data ?? []).map(enrich),
+    pending: pending.map(enrich),
+    history: history.map(enrich),
   })
-}
+})
