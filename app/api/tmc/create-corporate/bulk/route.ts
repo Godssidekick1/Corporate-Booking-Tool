@@ -152,7 +152,10 @@ export async function POST(req: NextRequest) {
         full_name: fullName,
         role,
         status: 'active',
-        onboarding_method: 'csv_import',
+        // What happened to them, from the values the check constraint allows:
+        // a CBT-only traveller is created directly, with no account. This was
+        // 'csv_import', which the constraint rejects -- so every row failed.
+        onboarding_method: 'direct_create',
         first_login_completed: false,
         department: row.department?.trim() || null,
         cost_centre: row.cost_centre?.trim() || null,
@@ -196,7 +199,9 @@ export async function POST(req: NextRequest) {
         full_name: fullName,
         role,
         status: 'invited',
-        onboarding_method: 'csv_import',
+        // Invited. (Was 'csv_import': the constraint rejected it, AFTER the
+        // invite email had gone out, and the account was then deleted.)
+        onboarding_method: 'invite',
         first_login_completed: false,
         department: row.department?.trim() || null,
         cost_centre: row.cost_centre?.trim() || null,

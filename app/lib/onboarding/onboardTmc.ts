@@ -57,10 +57,15 @@ export async function onboardTmc(
 
   // Checked before anything is created, so the common mistake — onboarding the
   // same TMC twice — fails cleanly instead of through the rollback path.
+  //
+  // limit(1): this was maybeSingle() alone, which ERRORS once a name exists
+  // twice -- the error was discarded, the check read "no clash", and a third
+  // copy was created. That is how one database came to hold seventeen "AMEX".
   const { data: clash } = await service
     .from('tmcs')
     .select('id')
     .ilike('name', tmcName)
+    .limit(1)
     .maybeSingle()
 
   if (clash) {
