@@ -1,7 +1,8 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
+import * as policy from '@/app/lib/repositories/policy'
+import * as employees from '@/app/lib/repositories/employees'
+import { route } from '@/app/lib/http/handler'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
-import { getBandRanksByGroup } from '@/app/lib/rule-engine/linkedPolicyGroups'
 import { NextRequest } from 'next/server'
 import { db } from '@/app/lib/db'
 
@@ -24,32 +25,7 @@ interface RuleInput {
   limit_bool?: boolean | null
 }
 
-async function getLatestVersionRows(
-  service: ReturnType<typeof createServiceClient>,
-  policyGroupId: string
-) {
-  const { data: latest } = await service
-    .from('policy_rules')
-    .select('version')
-    .eq('policy_group_id', policyGroupId)
-    .is('deleted_at', null)
-    .order('version', { ascending: false })
-    .limit(1)
-    .maybeSingle()
-
-  if (!latest) return { version: 0, rows: [] }
-
-  const { data: rows } = await service
-    .from('policy_rules')
-    .select('id, travel_type, limit_key, limit_value, limit_bool, version')
-    .eq('policy_group_id', policyGroupId)
-    .eq('version', latest.version)
-    .is('deleted_at', null)
-
-  return { version: latest.version, rows: rows ?? [] }
-}
-
-export async function GET(req: NextRequest) {
+export const GET = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -57,7 +33,6 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
   const groupId = req.nextUrl.searchParams.get('groupId')
 
   if (!groupId) {
@@ -66,11 +41,7 @@ export async function GET(req: NextRequest) {
 
   // No clientId to check per-client access against anymore — just confirm
   // the caller manages policy for the TMC that owns this group.
-  const { data: group } = await service
-    .from('policy_groups')
-    .select('id, tmc_id')
-    .eq('id', groupId)
-    .maybeSingle()
+  const group = await policy.groupOwner(db, groupId)
 
   if (!group) {
     return Response.json({ error: 'Policy group not found' }, { status: 404 })
@@ -85,12 +56,13 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'This policy group belongs to a different TMC' }, { status: 403 })
   }
 
-  const { version, rows } = await getLatestVersionRows(service, groupId)
+  const version = await policy.latestVersion(db, groupId)
+  const rows = version > 0 ? await policy.rulesAtVersion(db, groupId, version) : []
 
   return Response.json({ ok: true, version, rows })
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -98,7 +70,6 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
   const { policyGroupId, rules }: {
     policyGroupId: string
     rules: RuleInput[]
@@ -108,11 +79,7 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'policyGroupId and rules are required' }, { status: 400 })
   }
 
-  const { data: group } = await service
-    .from('policy_groups')
-    .select('id, tmc_id')
-    .eq('id', policyGroupId)
-    .maybeSingle()
+  const group = await policy.groupOwner(db, policyGroupId)
 
   if (!group) {
     return Response.json({ error: 'Policy group not found' }, { status: 404 })
@@ -132,7 +99,7 @@ export async function POST(req: NextRequest) {
   // PER RULE — rules are not filed against a rank any more — but a group with an
   // empty rank set is still an empty policy, and saving limits into one is
   // almost certainly not what the admin thinks they are doing.
-  const coveredRanks = (await getBandRanksByGroup(service, [policyGroupId])).get(policyGroupId) ?? []
+  const coveredRanks = (await policy.bandRanksByGroup(db, [policyGroupId])).get(policyGroupId) ?? []
 
   if (coveredRanks.length === 0) {
     return Response.json(
@@ -141,16 +108,11 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const { version: currentVersion } = await getLatestVersionRows(service, policyGroupId)
-
-  const { data: caller } = await service
-    .from('employees')
-    .select('id')
-    .eq('id', user.id)
-    .maybeSingle()
+  const currentVersion = await policy.latestVersion(db, policyGroupId)
+  const updatedBy = (await employees.traveller(db, user.id))?.id ?? null
 
   const seen = new Set<string>()
-  const newRows: object[] = []
+  const newRows: policy.NewRule[] = []
 
   for (const input of rules) {
     if (!input.travel_type || !input.limit_key) {
@@ -180,26 +142,19 @@ export async function POST(req: NextRequest) {
     seen.add(dedupeKey)
 
     newRows.push({
-      client_id: null,
       tmc_id: group.tmc_id,
       policy_group_id: policyGroupId,
-      band_id: null,   // legacy column, no longer used for matching
-      band_code: null, // legacy column, no longer used for matching
       travel_type: input.travel_type,
       limit_key: input.limit_key,
       limit_value: isNumeric ? Number(input.limit_value) : null,
       limit_bool: isBool ? Boolean(input.limit_bool) : null,
-      locked: false,
       version: currentVersion + 1,
-      updated_by: caller?.id ?? null,
+      updated_by: updatedBy,
     })
   }
 
-  const { error: insertError } = await service.from('policy_rules').insert(newRows)
-
-  if (insertError) {
-    return Response.json({ error: insertError.message }, { status: 500 })
-  }
+  // One statement, so the new version lands whole or not at all.
+  await policy.insertRules(db, newRows)
 
   return Response.json({ ok: true, newVersion: currentVersion + 1 })
-}
+})

@@ -1,11 +1,10 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
+import * as policy from '@/app/lib/repositories/policy'
+import { route } from '@/app/lib/http/handler'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
-import { getBandRanksByGroup } from '@/app/lib/rule-engine/linkedPolicyGroups'
-import { normaliseBandRanks } from '../route'
-import { withTransaction, orAbort } from '@/app/lib/db/tx'
+import { normaliseBandRanks, NAME_TAKEN, codeTaken } from '../route'
 import { NextRequest } from 'next/server'
-import { db } from '@/app/lib/db'
+import { db, transaction, isConstraint } from '@/app/lib/db'
 
 // ── PATCH /api/tmc/policy-groups/[id] ────────────────────────────────────
 // Edits a group's identity and, more importantly, the set of band ranks it
@@ -36,10 +35,10 @@ interface UpdateGroupBody {
   bandRanks?: number[]
 }
 
-export async function PATCH(
+export const PATCH = route(async (
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
+) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -48,13 +47,7 @@ export async function PATCH(
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-
-  const { data: group } = await service
-    .from('policy_groups')
-    .select('id, tmc_id, name')
-    .eq('id', id)
-    .maybeSingle()
+  const group = await policy.groupOwner(db, id)
 
   if (!group) {
     return Response.json({ error: 'Policy group not found' }, { status: 404 })
@@ -71,7 +64,7 @@ export async function PATCH(
 
   const body: UpdateGroupBody = await req.json()
 
-  const fields: Record<string, string | null> = {}
+  const fields: policy.GroupEdit = {}
   if (body.name !== undefined) {
     if (!body.name.trim()) {
       return Response.json({ error: 'name cannot be empty' }, { status: 400 })
@@ -81,85 +74,59 @@ export async function PATCH(
   if (body.code !== undefined) fields.code = body.code?.trim() || null
   if (body.description !== undefined) fields.description = body.description?.trim() || null
 
-  // ── Rename, re-band and soft-delete, atomically ──────────────────────────
-  // Four writes across three tables. Without a transaction the dangerous
-  // interleaving is: band ranks removed, then the soft-delete of the rules
-  // authored at those ranks fails. The group now covers ranks whose rules are
-  // still live but unreachable — resolveEffectivePolicy only looks at ranks in
-  // the set, so those rules silently stop applying while still appearing in the
-  // UI as active policy. That last write did not even check its own error.
-  const { error: writeError } = await withTransaction(async (tx) => {
-    if (Object.keys(fields).length > 0) {
-      await orAbort(tx.from('policy_groups').update(fields).eq('id', id))
-    }
-
-    if (body.bandRanks !== undefined) {
-      const desired = normaliseBandRanks(body.bandRanks)
-      // Read through the transaction, so it sees this transaction's own writes.
-      const current = (await getBandRanksByGroup(tx, [id])).get(id) ?? []
-
-      const toAdd = desired.filter(r => !current.includes(r))
-      const toRemove = current.filter(r => !desired.includes(r))
-
-      if (toRemove.length > 0) {
-        await orAbort(
-          tx.from('policy_group_band_ranks')
-            .delete()
-            .eq('policy_group_id', id)
-            .in('band_rank', toRemove)
-        )
+  // ── Rename and re-band, atomically ───────────────────────────────────────
+  // Writes across two tables. Without a transaction a rename could commit
+  // while the rank change beside it is refused, and the admin would see half
+  // of what they saved.
+  try {
+    await transaction(async (tx) => {
+      if (Object.keys(fields).length > 0) {
+        await policy.updateGroup(tx, id, fields)
       }
 
-      if (toAdd.length > 0) {
-        await orAbort(
-          tx.from('policy_group_band_ranks')
-            .insert(toAdd.map(band_rank => ({ policy_group_id: id, band_rank })))
-        )
+      if (body.bandRanks !== undefined) {
+        const desired = normaliseBandRanks(body.bandRanks)
+        // Read through the transaction, so it sees this transaction's own writes.
+        const current = (await policy.bandRanksByGroup(tx, [id])).get(id) ?? []
+
+        await policy.removeRanks(tx, id, current.filter(r => !desired.includes(r)))
+        await policy.addRanks(tx, id, desired.filter(r => !current.includes(r)))
+
+        // Nothing to retire when a rank leaves the set. Rules belong to the
+        // GROUP, not to a rank within it (see resolveEffectivePolicy): the
+        // remaining ranks keep the same limits.
       }
-
-      // Nothing to retire when a rank leaves the set. Rules belong to the
-      // GROUP, not to a rank within it (see resolveEffectivePolicy): the
-      // remaining ranks keep the same limits. This used to soft-delete rules
-      // "at the removed rank" by policy_rules.band_rank -- a column that no
-      // longer exists -- so every PATCH that removed a rank failed and rolled
-      // back.
-    }
-  })
-
-  if (writeError) {
+    }, { tenantId: auth.tmcId, userId: user.id })
+  } catch (err) {
     // The two constraint violations that are a user's mistake rather than a
-    // fault, mapped to 409 exactly as they were before. Both codes survive the
-    // transaction intact, which is the whole reason TxAbort carries the
-    // DbError rather than re-deriving one.
-    if (writeError.code === '23505') {
+    // fault, mapped to 409 exactly as they were before.
+    if (codeTaken(err) || isConstraint(err, 'unique', NAME_TAKEN)) {
       return Response.json(
-        { error: `Another policy group already uses that ${writeError.message.includes('code') ? 'code' : 'name'}` },
+        { error: `Another policy group already uses that ${codeTaken(err) ? 'code' : 'name'}` },
         { status: 409 }
       )
     }
-    // 23P01 comes from policy_group_band_ranks_no_overlap: this rank is
-    // already covered by another group at a client using this one.
-    if (writeError.code === '23P01') {
-      return Response.json({ error: writeError.message }, { status: 409 })
+    // An exclusion violation comes from policy_group_band_ranks_no_overlap:
+    // this rank is already covered by another group at a client using this
+    // one. The trigger's message is written for a person and names both.
+    if (isConstraint(err, 'exclusion')) {
+      return Response.json({ error: err.message }, { status: 409 })
     }
-    return Response.json({ error: writeError.message }, { status: 500 })
+    throw err
   }
 
-  const bandRanks = (await getBandRanksByGroup(service, [id])).get(id) ?? []
+  const [updated, ranks] = await Promise.all([
+    policy.group(db, id),
+    policy.bandRanksByGroup(db, [id]),
+  ])
 
-  const { data: updated } = await service
-    .from('policy_groups')
-    .select('id, name, code, description, created_at')
-    .eq('id', id)
-    .single()
+  return Response.json({ ok: true, group: { ...updated, bandRanks: ranks.get(id) ?? [] } })
+})
 
-  return Response.json({ ok: true, group: { ...updated, bandRanks } })
-}
-
-export async function DELETE(
+export const DELETE = route(async (
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
+) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -168,13 +135,7 @@ export async function DELETE(
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-
-  const { data: group } = await service
-    .from('policy_groups')
-    .select('id, tmc_id, name')
-    .eq('id', id)
-    .maybeSingle()
+  const group = await policy.groupOwner(db, id)
 
   if (!group) {
     return Response.json({ error: 'Policy group not found' }, { status: 404 })
@@ -192,12 +153,9 @@ export async function DELETE(
     return Response.json({ error: 'This policy group belongs to a different TMC' }, { status: 403 })
   }
 
-  const { count } = await service
-    .from('client_policy_groups')
-    .select('client_id', { count: 'exact', head: true })
-    .eq('policy_group_id', id)
+  const count = (await policy.clientCounts(db, [id])).get(id) ?? 0
 
-  if (count && count > 0) {
+  if (count > 0) {
     return Response.json(
       { error: `${count} client${count > 1 ? 's are' : ' is'} still linked to "${group.name}". Unlink them before deleting.` },
       { status: 409 }
@@ -208,11 +166,7 @@ export async function DELETE(
   // group also removes its rule rows (all versions). This is intentional:
   // an unused group with no clients linked carries no meaningful audit
   // history worth preserving.
-  const { error } = await service.from('policy_groups').delete().eq('id', id)
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
+  await policy.deleteGroup(db, id)
 
   return Response.json({ ok: true })
-}
+})

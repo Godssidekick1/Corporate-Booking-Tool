@@ -1,9 +1,9 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
+import * as policy from '@/app/lib/repositories/policy'
+import { route } from '@/app/lib/http/handler'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
-import { getBandRanksByGroup } from '@/app/lib/rule-engine/linkedPolicyGroups'
 import { NextRequest } from 'next/server'
-import { db } from '@/app/lib/db'
+import { db, transaction, isConstraint, type ConstraintViolation } from '@/app/lib/db'
 
 // ── GET /api/tmc/policy-groups?search=<text> ──────────────────────────────
 // Lists policy groups — reusable templates, no longer scoped to one
@@ -38,15 +38,13 @@ export function normaliseBandRanks(input: unknown): number[] {
   return Array.from(new Set(cleaned)).sort((a, b) => a - b)
 }
 
-export async function GET(req: NextRequest) {
+export const GET = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
   if (authError || !user) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
-
-  const service = createServiceClient()
 
   // manage_policy is checked without a specific clientId — groups are
   // global templates now, so this just confirms the caller has
@@ -56,28 +54,10 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
 
-  const search = req.nextUrl.searchParams.get('search')?.trim()
-
-  let query = service
-    .from('policy_groups')
-    .select('id, name, code, description, created_at')
-    .eq('tmc_id', auth.tmcId)
-    .order('name')
-
-  if (search) {
-    // Matches name OR code — "PLCYGRP1" should find it whether typed as
-    // the code or as part of the display name.
-    query = query.or(`name.ilike.%${search}%,code.ilike.%${search}%`)
-  }
-
-  const { data: groups, error } = await query
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
-
-  const groupIds = (groups ?? []).map(g => g.id)
-  const ranksByGroup = await getBandRanksByGroup(service, groupIds)
+  // Matches name OR code — "PLCYGRP1" should find it whether typed as
+  // the code or as part of the display name.
+  const groups = await policy.groupsForTmc(db, auth.tmcId, req.nextUrl.searchParams.get('search'))
+  const groupIds = groups.map(g => g.id)
 
   // Client count per group — lets the picker/list show "used by 4
   // clients" so an admin can gauge blast radius before editing a shared
@@ -85,27 +65,32 @@ export async function GET(req: NextRequest) {
   // column) and none is needed: groupIds is already scoped to this TMC
   // above, and client-policy-groups only ever links a client to a group
   // when both belong to the caller's TMC.
-  const countByGroup = new Map<string, number>()
-  if (groupIds.length > 0) {
-    const { data: links } = await service
-      .from('client_policy_groups')
-      .select('policy_group_id')
-      .in('policy_group_id', groupIds)
-    for (const l of links ?? []) {
-      countByGroup.set(l.policy_group_id, (countByGroup.get(l.policy_group_id) ?? 0) + 1)
-    }
-  }
+  const [ranksByGroup, countByGroup] = await Promise.all([
+    policy.bandRanksByGroup(db, groupIds),
+    policy.clientCounts(db, groupIds),
+  ])
 
-  const enriched = (groups ?? []).map(g => ({
+  const enriched = groups.map(g => ({
     ...g,
     bandRanks: ranksByGroup.get(g.id) ?? [],
     clientCount: countByGroup.get(g.id) ?? 0,
   }))
 
   return Response.json({ ok: true, groups: enriched })
+})
+
+// Name and code are each unique per TMC. The code rule is enforced by TWO
+// identical partial indexes (schema drift: idx_policy_groups_code_per_tmc
+// predates policy_groups_tmc_id_code_key), and PostgreSQL reports whichever
+// it checks first -- so either name means "that code is taken".
+export const NAME_TAKEN = 'policy_groups_tmc_id_name_key'
+const CODE_INDEXES = ['policy_groups_tmc_id_code_key', 'idx_policy_groups_code_per_tmc']
+
+export function codeTaken(err: unknown): err is ConstraintViolation {
+  return isConstraint(err, 'unique') && CODE_INDEXES.includes(err.constraint ?? '')
 }
 
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -113,11 +98,11 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
   const auth = await requireTmcPermission(db, user.id, 'manage_policy')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
+  const tmcId = auth.tmcId
 
   const body: CreateGroupBody = await req.json()
   const { name, code, description } = body
@@ -132,48 +117,35 @@ export async function POST(req: NextRequest) {
   // auth.tmcId === group.tmc_id, and policy_rules carries a CHECK requiring
   // exactly one of client_id/tmc_id to be set. A group created without it
   // is unreachable by every other route.
-  const { data: group, error } = await service
-    .from('policy_groups')
-    .insert({
-      tmc_id: auth.tmcId,
-      name: name.trim(),
-      code: code?.trim() || null,
-      description: description?.trim() || null,
-    })
-    .select('id, name, code, description, created_at')
-    .single()
+  //
+  // The group and its ranks in one transaction: a group whose coverage does
+  // not match what was asked for is never visible, even briefly. (This used
+  // to insert, then delete the group again by hand if the ranks failed.)
+  try {
+    const group = await transaction(async (tx) => {
+      const created = await policy.insertGroup(tx, {
+        tmc_id: tmcId,
+        name: name.trim(),
+        code: code?.trim() || null,
+        description: description?.trim() || null,
+      })
+      await policy.addRanks(tx, created.id, bandRanks)
+      return created
+    }, { tenantId: tmcId, userId: user.id })
 
-  if (error) {
-    if (error.code === '23505') {
-      // Name and code are each unique per TMC — say which one collided
-      // rather than always blaming the name.
-      const clashedOnCode = code?.trim() && error.message.includes('code')
-      return Response.json({
-        error: clashedOnCode
-          ? `A policy group with code "${code!.trim()}" already exists`
-          : `A policy group named "${name.trim()}" already exists`,
-      }, { status: 409 })
+    return Response.json(
+      { ok: true, group: { ...group, bandRanks, clientCount: 0 } },
+      { status: 201 }
+    )
+  } catch (err) {
+    // Name and code are each unique per TMC — say which one collided
+    // rather than always blaming the name.
+    if (codeTaken(err)) {
+      return Response.json({ error: `A policy group with code "${code!.trim()}" already exists` }, { status: 409 })
     }
-    return Response.json({ error: error.message }, { status: 500 })
-  }
-
-  // A brand-new group is linked to nothing, so the rank rows can't collide
-  // with another group yet — but insert them after the group exists so the
-  // FK holds, and clean up if they fail rather than leaving a group whose
-  // coverage silently doesn't match what was asked for.
-  if (bandRanks.length > 0) {
-    const { error: rankError } = await service
-      .from('policy_group_band_ranks')
-      .insert(bandRanks.map(band_rank => ({ policy_group_id: group.id, band_rank })))
-
-    if (rankError) {
-      await service.from('policy_groups').delete().eq('id', group.id)
-      return Response.json({ error: rankError.message }, { status: 500 })
+    if (isConstraint(err, 'unique', NAME_TAKEN)) {
+      return Response.json({ error: `A policy group named "${name.trim()}" already exists` }, { status: 409 })
     }
+    throw err
   }
-
-  return Response.json(
-    { ok: true, group: { ...group, bandRanks, clientCount: 0 } },
-    { status: 201 }
-  )
-}
+})

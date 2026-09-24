@@ -1,5 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
+import * as employees from '@/app/lib/repositories/employees'
+import * as clients from '@/app/lib/repositories/clients'
+import { route } from '@/app/lib/http/handler'
 import { checkBookingAgainstPolicy } from '@/app/lib/rule-engine/checkBookingAgainstPolicy'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
@@ -23,7 +25,7 @@ interface TestRequestBody {
   tierValues?: Record<string, number>
 }
 
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -31,7 +33,6 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
   const body: TestRequestBody = await req.json()
   const { employeeId, travelType, totalCost, numericValues, booleanValues, tierValues } = body
 
@@ -39,17 +40,13 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'employeeId, travelType, and totalCost are required' }, { status: 400 })
   }
 
-  const { data: employee } = await service
-    .from('employees')
-    .select('client_id')
-    .eq('id', employeeId)
-    .maybeSingle()
+  const employee = await employees.policySubject(db, employeeId)
 
   if (!employee) {
     return Response.json({ error: 'Employee not found' }, { status: 404 })
   }
 
-  const auth = await requireTmcPermission(db, user.id, 'manage_policy', employee.client_id)
+  const auth = await requireTmcPermission(db, user.id, 'manage_policy', employee.client_id ?? undefined)
   if (!auth.authorized) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }
@@ -57,9 +54,7 @@ export async function POST(req: NextRequest) {
   // A tmc_admin passes the check above for any client, so the traveller's
   // client must be this TMC's -- or any TMC could read anyone's policy by
   // employee id. Answered like a missing employee.
-  const { data: client } = employee.client_id
-    ? await service.from('clients').select('tmc_id').eq('id', employee.client_id).maybeSingle()
-    : { data: null }
+  const client = employee.client_id ? await clients.tenancy(db, employee.client_id) : null
 
   if (!client || client.tmc_id !== auth.tmcId) {
     return Response.json({ error: 'Employee not found' }, { status: 404 })
@@ -75,4 +70,4 @@ export async function POST(req: NextRequest) {
   })
 
   return Response.json({ ok: true, result })
-}
+})

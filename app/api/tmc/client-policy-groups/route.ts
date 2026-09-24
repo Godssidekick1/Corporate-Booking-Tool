@@ -1,9 +1,11 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
+import * as policy from '@/app/lib/repositories/policy'
+import * as clients from '@/app/lib/repositories/clients'
+import * as employees from '@/app/lib/repositories/employees'
+import { route } from '@/app/lib/http/handler'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
-import { getBandRanksByGroup } from '@/app/lib/rule-engine/linkedPolicyGroups'
 import { NextRequest } from 'next/server'
-import { db } from '@/app/lib/db'
+import { db, isConstraint } from '@/app/lib/db'
 
 // ── GET /api/tmc/client-policy-groups?clientId=<uuid> ──────────────────
 // Lists every policy group currently linked to a client, with the band ranks
@@ -40,20 +42,12 @@ function sharedRanks(a: number[], b: number[]): number[] {
 // be checked against their TMC explicitly. POST always did this; GET and
 // DELETE did not, which let another TMC's admin read -- and unlink -- a
 // client's policy groups by id.
-async function clientIsTmcs(
-  service: ReturnType<typeof createServiceClient>,
-  clientId: string,
-  tmcId: string | null | undefined
-): Promise<boolean> {
-  const { data: client } = await service
-    .from('clients')
-    .select('id, tmc_id')
-    .eq('id', clientId)
-    .maybeSingle()
+async function clientIsTmcs(clientId: string, tmcId: string | null | undefined): Promise<boolean> {
+  const client = await clients.tenancy(db, clientId)
   return Boolean(client && tmcId && client.tmc_id === tmcId)
 }
 
-export async function GET(req: NextRequest) {
+export const GET = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -66,39 +60,29 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'clientId is required' }, { status: 400 })
   }
 
-  const service = createServiceClient()
   const auth = await requireTmcPermission(db, user.id, 'manage_policy', clientId)
   if (!auth.authorized) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }
 
-  if (!(await clientIsTmcs(service, clientId, auth.tmcId))) {
+  if (!(await clientIsTmcs(clientId, auth.tmcId))) {
     return Response.json({ error: 'Client not found for this TMC' }, { status: 404 })
   }
 
-  const { data: links, error } = await service
-    .from('client_policy_groups')
-    .select('policy_group_id, assigned_at')
-    .eq('client_id', clientId)
+  const links = await policy.links(db, clientId)
 
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
-
-  const groupIds = (links ?? []).map(l => l.policy_group_id)
+  const groupIds = links.map(l => l.policy_group_id)
   if (groupIds.length === 0) {
     return Response.json({ ok: true, links: [] })
   }
 
-  const { data: groups } = await service
-    .from('policy_groups')
-    .select('id, name, code')
-    .in('id', groupIds)
+  const [groups, ranksByGroup] = await Promise.all([
+    policy.groupLabels(db, groupIds),
+    policy.bandRanksByGroup(db, groupIds),
+  ])
+  const groupById = new Map(groups.map(g => [g.id, g]))
 
-  const ranksByGroup = await getBandRanksByGroup(service, groupIds)
-  const groupById = new Map((groups ?? []).map(g => [g.id, g]))
-
-  const enriched = (links ?? [])
+  const enriched = links
     .map(l => {
       const group = groupById.get(l.policy_group_id)
       return {
@@ -114,9 +98,9 @@ export async function GET(req: NextRequest) {
     .sort((a, b) => (a.group?.bandRanks[0] ?? Infinity) - (b.group?.bandRanks[0] ?? Infinity))
 
   return Response.json({ ok: true, links: enriched })
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -131,17 +115,12 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'clientId and policyGroupId are required' }, { status: 400 })
   }
 
-  const service = createServiceClient()
   const auth = await requireTmcPermission(db, user.id, 'manage_policy', clientId)
   if (!auth.authorized) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }
 
-  const { data: newGroup } = await service
-    .from('policy_groups')
-    .select('id, name, tmc_id')
-    .eq('id', policyGroupId)
-    .maybeSingle()
+  const newGroup = await policy.groupOwner(db, policyGroupId)
 
   if (!newGroup) {
     return Response.json({ error: 'Policy group not found' }, { status: 404 })
@@ -154,28 +133,17 @@ export async function POST(req: NextRequest) {
   // Confirm the client actually belongs to this TMC too — a crafted
   // clientId from another TMC's client shouldn't be linkable even if the
   // caller passes the manage_policy check generically.
-  const { data: client } = await service
-    .from('clients')
-    .select('id, tmc_id')
-    .eq('id', clientId)
-    .maybeSingle()
-
-  if (!client || client.tmc_id !== auth.tmcId) {
+  if (!(await clientIsTmcs(clientId, auth.tmcId))) {
     return Response.json({ error: 'Client not found for this TMC' }, { status: 404 })
   }
 
-  const { data: existingLinks } = await service
-    .from('client_policy_groups')
-    .select('policy_group_id')
-    .eq('client_id', clientId)
-
-  const existingGroupIds = (existingLinks ?? []).map(l => l.policy_group_id)
+  const existingGroupIds = (await policy.links(db, clientId)).map(l => l.policy_group_id)
 
   if (existingGroupIds.includes(policyGroupId)) {
     return Response.json({ error: `"${newGroup.name}" is already linked to this client` }, { status: 409 })
   }
 
-  const ranksByGroup = await getBandRanksByGroup(service, [policyGroupId, ...existingGroupIds])
+  const ranksByGroup = await policy.bandRanksByGroup(db, [policyGroupId, ...existingGroupIds])
   const newRanks = ranksByGroup.get(policyGroupId) ?? []
 
   if (newRanks.length === 0) {
@@ -184,51 +152,32 @@ export async function POST(req: NextRequest) {
     }, { status: 400 })
   }
 
-  if (existingGroupIds.length > 0) {
-    const { data: existingGroups } = await service
-      .from('policy_groups')
-      .select('id, name')
-      .in('id', existingGroupIds)
-
-    for (const existing of existingGroups ?? []) {
-      const clash = sharedRanks(newRanks, ranksByGroup.get(existing.id) ?? [])
-      if (clash.length > 0) {
-        return Response.json({
-          error: `"${newGroup.name}" overlaps with "${existing.name}" at band rank${clash.length > 1 ? 's' : ''} ${clash.join(', ')}, which is already linked to this client. Each linked group must cover distinct ranks.`,
-        }, { status: 409 })
-      }
+  for (const existing of await policy.groupLabels(db, existingGroupIds)) {
+    const clash = sharedRanks(newRanks, ranksByGroup.get(existing.id) ?? [])
+    if (clash.length > 0) {
+      return Response.json({
+        error: `"${newGroup.name}" overlaps with "${existing.name}" at band rank${clash.length > 1 ? 's' : ''} ${clash.join(', ')}, which is already linked to this client. Each linked group must cover distinct ranks.`,
+      }, { status: 409 })
     }
   }
 
-  const { data: caller } = await service
-    .from('employees')
-    .select('id')
-    .eq('id', user.id)
-    .maybeSingle()
-
-  const { error: insertError } = await service
-    .from('client_policy_groups')
-    .insert({
-      client_id: clientId,
-      policy_group_id: policyGroupId,
-      assigned_by: caller?.id ?? null,
-    })
-
-  if (insertError) {
-    // 23P01 is raised by the client_policy_groups_no_overlap constraint
-    // trigger. The check above catches this in the ordinary case; the trigger
-    // is the backstop for two links racing each other, where both requests
-    // read the pre-insert state and neither sees the other's pending row.
-    if (insertError.code === '23P01') {
-      return Response.json({ error: insertError.message }, { status: 409 })
+  try {
+    await policy.link(db, clientId, policyGroupId, (await employees.traveller(db, user.id))?.id ?? null)
+  } catch (err) {
+    // An exclusion violation is the client_policy_groups_no_overlap
+    // constraint trigger. The check above catches this in the ordinary case;
+    // the trigger is the backstop for two links racing each other, where both
+    // requests read the pre-insert state and neither sees the other's row.
+    if (isConstraint(err, 'exclusion')) {
+      return Response.json({ error: err.message }, { status: 409 })
     }
-    return Response.json({ error: insertError.message }, { status: 500 })
+    throw err
   }
 
   return Response.json({ ok: true }, { status: 201 })
-}
+})
 
-export async function DELETE(req: NextRequest) {
+export const DELETE = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -243,25 +192,16 @@ export async function DELETE(req: NextRequest) {
     return Response.json({ error: 'clientId and policyGroupId are required' }, { status: 400 })
   }
 
-  const service = createServiceClient()
   const auth = await requireTmcPermission(db, user.id, 'manage_policy', clientId)
   if (!auth.authorized) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }
 
-  if (!(await clientIsTmcs(service, clientId, auth.tmcId))) {
+  if (!(await clientIsTmcs(clientId, auth.tmcId))) {
     return Response.json({ error: 'Client not found for this TMC' }, { status: 404 })
   }
 
-  const { error } = await service
-    .from('client_policy_groups')
-    .delete()
-    .eq('client_id', clientId)
-    .eq('policy_group_id', policyGroupId)
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
+  await policy.unlink(db, clientId, policyGroupId)
 
   return Response.json({ ok: true })
-}
+})

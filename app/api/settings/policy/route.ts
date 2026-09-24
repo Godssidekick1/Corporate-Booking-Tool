@@ -1,6 +1,8 @@
 import { createClient } from '@/utils/supabase/server'
 import { db } from '@/app/lib/db'
-import { createServiceClient } from '@/utils/supabase/service'
+import * as employees from '@/app/lib/repositories/employees'
+import * as policy from '@/app/lib/repositories/policy'
+import { route } from '@/app/lib/http/handler'
 import { getLinkedPolicyGroups, groupsCoveringRank } from '@/app/lib/rule-engine/linkedPolicyGroups'
 
 // ── GET /api/settings/policy ─────────────────────────────────────────────────
@@ -40,7 +42,7 @@ interface UnresolvedBand {
   detail: string
 }
 
-export async function GET() {
+export const GET = route(async () => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -48,40 +50,33 @@ export async function GET() {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-
-  const { data: employee } = await service
-    .from('employees')
-    .select('client_id, role')
-    .eq('id', user.id)
-    .single()
+  const employee = await employees.scope(db, user.id)
 
   if (!employee) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
   }
 
-  if (employee.role !== 'admin') {
+  // A corporate admin always has a client; an 'admin' without one is not a
+  // corporate admin, and has no client policy to view.
+  const clientId = employee.client_id
+  if (employee.role !== 'admin' || !clientId) {
     return Response.json({ error: 'Only admins can view policy settings' }, { status: 403 })
   }
 
-  const clientId = employee.client_id
-
-  const { data: bands } = await service
-    .from('bands')
-    .select('code, label, rank')
-    .eq('client_id', clientId)
-    .order('rank')
-
-  const groups = await getLinkedPolicyGroups(db, clientId)
+  const [bandRows, groups] = await Promise.all([
+    employees.bandsForClient(db, clientId),
+    getLinkedPolicyGroups(db, clientId),
+  ])
+  const bands = bandRows.map(b => ({ code: b.code, label: b.label, rank: b.rank }))
 
   if (groups.length === 0) {
     return Response.json({
       ok: true,
       managedByTmc: true,
-      bands: bands ?? [],
+      bands,
       groups: [],
       rows: [],
-      unresolved: (bands ?? []).map(b => ({
+      unresolved: bands.map(b => ({
         band_code: b.code,
         band_label: b.label,
         band_rank: b.rank,
@@ -91,40 +86,22 @@ export async function GET() {
     })
   }
 
-  // Latest live version per group, then that version's rules. Fetched per
-  // group rather than in one sweep because each group versions independently,
-  // so there is no single version number to filter on — and pulling every
-  // version to reduce in JS would grow with save history.
-  const ruleSets = await Promise.all(
-    groups.map(async group => {
-      const { data: latest } = await service
-        .from('policy_rules')
-        .select('version')
-        .eq('policy_group_id', group.id)
-        .is('deleted_at', null)
-        .order('version', { ascending: false })
-        .limit(1)
-        .maybeSingle()
+  // Latest live version per group, and that version's rules, in one query.
+  // Each group versions independently, so there is no single version number
+  // to filter on; this used to cost two round trips per group.
+  const latest = await policy.latestRulesFor(db, groups.map(g => g.id))
 
-      if (!latest) return { group, version: 0, rules: [] }
-
-      const { data: rules } = await service
-        .from('policy_rules')
-        .select('travel_type, limit_key, limit_value, limit_bool')
-        .eq('policy_group_id', group.id)
-        .eq('version', latest.version)
-        .is('deleted_at', null)
-
-      return { group, version: latest.version, rules: rules ?? [] }
-    })
-  )
+  const ruleSets = groups.map(group => {
+    const rules = latest.filter(r => r.policy_group_id === group.id)
+    return { group, version: rules[0]?.version ?? 0, rules }
+  })
 
   const ruleSetByGroupId = new Map(ruleSets.map(rs => [rs.group.id, rs]))
 
   const rows: EffectiveRow[] = []
   const unresolved: UnresolvedBand[] = []
 
-  for (const band of bands ?? []) {
+  for (const band of bands) {
     const covering = groupsCoveringRank(groups, band.rank)
 
     if (covering.length === 0) {
@@ -186,7 +163,7 @@ export async function GET() {
   return Response.json({
     ok: true,
     managedByTmc: true,
-    bands: bands ?? [],
+    bands,
     groups: ruleSets.map(rs => ({
       id: rs.group.id,
       name: rs.group.name,
@@ -197,4 +174,4 @@ export async function GET() {
     rows,
     unresolved,
   })
-}
+})

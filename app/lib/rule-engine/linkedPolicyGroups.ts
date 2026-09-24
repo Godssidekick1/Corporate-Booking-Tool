@@ -1,59 +1,15 @@
-import { createServiceClient } from '@/utils/supabase/service'
 import type { Queryable } from '@/app/lib/db'
 import * as policy from '@/app/lib/repositories/policy'
 
-// Data access only, so a transaction client satisfies it too. See the same
-// narrowing in the approval engine.
-//
-// ONLY getBandRanksByGroup still takes one: its callers (the policy master
-// routes) call it inside shim transactions, and handing them the pool instead
-// would read outside the transaction they are writing in. It moves with those
-// routes; the migrated path uses policy.bandRanksByGroup.
-type ServiceClient = Pick<ReturnType<typeof createServiceClient>, "from">
+// Every function here takes `db` -- the pool or a transaction's connection.
+// Rank sets are policy.bandRanksByGroup: coverage is an explicit set rather
+// than a min..max range, so a group can cover non-contiguous ranks (1, 4, 7).
 
 export interface LinkedPolicyGroup {
   id: string
   name: string
   code: string | null
   bandRanks: number[]
-}
-
-// ── getBandRanksByGroup ──────────────────────────────────────────────────────
-// Rank sets for the given groups, as a map of group id -> sorted ranks.
-//
-// Coverage is an explicit set rather than a min..max range so a group can cover
-// non-contiguous ranks (1, 4, 7) — a range could only ever express a
-// contiguous span.
-// ─────────────────────────────────────────────────────────────────────────────
-
-export async function getBandRanksByGroup(
-  service: ServiceClient,
-  groupIds: string[]
-): Promise<Map<string, number[]>> {
-  const byGroup = new Map<string, number[]>()
-
-  if (groupIds.length === 0) return byGroup
-
-  const { data: rankRows } = await service
-    .from('policy_group_band_ranks')
-    .select('policy_group_id, band_rank')
-    .in('policy_group_id', groupIds)
-
-  for (const row of rankRows ?? []) {
-    const existing = byGroup.get(row.policy_group_id)
-    if (existing) existing.push(row.band_rank)
-    else byGroup.set(row.policy_group_id, [row.band_rank])
-  }
-
-  for (const ranks of byGroup.values()) ranks.sort((a, b) => a - b)
-
-  // Groups with no ranks yet still need an entry, otherwise callers can't tell
-  // "not fetched" from "covers nothing".
-  for (const id of groupIds) {
-    if (!byGroup.has(id)) byGroup.set(id, [])
-  }
-
-  return byGroup
 }
 
 // ── getLinkedPolicyGroups ────────────────────────────────────────────────────
