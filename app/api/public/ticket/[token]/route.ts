@@ -2,6 +2,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { round2 } from '@/app/lib/commercials/fareComponents'
 import { visibleLines, ADJUSTMENT_LABELS } from '@/app/lib/commercials/adjustment'
 import type { CommercialsRecord } from '@/app/lib/commercials/composeSellPrice'
+import { travellerItinerary } from '@/app/lib/book/travellerView'
 import { NextRequest } from 'next/server'
 
 // ── GET /api/public/ticket/[token] ───────────────────────────────────────────
@@ -106,7 +107,9 @@ export async function GET(
     ticket: {
       pnr: booking.pnr,
       reference: booking.provider_order_id,
-      itinerary: booking.itinerary,
+      // Projected: the frozen itinerary carries the airline's fares, and this
+      // page needs no login. See app/lib/book/travellerView.
+      itinerary: travellerItinerary(booking.itinerary),
       passengers: (snapshot?.PassengerDetails ?? []).map((p, i) => ({
         title: p.Title,
         firstName: p.FirstName,

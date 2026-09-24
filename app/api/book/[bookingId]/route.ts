@@ -4,6 +4,7 @@ import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic, CustomerInfo } from '
 import { visibleLines, ADJUSTMENT_LABELS } from '@/app/lib/commercials/adjustment'
 import { round2 } from '@/app/lib/commercials/fareComponents'
 import type { CommercialsRecord } from '@/app/lib/commercials/composeSellPrice'
+import { travellerItinerary, travellerFareBreakdown } from '@/app/lib/book/travellerView'
 import { NextRequest } from 'next/server'
 
 // One passenger's fare, as frozen on bookings.fare_breakdown.
@@ -209,8 +210,12 @@ export async function GET(
       // bookings made before commercial rules existed — on those the two are
       // the same number, so nothing is revealed by the fallback.
       sell_total: sellTotal,
+      // Projected: the frozen itinerary carries the airline's fares, and the
+      // stored breakdown its per-passenger split -- replaced here by the
+      // sell-side rows computed above. See app/lib/book/travellerView.
+      itinerary: travellerItinerary(booking.itinerary),
       fare_breakdown: {
-        ...(booking.fare_breakdown as Record<string, unknown> | null),
+        ...travellerFareBreakdown(booking.fare_breakdown),
         passengerBreakup,
       },
       // Base, taxes and the itemised tax codes. Null on pre-commercials

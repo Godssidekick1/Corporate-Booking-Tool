@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { NextRequest } from 'next/server'
+import { travellerItinerary } from '@/app/lib/book/travellerView'
 
 // GET /api/trips/[tripId] — one trip's workspace: the trip itself, every
 // booking attached to it (flights, and hotels/cabs once those exist), and
@@ -62,9 +63,10 @@ export async function GET(
     trip,
     // The sell figure, never the airline one — see /api/bookings for why the
     // airline total is dropped rather than sent alongside.
+    // The itinerary is projected too: frozen, it carries the airline's fares.
     bookings: (bookings ?? []).map(b => {
       const { sell_total, ...rest } = b
-      return { ...rest, total_cost: sell_total ?? b.total_cost }
+      return { ...rest, total_cost: sell_total ?? b.total_cost, itinerary: travellerItinerary(b.itinerary) }
     }),
     expenses: expenses ?? [],
   })

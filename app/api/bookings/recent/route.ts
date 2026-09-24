@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { NextRequest } from 'next/server'
+import { travellerItinerary, travellerFareBreakdown } from '@/app/lib/book/travellerView'
 
 // ── GET /api/bookings/recent ─────────────────────────────────────────────────
 // Feeds the dashboard's "Recent bookings" widget. Distinct from
@@ -93,8 +94,9 @@ export async function GET(req: NextRequest) {
     // figure is dropped here rather than sent and ignored — a markup visible in
     // a network response is not hidden. Falls back for pre-commercials bookings.
     totalCost: b.sell_total ?? b.total_cost,
-    itinerary: b.itinerary,
-    fareBreakdown: b.fare_breakdown,
+    // Projected: both carry airline figures. See app/lib/book/travellerView.
+    itinerary: travellerItinerary(b.itinerary),
+    fareBreakdown: travellerFareBreakdown(b.fare_breakdown),
     createdAt: b.created_at,
     travelerName: nameById.get(b.employee_id) ?? null,
     isOwn: b.employee_id === employee.id,

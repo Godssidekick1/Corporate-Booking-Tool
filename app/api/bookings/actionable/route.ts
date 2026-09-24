@@ -1,5 +1,6 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
+import { travellerItinerary } from '@/app/lib/book/travellerView'
 
 // ── GET /api/bookings/actionable ─────────────────────────────────────────
 // For the employee dashboard's "you have a booking to finish" banner —
@@ -51,7 +52,8 @@ export async function GET() {
       status: b.status,
       // The sell figure, never the airline one — see /api/bookings for why.
       totalCost: b.sell_total ?? b.total_cost,
-      itinerary: b.itinerary,
+      // Projected: the frozen itinerary carries airline figures.
+      itinerary: travellerItinerary(b.itinerary),
       updatedAt: b.updated_at,
     })),
   })

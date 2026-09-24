@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { NextRequest } from 'next/server'
+import { travellerItinerary, travellerFareBreakdown } from '@/app/lib/book/travellerView'
 
 // ── GET /api/bookings ─────────────────────────────────────────────────────────
 // Lists bookings for the logged-in employee — this is the data behind
@@ -80,9 +81,18 @@ export async function GET(req: NextRequest) {
   //
   // Mapped onto `total_cost` so nothing downstream changes; the fallback covers
   // bookings made before commercial rules existed.
-  function sellSide<T extends { total_cost: number | null; sell_total: number | null }>(row: T) {
+  //
+  // The itinerary and fare breakdown are projected too: the frozen itinerary
+  // carries the airline's totalFare and fareOptions, and the breakdown its
+  // per-passenger split. See app/lib/book/travellerView.
+  function sellSide<T extends BookingRow>(row: T) {
     const { sell_total, ...rest } = row
-    return { ...rest, total_cost: sell_total ?? row.total_cost }
+    return {
+      ...rest,
+      total_cost: sell_total ?? row.total_cost,
+      itinerary: travellerItinerary(row.itinerary),
+      fare_breakdown: travellerFareBreakdown(row.fare_breakdown),
+    }
   }
 
   // Every trip that owns at least one of these bookings, plus any trip the
