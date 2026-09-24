@@ -11,6 +11,7 @@ import { stampCommercials } from '@/app/lib/commercials/stampCommercials'
 import { emptyCommercials } from '@/app/lib/commercials/composeSellPrice'
 import type { FareComponents } from '@/app/lib/commercials/fareComponents'
 import type { FlatFlightResult } from '@/app/lib/book/types'
+import { travellerFareBreakdown } from '@/app/lib/book/travellerView'
 
 // ── POST /api/approvals/[approvalId]/refresh-fare ────────────────────────
 // A pending approval can sit for hours (see the 10-hour "urgent" badge) —
@@ -217,12 +218,16 @@ export async function POST(
       console.error('Refreshed fare but failed to update the approval row\'s cached verdict', approvalUpdateError, { approvalId })
     }
 
+    // THE SELL SIDE ONLY. The approver is an ordinary employee, and the queue
+    // already shows them the sell total; answering a refresh with total_cost
+    // (the airline figure) and the airline's per-passenger split put the
+    // markup one subtraction away in the network response.
     return Response.json({
       ok: true,
-      totalCost: updated.total_cost,
+      totalCost: newSellTotal,
       policyVerdict: updated.policy_verdict,
       policyVerdictDetail: updated.policy_verdict_detail,
-      fareBreakdown: updated.fare_breakdown,
+      fareBreakdown: travellerFareBreakdown(updated.fare_breakdown),
       reason,
     })
   } catch (err) {

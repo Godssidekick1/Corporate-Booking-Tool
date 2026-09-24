@@ -1,5 +1,6 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
+import { travellerItinerary } from '@/app/lib/book/travellerView'
 
 // ── GET /api/approvals ───────────────────────────────────────────────────
 // Returns everything the logged-in employee needs to act on their approval
@@ -174,7 +175,9 @@ export async function GET(req: Request) {
       booking: booking ? {
         bookingType: booking.booking_type,
         totalCost: booking.total_cost,
-        itinerary: booking.itinerary,
+        // Projected like every other employee-facing booking read: no
+        // provider session keys or stored fare options.
+        itinerary: travellerItinerary(booking.itinerary),
         policyVerdict: booking.policy_verdict,
         status: booking.status,
       } : null,
