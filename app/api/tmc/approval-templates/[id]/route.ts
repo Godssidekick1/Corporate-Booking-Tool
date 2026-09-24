@@ -1,9 +1,11 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
+import * as approvals from '@/app/lib/repositories/approvals'
+import * as employees from '@/app/lib/repositories/employees'
+import { route } from '@/app/lib/http/handler'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
-import { MODES, QUORUMS, validateTiers } from '../route'
+import { MODES, QUORUMS, validateTiers, NAME_TAKEN, CODE_TAKEN } from '../route'
 import { NextRequest } from 'next/server'
-import { db } from '@/app/lib/db'
+import { db, isConstraint } from '@/app/lib/db'
 
 // ── PATCH /api/tmc/approval-templates/[id] ───────────────────────────────────
 // Edits a chain's name, its steps, or its mode. Not its approvers — those are
@@ -36,10 +38,10 @@ interface UpdateTemplateBody {
   }[]
 }
 
-export async function PATCH(
+export const PATCH = route(async (
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
+) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -48,13 +50,7 @@ export async function PATCH(
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-
-  const { data: template } = await service
-    .from('approval_chain_templates')
-    .select('id, tmc_id, name, mode, quorum, tiers, version')
-    .eq('id', id)
-    .maybeSingle()
+  const template = await approvals.templateRecord(db, id)
 
   if (!template) {
     return Response.json({ error: 'Approval template not found' }, { status: 404 })
@@ -70,7 +66,7 @@ export async function PATCH(
   }
 
   const body: UpdateTemplateBody = await req.json()
-  const fields: Record<string, unknown> = {}
+  const fields: approvals.TemplateEdit = {}
 
   if (body.name !== undefined) {
     if (!body.name.trim()) return Response.json({ error: 'name cannot be empty' }, { status: 400 })
@@ -95,8 +91,8 @@ export async function PATCH(
 
   // Validate whichever tiers will be stored against whichever mode will apply,
   // not just the pair that happened to arrive in this request.
-  const effectiveMode = (fields.mode as string) ?? template.mode
-  const effectiveTiers = body.tiers ?? (template.tiers as UpdateTemplateBody['tiers']) ?? []
+  const effectiveMode = fields.mode ?? template.mode
+  const effectiveTiers = body.tiers ?? template.tiers ?? []
 
   if (body.tiers !== undefined || body.mode !== undefined) {
     const tierError = validateTiers(effectiveTiers, effectiveMode)
@@ -110,38 +106,26 @@ export async function PATCH(
     return Response.json({ error: 'Nothing to update' }, { status: 400 })
   }
 
-  const { data: caller } = await service
-    .from('employees')
-    .select('id')
-    .eq('id', user.id)
-    .maybeSingle()
-
   fields.version = template.version + 1
-  fields.updated_by = caller?.id ?? null
+  fields.updated_by = (await employees.traveller(db, user.id))?.id ?? null
 
-  const { data: updated, error: updateError } = await service
-    .from('approval_chain_templates')
-    .update(fields)
-    .eq('id', id)
-    .select('id, name, code, description, mode, quorum, tiers, version, created_at, client_id')
-    .single()
-
-  if (updateError) {
-    if (updateError.code === '23505') {
+  try {
+    const updated = await approvals.updateTemplate(db, id, fields)
+    return Response.json({ ok: true, template: updated })
+  } catch (err) {
+    if (isConstraint(err, 'unique', CODE_TAKEN) || isConstraint(err, 'unique', NAME_TAKEN)) {
       return Response.json({
-        error: `Another template already uses that ${updateError.message.includes('code') ? 'code' : 'name'}`,
+        error: `Another template already uses that ${err.constraint === CODE_TAKEN ? 'code' : 'name'}`,
       }, { status: 409 })
     }
-    return Response.json({ error: updateError.message }, { status: 500 })
+    throw err
   }
+})
 
-  return Response.json({ ok: true, template: updated })
-}
-
-export async function DELETE(
+export const DELETE = route(async (
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
+) => {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -150,13 +134,7 @@ export async function DELETE(
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
-
-  const { data: template } = await service
-    .from('approval_chain_templates')
-    .select('id, tmc_id, name')
-    .eq('id', id)
-    .maybeSingle()
+  const template = await approvals.ownership(db, id)
 
   if (!template) {
     return Response.json({ error: 'Approval template not found' }, { status: 404 })
@@ -171,23 +149,21 @@ export async function DELETE(
     return Response.json({ error: 'This template belongs to a different TMC' }, { status: 403 })
   }
 
-  const { count: assignedCount } = await service
-    .from('employee_approval_templates')
-    .select('employee_id', { count: 'exact', head: true })
-    .eq('template_id', id)
+  const [employeeCounts, defaultCounts, bandCounts] = await Promise.all([
+    approvals.employeeCounts(db, [id]),
+    approvals.defaultCounts(db, [id]),
+    approvals.bandCounts(db, [id]),
+  ])
 
-  if (assignedCount && assignedCount > 0) {
+  const assignedCount = employeeCounts.get(id) ?? 0
+  if (assignedCount > 0) {
     return Response.json({
       error: `${assignedCount} employee${assignedCount > 1 ? 's are' : ' is'} routed through "${template.name}". Reassign them before deleting.`,
     }, { status: 409 })
   }
 
-  const { count: defaultCount } = await service
-    .from('client_default_approval_templates')
-    .select('client_id', { count: 'exact', head: true })
-    .eq('template_id', id)
-
-  if (defaultCount && defaultCount > 0) {
+  const defaultCount = defaultCounts.get(id) ?? 0
+  if (defaultCount > 0) {
     return Response.json({
       error: `"${template.name}" is the default for ${defaultCount} client${defaultCount > 1 ? 's' : ''}. Change their default before deleting.`,
     }, { status: 409 })
@@ -196,12 +172,8 @@ export async function DELETE(
   // Band routing too. band_approval_templates cascades on delete, so without
   // this check deleting a template silently removed every band's routing
   // through it -- the two checks above only ever looked at the other rungs.
-  const { count: bandCount } = await service
-    .from('band_approval_templates')
-    .select('client_id', { count: 'exact', head: true })
-    .eq('template_id', id)
-
-  if (bandCount && bandCount > 0) {
+  const bandCount = bandCounts.get(id) ?? 0
+  if (bandCount > 0) {
     return Response.json({
       error: `"${template.name}" is assigned to ${bandCount} band${bandCount > 1 ? 's' : ''}. Reassign ${bandCount > 1 ? 'them' : 'it'} before deleting.`,
     }, { status: 409 })
@@ -210,11 +182,7 @@ export async function DELETE(
   // approvals.chain_template_id is ON DELETE SET NULL, so historical approval
   // records survive with their decision intact — they just lose the pointer to
   // a template that no longer exists.
-  const { error } = await service.from('approval_chain_templates').delete().eq('id', id)
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
+  await approvals.deleteTemplate(db, id)
 
   return Response.json({ ok: true })
-}
+})

@@ -1,10 +1,12 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
+import * as approvals from '@/app/lib/repositories/approvals'
+import * as clients from '@/app/lib/repositories/clients'
+import * as employees from '@/app/lib/repositories/employees'
+import { route } from '@/app/lib/http/handler'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { APPROVAL_CATEGORIES } from '@/app/lib/approval-engine/resolveApprovalTier'
-import { withTransaction, orAbort } from '@/app/lib/db/tx'
 import { NextRequest } from 'next/server'
-import { db } from '@/app/lib/db'
+import { db, transaction, isConstraint } from '@/app/lib/db'
 
 // ── /api/tmc/approval-chains/direct ──────────────────────────────────────────
 // One request, one whole chain: pick a client, pick who it covers, list the
@@ -48,7 +50,6 @@ interface SaveBody {
 }
 
 async function authorise(
-  service: ReturnType<typeof createServiceClient>,
   userId: string,
   clientId: string
 ): Promise<{ ok: true; tmcId: string } | { ok: false; error: string; status: number }> {
@@ -57,11 +58,7 @@ async function authorise(
     return { ok: false, error: auth.error ?? 'Forbidden', status: auth.status ?? 403 }
   }
 
-  const { data: client } = await service
-    .from('clients')
-    .select('id, tmc_id')
-    .eq('id', clientId)
-    .maybeSingle()
+  const client = await clients.tenancy(db, clientId)
 
   if (!client || client.tmc_id !== auth.tmcId) {
     return { ok: false, error: 'Client not found for this TMC', status: 404 }
@@ -74,37 +71,22 @@ async function authorise(
 // client-owned chain: a shared template reached through the assign flow is not
 // this flow's to overwrite.
 async function findExistingChain(
-  service: ReturnType<typeof createServiceClient>,
   clientId: string,
   employeeId: string | null,
   category: string
 ): Promise<string | null> {
   const templateId = employeeId
-    ? (await service
-        .from('employee_approval_templates')
-        .select('template_id')
-        .eq('employee_id', employeeId)
-        .eq('category', category)
-        .maybeSingle()).data?.template_id
-    : (await service
-        .from('client_default_approval_templates')
-        .select('template_id')
-        .eq('client_id', clientId)
-        .eq('category', category)
-        .maybeSingle()).data?.template_id
+    ? await approvals.employeeTemplateId(db, employeeId, category)
+    : await approvals.defaultTemplateId(db, clientId, category)
 
   if (!templateId) return null
 
-  const { data: template } = await service
-    .from('approval_chain_templates')
-    .select('id, client_id')
-    .eq('id', templateId)
-    .maybeSingle()
+  const template = await approvals.ownership(db, templateId)
 
   return template?.client_id === clientId ? template.id : null
 }
 
-export async function GET(req: NextRequest) {
+export const GET = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -120,35 +102,27 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'clientId is required' }, { status: 400 })
   }
 
-  const service = createServiceClient()
-  const access = await authorise(service, user.id, clientId)
+  const access = await authorise(user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
 
-  const templateId = await findExistingChain(service, clientId, employeeId, category)
+  const templateId = await findExistingChain(clientId, employeeId, category)
 
   if (!templateId) {
     return Response.json({ ok: true, chain: null })
   }
 
-  const { data: template } = await service
-    .from('approval_chain_templates')
-    .select('id, mode, quorum, tiers')
-    .eq('id', templateId)
-    .single()
+  const [template, bindings] = await Promise.all([
+    approvals.template(db, templateId),
+    approvals.bindings(db, clientId, templateId),
+  ])
 
-  const { data: bindings } = await service
-    .from('approval_tier_approvers')
-    .select('tier, approver_type, approver_user_id, min_band_rank')
-    .eq('client_id', clientId)
-    .eq('template_id', templateId)
-
-  const byTier = new Map((bindings ?? []).map(b => [b.tier, b]))
+  const byTier = new Map(bindings.map(b => [b.tier, b]))
 
   // Flattened back into the one list the form works in — the caller never sees
   // the two halves separately.
-  const steps = (template?.tiers as { tier: number; min_verdict: string }[] | null) ?? []
+  const steps = template?.tiers ?? []
   const approvers = [...steps]
     .sort((a, b) => a.tier - b.tier)
     .map(step => {
@@ -165,9 +139,9 @@ export async function GET(req: NextRequest) {
     ok: true,
     chain: { id: templateId, mode: template?.mode, quorum: template?.quorum, approvers },
   })
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -209,30 +183,20 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const service = createServiceClient()
-  const access = await authorise(service, user.id, clientId)
+  const access = await authorise(user.id, clientId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
 
   if (employeeId) {
-    const { data: employee } = await service
-      .from('employees')
-      .select('id')
-      .eq('id', employeeId)
-      .eq('client_id', clientId)
-      .maybeSingle()
+    const [atClient] = await employees.idsInClientAmong(db, clientId, [employeeId])
 
-    if (!employee) {
+    if (!atClient) {
       return Response.json({ error: 'Employee not found at this client' }, { status: 404 })
     }
   }
 
-  const { data: caller } = await service
-    .from('employees')
-    .select('id')
-    .eq('id', user.id)
-    .maybeSingle()
+  const assignedBy = (await employees.traveller(db, user.id))?.id ?? null
 
   // Steps are numbered 1..n in BOTH modes. Bindings are keyed by step number
   // and mergeTiers looks them up that way, so duplicates would collapse several
@@ -249,121 +213,79 @@ export async function POST(req: NextRequest) {
     label: null,
   }))
 
-  const existingId = await findExistingChain(service, clientId, employeeId, category)
+  const existingId = await findExistingChain(clientId, employeeId, category)
 
   // Naming reads happen outside the transaction: they are pure lookups, only
   // needed when a chain is being created, and keeping them out means the
   // transaction below holds its connection for writes alone.
   let name = ''
   if (!existingId) {
-    const [{ data: client }, { data: employee }] = await Promise.all([
-      service.from('clients').select('name').eq('id', clientId).single(),
-      employeeId
-        ? service.from('employees').select('full_name').eq('id', employeeId).single()
-        : Promise.resolve({ data: null }),
+    const [client, who] = await Promise.all([
+      clients.clientName(db, clientId),
+      employeeId ? employees.fullName(db, employeeId) : Promise.resolve(null),
     ])
 
     // Never shown — client-owned chains are excluded from the template list —
     // but names are unique per TMC, so the id fragment keeps two people with
     // the same name at the same client from colliding.
-    const who = employee?.full_name ?? 'All employees'
     const suffix = employeeId ? ` [${employeeId.slice(0, 8)}]` : ''
-    name = `${client?.name ?? 'Client'} — ${who} — ${category}${suffix}`
+    name = `${client?.name ?? 'Client'} — ${who ?? 'All employees'} — ${category}${suffix}`
   }
 
   // ── The chain, its approvers and the pointer at it, atomically ───────────
   // THE FAILURE THIS PREVENTS: the approver bindings are replaced wholesale as
-  // DELETE-then-INSERT. If the insert failed — and 23514 says it realistically
-  // can, when someone named does not work at this client — the chain was left
-  // with NO approvers while the pointer below still routed bookings to it.
-  // Every booking down that chain then resolves to no approver at all and
-  // lands in approval_misconfigured, for a request that returned 400 and
-  // looked like it had changed nothing.
-  const { data: chainId, error: writeError } = await withTransaction(async (tx) => {
-    let templateId = existingId
-
-    if (templateId) {
-      await orAbort(
-        tx.from('approval_chain_templates')
-          .update({ mode, quorum, tiers, updated_by: caller?.id ?? null })
-          .eq('id', templateId)
-      )
-    } else {
-      const created = await orAbort(
-        tx.from<{ id: string }[]>('approval_chain_templates')
-          .insert({
+  // DELETE-then-INSERT. If the insert failed — and the client-check trigger
+  // says it realistically can, when someone named does not work at this
+  // client — the chain was left with NO approvers while the pointer below
+  // still routed bookings to it. Every booking down that chain then resolves
+  // to no approver at all and lands in approval_misconfigured, for a request
+  // that returned 400 and looked like it had changed nothing.
+  let chainId: string
+  try {
+    chainId = await transaction(async (tx) => {
+      const templateId = existingId
+        ? (await approvals.updateTemplate(tx, existingId, { mode, quorum, tiers, updated_by: assignedBy })).id
+        : (await approvals.insertTemplate(tx, {
             tmc_id: access.tmcId,
             client_id: clientId,
             name,
+            code: null,
+            description: null,
             mode,
             quorum,
             tiers,
-            updated_by: caller?.id ?? null,
-          })
-          .select('id')
-          .single()
-      )
-      templateId = created.id
-    }
+            updated_by: assignedBy,
+          })).id
 
-    // Replace the bindings wholesale rather than diffing. The step numbering
-    // shifts whenever an approver is removed or the mode flips, so matching
-    // old rows to new positions would be guesswork.
-    await orAbort(
-      tx.from('approval_tier_approvers')
-        .delete()
-        .eq('client_id', clientId)
-        .eq('template_id', templateId)
-    )
+      // Replace the bindings wholesale rather than diffing. The step numbering
+      // shifts whenever an approver is removed or the mode flips, so matching
+      // old rows to new positions would be guesswork.
+      await approvals.replaceBindings(tx, clientId, templateId, approvers.map((a, i) => ({
+        tier: i + 1,
+        approver_type: a.approver_type,
+        approver_user_id: a.approver_type === 'specific_user' ? a.approver_user_id ?? null : null,
+        min_band_rank: a.approver_type === 'any_manager_at' ? a.min_band_rank ?? null : null,
+        assigned_by: assignedBy,
+      })))
 
-    await orAbort(
-      tx.from('approval_tier_approvers')
-        .insert(approvers.map((a, i) => ({
-          client_id: clientId,
-          template_id: templateId,
-          tier: i + 1,
-          approver_type: a.approver_type,
-          approver_user_id: a.approver_type === 'specific_user' ? a.approver_user_id : null,
-          min_band_rank: a.approver_type === 'any_manager_at' ? a.min_band_rank : null,
-          assigned_by: caller?.id ?? null,
-        })))
-    )
+      // Point the target at this chain.
+      if (employeeId) {
+        await approvals.assignToEmployees(tx, [employeeId], category, templateId, assignedBy)
+      } else {
+        await approvals.assignDefault(tx, clientId, category, templateId, assignedBy)
+      }
 
-    // Point the target at this chain.
-    if (employeeId) {
-      await orAbort(
-        tx.from('employee_approval_templates').upsert({
-          employee_id: employeeId,
-          category,
-          template_id: templateId,
-          assigned_by: caller?.id ?? null,
-          assigned_at: new Date().toISOString(),
-        }, { onConflict: 'employee_id,category' })
-      )
-    } else {
-      await orAbort(
-        tx.from('client_default_approval_templates').upsert({
-          client_id: clientId,
-          category,
-          template_id: templateId,
-          assigned_by: caller?.id ?? null,
-          assigned_at: new Date().toISOString(),
-        }, { onConflict: 'client_id,category' })
-      )
-    }
-
-    return templateId
-  })
-
-  if (writeError) {
-    if (writeError.code === '23514') {
+      return templateId
+    }, { tenantId: access.tmcId, userId: user.id })
+  } catch (err) {
+    if (isConstraint(err, 'check')) {
       return Response.json(
         { error: 'One of those people does not work at this client' },
         { status: 400 }
       )
     }
-    return Response.json({ error: writeError.message }, { status: 500 })
+    throw err
   }
 
   return Response.json({ ok: true, chainId })
-}
+})

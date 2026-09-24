@@ -1,8 +1,11 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
+import * as approvals from '@/app/lib/repositories/approvals'
+import * as clients from '@/app/lib/repositories/clients'
+import * as employees from '@/app/lib/repositories/employees'
+import { route } from '@/app/lib/http/handler'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
-import { db } from '@/app/lib/db'
+import { db, isConstraint } from '@/app/lib/db'
 
 // ── /api/tmc/approval-tier-approvers ─────────────────────────────────────────
 // Who fills each step of one approval chain at one client.
@@ -37,7 +40,6 @@ interface BindBody {
 }
 
 async function authorise(
-  service: ReturnType<typeof createServiceClient>,
   userId: string,
   clientId: string,
   templateId: string
@@ -47,21 +49,13 @@ async function authorise(
     return { ok: false, error: auth.error ?? 'Forbidden', status: auth.status ?? 403 }
   }
 
-  const { data: client } = await service
-    .from('clients')
-    .select('id, tmc_id')
-    .eq('id', clientId)
-    .maybeSingle()
+  const client = await clients.tenancy(db, clientId)
 
   if (!client || client.tmc_id !== auth.tmcId) {
     return { ok: false, error: 'Client not found for this TMC', status: 404 }
   }
 
-  const { data: template } = await service
-    .from('approval_chain_templates')
-    .select('id, tmc_id, client_id')
-    .eq('id', templateId)
-    .maybeSingle()
+  const template = await approvals.ownership(db, templateId)
 
   if (!template || template.tmc_id !== auth.tmcId) {
     return { ok: false, error: 'Approval chain not found for this TMC', status: 404 }
@@ -76,7 +70,7 @@ async function authorise(
   return { ok: true }
 }
 
-export async function GET(req: NextRequest) {
+export const GET = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -91,34 +85,25 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'clientId and templateId are required' }, { status: 400 })
   }
 
-  const service = createServiceClient()
-  const access = await authorise(service, user.id, clientId, templateId)
+  const access = await authorise(user.id, clientId, templateId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
 
   // Steps come back alongside the bindings so the caller renders one list and
   // can tell a bound step from an unbound one without a second request.
-  const { data: template } = await service
-    .from('approval_chain_templates')
-    .select('id, name, mode, quorum, tiers')
-    .eq('id', templateId)
-    .single()
+  const [chain, bindings] = await Promise.all([
+    approvals.template(db, templateId),
+    approvals.bindings(db, clientId, templateId),
+  ])
+  const template = chain
+    ? { id: chain.id, name: chain.name, mode: chain.mode, quorum: chain.quorum, tiers: chain.tiers }
+    : null
 
-  const { data: bindings, error } = await service
-    .from('approval_tier_approvers')
-    .select('tier, approver_type, approver_user_id, min_band_rank')
-    .eq('client_id', clientId)
-    .eq('template_id', templateId)
+  return Response.json({ ok: true, template, bindings })
+})
 
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
-
-  return Response.json({ ok: true, template, bindings: bindings ?? [] })
-}
-
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -145,48 +130,37 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Choose a minimum band rank for this step' }, { status: 400 })
   }
 
-  const service = createServiceClient()
-  const access = await authorise(service, user.id, clientId, templateId)
+  const access = await authorise(user.id, clientId, templateId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
 
-  const { data: caller } = await service
-    .from('employees')
-    .select('id')
-    .eq('id', user.id)
-    .maybeSingle()
-
-  const { error } = await service
-    .from('approval_tier_approvers')
-    .upsert({
-      client_id: clientId,
-      template_id: templateId,
+  try {
+    await approvals.bind(db, clientId, templateId, {
       tier,
       approver_type: approverType,
-      approver_user_id: approverType === 'specific_user' ? approverUserId : null,
-      min_band_rank: approverType === 'any_manager_at' ? minBandRank : null,
-      assigned_by: caller?.id ?? null,
-      assigned_at: new Date().toISOString(),
-    }, { onConflict: 'client_id,template_id,tier' })
-
-  if (error) {
-    // 23514 is the approval_tier_approvers_client_check trigger: the chosen
-    // person works at a different client. Reachable through a crafted request
-    // even though the UI only ever offers this client's staff.
-    if (error.code === '23514') {
+      approver_user_id: approverType === 'specific_user' ? approverUserId ?? null : null,
+      min_band_rank: approverType === 'any_manager_at' ? minBandRank ?? null : null,
+      assigned_by: (await employees.traveller(db, user.id))?.id ?? null,
+    })
+  } catch (err) {
+    // A check violation here is the approval_tier_approvers_client_check
+    // trigger: the chosen person works at a different client. Reachable
+    // through a crafted request even though the UI only ever offers this
+    // client's staff.
+    if (isConstraint(err, 'check')) {
       return Response.json(
         { error: 'That person does not work at this client' },
         { status: 400 }
       )
     }
-    return Response.json({ error: error.message }, { status: 500 })
+    throw err
   }
 
   return Response.json({ ok: true })
-}
+})
 
-export async function DELETE(req: NextRequest) {
+export const DELETE = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -202,22 +176,12 @@ export async function DELETE(req: NextRequest) {
     return Response.json({ error: 'clientId, templateId and tier are required' }, { status: 400 })
   }
 
-  const service = createServiceClient()
-  const access = await authorise(service, user.id, clientId, templateId)
+  const access = await authorise(user.id, clientId, templateId)
   if (!access.ok) {
     return Response.json({ error: access.error }, { status: access.status })
   }
 
-  const { error } = await service
-    .from('approval_tier_approvers')
-    .delete()
-    .eq('client_id', clientId)
-    .eq('template_id', templateId)
-    .eq('tier', tier)
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
+  await approvals.unbind(db, clientId, templateId, tier)
 
   return Response.json({ ok: true })
-}
+})

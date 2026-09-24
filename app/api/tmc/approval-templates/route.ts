@@ -1,9 +1,12 @@
 import { createClient } from '@/utils/supabase/server'
-import { createServiceClient } from '@/utils/supabase/service'
+import * as approvals from '@/app/lib/repositories/approvals'
+import * as clients from '@/app/lib/repositories/clients'
+import * as employees from '@/app/lib/repositories/employees'
+import { route } from '@/app/lib/http/handler'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { APPROVAL_CATEGORIES } from '@/app/lib/approval-engine/resolveApprovalTier'
 import { NextRequest } from 'next/server'
-import { db } from '@/app/lib/db'
+import { db, isConstraint } from '@/app/lib/db'
 
 // ── GET /api/tmc/approval-templates?search=<text> ────────────────────────────
 // Lists the caller's TMC's approval templates. A template is the reusable
@@ -84,7 +87,7 @@ export function validateTiers(tiers: TemplateTierInput[], mode: string): string 
   return null
 }
 
-export async function GET(req: NextRequest) {
+export const GET = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -92,70 +95,34 @@ export async function GET(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
   const auth = await requireTmcPermission(db, user.id, 'manage_approvals')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
 
-  const search = req.nextUrl.searchParams.get('search')?.trim()
-
-  let query = service
-    .from('approval_chain_templates')
-    .select('id, name, code, description, mode, quorum, tiers, version, created_at, client_id')
-    .eq('tmc_id', auth.tmcId)
-    .order('name')
-
-  if (search) {
-    query = query.or(`name.ilike.%${search}%,code.ilike.%${search}%`)
-  }
-
-  const { data: templates, error } = await query
-
-  if (error) {
-    return Response.json({ error: error.message }, { status: 500 })
-  }
-
-  const templateIds = (templates ?? []).map(t => t.id)
+  const templates = await approvals.templatesForTmc(db, auth.tmcId, req.nextUrl.searchParams.get('search'))
+  const templateIds = templates.map(t => t.id)
 
   // How many employees are routed through each template, so an admin can see
   // the blast radius before editing something shared. Counted across the whole
   // TMC: templateIds is already TMC-scoped, and an assignment is only ever
   // created for an employee at a client in that TMC.
-  const usageByTemplate = new Map<string, number>()
-  const defaultForByTemplate = new Map<string, number>()
-
-  if (templateIds.length > 0) {
-    const { data: assignments } = await service
-      .from('employee_approval_templates')
-      .select('template_id')
-      .in('template_id', templateIds)
-
-    for (const a of assignments ?? []) {
-      usageByTemplate.set(a.template_id, (usageByTemplate.get(a.template_id) ?? 0) + 1)
-    }
-
-    const { data: defaults } = await service
-      .from('client_default_approval_templates')
-      .select('template_id')
-      .in('template_id', templateIds)
-
-    for (const d of defaults ?? []) {
-      defaultForByTemplate.set(d.template_id, (defaultForByTemplate.get(d.template_id) ?? 0) + 1)
-    }
-  }
+  const [usageByTemplate, defaultForByTemplate] = await Promise.all([
+    approvals.employeeCounts(db, templateIds),
+    approvals.defaultCounts(db, templateIds),
+  ])
 
   return Response.json({
     ok: true,
-    templates: (templates ?? []).map(t => ({
+    templates: templates.map(t => ({
       ...t,
       employeeCount: usageByTemplate.get(t.id) ?? 0,
       defaultForClients: defaultForByTemplate.get(t.id) ?? 0,
     })),
   })
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = route(async (req: NextRequest) => {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
 
@@ -163,7 +130,6 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Not authenticated' }, { status: 401 })
   }
 
-  const service = createServiceClient()
   const auth = await requireTmcPermission(db, user.id, 'manage_approvals')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
@@ -196,26 +162,17 @@ export async function POST(req: NextRequest) {
   // A client-scoped chain must point at a client this TMC actually manages,
   // or it would be created and then be invisible and unusable.
   if (body.clientId) {
-    const { data: client } = await service
-      .from('clients')
-      .select('id, tmc_id')
-      .eq('id', body.clientId)
-      .maybeSingle()
+    const client = await clients.tenancy(db, body.clientId)
 
     if (!client || client.tmc_id !== auth.tmcId) {
       return Response.json({ error: 'Client not found for this TMC' }, { status: 404 })
     }
   }
 
-  const { data: caller } = await service
-    .from('employees')
-    .select('id')
-    .eq('id', user.id)
-    .maybeSingle()
+  const updatedBy = (await employees.traveller(db, user.id))?.id ?? null
 
-  const { data: template, error } = await service
-    .from('approval_chain_templates')
-    .insert({
+  try {
+    const template = await approvals.insertTemplate(db, {
       tmc_id: auth.tmcId,
       client_id: body.clientId ?? null,
       name: name.trim(),
@@ -224,25 +181,24 @@ export async function POST(req: NextRequest) {
       mode,
       quorum,
       tiers,
-      updated_by: caller?.id ?? null,
+      updated_by: updatedBy,
     })
-    .select('id, name, code, description, mode, quorum, tiers, version, created_at, client_id')
-    .single()
 
-  if (error) {
-    if (error.code === '23505') {
-      const clashedOnCode = code?.trim() && error.message.includes('code')
-      return Response.json({
-        error: clashedOnCode
-          ? `An approval template with code "${code!.trim()}" already exists`
-          : `An approval template named "${name.trim()}" already exists`,
-      }, { status: 409 })
+    return Response.json(
+      { ok: true, template: { ...template, employeeCount: 0, defaultForClients: 0 } },
+      { status: 201 }
+    )
+  } catch (err) {
+    if (isConstraint(err, 'unique', CODE_TAKEN)) {
+      return Response.json({ error: `An approval template with code "${code!.trim()}" already exists` }, { status: 409 })
     }
-    return Response.json({ error: error.message }, { status: 500 })
+    if (isConstraint(err, 'unique', NAME_TAKEN)) {
+      return Response.json({ error: `An approval template named "${name.trim()}" already exists` }, { status: 409 })
+    }
+    throw err
   }
+})
 
-  return Response.json(
-    { ok: true, template: { ...template, employeeCount: 0, defaultForClients: 0 } },
-    { status: 201 }
-  )
-}
+// A TMC's templates are unique by name, and by code where one is set.
+export const NAME_TAKEN = 'approval_chain_templates_tmc_id_name_key'
+export const CODE_TAKEN = 'approval_chain_templates_tmc_id_code_key'
