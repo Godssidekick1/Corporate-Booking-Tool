@@ -249,7 +249,14 @@ d('forms of payment', () => {
     for (const row of await many<{ id: string }>(db, sql`select id from fop_assignments where fop_id = ${fresh}`)) {
       created.set(row.id, '<new mapping>')
     }
-    expect(scrub(res.json)).toMatchSnapshot()
+    // The two new mappings came from one insert, so they share created_at and
+    // the list's tie-break is their id -- a fresh random uuid each run. Put
+    // them in a stable order before comparing.
+    const body = res.json as { items: { id: string; kind: string }[] }
+    const isNew = (r: { id: string }) => created.has(r.id)
+    const fresh_rows = body.items.filter(isNew).sort((x, y) => x.kind.localeCompare(y.kind))
+    body.items = body.items.map(r => (isNew(r) ? fresh_rows.shift()! : r))
+    expect(scrub(body)).toMatchSnapshot()
 
     const one_fop = await call(mappingsGet, { as: a.tmcAdmin, url: `/api/tmc/fop-assignments?fopId=${fresh}` })
     expect((one_fop.json as Paged<{ fop_id: string }>).items.every(i => i.fop_id === fresh)).toBe(true)

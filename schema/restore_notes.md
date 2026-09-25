@@ -5,7 +5,7 @@ does not, and why. Every item here was found by actually running the restore.
 
 ## The schema was not in this repository
 
-`supabase/migrations/` contains 27 files, but **14 of the 38 tables the code
+`db/migrations/archive/` contains 27 files, but **14 of the 38 tables the code
 queries have no `CREATE TABLE` in any of them** — `employees`, `clients`,
 `tmcs`, `bookings`, `approvals`, `trips` among them. The migrations only
 `ALTER` those tables.
@@ -17,7 +17,7 @@ The live database was the only complete description of the schema until
   truth for all of them.
 - **Things exist in production that no migration mentions.** The clearest
   example is `employees.auth_user_id`, below. Anything reasoned about by
-  reading `supabase/migrations/` alone is reasoning about a partial picture.
+  reading `db/migrations/archive/` alone is reasoning about a partial picture.
 
 ## Restore errors, and what each one means
 

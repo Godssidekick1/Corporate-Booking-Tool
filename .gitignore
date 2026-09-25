@@ -46,7 +46,7 @@ next-env.d.ts
 # ── Database dumps ───────────────────────────────────────────────────────────
 # schema/baseline.sql and schema/auth_baseline.sql ARE committed — they are the
 # only complete description of 14 tables that have no CREATE TABLE in
-# supabase/migrations, so losing them loses the schema.
+# db/migrations/archive, so losing them loses the schema.
 #
 # Everything holding ROWS is excluded. seed.sql carries live passenger detail:
 # bookings.traveler_snapshot freezes full CustomerInfo including passport

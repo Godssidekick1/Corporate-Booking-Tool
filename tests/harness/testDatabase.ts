@@ -19,6 +19,12 @@ function adminUrl(): string {
   return u.toString()
 }
 
+export function templateUrl(): string {
+  const u = new URL(adminUrl())
+  u.pathname = `/${TEMPLATE}`
+  return u.toString()
+}
+
 export async function recreateTestDatabase(): Promise<void> {
   const admin = new pg.Client({ connectionString: adminUrl() })
   await admin.connect()

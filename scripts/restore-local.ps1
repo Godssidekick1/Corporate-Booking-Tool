@@ -230,7 +230,7 @@ if ($errors) {
 #   employees.auth_user_id  -> auth.users(id)  ON DELETE SET NULL
 #   platform_admins.user_id -> auth.users(id)  ON DELETE CASCADE
 #
-# Neither appears in supabase/migrations -- employees.auth_user_id exists only
+# Neither appears in db/migrations/archive -- employees.auth_user_id exists only
 # in the live database, and is written by application code in five places. It
 # was found by dumping the real schema, which is the argument for having done
 # that first.
@@ -276,6 +276,15 @@ if ($WithData) {
     Write-Host "  seed.sql not present, skipping data" -ForegroundColor DarkYellow
   }
 }
+
+# ── 6b. Migrations newer than baseline.sql ───────────────────────────────────
+# baseline.sql predates db/migrations. The runner records what it applies, so
+# this database can then be kept current with `node scripts/migrate.mjs`.
+# After the data, because a migration may transform rows.
+Write-Host "  applying db/migrations ..."
+$pw = [uri]::EscapeDataString($env:PGPASSWORD)
+& node scripts/migrate.mjs "postgresql://${SuperUser}:${pw}@localhost:5432/$Database"
+if ($LASTEXITCODE -ne 0) { Write-Host "  migrations FAILED" -ForegroundColor Red; exit 1 }
 
 # ── 7. What we ended up with ─────────────────────────────────────────────────
 Write-Host ""

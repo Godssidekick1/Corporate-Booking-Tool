@@ -3,7 +3,7 @@
 #
 # WHY THIS EXISTS, AND WHY IT RUNS FIRST:
 # 14 of the 38 tables this application queries have no CREATE TABLE anywhere in
-# supabase/migrations — employees, clients, tmcs, bookings, approvals, trips and
+# db/migrations/archive — employees, clients, tmcs, bookings, approvals, trips and
 # eight more. The migrations only ALTER them. That means the live Supabase
 # database is currently the ONLY complete description of our schema, and a
 # dropped project or a mistaken dashboard click loses it with no recovery.
