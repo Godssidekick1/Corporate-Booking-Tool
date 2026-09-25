@@ -80,7 +80,8 @@ export default defineConfig({
     // Route handlers authenticate through utils/supabase/server, and 77 of 86
     // do nothing else with Supabase; mocking that one module is what lets a
     // test call a handler directly, as any user, with no login.
-    setupFiles: ['./tests/setup/auth.ts'],
+    // Outgoing email is replaced the same way, so no test can send any.
+    setupFiles: ['./tests/setup/auth.ts', './tests/setup/mail.ts'],
     env: testUrl && adminUrl
       ? { DATABASE_URL: testUrl, TEST_DATABASE_URL: testUrl, TEST_ADMIN_DATABASE_URL: adminUrl }
       : {},

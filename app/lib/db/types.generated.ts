@@ -3,11 +3,22 @@
 // Written by scripts/generate-db-types.mjs from the live database schema.
 // Re-run after any schema change:  node scripts/generate-db-types.mjs
 //
-// 41 tables, 1 view(s), 451 columns.
+// 46 tables, 1 view(s), 483 columns.
 
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json }
 
 export interface Tables {
+  accounts: {
+    id: string
+    email: string
+    password_hash: string | null
+    must_change_password: boolean
+    email_verified_at: string | null
+    password_changed_at: string | null
+    last_sign_in_at: string | null
+    created_at: string
+    updated_at: string
+  }
   airlines: {
     code: string
     name: string
@@ -69,6 +80,20 @@ export interface Tables {
     entity_id: string
     metadata: Json
     created_at: string
+  }
+  auth_attempts: {
+    id: number
+    key: string
+    at: string
+  }
+  auth_tokens: {
+    id: string
+    account_id: string
+    purpose: string
+    created_at: string
+    expires_at: string
+    consumed_at: string | null
+    created_by: string | null
   }
   band_approval_templates: {
     client_id: string
@@ -502,6 +527,23 @@ export interface Tables {
     sell_total: number
     created_at: string
     expires_at: string
+  }
+  schema_migrations: {
+    filename: string
+    sha256: string
+    applied_at: string
+  }
+  sessions: {
+    id: string
+    account_id: string
+    created_at: string
+    last_seen_at: string
+    idle_expires_at: string
+    absolute_expires_at: string
+    revoked_at: string | null
+    revoked_reason: string | null
+    ip: string | null
+    user_agent: string | null
   }
   tmcs: {
     id: string

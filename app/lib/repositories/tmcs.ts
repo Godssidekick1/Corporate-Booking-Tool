@@ -4,7 +4,7 @@ import type { Row } from '@/app/lib/db/types.generated'
 import type { PageParams } from '@/app/lib/pagination'
 
 // ── TMCs and the platform ────────────────────────────────────────────────────
-// Owns: tmcs, platform_admins, audit_log, branches.
+// Owns: tmcs, platform_admins, branches.
 //
 // Branches belong here rather than with clients because they are the TMC's
 // own offices (branches.tmc_id) -- a client is filed under one, but does not
