@@ -5,7 +5,7 @@
 // fares go stale fast and shouldn't be resurrected days later.
 //
 // Once /api/book/add-passenger creates a real `bookings` row, the flow
-// switches to using bookingId (in the URL) + fetching from Supabase —
+// switches to using bookingId (in the URL) + fetching from the API —
 // this module is not used past that point.
 // ─────────────────────────────────────────────────────────────────────────────
 

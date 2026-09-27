@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import * as fops from '@/app/lib/repositories/fop'
 import * as clients from '@/app/lib/repositories/clients'
 import * as employees from '@/app/lib/repositories/employees'
@@ -40,12 +40,7 @@ export const PAYERS = ['agency', 'corporate', 'traveller'] as const
 export const CARD_TYPES = ['AX', 'VI', 'CA', 'DC'] as const
 
 export const GET = route(async (req: NextRequest) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   // Resolves who is asking before deciding what they may see. Deliberately does
   // NOT go through requireTmcPermission first: a corporate admin is a legitimate
@@ -297,12 +292,7 @@ export function validateFop(body: Partial<CreateBody>): string | null {
 }
 
 export const POST = route(async (req: NextRequest) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const auth = await requireTmcPermission(db, user.id, 'manage_fops')
   if (!auth.authorized || !auth.tmcId) {

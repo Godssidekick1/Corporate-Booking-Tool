@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { GET as tmcsGet, POST as tmcsPost } from '@/app/api/platform/tmcs/route'
 import { GET as tmcGet, POST as tmcInvite, PATCH as tmcPatch } from '@/app/api/platform/tmcs/[id]/route'
 import { GET as staffCsvGet, POST as staffCsvPost } from '@/app/api/platform/tmcs/[id]/staff-csv/route'
@@ -7,7 +7,8 @@ import { POST as createCorporate } from '@/app/api/tmc/create-corporate/bulk/rou
 import { call } from '../harness/call'
 import { actors, type Actors } from '../harness/actors'
 import { resetDatabase } from '../harness/db'
-import { authCalls, failNextAuthWith } from '../harness/authAdmin'
+import { outbox, linkIn, failNextMailWith } from '../harness/mail'
+import { MESSAGES } from '@/app/lib/auth/flows'
 import { db } from '@/app/lib/db'
 import { sql, many, one, maybeOne } from '@/app/lib/db/sql'
 
@@ -16,8 +17,9 @@ import { sql, many, one, maybeOne } from '@/app/lib/db/sql'
 // the Postman fallback that onboards a TMC, and a TMC onboarding a client with
 // its roster.
 //
-// Every one of these creates accounts, so GoTrue is FAKED: no real user is
-// created and no email is sent. The fake's ids are derived from the email.
+// Every one of these creates accounts and sends invites. The accounts are real
+// rows in cbt_test (ids derived from the email, see tests/setup/auth.ts); the
+// email goes to the fake outbox (tests/harness/mail.ts), never anywhere real.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const HAS_DB = Boolean(process.env.DATABASE_URL)
@@ -44,9 +46,7 @@ d('onboarding', () => {
     vi.stubEnv('INTERNAL_API_SECRET', 'test-internal-secret')
   })
   afterAll(() => { vi.unstubAllEnvs() })
-  beforeEach(() => { authCalls.length = 0 })
-
-  const invites = () => authCalls.filter(c => c.method === 'inviteUserByEmail').map(c => c.args[0])
+  const invites = () => outbox.filter(m => linkIn(m).type === 'invite').map(m => m.to)
 
   // ── The platform: TMCs ─────────────────────────────────────────────────────
 
@@ -100,16 +100,25 @@ d('onboarding', () => {
     expect(await many(db, sql`select email, full_name, role, status, client_id from employees where tmc_id = ${created}`))
       .toEqual([{ email: 'boss@fresh.example', full_name: 'Fresh Boss', role: 'tmc_admin', status: 'invited', client_id: null }])
     expect(invites()).toEqual(['boss@fresh.example'])
-    expect((authCalls[0].args[1] as { data: unknown }).data)
-      .toEqual({ full_name: 'Fresh Boss', tmc_id: created, role: 'tmc_admin' })
+    // An account with no password until they choose one from the invite; its
+    // id is the employee's.
+    expect(await one(db, sql`
+      select a.email, a.password_hash, a.must_change_password, e.auth_user_id = a.id as linked
+      from employees e join accounts a on a.id = e.id where e.tmc_id = ${created}`))
+      .toEqual({ email: 'boss@fresh.example', password_hash: null, must_change_password: false, linked: true })
   })
 
   it('platform: a failed invite leaves no TMC behind', async () => {
-    failNextAuthWith('A user with this email address has already been registered')
-    const res = await call(tmcsPost, { as: platform, method: 'POST', url: '/api/platform/tmcs',
-      body: { tmcName: 'Doomed Travel', adminEmail: 'doomed@example.test', adminName: 'D' } })
-    expect(res).toEqual({ status: 500, json: { error: 'A user with this email address has already been registered' } })
+    const post = (adminEmail: string) => call(tmcsPost, { as: platform, method: 'POST', url: '/api/platform/tmcs',
+      body: { tmcName: 'Doomed Travel', adminEmail, adminName: 'D' } })
+    // The address already has an account: a conflict (GoTrue made it a 500).
+    expect(await post('boss@fresh.example'))
+      .toEqual({ status: 409, json: { error: 'A user with this email address has already been registered' } })
+    // The mail server refuses: nothing is kept, and the server's text is not shown.
+    failNextMailWith('421 4.7.0 try again later')
+    expect(await post('doomed@example.test')).toEqual({ status: 502, json: { error: MESSAGES.mailFailed } })
     expect(await maybeOne(db, sql`select id from tmcs where name = 'Doomed Travel'`)).toBeNull()
+    expect(await maybeOne(db, sql`select id from accounts where email = 'doomed@example.test'`)).toBeNull()
   })
 
   it('platform: invite a further admin; refuse an email already there', async () => {
@@ -278,7 +287,10 @@ d('onboarding', () => {
     expect(invites()).toEqual(['cfo@globex.example', 'one@globex.example', 'two@globex.example'])
   })
 
-  it('create corporate: a CBT-only client\'s roster are profiles, with no accounts', async () => {
+  // Changed deliberately in Stage 3 (finding 7): every employee gets an account,
+  // as POST /api/employees always gave one. A CBT-only roster used to get none,
+  // so those people could never sign in, not even to see their own trips.
+  it('create corporate: a CBT-only client\'s roster get accounts, but no email', async () => {
     const res = await onboard({
       client: { corporateName: 'Initech', adminEmail: 'bill@initech.example', adminName: 'Bill', bands: BANDS, bookingMode: 'cbt' },
       employees: [{ email: 'peter@initech.example', full_name: 'Peter', band: 'L1' }],
@@ -286,9 +298,11 @@ d('onboarding', () => {
     expect(res.status).toBe(201)
     const clientId = (res.json as { clientId: string }).clientId
     expect(await many(db, sql`
-      select email, status, auth_user_id is null as no_account from employees where client_id = ${clientId} and role <> 'admin'`))
-      .toEqual([{ email: 'peter@initech.example', status: 'active', no_account: true }])
-    // Only the admin was invited.
+      select e.email, e.status, e.onboarding_method, a.id = e.id as has_account, a.password_hash is null as no_password
+      from employees e left join accounts a on a.id = e.auth_user_id
+      where e.client_id = ${clientId} and e.role <> 'admin'`))
+      .toEqual([{ email: 'peter@initech.example', status: 'active', onboarding_method: 'direct_create', has_account: true, no_password: true }])
+    // Only the admin was invited. Peter can sign in via "Forgot password".
     expect(invites()).toEqual(['bill@initech.example'])
   })
 
@@ -318,11 +332,12 @@ d('onboarding', () => {
   })
 
   it('create corporate: a failed admin invite leaves no client behind', async () => {
-    failNextAuthWith('Email rate limit exceeded')
+    failNextMailWith('421 4.7.0 try again later')
     const res = await onboard({
       client: { corporateName: 'Vandelay', adminEmail: 'art@vandelay.example', adminName: 'Art', bands: BANDS },
     })
-    expect(res).toEqual({ status: 400, json: { error: 'Email rate limit exceeded' } })
+    expect(res).toEqual({ status: 400, json: { error: MESSAGES.mailFailed } })
     expect(await maybeOne(db, sql`select id from clients where name = 'Vandelay'`)).toBeNull()
+    expect(await maybeOne(db, sql`select id from accounts where email = 'art@vandelay.example'`)).toBeNull()
   })
 })

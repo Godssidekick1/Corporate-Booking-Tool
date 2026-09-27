@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { createClient } from '@/utils/supabase/client'
 import { PERMISSIONS } from '@/app/lib/permissions/permissionKeys'
 import PasswordInput from '@/app/components/PasswordInput'
 
@@ -56,6 +55,7 @@ export default function TmcProfilePage() {
   const [name, setName] = useState('')
   const [savingName, setSavingName] = useState(false)
 
+  const [currentPassword, setCurrentPassword] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [savingPassword, setSavingPassword] = useState(false)
@@ -99,15 +99,18 @@ export default function TmcProfilePage() {
 
     setSavingPassword(true)
     try {
-      // Done from the browser client, not a route: the user already holds a
-      // session, and Supabase's updateUser is the supported path for a
-      // self-service change. A server route would need the service client,
-      // which can change anyone's password — more power than this needs.
-      const supabase = createClient()
-      const { error: updateError } = await supabase.auth.updateUser({ password })
-      if (updateError) { setError(updateError.message); return }
-      setPassword(''); setConfirmPassword('')
-      setSuccess('Password changed. It applies the next time you sign in.')
+      // The current password is required: an open session alone must not be
+      // enough to take over the account. Every other session ends; this one
+      // is replaced by a fresh one, so this device stays signed in.
+      const res = await fetch('/api/auth/password/change', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentPassword, newPassword: password }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) { setError(data.error || 'Could not change your password.'); return }
+      setCurrentPassword(''); setPassword(''); setConfirmPassword('')
+      setSuccess('Password changed. You have been signed out everywhere else.')
     } finally { setSavingPassword(false) }
   }
 
@@ -237,9 +240,17 @@ export default function TmcProfilePage() {
       {/* ── Security ───────────────────────────────────────────────── */}
       <section style={s.card}>
         <h2 style={s.cardTitle}>Security</h2>
-        <p style={s.cardSub}>Change your password. You stay signed in on this device.</p>
+        <p style={s.cardSub}>Change your password. You stay signed in on this device, and are signed out everywhere else.</p>
 
         <form onSubmit={changePassword} style={s.passwordForm}>
+          <div style={{ ...s.field, flex: 1, minWidth: 200 }}>
+            <label style={s.label} htmlFor="currentPassword">Current password</label>
+            <PasswordInput
+              id="currentPassword" value={currentPassword} autoComplete="current-password"
+              onChange={setCurrentPassword}
+              style={s.input}
+            />
+          </div>
           <div style={{ ...s.field, flex: 1, minWidth: 200 }}>
             <label style={s.label} htmlFor="password">New password</label>
             <PasswordInput
@@ -258,8 +269,8 @@ export default function TmcProfilePage() {
           </div>
           <button
             type="submit"
-            disabled={savingPassword || !password}
-            style={{ ...s.primaryBtn, opacity: savingPassword || !password ? 0.5 : 1 }}
+            disabled={savingPassword || !password || !currentPassword}
+            style={{ ...s.primaryBtn, opacity: savingPassword || !password || !currentPassword ? 0.5 : 1 }}
           >
             {savingPassword ? 'Changing…' : 'Change password'}
           </button>

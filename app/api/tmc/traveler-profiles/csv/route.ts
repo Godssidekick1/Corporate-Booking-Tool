@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import { authoriseClient } from '../route'
 import { NextRequest } from 'next/server'
 import { db } from '@/app/lib/db'
@@ -56,12 +56,7 @@ function escapeCell(value: unknown): string {
 }
 
 export const GET = route(async (req: NextRequest) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const clientId = req.nextUrl.searchParams.get('clientId')
   if (!clientId) {
@@ -113,12 +108,7 @@ interface ImportBody {
 }
 
 export const POST = route(async (req: NextRequest) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const body: ImportBody = await req.json()
   const { clientId, rows } = body

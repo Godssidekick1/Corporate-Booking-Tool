@@ -14,8 +14,8 @@ import { DbConfigurationError } from './errors'
 // build time, where DATABASE_URL may legitimately be absent. Creating the pool
 // on first use rather than at import means a build does not need a database.
 //
-// Measured context for the size below: the Supabase round trip this replaces
-// was ~200ms per query over HTTP, and a single ticketing request made four of
+// Measured context for the size below: the HTTP data API round trip this
+// replaced was ~200ms per query, and a single ticketing request made four of
 // them sequentially before the provider was contacted at all.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -36,7 +36,7 @@ export function getPool(): Pool {
     throw new DbConfigurationError(
       '[db] DATABASE_URL is not set, and the application has no other data path.\n' +
       '  Local:    DATABASE_URL=postgresql://postgres:<password>@localhost:5432/cbt_local\n' +
-      '  Deployed: the Supabase transaction pooler (port 6543).'
+      '  Deployed: the production PostgreSQL (behind a transaction pooler when serverless).'
     )
   }
 
@@ -48,7 +48,7 @@ export function getPool(): Pool {
   // never the user or password.
   const target = new URL(connectionString)
   console.info(`[db] data -> PostgreSQL ${target.hostname}:${target.port || 5432}${target.pathname}` +
-    ` (pool max ${serverless ? 3 : 10}); auth -> Supabase GoTrue`)
+    ` (pool max ${serverless ? 3 : 10})`)
 
   pool = new Pool({
     connectionString,
@@ -58,7 +58,7 @@ export function getPool(): Pool {
     // max 10 is 200 connections against a database whose limit is far lower,
     // and the failure ("remaining connection slots are reserved") appears only
     // under load, never in dev. So serverless gets a pool of 3, and relies on
-    // the Supabase transaction pooler (port 6543) to multiplex upstream.
+    // a transaction pooler in front of the database to multiplex upstream.
     max: serverless ? 3 : 10,
     // Idle connections on a frozen serverless instance are held open against
     // the pooler for nothing; release them quickly.

@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { gstinFinding } from '@/app/lib/data/gstin'
 import { NextRequest } from 'next/server'
@@ -41,11 +41,7 @@ interface Body {
 type Ctx = { params: Promise<{ id: string }> }
 
 async function authorise(clientId: string) {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-  if (authError || !user) {
-    return { error: Response.json({ error: 'Not authenticated' }, { status: 401 }) }
-  }
+  const user = await requireUser()
 
   const check = await requireTmcPermission(db, user.id, 'manage_clients', clientId)
   if (!check.authorized || !check.tmcId) {

@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import { NextRequest } from 'next/server'
 import type { TravelerProfile } from '@/app/lib/book/types'
 import { db } from '@/app/lib/db'
@@ -25,12 +25,7 @@ import { route } from '@/app/lib/http/handler'
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const GET = route(async () => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   // A database failure throws (500) rather than reading as "not found".
   const employee = await employees.travellerRecord(db, user.id)
@@ -124,12 +119,7 @@ function validateTravelerProfile(body: unknown): { profile?: TravelerProfile; er
 }
 
 export const PATCH = route(async (req: NextRequest) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const body = await req.json()
   const { profile, error: validationError } = validateTravelerProfile(body)

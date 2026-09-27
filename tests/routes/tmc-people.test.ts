@@ -11,7 +11,7 @@ import { GET as csvGet, POST as csvPost } from '@/app/api/tmc/traveler-profiles/
 import { call } from '../harness/call'
 import { actors, type Actors } from '../harness/actors'
 import { resetDatabase } from '../harness/db'
-import { authCalls } from '../harness/authAdmin'
+import { outbox, linkIn } from '../harness/mail'
 import { db } from '@/app/lib/db'
 import { sql, many, maybeOne, one, exec } from '@/app/lib/db/sql'
 
@@ -19,8 +19,8 @@ import { sql, many, maybeOne, one, exec } from '@/app/lib/db/sql'
 // Travel counsellors, branches, a client's bands, and the traveller-profile
 // roster (list, edit, CSV round trip).
 //
-// POST /api/tmc/tcs invites through GoTrue's admin API, faked here -- a real
-// call would create a real account and send a real email.
+// POST /api/tmc/tcs creates an account and emails an invite, which lands in
+// the fake outbox (tests/harness/mail.ts).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const HAS_DB = Boolean(process.env.DATABASE_URL)
@@ -113,12 +113,11 @@ d('tmc/tcs', () => {
   })
 
   it('POST: invites a counsellor with exactly the permissions and clients asked for', async () => {
-    const before = authCalls.length
     const res = await call(tcsPost, { as: a.tmcAdmin, method: 'POST', url: '/api/tmc/tcs', body: newTc() })
     expect(res.status).toBe(201)
     const { employeeId, message } = res.json as { employeeId: string; message: string }
     expect(message).toBe(' New Counsellor  invited as a TC.')
-    expect(authCalls.slice(before).map(c => c.method)).toEqual(['inviteUserByEmail'])
+    expect(outbox.map(m => [m.to, linkIn(m).type])).toEqual([['new.counsellor@example.test', 'invite']])
 
     const row = await employee(employeeId)
     expect(row).toMatchObject({

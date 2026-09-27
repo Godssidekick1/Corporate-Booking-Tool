@@ -2,9 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/utils/supabase/client'
-
-const supabase = createClient()
 
 interface Employee {
   id: string
@@ -233,7 +230,8 @@ export default function DashboardPage() {
   }, [])
 
   async function handleSignOut() {
-    await supabase.auth.signOut()
+    // Ends the session on the server; the route clears the cookie.
+    await fetch('/api/auth/signout', { method: 'POST', redirect: 'manual' })
     router.replace('/login')
   }
 

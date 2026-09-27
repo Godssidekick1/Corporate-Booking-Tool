@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import * as dealCodes from '@/app/lib/repositories/dealCodes'
 import { route } from '@/app/lib/http/handler'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
@@ -37,12 +37,7 @@ const DEFAULT_MATRIX: Record<string, Record<string, boolean>> = {
 }
 
 export const GET = route(async () => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const auth = await requireTmcPermission(db, user.id, 'manage_deal_codes')
   if (!auth.authorized || !auth.tmcId) {

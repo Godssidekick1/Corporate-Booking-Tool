@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import { requireTmcPermission, getAccessibleClientIds } from '@/app/lib/permissions/requireTmcPermission'
 import { db } from '@/app/lib/db'
 import * as clientsRepo from '@/app/lib/repositories/clients'
@@ -31,12 +31,7 @@ interface ClientStat {
 }
 
 export const GET = route(async () => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   // No specific clientId — this is a whole-portfolio view, and which slice of
   // it the caller may see is decided by getAccessibleClientIds below.

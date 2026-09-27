@@ -1,7 +1,7 @@
 # ── restore-local.ps1 ────────────────────────────────────────────────────────
 # Rebuilds the captured Supabase schema on the local PostgreSQL 18 instance.
 #
-# This is the proof that capture-schema.ps1 produced something usable. A dump
+# This is the proof that baseline.sql is usable. A dump
 # that has never been restored is not a backup, it is a file — and the failure
 # modes below are exactly the ones that only appear on restore.
 #
@@ -32,7 +32,7 @@ $pgbin = "C:\Program Files\PostgreSQL\18\bin"
 if (Test-Path $pgbin) { $env:Path = "$env:Path;$pgbin" }
 
 if (-not (Test-Path "$OutDir/baseline.sql")) {
-  Write-Host "$OutDir/baseline.sql not found. Run .\scripts\capture-schema.ps1 first." -ForegroundColor Red
+  Write-Host "$OutDir/baseline.sql not found. It is committed; check out the repository fully." -ForegroundColor Red
   exit 1
 }
 
@@ -64,7 +64,7 @@ function Invoke-Psql {
   Write-Host "  $Label ..." -NoNewline
   $errFile = [IO.Path]::GetTempFileName()
 
-  # See the note in capture-schema.ps1: in PowerShell 5.1 ANY stderr
+  # In PowerShell 5.1 ANY stderr
   # redirection of a native command (`2> file` as much as `2>&1`) turns each
   # stderr line into a NativeCommandError, which is terminating under "Stop".
   # psql writes NOTICE and WARNING to stderr as a matter of course, so this has
@@ -91,7 +91,7 @@ function Invoke-Psql {
 
   Write-Host " ok" -ForegroundColor Green
   if ($stderr -and $AllowNotices) {
-    # psql's words only -- see the matching note in capture-schema.ps1.
+    # psql's words only, without PowerShell's error decoration.
     ($stderr -split "`r?`n") | Where-Object {
       $_ -match '\S' -and
       $_ -notmatch '^\s*(At |\+|\s+\+ (CategoryInfo|FullyQualifiedErrorId))' -and

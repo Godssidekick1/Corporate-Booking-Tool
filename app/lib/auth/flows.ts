@@ -8,6 +8,7 @@ import { hashPassword, verifyPassword, burnVerifyTime, passwordProblem } from '.
 import { newToken, tokenId, isToken } from './tokens'
 import { startSession, refusal, TMC_ROLES, type Principal, type RequestMeta } from './session'
 import { appUrl } from './request'
+import { newAccountId } from './ids'
 import * as throttle from './throttle'
 
 // ── Authentication flows ─────────────────────────────────────────────────────
@@ -38,6 +39,7 @@ export const MESSAGES = {
   wrongCurrent: 'Your current password is incorrect.',
   samePassword: 'Choose a password different from your current one.',
   accountExists: 'A user with this email address has already been registered',
+  mailFailed: 'The email could not be sent. Check the address and try again, or contact support.',
 } as const
 
 export function normalizeEmail(raw: unknown): string {
@@ -164,9 +166,23 @@ async function issueLink(
   await accounts.retireOpenTokens(q, account.id)
   await accounts.insertToken(q, { id, accountId: account.id, purpose, ttlSeconds, createdBy: issuedBy })
   const link = linkFor(token, purpose)
-  await sendMail(purpose === 'invite'
-    ? inviteEmail(account.email, link, INVITE_TTL_SECONDS / 86_400)
-    : resetEmail(account.email, link, RESET_TTL_SECONDS / 60))
+  try {
+    await sendMail(purpose === 'invite'
+      ? inviteEmail(account.email, link, INVITE_TTL_SECONDS / 86_400)
+      : resetEmail(account.email, link, RESET_TTL_SECONDS / 60))
+  } catch (err) {
+    throw new MailFailed(err)
+  }
+}
+
+// The mail server refused, or email is not configured. Callers answer it with
+// MESSAGES.mailFailed. The server's own text is logged, not shown: it can name
+// hosts and accounts.
+export class MailFailed extends Error {
+  constructor(cause: unknown) {
+    super(MESSAGES.mailFailed, { cause })
+    this.name = 'MailFailed'
+  }
 }
 
 // "Forgot password". Always answers the same way, whether or not the address
@@ -197,12 +213,14 @@ export async function requestPasswordReset(rawEmail: unknown, meta: RequestMeta)
 }
 
 // An admin resets someone else's password: the same email, sent on their
-// behalf. The admin never learns or chooses the password.
-export async function sendPasswordReset(q: Queryable, accountId: string, requestedBy: string): Promise<void> {
+// behalf. The admin never learns or chooses the password. Returns the address
+// it went to, or null when the person has no account to reset.
+export async function sendPasswordReset(q: Queryable, accountId: string, requestedBy: string): Promise<{ email: string } | null> {
   const account = await accounts.byId(q, accountId)
-  if (!account) throw new Error(`[auth] no account ${accountId}`)
+  if (!account) return null
   await issueLink(q, account, 'reset', requestedBy)
   await record(q, 'auth.reset_sent', account.id, requestedBy, null)
+  return { email: account.email }
 }
 
 // What a link is for, without spending it: the confirm page shows the address
@@ -323,44 +341,41 @@ export class AccountExists extends Error {
   }
 }
 
-// An account the person activates themselves from an emailed link. Runs on
-// the caller's transaction, so the employee row, the account, the link and
-// the email stand or fall together.
-export async function inviteAccount(q: Queryable, rawEmail: string, invitedBy: string | null): Promise<{ accountId: string }> {
-  const email = normalizeEmail(rawEmail)
-  if (await accounts.byEmail(q, email)) throw new AccountExists()
-  const { id } = await accounts.insert(q, { email, passwordHash: null, mustChangePassword: false, verified: false })
-  await issueLink(q, { id, email }, 'invite', invitedBy)
-  await record(q, 'auth.invite_sent', id, invitedBy, null)
-  return { accountId: id }
-}
-
-// Sends a fresh invite to an account that has not accepted its first one.
-export async function reinvite(q: Queryable, accountId: string, invitedBy: string): Promise<void> {
-  const account = await accounts.byId(q, accountId)
-  if (!account) throw new Error(`[auth] no account ${accountId}`)
-  await issueLink(q, account, 'invite', invitedBy)
-  await record(q, 'auth.invite_sent', account.id, invitedBy, null, { resent: true })
-}
-
-// An account with a password the admin chose and hands over themselves. The
-// person must replace it at first sign-in: until they do, the admin knows it.
-export async function createAccountWithPassword(
+// A new account, for someone an admin is adding. Runs on the caller's
+// transaction, so the account and the employee record stand or fall together.
+//
+//   With a password: one the admin chose and hands over themselves. The
+//   person must replace it at first sign-in, since until they do the admin
+//   knows it.
+//   Without one: the person chooses it from an invite (sendInvite, below).
+export async function createAccount(
   q: Queryable,
   rawEmail: string,
-  password: string,
-  createdBy: string
+  opts: { password?: string; createdBy: string | null }
 ): Promise<{ accountId: string }> {
   const email = normalizeEmail(rawEmail)
   if (await accounts.byEmail(q, email)) throw new AccountExists()
+  const direct = typeof opts.password === 'string'
   const { id } = await accounts.insert(q, {
+    id: newAccountId(email),
     email,
-    passwordHash: await hashPassword(password),
-    mustChangePassword: true,
-    verified: true,
+    passwordHash: direct ? await hashPassword(opts.password!) : null,
+    mustChangePassword: direct,
+    verified: direct,
   })
-  await record(q, 'auth.account_created', id, createdBy, null, { method: 'direct' })
+  await record(q, 'auth.account_created', id, opts.createdBy, null, { method: direct ? 'direct' : 'invite' })
   return { accountId: id }
+}
+
+// Emails an invite link, retiring any earlier one: the first invite, or a
+// resend. Call it LAST in the caller's transaction, after the rows the account
+// needs exist: a failure here (the mail server refused) rolls everything back,
+// and nothing that follows can fail after the email has gone.
+export async function sendInvite(q: Queryable, accountId: string, invitedBy: string | null): Promise<void> {
+  const account = await accounts.byId(q, accountId)
+  if (!account) throw new Error(`[auth] no account ${accountId}`)
+  await issueLink(q, account, 'invite', invitedBy)
+  await record(q, 'auth.invite_sent', account.id, invitedBy, null)
 }
 
 // Deactivation, done: ends every session now rather than at the next request.

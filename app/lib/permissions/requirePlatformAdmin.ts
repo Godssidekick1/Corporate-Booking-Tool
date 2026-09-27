@@ -1,6 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
-import { db } from '@/app/lib/db'
-import * as tmcs from '@/app/lib/repositories/tmcs'
+import { currentUser } from '@/app/lib/auth/session'
 
 // ── requirePlatformAdmin ─────────────────────────────────────────────────────
 // The gate on every /platform surface.
@@ -11,9 +9,10 @@ import * as tmcs from '@/app/lib/repositories/tmcs'
 // the same code path as the lowest is exactly the confusion this separation
 // exists to prevent.
 //
-// platform_admins has RLS on with no policies, so only a privileged connection
-// can read it -- which is also why this cannot be checked from the proxy or a
-// client component.
+// Membership comes from the session lookup itself (currentUser() reads
+// platform_admins in the same query that resolves the session), so this costs
+// no query of its own. platform_admins has RLS on with no policies, so only
+// the application's own connection can read it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface PlatformAdmin {
@@ -25,28 +24,22 @@ export type PlatformCheck =
   | { ok: true; admin: PlatformAdmin }
   | { ok: false; status: number; error: string }
 
-// For route handlers. Resolves the session, then membership.
+// For route handlers and the /platform layout.
 //
 // A signed-in user who is not a platform admin gets 404, not 403. 403 confirms
 // the surface exists and that they simply lack access, which tells an attacker
 // where to aim; 404 says nothing. The distinction costs nothing here because a
 // legitimate platform admin never sees either.
 export async function requirePlatformAdmin(): Promise<PlatformCheck> {
-  const supabase = await createClient()
-  const { data: { user }, error } = await supabase.auth.getUser()
+  const me = await currentUser()
 
-  if (error || !user) {
+  if (!me) {
     return { ok: false, status: 401, error: 'Not authenticated' }
   }
 
-  const admin = await tmcs.platformAdmin(db, user.id)
-
-  if (!admin) {
+  if (!me.isPlatformAdmin) {
     return { ok: false, status: 404, error: 'Not found' }
   }
 
-  return {
-    ok: true,
-    admin: { userId: admin.user_id, email: admin.email ?? user.email ?? null },
-  }
+  return { ok: true, admin: { userId: me.id, email: me.email } }
 }

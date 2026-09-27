@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { BRANCH_STATUSES, DUPLICATE_BRANCH, branchFields, type BranchBody } from '../route'
 import { NextRequest } from 'next/server'
@@ -33,12 +33,7 @@ async function authorise(userId: string, id: string) {
 
 export const GET = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const check = await authorise(user.id, id)
   if (!check.ok) {
@@ -55,12 +50,7 @@ export const GET = route(async (req: NextRequest, { params }: Ctx) => {
 
 export const PATCH = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const check = await authorise(user.id, id)
   if (!check.ok) {
@@ -98,12 +88,7 @@ export const PATCH = route(async (req: NextRequest, { params }: Ctx) => {
 
 export const DELETE = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const check = await authorise(user.id, id)
   if (!check.ok) {

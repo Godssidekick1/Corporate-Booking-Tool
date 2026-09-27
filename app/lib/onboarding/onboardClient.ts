@@ -1,4 +1,5 @@
-import { authAdmin } from '@/utils/supabase/admin'
+import { createAccount, sendInvite } from '@/app/lib/auth/flows'
+import { inviteFailure } from './onboardTmc'
 import { db, transaction } from '@/app/lib/db'
 import * as clients from '@/app/lib/repositories/clients'
 import * as employees from '@/app/lib/repositories/employees'
@@ -115,7 +116,6 @@ export function validateBands(bands: BandInput[] | undefined): string | null {
 
 export async function onboardClient(
   tmcId: string,
-  appUrl: string,
   input: OnboardClientInput
 ): Promise<OnboardClientResult> {
   const { corporateName, adminEmail, adminName } = input
@@ -174,8 +174,6 @@ export async function onboardClient(
   }
 
   const email = adminEmail.trim().toLowerCase()
-  const auth = authAdmin()
-  let authUserId: string | null = null
 
   try {
     const clientId = await transaction(async (tx) => {
@@ -215,20 +213,16 @@ export async function onboardClient(
         await policy.link(tx, id, input.policyGroupId, null)
       }
 
-      // redirectTo points at /auth/callback, not /login — see inviteRedirectUrl.
-      const { data: authData, error: inviteError } = await auth.inviteUserByEmail(email, {
-        redirectTo: `${appUrl}/auth/callback?next=/auth/set-password`,
-      })
-      if (inviteError) throw new InviteRefused(inviteError.message)
-      authUserId = authData.user.id
-
+      const { accountId } = await createAccount(tx, email, { createdBy: null })
       await employees.insertClientAdmin(tx, {
-        id: authUserId,
+        id: accountId,
         client_id: id,
         band: adminBand,
         full_name: adminName.trim(),
         email,
       })
+      // Last: a refused email rolls the whole client back.
+      await sendInvite(tx, accountId, null)
 
       return id
     }, { tenantId: tmcId })
@@ -236,16 +230,11 @@ export async function onboardClient(
     return { ok: true, clientId }
   } catch (err) {
     console.error('onboardClient failed, rolled back', err)
-    if (authUserId) await auth.deleteUser(authUserId)
-
-    // GoTrue's own message is the useful one ("already registered", "rate
-    // limit"); anything from the database is not for the browser.
+    // An address that already has an account, or an email that could not be
+    // sent, is worth saying; anything from the database is not for the browser.
     return {
       ok: false,
-      error: err instanceof InviteRefused ? err.message : 'The client could not be created. Nothing was saved.',
+      error: inviteFailure(err)?.error ?? 'The client could not be created. Nothing was saved.',
     }
   }
 }
-
-// The admin's invite was refused by the auth service; its message is shown.
-class InviteRefused extends Error {}

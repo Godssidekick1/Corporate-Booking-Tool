@@ -1,323 +1,97 @@
-import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
-import { db } from '@/app/lib/db'
-import * as employees from '@/app/lib/repositories/employees'
+import { principalForToken, SESSION_COOKIE, TMC_ROLES } from '@/app/lib/auth/session'
 
-// Exact-or-child-segment match.
-// /book/flights → matches /book
-// /bookmark     → does NOT match /book
+// ── proxy.ts: the page gate ──────────────────────────────────────────────────
+// Runs before every PAGE request (API routes authenticate themselves; see the
+// matcher). Decides only where a browser should be: signed out -> /login,
+// admin-set password not yet replaced -> /auth/set-password, first-login
+// profile not done -> /profile, corporate user on /tmc -> /dashboard.
+//
+// ONE LOOKUP, FROM THE DATABASE. principalForToken is the same session lookup
+// every API route uses: session -> account -> employee -> client/TMC standing.
+// The role and the must-change-password flag come from there. Under GoTrue
+// they came from user_metadata, which the user could rewrite on themselves (a
+// self-granted tmc_admin opened the /tmc pages; a cleared must_set_password
+// skipped the forced change). A deactivated person has no session at all
+// here: the lookup refuses them.
+//
+// Next 16 runs proxy on the Node.js runtime, so this is node-postgres like
+// everywhere else.
+//
+// This is navigation, not authorization. Every page's data comes from API
+// routes that check for themselves, and /platform's layout checks platform
+// membership itself.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Exact-or-child-segment match: /book/flights matches /book, /bookmark does not.
 function matchesBase(pathname: string, base: string): boolean {
   return pathname === base || pathname.startsWith(base + '/')
 }
 
-function matchesAny(pathname: string, bases: string[]): boolean {
-  return bases.some((base) => matchesBase(pathname, base))
-}
+// Keep this an explicit allow-list. A new page is NOT protected until it is
+// added here (its data still is, by its API routes).
+const PROTECTED = ['/dashboard', '/settings', '/tmc', '/book', '/bookings', '/approvals', '/reports', '/profile', '/platform']
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
+  const to = (path: string) => NextResponse.redirect(new URL(path, request.url))
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // PUBLIC AUTH ROUTES
-  // ─────────────────────────────────────────────────────────────────────────
-  //
-  // /auth/* handles things like:
-  // - auth/callback
-  // - password recovery
-  // - set-password
-  //
-  // These routes should not call supabase.auth.getUser().
-  // They need to be able to complete the authentication flow without being
-  // treated as normally authenticated protected pages.
-  //
-  // This check happens BEFORE creating the Supabase client and BEFORE
-  // getUser(), avoiding an unnecessary network round trip to Supabase.
-  //
-  // /api/* is NOT handled here because it is excluded from the matcher below.
-  // API routes perform their own authentication server-side.
-  // ─────────────────────────────────────────────────────────────────────────
+  // /auth/* completes authentication (invite and reset links, the forced
+  // password change), so it must be reachable without a normal session.
+  if (matchesBase(pathname, '/auth')) return NextResponse.next()
 
-  if (matchesAny(pathname, ['/auth'])) {
-    return NextResponse.next({ request })
+  const isProtected = PROTECTED.some(base => matchesBase(pathname, base))
+  const isLogin = pathname === '/login'
+  if (!isProtected && !isLogin) return NextResponse.next()
+
+  // Failing open on a database error is the right call for navigation (a blip
+  // must not lock everyone out, and the API routes still refuse), but it must
+  // be loud when it happens.
+  let me = null
+  try {
+    me = await principalForToken(request.cookies.get(SESSION_COOKIE)?.value)
+  } catch (err) {
+    console.error('[proxy] session lookup failed:', err)
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // SUPABASE SERVER CLIENT
-  // ─────────────────────────────────────────────────────────────────────────
+  if (!me) {
+    if (!isProtected) return NextResponse.next()
+    const login = new URL('/login', request.url)
+    login.searchParams.set('next', pathname)
+    return NextResponse.redirect(login)
+  }
 
-  let supabaseResponse = NextResponse.next({ request })
+  const role = me.employee?.role ?? null
+  const tmcSide = role !== null && TMC_ROLES.includes(role)
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
+  // An admin chose this person's password, so the admin knows it. Nothing else
+  // until they replace it, including the profile step.
+  if (me.mustChangePassword && (isProtected || isLogin)) return to('/auth/set-password')
 
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) => {
-            request.cookies.set(name, value)
-          })
+  // Already signed in: /login goes to where they belong. A platform admin has
+  // no employees row, by design. An account with neither has nowhere to go and
+  // sees the sign-in page (redirecting it to /login would loop).
+  if (isLogin) {
+    const home = tmcSide ? '/tmc/dashboard' : role ? '/dashboard' : me.isPlatformAdmin ? '/platform' : null
+    return home ? to(home) : NextResponse.next()
+  }
 
-          supabaseResponse = NextResponse.next({ request })
-
-          cookiesToSet.forEach(({ name, value, options }) => {
-            supabaseResponse.cookies.set(name, value, options)
-          })
-        },
-      },
-    }
-  )
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // AUTHENTICATION
-  // ─────────────────────────────────────────────────────────────────────────
-  //
-  // At this point we know the request is not /auth/* and not /api/*.
-  // Therefore getUser() is only performed for pages where the proxy actually
-  // needs authentication information.
-  // ─────────────────────────────────────────────────────────────────────────
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // PROTECTED ROUTES
-  // ─────────────────────────────────────────────────────────────────────────
-  //
-  // Keep this as an explicit allow-list.
-  //
-  // IMPORTANT:
-  // A newly created page is NOT automatically protected by this list.
-  // It must be added here if it requires authentication.
-  // ─────────────────────────────────────────────────────────────────────────
-
-  const protectedBases = [
-    '/dashboard',
-    '/settings',
-    '/tmc',
-    '/book',
-    '/bookings',
-    '/approvals',
-    '/reports',
-    '/profile',
-    // Listed here only so an anonymous visitor is sent to /login rather than
-    // rendering anything. The REAL gate is app/platform/layout.tsx, which checks
-    // platform_admins with the service client and 404s — this proxy runs on the
-    // anon client, and platform_admins has RLS on with no policies precisely so
-    // that an anon-key read of it returns nothing. Membership cannot be, and
-    // must not be, decided here.
-    '/platform',
-  ]
-
-  const isProtected = matchesAny(pathname, protectedBases)
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // ROUTE TYPES
-  // ─────────────────────────────────────────────────────────────────────────
-
-  const isAuthOnly = pathname === '/login'
-
-  const isProfilePage = matchesBase(pathname, '/profile')
-
-  const needsRoleCheck =
-    !!user &&
-    (isAuthOnly || matchesBase(pathname, '/tmc'))
-
-  const isPlatformPage = matchesBase(pathname, '/platform')
-
-  // Profile itself is where the user completes onboarding, so don't redirect
-  // /profile → /profile when first_login_completed is false.
-  //
-  // /platform is excluded too, and for a different reason: first-login
-  // onboarding is a corporate-employee concept, and a platform admin has no
-  // employees row at all. Running the check for them means a failed .single()
-  // lookup — and a logged error — on every single request to the surface.
-  const needsOnboardingCheck =
-    !!user &&
-    isProtected &&
-    !isProfilePage &&
-    !isPlatformPage
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // USER ROLE / ONBOARDING DATA
-  // ─────────────────────────────────────────────────────────────────────────
-  //
-  // Try user_metadata first for role because it avoids a database query when
-  // the metadata is present.
-  //
-  // first_login_completed is stored in employees, so when onboarding needs to
-  // be checked we fetch it from the database.
-  // ─────────────────────────────────────────────────────────────────────────
-
-  let resolvedRole =
-    user?.user_metadata?.role as string | undefined
-
-  let firstLoginCompleted: boolean | undefined
-
+  // Corporate employees finish their first-login profile before anything else.
+  // /profile is where they do it (no loop), TMC staff have no such step, and
+  // /platform is for platform admins, who have no employee record.
   if (
-    (needsRoleCheck || needsOnboardingCheck) &&
-    (!resolvedRole || firstLoginCompleted === undefined)
+    me.employee && !tmcSide && me.employee.firstLoginCompleted === false &&
+    !matchesBase(pathname, '/profile') && !matchesBase(pathname, '/platform')
   ) {
-    // Through the repository, not the anon Supabase client. This was the one
-    // PostgREST call the Stage 1 shim never covered: it ran on the anon key
-    // with RLS, on page navigation, so even with the data layer on PostgreSQL
-    // every signed-in page load still made an HTTP round trip to Supabase. Next 16 runs proxy
-    // on the Node.js runtime, so node-postgres works here.
-    //
-    // The id is the one from the VERIFIED session above, so reading with the
-    // application's connection returns exactly the row RLS used to allow.
-    //
-    // Failing open is still the right call in middleware -- a database blip
-    // should not lock everyone out -- but it must be loud when it happens. A
-    // discarded error here once hid a broken RLS policy for a long time: the
-    // read failed on every request and the onboarding gate below, which tests
-    // `=== false`, silently never fired.
-    let employee: employees.SessionProfile | null = null
-    try {
-      employee = await employees.sessionProfile(db, user!.id)
-    } catch (err) {
-      console.error('[proxy] employee lookup failed:', err)
-    }
-
-    resolvedRole = resolvedRole ?? employee?.role
-    firstLoginCompleted = employee?.first_login_completed
+    return to('/profile?first=1')
   }
 
-  const isTmcSideRole =
-    resolvedRole === 'tmc_admin' ||
-    resolvedRole === 'tc'
+  if (matchesBase(pathname, '/tmc') && !tmcSide) return to('/dashboard')
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // FIRST-LOGIN ONBOARDING
-  // ─────────────────────────────────────────────────────────────────────────
-  //
-  // Corporate-side employees who haven't completed their first-login profile
-  // are forced to /profile?first=1.
-  //
-  // TMC admins / TCs are excluded because they are TMC-side users and don't
-  // personally go through the corporate employee booking profile flow.
-  //
-  // /profile itself is excluded above to prevent a redirect loop.
-  // ─────────────────────────────────────────────────────────────────────────
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // FORCED PASSWORD CHANGE
-  // ─────────────────────────────────────────────────────────────────────────
-  //
-  // Accounts created by an admin with a starting password carry
-  // must_set_password in user_metadata. Until they choose their own, the
-  // admin knows their password and could sign in as them, so this gate comes
-  // before everything else — including the profile step, which would
-  // otherwise let someone work through onboarding on a shared credential.
-  //
-  // /auth/* returned early at the top of this file, so /auth/set-password is
-  // reachable and this cannot loop.
-  // ─────────────────────────────────────────────────────────────────────────
-
-  if (user?.user_metadata?.must_set_password === true && isProtected) {
-    return NextResponse.redirect(new URL('/auth/set-password', request.url))
-  }
-
-  if (
-    needsOnboardingCheck &&
-    !isTmcSideRole &&
-    firstLoginCompleted === false
-  ) {
-    const profileUrl = new URL('/profile', request.url)
-
-    profileUrl.searchParams.set('first', '1')
-
-    return NextResponse.redirect(profileUrl)
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // LOGIN PAGE
-  // ─────────────────────────────────────────────────────────────────────────
-  //
-  // If an already-authenticated user visits /login, send them to the correct
-  // dashboard instead.
-  // ─────────────────────────────────────────────────────────────────────────
-
-  if (user && isAuthOnly) {
-    // A signed-in user with NO resolvable role is either a platform admin —
-    // who has no employees row by design — or an account in a broken state.
-    // Either way /dashboard cannot render for them, since it is built entirely
-    // around an employee and their client. /platform is the one surface that
-    // serves a role-less account, and it 404s for anyone who does not belong
-    // there, so sending them here grants nothing.
-    //
-    // This proxy runs on the anon client and platform_admins has RLS on with no
-    // policies, so membership genuinely cannot be checked here — hence routing
-    // on the absence of a role rather than on the presence of the privilege.
-    const destination = isTmcSideRole
-      ? '/tmc/dashboard'
-      : resolvedRole
-        ? '/dashboard'
-        : '/platform'
-
-    return NextResponse.redirect(
-      new URL(destination, request.url)
-    )
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // PROTECTED ROUTES
-  // ─────────────────────────────────────────────────────────────────────────
-  //
-  // An unauthenticated user trying to access a protected page gets sent to
-  // /login.
-  //
-  // The original destination is preserved in ?next= so the application can
-  // optionally return the user there after login.
-  // ─────────────────────────────────────────────────────────────────────────
-
-  if (!user && isProtected) {
-    const loginUrl = new URL('/login', request.url)
-
-    loginUrl.searchParams.set('next', pathname)
-
-    return NextResponse.redirect(loginUrl)
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // TMC-ONLY ROUTES
-  // ─────────────────────────────────────────────────────────────────────────
-  //
-  // A logged-in corporate employee cannot access /tmc/*.
-  // Only tmc_admin and tc users are allowed there.
-  // ─────────────────────────────────────────────────────────────────────────
-
-  if (
-    user &&
-    matchesBase(pathname, '/tmc') &&
-    !isTmcSideRole
-  ) {
-    return NextResponse.redirect(
-      new URL('/dashboard', request.url)
-    )
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // ALLOW REQUEST
-  // ─────────────────────────────────────────────────────────────────────────
-
-  return supabaseResponse
+  return NextResponse.next()
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MATCHER
-// ─────────────────────────────────────────────────────────────────────────────
-//
-// /api and /api/* are excluded because API routes perform their own
-// authentication server-side.
-//
-// Static assets are also excluded.
-// ─────────────────────────────────────────────────────────────────────────────
-
+// /api is excluded: API routes authenticate themselves. So are static assets.
 export const config = {
   matcher: [
     '/((?!api(?:/|$)|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',

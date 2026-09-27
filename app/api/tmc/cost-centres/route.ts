@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import { authoriseClient } from '../traveler-profiles/route'
 import { NextRequest } from 'next/server'
 import { db, transaction, isConstraint } from '@/app/lib/db'
@@ -32,12 +32,7 @@ const duplicate = (code: string) =>
   Response.json({ error: `"${code}" already exists for this client` }, { status: 409 })
 
 export const GET = route(async (req: NextRequest) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const clientId = req.nextUrl.searchParams.get('clientId')
   if (!clientId) {
@@ -80,12 +75,7 @@ export const GET = route(async (req: NextRequest) => {
 })
 
 export const POST = route(async (req: NextRequest) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const body: CentreBody = await req.json()
   const { clientId } = body
@@ -111,12 +101,7 @@ export const POST = route(async (req: NextRequest) => {
 })
 
 export const PATCH = route(async (req: NextRequest) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const body: CentreBody = await req.json()
   const { clientId, previousCode } = body
@@ -155,12 +140,7 @@ export const PATCH = route(async (req: NextRequest) => {
 })
 
 export const DELETE = route(async (req: NextRequest) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const clientId = req.nextUrl.searchParams.get('clientId')
   const code = req.nextUrl.searchParams.get('code')

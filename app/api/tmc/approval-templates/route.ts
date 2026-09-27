@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import * as approvals from '@/app/lib/repositories/approvals'
 import * as clients from '@/app/lib/repositories/clients'
 import * as employees from '@/app/lib/repositories/employees'
@@ -88,12 +88,7 @@ export function validateTiers(tiers: TemplateTierInput[], mode: string): string 
 }
 
 export const GET = route(async (req: NextRequest) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const auth = await requireTmcPermission(db, user.id, 'manage_approvals')
   if (!auth.authorized || !auth.tmcId) {
@@ -123,12 +118,7 @@ export const GET = route(async (req: NextRequest) => {
 })
 
 export const POST = route(async (req: NextRequest) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const auth = await requireTmcPermission(db, user.id, 'manage_approvals')
   if (!auth.authorized || !auth.tmcId) {

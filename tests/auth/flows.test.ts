@@ -118,7 +118,11 @@ d('auth flows', () => {
   })
 
   it('an account with no password yet (invite not accepted) cannot sign in', async () => {
-    const { accountId } = await transaction(tx => flows.inviteAccount(tx, 'pending.invite@example.test', staff.id))
+    const { accountId } = await transaction(async tx => {
+      const r = await flows.createAccount(tx, 'pending.invite@example.test', { createdBy: staff.id })
+      await flows.sendInvite(tx, r.accountId, staff.id)
+      return r
+    })
     expect(await flows.signIn('pending.invite@example.test', '', meta)).toMatchObject({ status: 400 })
     expect(await flows.signIn('pending.invite@example.test', 'anything at all', meta))
       .toEqual({ ok: false, status: 401, error: flows.MESSAGES.badCredentials })
@@ -264,10 +268,11 @@ d('auth flows', () => {
   it('an invite is accepted by choosing a password; the employee becomes active', async () => {
     const email = 'new.joiner@example.test'
     const { accountId } = await transaction(async tx => {
-      const r = await flows.inviteAccount(tx, email, staff.id)
+      const r = await flows.createAccount(tx, email, { createdBy: staff.id })
       await exec(tx, sql`
         insert into employees (id, auth_user_id, client_id, email, full_name, role, status, onboarding_method)
         values (${r.accountId}, ${r.accountId}, ${person.client_id}, ${email}, 'New Joiner', 'employee', 'invited', 'invite')`)
+      await flows.sendInvite(tx, r.accountId, staff.id)
       return r
     })
     const { token, type } = linkIn(lastMailTo(email)!)
@@ -281,13 +286,16 @@ d('auth flows', () => {
   })
 
   it('an address that already has an account cannot be invited again', async () => {
-    await expect(transaction(tx => flows.inviteAccount(tx, person.email!.toUpperCase(), staff.id)))
+    await expect(transaction(tx => flows.createAccount(tx, person.email!.toUpperCase(), { createdBy: staff.id })))
       .rejects.toBeInstanceOf(flows.AccountExists)
   })
 
   it('an invite whose email fails leaves nothing behind', async () => {
     failNextMailWith('SMTP 550 mailbox unavailable')
-    await expect(transaction(tx => flows.inviteAccount(tx, 'bounced@example.test', staff.id))).rejects.toThrow('550')
+    await expect(transaction(async tx => {
+      const r = await flows.createAccount(tx, 'bounced@example.test', { createdBy: staff.id })
+      await flows.sendInvite(tx, r.accountId, staff.id)
+    })).rejects.toBeInstanceOf(flows.MailFailed)
     expect(await maybeOne(db, sql`select 1 from accounts where email = 'bounced@example.test'`)).toBeNull()
   })
 
@@ -320,7 +328,7 @@ d('auth flows', () => {
 
   it('an admin-set password must be changed, and the flag is server-owned', async () => {
     const email = 'direct.create@example.test'
-    await transaction(tx => flows.createAccountWithPassword(tx, email, 'starting password 1', staff.id))
+    await transaction(tx => flows.createAccount(tx, email, { password: 'starting password 1', createdBy: staff.id }))
     const r = await flows.signIn(email, 'starting password 1', meta)
     expect(r).toMatchObject({ ok: true, mustChangePassword: true })
     if (!r.ok) return

@@ -2,9 +2,9 @@
 // Kinds, calculation bases, fare types and which combinations are offered.
 //
 // NO IMPORTS, deliberately. This is read by the resolver (pure), by the route
-// handlers (server, service-role client) and by the rule editor (browser).
-// Putting it anywhere that touches Supabase would drag the service-role client
-// into the client bundle — the same reason app/lib/fop/paymentTypes.ts exists
+// handlers (server, with the database) and by the rule editor (browser).
+// Putting it anywhere that touches the database would drag the pg driver into
+// the client bundle — the same reason app/lib/fop/paymentTypes.ts exists
 // separately from clientGates.ts.
 //
 // WHICH calc_on VALUES EACH KIND MAY USE IS NOT A DATABASE CHECK. It lives here

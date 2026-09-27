@@ -402,7 +402,7 @@ export default function TicketPage() {
               <h1 style={s.successHeading}>You're booked!</h1>
               {/* The claim that "a copy has also been sent to your email" was
                   here and is not true — no booking email is sent anywhere in
-                  this app, the only mail being Supabase Auth invites. A
+                  this app, the only mail being invites and password resets. A
                   traveller who believes it will not screenshot or download the
                   ticket, which is exactly the person who then has nothing at a
                   gate. Replaced with the two things that ARE true and are the

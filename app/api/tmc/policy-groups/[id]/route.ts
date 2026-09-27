@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import * as policy from '@/app/lib/repositories/policy'
 import { route } from '@/app/lib/http/handler'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
@@ -40,12 +40,7 @@ export const PATCH = route(async (
   { params }: { params: Promise<{ id: string }> }
 ) => {
   const { id } = await params
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const group = await policy.groupOwner(db, id)
 
@@ -128,12 +123,7 @@ export const DELETE = route(async (
   { params }: { params: Promise<{ id: string }> }
 ) => {
   const { id } = await params
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const group = await policy.groupOwner(db, id)
 

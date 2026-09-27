@@ -29,6 +29,7 @@ export async function byId(db: Queryable, id: string): Promise<AccountCredential
 }
 
 export interface NewAccount {
+  id: string
   email: string
   // Null for an invite: the person chooses it.
   passwordHash: string | null
@@ -39,9 +40,9 @@ export interface NewAccount {
 
 export async function insert(db: Queryable, account: NewAccount): Promise<{ id: string }> {
   return one<{ id: string }>(db, sql`
-    insert into accounts (email, password_hash, must_change_password, email_verified_at, password_changed_at)
+    insert into accounts (id, email, password_hash, must_change_password, email_verified_at, password_changed_at)
     values (
-      ${account.email}, ${account.passwordHash}, ${account.mustChangePassword},
+      ${account.id}, ${account.email}, ${account.passwordHash}, ${account.mustChangePassword},
       case when ${account.verified}::boolean then now() end,
       case when ${account.passwordHash}::text is not null then now() end
     )

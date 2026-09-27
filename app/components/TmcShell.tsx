@@ -183,8 +183,8 @@ export default function TmcShell({ children }: { children: React.ReactNode }) {
             {!collapsed && <span className="truncate">{employee?.full_name ?? 'Profile'}</span>}
           </Link>
 
-          {/* POST then hard redirect: the route clears the Supabase session
-              cookie server-side and returns JSON, and a full location change
+          {/* POST then hard redirect: the route ends the session server-side
+              and clears its cookie, and a full location change
               guarantees no client-side cache of the old session survives. */}
           <button
             type="button"

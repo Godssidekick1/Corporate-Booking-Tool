@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import * as policy from '@/app/lib/repositories/policy'
 import * as clients from '@/app/lib/repositories/clients'
 import * as employees from '@/app/lib/repositories/employees'
@@ -48,12 +48,7 @@ async function clientIsTmcs(clientId: string, tmcId: string | null | undefined):
 }
 
 export const GET = route(async (req: NextRequest) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const clientId = req.nextUrl.searchParams.get('clientId')
   if (!clientId) {
@@ -101,12 +96,7 @@ export const GET = route(async (req: NextRequest) => {
 })
 
 export const POST = route(async (req: NextRequest) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const body: LinkBody = await req.json()
   const { clientId, policyGroupId } = body
@@ -178,12 +168,7 @@ export const POST = route(async (req: NextRequest) => {
 })
 
 export const DELETE = route(async (req: NextRequest) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const clientId = req.nextUrl.searchParams.get('clientId')
   const policyGroupId = req.nextUrl.searchParams.get('policyGroupId')

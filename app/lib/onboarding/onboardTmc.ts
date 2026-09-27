@@ -1,4 +1,4 @@
-import { authAdmin } from '@/utils/supabase/admin'
+import { createAccount, sendInvite, AccountExists, MailFailed } from '@/app/lib/auth/flows'
 import { db, transaction } from '@/app/lib/db'
 import * as tmcs from '@/app/lib/repositories/tmcs'
 import * as employees from '@/app/lib/repositories/employees'
@@ -11,11 +11,10 @@ import * as employees from '@/app/lib/repositories/employees'
 // how one of them quietly stops rolling back — and a half-created TMC means an
 // auth user with no employees row, which nothing in the app can see or repair.
 //
-// The TMC and its admin's row are one transaction, with the invite between
-// them (the invite needs the TMC's id). A failure anywhere rolls the database
-// back by itself. The invite is an API call to Supabase's auth service, outside
-// any Postgres transaction, so it alone is compensated by hand: if it
-// succeeded and a later step failed, the account is deleted.
+// The TMC, the admin's account, their employees row and the invite email are
+// ONE transaction, email last. A failure anywhere rolls all of it back, and
+// there is nothing left to compensate by hand (the GoTrue account used to
+// live outside the database and had to be deleted when a later step failed).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface OnboardTmcInput {
@@ -28,21 +27,15 @@ export type OnboardTmcResult =
   | { ok: true; tmcId: string; adminUserId: string }
   | { ok: false; error: string; status: number }
 
-// Shared by both entry points so an invite from the screen and an invite from
-// Postman land the user in exactly the same place.
-//
-// redirectTo points at /auth/callback rather than /login: /login is gated by
-// proxy.ts's "authenticated user visiting /login -> dashboard" rule, which runs
-// before any client page loads, so anyone with an existing session cookie in
-// that browser got bounced away before the invite was ever processed.
-export function inviteRedirectUrl(): string {
-  return `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/auth/set-password`
-}
-
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
-// The auth service refused the invite; its message is the useful one to show.
-class InviteRefused extends Error {}
+// An invite that could not be made, as the caller should hear it: the address
+// already has an account (409), or the email could not be sent (502).
+export function inviteFailure(err: unknown): { status: number; error: string } | null {
+  if (err instanceof AccountExists) return { status: 409, error: err.message }
+  if (err instanceof MailFailed) return { status: 502, error: err.message }
+  return null
+}
 
 export async function onboardTmc(input: OnboardTmcInput): Promise<OnboardTmcResult> {
   const tmcName = input.tmcName?.trim()
@@ -68,42 +61,25 @@ export async function onboardTmc(input: OnboardTmcInput): Promise<OnboardTmcResu
     return { ok: false, status: 409, error: `A TMC named "${tmcName}" already exists.` }
   }
 
-  const auth = authAdmin()
-  let authUserId: string | null = null
-
   try {
-    const tmcId = await transaction(async (tx) => {
-      const { id } = await tmcs.insertTmc(tx, tmcName)
-
-      // role and tmc_id go into user_metadata so proxy.ts's role check works on
-      // the very first request, without a database round trip.
-      const { data: authData, error: inviteError } = await auth.inviteUserByEmail(adminEmail, {
-        redirectTo: inviteRedirectUrl(),
-        data: { full_name: adminName, tmc_id: id, role: 'tmc_admin' },
-      })
-      if (inviteError) throw new InviteRefused(inviteError.message)
-      authUserId = authData.user.id
-
-      await employees.insertTmcAdmin(tx, { id: authUserId, tmc_id: id, full_name: adminName, email: adminEmail })
-      return id
+    const created = await transaction(async (tx) => {
+      const { id: tmcId } = await tmcs.insertTmc(tx, tmcName)
+      const { accountId } = await createAccount(tx, adminEmail, { createdBy: null })
+      await employees.insertTmcAdmin(tx, { id: accountId, tmc_id: tmcId, full_name: adminName, email: adminEmail })
+      await sendInvite(tx, accountId, null)
+      return { tmcId, adminUserId: accountId }
     })
 
-    return { ok: true, tmcId, adminUserId: authUserId! }
+    return { ok: true, ...created }
   } catch (err) {
     console.error('[onboardTmc] failed, rolled back', { tmcName, adminEmail, err })
-    if (authUserId) await auth.deleteUser(authUserId)
-
-    return {
-      ok: false,
-      status: 500,
-      error: err instanceof InviteRefused ? err.message : 'Failed to create TMC',
-    }
+    return { ok: false, ...(inviteFailure(err) ?? { status: 500, error: 'Failed to create TMC' }) }
   }
 }
 
 // ── inviteTmcAdmin ───────────────────────────────────────────────────────────
-// A further admin for a TMC that already exists. Same invite shape, no TMC to
-// create, so the rollback is just the auth user.
+// A further admin for a TMC that already exists. Same invite, no TMC to
+// create.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function inviteTmcAdmin(
@@ -125,27 +101,16 @@ export async function inviteTmcAdmin(
     return { ok: false, status: 409, error: 'Someone with that email is already at this TMC.' }
   }
 
-  const auth = authAdmin()
-  let authUserId: string | null = null
-
   try {
-    const { data: authData, error: inviteError } = await auth.inviteUserByEmail(address, {
-      redirectTo: inviteRedirectUrl(),
-      data: { full_name: name, tmc_id: tmcId, role: 'tmc_admin' },
+    const userId = await transaction(async tx => {
+      const { accountId } = await createAccount(tx, address, { createdBy: null })
+      await employees.insertTmcAdmin(tx, { id: accountId, tmc_id: tmcId, full_name: name, email: address })
+      await sendInvite(tx, accountId, null)
+      return accountId
     })
-    if (inviteError) throw new InviteRefused(inviteError.message)
-    authUserId = authData.user.id
-
-    await employees.insertTmcAdmin(db, { id: authUserId, tmc_id: tmcId, full_name: name, email: address })
-
-    return { ok: true, userId: authUserId }
+    return { ok: true, userId }
   } catch (err) {
-    console.error('[inviteTmcAdmin] failed, rolling back', { tmcId, address, err })
-    if (authUserId) await auth.deleteUser(authUserId)
-    return {
-      ok: false,
-      status: 500,
-      error: err instanceof InviteRefused ? err.message : 'Failed to invite the admin',
-    }
+    console.error('[inviteTmcAdmin] failed, rolled back', { tmcId, address, err })
+    return { ok: false, ...(inviteFailure(err) ?? { status: 500, error: 'Failed to invite the admin' }) }
   }
 }

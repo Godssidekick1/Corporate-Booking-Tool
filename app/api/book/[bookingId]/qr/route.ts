@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import QRCode from 'qrcode'
 import { NextRequest } from 'next/server'
 import { db } from '@/app/lib/db'
@@ -26,12 +26,7 @@ export const GET = route(async (
   req: NextRequest,
   { params }: { params: Promise<{ bookingId: string }> }
 ) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const { bookingId } = await params
 

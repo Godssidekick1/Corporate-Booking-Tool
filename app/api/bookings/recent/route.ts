@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import { NextRequest } from 'next/server'
 import { travellerItinerary, travellerFareBreakdown } from '@/app/lib/book/travellerView'
 import { db } from '@/app/lib/db'
@@ -22,12 +22,7 @@ import { route } from '@/app/lib/http/handler'
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const GET = route(async (req: NextRequest) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const employee = await employees.scope(db, user.id)
 

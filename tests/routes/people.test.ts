@@ -9,7 +9,7 @@ import { PATCH as tmcEmployeePatch } from '@/app/api/tmc/employees/[id]/route'
 import { call } from '../harness/call'
 import { actors, type Actors } from '../harness/actors'
 import { resetDatabase } from '../harness/db'
-import { authCalls } from '../harness/authAdmin'
+import { outbox, linkIn } from '../harness/mail'
 import { db } from '@/app/lib/db'
 import { sql, many, maybeOne, exec } from '@/app/lib/db/sql'
 
@@ -17,9 +17,8 @@ import { sql, many, maybeOne, exec } from '@/app/lib/db/sql'
 // Profiles, the corporate user directory, adding an employee, and the TMC-side
 // roster and reporting-line editor.
 //
-// POST /api/employees creates accounts through GoTrue's admin API. That is
-// faked here -- against the real project a test would create real users and
-// send real invite emails. Data calls go through untouched.
+// POST /api/employees creates accounts and emails invites. The invite lands
+// in the fake outbox (tests/harness/mail.ts), never a real mailbox.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const HAS_DB = Boolean(process.env.DATABASE_URL)
@@ -156,12 +155,11 @@ d('people screens', () => {
   })
 
   it('employees POST: an invite creates an INVITED employee with the band denormalised', async () => {
-    const before = authCalls.length
     const res = await call(createEmployee, { as: a.corpAdmin, method: 'POST', url: '/api/employees', body: newEmployee() })
     expect(res.status).toBe(201)
     const { employeeId, message } = res.json as { employeeId: string; message: string }
     expect(message).toBe('Invite sent to New Person at new.person@example.test.')
-    expect(authCalls.slice(before).map(c => c.method)).toEqual(['inviteUserByEmail'])
+    expect(outbox.map(m => [m.to, linkIn(m).type])).toEqual([['new.person@example.test', 'invite']])
 
     const row = await employee(employeeId)
     expect(row).toMatchObject({

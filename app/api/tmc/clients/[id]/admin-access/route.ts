@@ -1,9 +1,8 @@
-import { createClient } from '@/utils/supabase/server'
-import { authAdmin } from '@/utils/supabase/admin'
+import { requireUser } from '@/app/lib/auth/session'
+import { sendPasswordReset } from '@/app/lib/auth/flows'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
-import { inviteRedirectUrl } from '@/app/lib/onboarding/onboardTmc'
 import { NextRequest } from 'next/server'
-import { db } from '@/app/lib/db'
+import { db, transaction } from '@/app/lib/db'
 import * as employees from '@/app/lib/repositories/employees'
 import * as clients from '@/app/lib/repositories/clients'
 import { route } from '@/app/lib/http/handler'
@@ -17,7 +16,7 @@ import { route } from '@/app/lib/http/handler'
 // user to read down the phone. An admin who knows someone's password can act as
 // them, and every action would be logged as the client's admin rather than the
 // TMC staffer who actually took it. That is precisely the hole
-// `must_set_password` exists to close elsewhere in this codebase — reopening it
+// `must_change_password` exists to close elsewhere in this codebase — reopening it
 // here for convenience would be a poor trade.
 //
 // What a TMC genuinely needs is "this client cannot get in, help them", and a
@@ -47,12 +46,7 @@ async function authorise(userId: string, clientId: string) {
 
 export const GET = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const check = await authorise(user.id, id)
   if (!check.ok) {
@@ -66,12 +60,7 @@ export const GET = route(async (req: NextRequest, { params }: Ctx) => {
 
 export const POST = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const check = await authorise(user.id, id)
   if (!check.ok) {
@@ -94,25 +83,22 @@ export const POST = route(async (req: NextRequest, { params }: Ctx) => {
     return Response.json({ error: 'That person is not an admin at this client' }, { status: 404 })
   }
 
-  // Same destination as the reset flow on the login page: /auth/callback does a
-  // server-side code exchange and is exempt from the proxy rule that bounces an
-  // authenticated user away from /login before any client code runs.
-  //
-  // GoTrue only: an auth call, not a data call.
-  const { error: resetError } = await authAdmin().resetPasswordForEmail(
-    admin.email,
-    { redirectTo: inviteRedirectUrl() }
-  )
+  // The same reset email the login page's "Forgot password" sends, to the
+  // address on the account. The account id is the employee id.
+  const sent = await transaction(tx => sendPasswordReset(tx, admin.id, user.id))
 
-  if (resetError) {
-    return Response.json({ error: resetError.message }, { status: 500 })
+  if (!sent) {
+    return Response.json(
+      { error: 'That admin has no sign-in account yet. Invite them instead.' },
+      { status: 409 }
+    )
   }
 
   return Response.json({
     ok: true,
     // The address is echoed so the UI can say where it went — a TMC staffer
     // needs to know whether it reached the address the client actually reads.
-    message: `Password reset sent to ${admin.email}.`,
+    message: `Password reset sent to ${sent.email}.`,
     sentAt: new Date().toISOString(),
   })
 })

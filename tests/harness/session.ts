@@ -1,77 +1,60 @@
+import { db } from '@/app/lib/db'
+import { sql, exec, maybeOne } from '@/app/lib/db/sql'
+import * as accounts from '@/app/lib/repositories/accounts'
+import { newToken } from '@/app/lib/auth/tokens'
+
 // ── Who the test is signed in as ─────────────────────────────────────────────
-// Read by the mocked utils/supabase/server (tests/setup/auth.ts). Route
-// handlers call `(await createClient()).auth.getUser()`; this decides what that
-// returns, so a test can run a handler as any user -- or as nobody.
+// actAs(user) makes the next request arrive with a REAL session cookie for
+// that user: tests/setup/auth.ts replaces next/headers' cookies() with one
+// that opens a session row in cbt_test for the current user. So every route
+// test runs the real session lookup (accounts.principalBySession), including
+// its refusal of deactivated people, not a stand-in for it.
 //
-// Also drives the two other auth calls routes make through that client:
-// signInWithPassword (the sign-in route) and signOut (which that route calls to
-// refuse an account after credentials were accepted).
+// A user the template has no account for gets one on the spot: most employees
+// in the template never had a login, and tests act as them freely.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface TestUser {
   id: string
   email?: string | null
-  user_metadata?: Record<string, unknown>
-  app_metadata?: Record<string, unknown>
 }
 
 let current: TestUser | null = null
-let signInAs: TestUser | null = null
-let signOuts = 0
 
 export function actAs(user: TestUser | null): void {
   current = user
 }
 
-// Whom the next signInWithPassword succeeds as; null makes it fail with the
-// message GoTrue returns for bad credentials.
-export function acceptSignInAs(user: TestUser | null): void {
-  signInAs = user
-}
-
-export function signOutCount(): number {
-  return signOuts
+export function actingAs(): TestUser | null {
+  return current
 }
 
 export function resetAuth(): void {
   current = null
-  signInAs = null
-  signOuts = 0
 }
 
-function asSupabaseUser(u: TestUser) {
-  return {
-    id: u.id,
-    email: u.email ?? undefined,
-    aud: 'authenticated',
-    role: 'authenticated',
-    user_metadata: u.user_metadata ?? {},
-    app_metadata: u.app_metadata ?? {},
-  }
+async function ensureAccount(user: TestUser): Promise<void> {
+  if (await maybeOne(db, sql`select 1 from accounts where id = ${user.id}`)) return
+  const email = user.email?.trim().toLowerCase()
+  const taken = email ? await maybeOne(db, sql`select 1 from accounts where email = ${email}`) : null
+  await exec(db, sql`
+    insert into accounts (id, email) values (${user.id}, ${email && !taken ? email : `${user.id}@example.test`})
+    on conflict do nothing`)
 }
 
-// The same shape supabase-js returns, including the no-session error, so a
-// route's `if (authError || !user)` branch runs exactly as it does for real.
-export function currentSession() {
-  if (!current) {
-    return {
-      data: { user: null },
-      error: { name: 'AuthSessionMissingError', message: 'Auth session missing!', status: 400 },
-    }
-  }
-  return { data: { user: asSupabaseUser(current) }, error: null }
-}
-
-export function signInResult() {
-  if (!signInAs) {
-    return { data: { user: null, session: null }, error: { name: 'AuthApiError', message: 'Invalid login credentials', status: 400 } }
-  }
-  current = signInAs
-  return { data: { user: asSupabaseUser(signInAs), session: {} }, error: null }
-}
-
-export function recordSignOut() {
-  signOuts++
-  current = null
-  return { error: null }
+// A fresh session for the current user, as the cookie value a browser would
+// send. Null when signed out.
+export async function sessionTokenForCurrentUser(): Promise<string | null> {
+  if (!current) return null
+  await ensureAccount(current)
+  const { token, id } = newToken()
+  await accounts.insertSession(db, {
+    id,
+    accountId: current.id,
+    idleSeconds: 3600,
+    absoluteSeconds: 3600,
+    ip: '127.0.0.1',
+    userAgent: 'vitest',
+  })
+  return token
 }

@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { commercialStatus } from '@/app/lib/commercials/commercialStatus'
 import { describeVia } from '@/app/lib/commercials/resolveCommercials'
@@ -20,11 +20,7 @@ type Ctx = { params: Promise<{ id: string }> }
 // Both verbs need the same two answers: may this caller manage commercials, and
 // does this rule belong to their TMC.
 async function authorise(ruleId: string) {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-  if (authError || !user) {
-    return { error: Response.json({ error: 'Not authenticated' }, { status: 401 }) }
-  }
+  const user = await requireUser()
 
   const auth = await requireTmcPermission(db, user.id, 'manage_commercials')
   if (!auth.authorized || !auth.tmcId) {

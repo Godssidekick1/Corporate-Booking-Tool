@@ -1,12 +1,12 @@
-import { createClient } from '@/utils/supabase/server'
-import { authAdmin } from '@/utils/supabase/admin'
+import { requireUser } from '@/app/lib/auth/session'
+import { createAccount, sendInvite } from '@/app/lib/auth/flows'
 import { onboardClient, OnboardClientInput } from '@/app/lib/onboarding/onboardClient'
+import { inviteFailure } from '@/app/lib/onboarding/onboardTmc'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
-import { randomUUID } from 'node:crypto'
 import * as employees from '@/app/lib/repositories/employees'
 import { route } from '@/app/lib/http/handler'
-import { db, isConstraint } from '@/app/lib/db'
+import { db, transaction, isConstraint } from '@/app/lib/db'
 
 // ── POST /api/tmc/create-corporate/bulk ──────────────────────────────────────
 // Creates ONE client (with admin invite), then bulk-creates its employee
@@ -35,12 +35,7 @@ interface EmployeeResult {
 }
 
 export const POST = route(async (req: NextRequest) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   // manage_clients, not manage_users. This route's privileged act is bringing a
   // new client company into existence; the employee roster is a consequence of
@@ -69,7 +64,7 @@ export const POST = route(async (req: NextRequest) => {
   }
 
   // ── Step 1: create the client + admin ─────────────────────────────────────
-  const clientResult = await onboardClient(tmcId, process.env.NEXT_PUBLIC_APP_URL!, client)
+  const clientResult = await onboardClient(tmcId, client)
 
   if (!clientResult.ok || !clientResult.clientId) {
     // 409 and the existing rows, not a flat 400: the caller is meant to show
@@ -108,9 +103,9 @@ export const POST = route(async (req: NextRequest) => {
   const leastSenior = bands.reduce<typeof bands[number] | null>((low, b) => (!low || b.rank < low.rank ? b : low), null)
 
   // ── Step 3: create each employee, sequentially ──────────────────────────────
-  // One at a time: for SBT each row is an invite, an API call that can fail on
-  // its own, and one bad row must not take the rest of the file down with it.
-  const gotrue = authAdmin()
+  // One at a time, each row its own transaction: one bad row (a duplicate
+  // address, a refused email) must not take the rest of the file down with it,
+  // and must not leave half of itself behind.
   const employeeResults: EmployeeResult[] = []
 
   for (const row of employeeRows) {
@@ -152,42 +147,27 @@ export const POST = route(async (req: NextRequest) => {
       cost_centre: row.cost_centre?.trim() || null,
     }
 
-    // ── CBT-only client: pure traveler profile, no auth at all ──────────────
-    if (isCbtOnly) {
-      try {
-        // What happened to them, from the values the check constraint allows:
-        // created directly, with no account.
-        await employees.insert(db, {
-          ...profile, id: randomUUID(), auth_user_id: null, status: 'active', onboarding_method: 'direct_create',
-        })
-        employeeResults.push({ email, status: 'created' })
-      } catch (err) {
-        employeeResults.push({ email, status: 'failed', error: rowError(err) })
-      }
-      continue
-    }
-
-    // ── SBT / hybrid client: real account, real invite email ────────────────
-    let authUserId: string | null = null
+    // Every employee gets an account, as POST /api/employees does. This import
+    // used to give a CBT-only client's people none, so they could never sign
+    // in at all, not even to see their own trips.
+    //   SBT / hybrid: invited by email, 'invited' until they set a password.
+    //   CBT only:     no email (a counsellor books for them), 'active'. They
+    //                 can still sign in any time via "Forgot password".
     try {
-      const { data: authData, error: inviteError } = await gotrue.inviteUserByEmail(email, {
-        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/auth/set-password`,
-        data: { full_name: fullName, client_id: clientId, role, band_code: band.code },
-      })
-
-      if (inviteError) {
-        employeeResults.push({ email, status: 'failed', error: inviteError.message })
-        continue
-      }
-
-      authUserId = authData.user.id
-      await employees.insert(db, {
-        ...profile, id: authUserId, auth_user_id: authUserId, status: 'invited', onboarding_method: 'invite',
-      })
+      await transaction(async tx => {
+        const { accountId } = await createAccount(tx, email, { createdBy: user.id })
+        await employees.insert(tx, {
+          ...profile,
+          id: accountId,
+          auth_user_id: accountId,
+          status: isCbtOnly ? 'active' : 'invited',
+          onboarding_method: isCbtOnly ? 'direct_create' : 'invite',
+        })
+        if (!isCbtOnly) await sendInvite(tx, accountId, user.id)
+      }, { tenantId: tmcId, userId: user.id })
       employeeResults.push({ email, status: 'created' })
     } catch (err) {
-      if (authUserId) await gotrue.deleteUser(authUserId)
-      employeeResults.push({ email, status: 'failed', error: rowError(err) })
+      employeeResults.push({ email, status: 'failed', error: inviteFailure(err)?.error ?? rowError(err) })
     }
   }
 

@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import { authoriseBandAccess } from '../route'
 import { NextRequest } from 'next/server'
 import { db, isConstraint } from '@/app/lib/db'
@@ -29,12 +29,7 @@ type Ctx = { params: Promise<{ id: string }> }
 
 export const PATCH = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const band = await employees.band(db, id)
 
@@ -109,12 +104,7 @@ export const PATCH = route(async (req: NextRequest, { params }: Ctx) => {
 
 export const DELETE = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const band = await employees.band(db, id)
 

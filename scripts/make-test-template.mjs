@@ -176,6 +176,18 @@ await db.query(`
                           else array(select '000-' || lpad(n::text, 10, '0') from generate_subscripts(ticket_numbers, 1) n) end
 `)
 
+// Cross-tenant tests need a SECOND active TMC with staff, and the copy has one
+// (the TMC with the most clients). The rest are inactive duplicates, whose
+// staff cannot sign in. Reactivate the TMC of the admin the tests have always
+// used as "another TMC", so they keep meaning what they say.
+await db.query(`
+  with main as (select tmc_id from clients group by tmc_id order by count(*) desc limit 1)
+  update tmcs set status = 'active'
+  where id = (select e.tmc_id from employees e
+              where e.role = 'tmc_admin' and e.status = 'active' and e.tmc_id <> (select tmc_id from main)
+              order by e.created_at, e.id limit 1)
+`)
+
 // jsonb: walk traveller documents key by key.
 for (const [table, column] of [['bookings', 'traveler_snapshot'], ['employees', 'traveler_profile']]) {
   const { rows } = await db.query(`select id, ${column} as v from ${table} where ${column} is not null`)

@@ -31,7 +31,6 @@ function* sourceFiles(dir: string, skip: readonly string[] = []): Generator<stri
 
 const APP_SOURCE = [
   ...sourceFiles(join(ROOT, 'app')),
-  ...sourceFiles(join(ROOT, 'utils')),
   join(ROOT, 'proxy.ts'),
 ].filter(p => !p.endsWith('.test.ts'))
 
@@ -54,7 +53,7 @@ describe('architecture', () => {
     const deleted = [
       'app/lib/db/builder.ts', 'app/lib/db/client.ts', 'app/lib/db/relationships.ts',
       'app/lib/db/schemaAllowList.ts', 'app/lib/db/schemaTables.generated.ts', 'app/lib/db/tx.ts',
-      'app/lib/db/dualRun.ts', 'utils/supabase/service.ts',
+      'app/lib/db/dualRun.ts',
     ]
     expect(deleted.filter(f => existsSync(join(ROOT, f)))).toEqual([])
 
@@ -64,13 +63,17 @@ describe('architecture', () => {
     expect(everything.filter(p => SWITCHES.test(read(p))).map(rel)).toEqual([])
   })
 
-  it('Supabase is imported only by the auth wrappers', () => {
-    const allowed = new Set([
-      'utils/supabase/server.ts', 'utils/supabase/client.ts', 'utils/supabase/admin.ts',
-      'proxy.ts', 'app/api/auth/verify/route.ts',
-    ])
-    const importers = APP_SOURCE.filter(p => /from ['"]@supabase\//.test(read(p))).map(rel)
-    expect(importers.filter(p => !allowed.has(p))).toEqual([])
+  it('Supabase is gone: no package, no client, no project URL (Stage 3)', () => {
+    // Auth is app/lib/auth, data is app/lib/repositories, and the database is
+    // reached through DATABASE_URL alone.
+    const everything = [...APP_SOURCE, ...sourceFiles(join(ROOT, 'scripts')), ...sourceFiles(join(ROOT, 'tests'))]
+      .filter(p => rel(p) !== 'tests/architecture.test.ts')
+    const SUPABASE = /@supabase\/|supabase\.co\b|SUPABASE_|utils\/supabase/
+    expect(everything.filter(p => SUPABASE.test(read(p))).map(rel)).toEqual([])
+    expect(existsSync(join(ROOT, 'utils', 'supabase'))).toBe(false)
+    const pkg = JSON.parse(read(join(ROOT, 'package.json')))
+    const deps = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies })
+    expect(deps.filter(d => d.startsWith('@supabase/'))).toEqual([])
   })
 
   it('pg and the sql tag are imported only by the driver and the repositories', () => {

@@ -3,9 +3,6 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import PasswordInput from '@/app/components/PasswordInput'
-import { createClient } from '@/utils/supabase/client'
-
-const supabase = createClient()
 
 export default function SignInPage() {
   const router = useRouter()
@@ -19,12 +16,6 @@ export default function SignInPage() {
   const [resetSent, setResetSent] = useState(false)
   const [resetLoading, setResetLoading] = useState(false)
   const [resetError, setResetError] = useState('')
-
-  // Invite and password-reset links both route through /auth/callback now
-  // (a server-side code exchange, exempt from proxy.ts's "authenticated
-  // user visiting /login -> redirect to dashboard" rule) rather than
-  // landing here with a hash-fragment token. This page no longer needs to
-  // parse anything off the URL on load — see /auth/callback/route.ts.
 
   // Returns true when a navigation was started, so the caller knows to KEEP the
   // loading state up rather than clearing it. router.push resolves immediately
@@ -105,6 +96,12 @@ export default function SignInPage() {
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error || 'Sign in failed'); return }
+      // An admin-set starting password is replaced before anything else.
+      if (data.mustChangePassword) {
+        router.push('/auth/set-password')
+        navigating = true
+        return
+      }
       navigating = await redirectByRole()
     } catch {
       setError('Something went wrong. Please try again.')
@@ -121,25 +118,15 @@ export default function SignInPage() {
     setResetError('')
     setResetLoading(true)
     try {
-      // Routed through /auth/callback, not /login — two separate problems
-      // with sending this to /login:
-      // 1. resetPasswordForEmail() issues a different link format than
-      //    inviteUserByEmail() does; /login only ever parsed hash-fragment
-      //    tokens (#access_token=...), so a link that arrives as a ?code=
-      //    query param instead would land on /login and do nothing.
-      // 2. Even for a hash-token link, proxy.ts redirects an authenticated
-      //    user away from /login server-side, before the browser ever runs
-      //    the client-side code that reads the hash — so anyone with an
-      //    existing session cookie in that browser never gets a chance to
-      //    process the reset link at all.
-      // /auth/callback does a proper server-side code exchange and is
-      // exempt from that redirect, and next=/auth/set-password tells it
-      // where to land afterward instead of its default role-based redirect.
-      const { error: resetErr } = await supabase.auth.resetPasswordForEmail(resetEmail, {
-        redirectTo: `${window.location.origin}/auth/callback?next=/auth/set-password`,
+      // The answer is the same whether or not the address has an account.
+      const res = await fetch('/api/auth/password/forgot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: resetEmail }),
       })
-      if (resetErr) {
-        setResetError(resetErr.message)
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        setResetError(data.error || 'Something went wrong. Please try again.')
         return
       }
       setResetSent(true)

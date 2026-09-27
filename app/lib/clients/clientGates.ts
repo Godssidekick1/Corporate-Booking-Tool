@@ -31,7 +31,7 @@ import type { CommercialKind } from '@/app/lib/commercials/calcOnByKind'
 // The four payment types, their labels and the default ordering live in
 // app/lib/fop/paymentTypes.ts — a module with no imports, because the Corporate
 // Settings screen needs the same vocabulary and importing it from here would
-// pull the service-role Supabase client into the browser bundle.
+// pull the database driver into the browser bundle.
 
 export interface ClientGates {
   // Whether the client company itself is still in service.

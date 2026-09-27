@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { validateManagerAssignment } from '@/app/lib/hierarchy/validateManagerAssignment'
 import { NextRequest } from 'next/server'
@@ -34,12 +34,7 @@ export const PATCH = route(async (
   { params }: { params: Promise<{ id: string }> }
 ) => {
   const { id } = await params
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const target = await employees.reportingTarget(db, id)
 

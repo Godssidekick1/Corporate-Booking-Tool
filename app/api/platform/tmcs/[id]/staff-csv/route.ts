@@ -1,8 +1,8 @@
 import { requirePlatformAdmin } from '@/app/lib/permissions/requirePlatformAdmin'
-import { inviteRedirectUrl } from '@/app/lib/onboarding/onboardTmc'
+import { inviteFailure } from '@/app/lib/onboarding/onboardTmc'
+import { createAccount, sendInvite } from '@/app/lib/auth/flows'
 import { PERMISSION_KEYS, isPermissionKey } from '@/app/lib/permissions/permissionKeys'
 import { NextRequest } from 'next/server'
-import { authAdmin } from '@/utils/supabase/admin'
 import { db, transaction } from '@/app/lib/db'
 import * as tmcs from '@/app/lib/repositories/tmcs'
 import * as employees from '@/app/lib/repositories/employees'
@@ -112,15 +112,15 @@ export const POST = route(async (req: NextRequest, { params }: Ctx) => {
   }
 
   const known = new Set((await employees.staffOfTmc(db, id)).map(e => e.email.toLowerCase()))
-  const auth = authAdmin()
+  const platformAdminId = check.admin.userId
 
   const errors: { row: number; email: string; error: string }[] = []
   let created = 0
   let skipped = 0
 
-  // One at a time, not a bulk insert: each row means an auth invite, which is an
-  // API call that can fail on its own, and a bad row must not take the rest of
-  // the file down with it. Failures are collected and reported per row.
+  // One at a time, each row its own transaction: a bad row (an address that
+  // already has an account, a refused email) must not take the rest of the
+  // file down with it. Failures are collected and reported per row.
   for (const [i, row] of rows.entries()) {
     const rowNumber = i + 2 // +1 for the header, +1 for 1-based counting
     const email = row.email?.trim().toLowerCase()
@@ -162,44 +162,26 @@ export const POST = route(async (req: NextRequest, { params }: Ctx) => {
       continue
     }
 
-    let authUserId: string | null = null
-
     try {
-      const { data: authData, error: inviteError } = await auth.inviteUserByEmail(email, {
-        redirectTo: inviteRedirectUrl(),
-        data: { full_name: fullName, tmc_id: id, role: 'tc' },
-      })
-
-      if (inviteError) throw new InviteRefused(inviteError.message)
-      const userId = authData.user.id
-      authUserId = userId
-
-      // The person and their permissions together: a row that fails half way
-      // no longer leaves a counsellor with none of the access they were given.
+      // The account, the person, their permissions and the invite together,
+      // email last: a row that fails anywhere leaves nothing behind.
       // granted_by is null: that column is a foreign key to `employees`, and a
       // platform admin has no employees row by design.
       await transaction(async (tx) => {
-        await employees.insertCounsellor(tx, { id: userId, tmc_id: id, full_name: fullName, email })
-        await employees.grantPermissions(tx, userId, requested, null)
+        const { accountId } = await createAccount(tx, email, { createdBy: platformAdminId })
+        await employees.insertCounsellor(tx, { id: accountId, tmc_id: id, full_name: fullName, email })
+        await employees.grantPermissions(tx, accountId, requested, null)
+        await sendInvite(tx, accountId, platformAdminId)
       }, { tenantId: id })
 
       known.add(email)
       created++
     } catch (err) {
-      // Compensating rollback for this row only — same reasoning as onboardTmc:
-      // the auth user is not inside any database transaction, so it has to be
-      // undone explicitly or it becomes an account nothing in the app can see.
-      if (authUserId) await auth.deleteUser(authUserId)
-      if (!(err instanceof InviteRefused)) console.error('[staff-csv] row failed', { rowNumber, err })
-      errors.push({
-        row: rowNumber, email,
-        error: err instanceof InviteRefused ? err.message : 'Could not create this account',
-      })
+      const knownFailure = inviteFailure(err)
+      if (!knownFailure) console.error('[staff-csv] row failed', { rowNumber, err })
+      errors.push({ row: rowNumber, email, error: knownFailure?.error ?? 'Could not create this account' })
     }
   }
 
   return Response.json({ ok: true, created, skipped, errors })
 })
-
-// The auth service refused the invite; its message is shown for the row.
-class InviteRefused extends Error {}

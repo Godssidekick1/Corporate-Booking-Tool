@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import { db } from '@/app/lib/db'
 import * as employees from '@/app/lib/repositories/employees'
 import * as clients from '@/app/lib/repositories/clients'
@@ -18,12 +18,7 @@ import { route } from '@/app/lib/http/handler'
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const GET = route(async () => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   // Someone can be both: a TMC employee who also runs the platform. Checked for
   // everyone so the nav can offer the link instead of making them remember the

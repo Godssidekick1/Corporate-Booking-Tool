@@ -1,4 +1,5 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
+import { endAllSessions } from '@/app/lib/auth/flows'
 import { isPermissionKey } from '@/app/lib/permissions/permissionKeys'
 import { NextRequest } from 'next/server'
 import { db, transaction } from '@/app/lib/db'
@@ -25,12 +26,7 @@ export const PATCH = route(async (
   { params }: { params: Promise<{ id: string }> }
 ) => {
   const { id } = await params
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const caller = await employees.accessProfile(db, user.id)
   if (!caller || caller.role !== 'tmc_admin' || !caller.tmc_id) {
@@ -100,6 +96,10 @@ export const PATCH = route(async (
 
     if (status !== undefined) {
       await employees.setStatus(tx, id, status)
+      // Signed out everywhere now. The session lookup would refuse them on
+      // their next request anyway; this also ends sessions a reactivation
+      // would otherwise bring back.
+      if (status === 'deactivated') await endAllSessions(tx, id, 'employee_deactivated', user.id)
     }
 
     // Which office this counsellor works out of. Organisational only — it

@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import {
   getAssignmentsForClient,
@@ -66,12 +66,7 @@ async function authorise(
 }
 
 export const GET = route(async (req: NextRequest) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const clientId = req.nextUrl.searchParams.get('clientId')
   if (!clientId) {
@@ -119,12 +114,7 @@ export const GET = route(async (req: NextRequest) => {
 })
 
 export const POST = route(async (req: NextRequest) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const body: AssignBody = await req.json()
   const { clientId, category, templateId, employeeIds, bandCode } = body
@@ -219,12 +209,7 @@ export const POST = route(async (req: NextRequest) => {
 })
 
 export const DELETE = route(async (req: NextRequest) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const clientId = req.nextUrl.searchParams.get('clientId')
   const category = req.nextUrl.searchParams.get('category')

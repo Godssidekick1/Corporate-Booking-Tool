@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic, CustomerInfo } from '@/app/lib/amadeus/client'
 import { db } from '@/app/lib/db'
 import * as employees from '@/app/lib/repositories/employees'
@@ -40,12 +40,7 @@ export const GET = route(async (
   req: NextRequest,
   { params }: { params: Promise<{ bookingId: string }> }
 ) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const { bookingId } = await params
 
@@ -222,12 +217,7 @@ export const PATCH = route(async (
   req: NextRequest,
   { params }: { params: Promise<{ bookingId: string }> }
 ) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const { bookingId } = await params
 

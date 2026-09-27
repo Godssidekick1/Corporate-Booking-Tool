@@ -9,10 +9,9 @@ import nextTs from "eslint-config-next/typescript";
 // driver underneath it). Routes, app/lib domain code and proxy.ts talk to the
 // database only by calling repository functions with `db` from '@/app/lib/db'.
 //
-// Supabase is AUTH ONLY, and reached through three wrappers in utils/supabase:
-// server.ts (the session, server side), client.ts (the session, in the
-// browser) and admin.ts (the GoTrue admin API). Importing the SDK anywhere
-// else is how a second data path would quietly come back.
+// Authentication is app/lib/auth (sessions in our own tables). Supabase is
+// gone entirely (Stage 3); its SDK is banned everywhere, so no second data or
+// auth path can quietly come back.
 //
 // Enforced here rather than left as a convention, because a convention is what
 // let 537 call sites build queries inline in the first place.
@@ -29,34 +28,22 @@ const SQL_ONLY_IN_REPOSITORIES = {
   ],
 };
 
-const SUPABASE_ONLY_THROUGH_WRAPPERS = {
+const NO_SUPABASE = {
   group: ["@supabase/*"],
-  message:
-    "Supabase is auth only, through utils/supabase: server.ts (session), client.ts (browser), admin.ts (GoTrue admin).",
+  message: "Supabase was removed in Stage 3. Auth is app/lib/auth; data is app/lib/repositories.",
 };
-
-// The wrappers themselves, and the two places that must build a client by hand:
-// the proxy (it runs before any route) and auth/verify (it sets session cookies
-// while spending a one-time token, and its test fakes @supabase/ssr directly).
-const SUPABASE_WRAPPERS = ["utils/supabase/**", "proxy.ts", "app/api/auth/verify/route.ts"];
 
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
   {
-    files: ["app/**/*.{ts,tsx}", "utils/**/*.ts", "proxy.ts"],
-    ignores: ["app/lib/db/**", "app/lib/repositories/**", "**/*.test.ts", ...SUPABASE_WRAPPERS],
+    files: ["app/**/*.{ts,tsx}", "proxy.ts"],
+    ignores: ["app/lib/db/**", "app/lib/repositories/**", "**/*.test.ts"],
     rules: {
       "no-restricted-imports": ["error", {
         ...SQL_ONLY_IN_REPOSITORIES,
-        patterns: [...SQL_ONLY_IN_REPOSITORIES.patterns, SUPABASE_ONLY_THROUGH_WRAPPERS],
+        patterns: [...SQL_ONLY_IN_REPOSITORIES.patterns, NO_SUPABASE],
       }],
-    },
-  },
-  {
-    files: SUPABASE_WRAPPERS,
-    rules: {
-      "no-restricted-imports": ["error", SQL_ONLY_IN_REPOSITORIES],
     },
   },
   {
@@ -68,7 +55,8 @@ const eslintConfig = defineConfig([
     rules: {
       "no-restricted-imports": ["error", {
         patterns: [
-          { group: ["@/utils/supabase/*", "@supabase/*"], message: "Repositories do data only. Auth stays in routes." },
+          { group: ["@/app/lib/auth/*"], message: "Repositories do data only. Auth decisions live in app/lib/auth." },
+          NO_SUPABASE,
           {
             group: ["@/app/lib/db/transaction"],
             message: "Repositories never open transactions. Take `db: Queryable` from the caller.",

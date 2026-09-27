@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import { db } from '@/app/lib/db'
 import * as approvals from '@/app/lib/repositories/approvals'
 import * as bookings from '@/app/lib/repositories/bookings'
@@ -39,12 +39,7 @@ export const POST = route(async (
   { params }: { params: Promise<{ approvalId: string }> }
 ) => {
   const { approvalId } = await params
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const caller = await employees.traveller(db, user.id)
 

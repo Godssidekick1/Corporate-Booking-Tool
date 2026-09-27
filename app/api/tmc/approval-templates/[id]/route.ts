@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import * as approvals from '@/app/lib/repositories/approvals'
 import * as employees from '@/app/lib/repositories/employees'
 import { route } from '@/app/lib/http/handler'
@@ -43,12 +43,7 @@ export const PATCH = route(async (
   { params }: { params: Promise<{ id: string }> }
 ) => {
   const { id } = await params
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const template = await approvals.templateRecord(db, id)
 
@@ -127,12 +122,7 @@ export const DELETE = route(async (
   { params }: { params: Promise<{ id: string }> }
 ) => {
   const { id } = await params
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const template = await approvals.ownership(db, id)
 

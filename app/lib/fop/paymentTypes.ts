@@ -11,9 +11,9 @@
 // agency / corporate / traveller. The split is about where the card lives.
 //
 // THIS FILE HAS NO IMPORTS, deliberately. It is read by the resolver (pure), by
-// clientGates (which pulls in the service-role Supabase client) and by the
+// clientGates (which pulls in the database driver) and by the
 // Corporate Settings screen (which runs in the browser). Putting the vocabulary
-// in clientGates would drag the service client into the client bundle.
+// in clientGates would drag the driver into the client bundle.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type PaymentType = 'agency' | 'corporate' | 'bta_cta' | 'bta_cta_manual'

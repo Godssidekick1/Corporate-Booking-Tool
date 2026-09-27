@@ -1,4 +1,5 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
+import { route } from '@/app/lib/http/handler'
 import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic } from '@/app/lib/amadeus/client'
 import { NextRequest } from 'next/server'
 import util from 'util'
@@ -37,13 +38,8 @@ interface SeatMapBody {
   legIndex: number      // which leg this is, for the frontend to key its state by
 }
 
-export async function POST(req: NextRequest) {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+export const POST = route(async (req: NextRequest) => {
+  await requireUser()
 
   const { key, referenceNo, provider, origin, destination, legIndex }: SeatMapBody = await req.json()
 
@@ -152,4 +148,4 @@ export async function POST(req: NextRequest) {
       legSeatMap: null,
     })
   }
-}
+})

@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
 import { db, transaction } from '@/app/lib/db'
@@ -28,11 +28,7 @@ type Ctx = { params: Promise<{ id: string }> }
 // Both verbs need the same three answers: is this a TMC user, may they manage
 // this client, and does the client exist under their TMC.
 async function authorise(clientId: string) {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-  if (authError || !user) {
-    return { error: Response.json({ error: 'Not authenticated' }, { status: 401 }) }
-  }
+  const user = await requireUser()
 
   const check = await requireTmcPermission(db, user.id, 'manage_clients', clientId)
   if (!check.authorized || !check.tmcId) {

@@ -22,8 +22,7 @@ export const PAGE_SIZE = 10
 export interface PageParams {
   page: number
   pageSize: number
-  // Inclusive bounds for Supabase's .range(), which is inclusive at both ends —
-  // .range(0, 9) is ten rows, not eleven.
+  // Inclusive row bounds, from 0: from 0 to 9 is ten rows, not eleven.
   from: number
   to: number
   search: string

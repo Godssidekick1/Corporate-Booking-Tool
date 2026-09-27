@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import { NextRequest } from 'next/server'
 import { travellerItinerary } from '@/app/lib/book/travellerView'
 import { db } from '@/app/lib/db'
@@ -15,12 +15,7 @@ type Ctx = { params: Promise<{ tripId: string }> }
 
 // The caller and the trip, with the ownership check every verb shares.
 async function ownTrip(tripId: string, verb: string) {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return { error: Response.json({ error: 'Not authenticated' }, { status: 401 }) }
-  }
+  const user = await requireUser()
 
   const employee = await employees.traveller(db, user.id)
 

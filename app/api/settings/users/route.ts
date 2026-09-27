@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import { parsePageParams, pagedResponse } from '@/app/lib/pagination'
 import { NextRequest } from 'next/server'
 import { db } from '@/app/lib/db'
@@ -9,12 +9,7 @@ import { route } from '@/app/lib/http/handler'
 // List all employees in the admin's client, for the settings/users table.
 
 export const GET = route(async (req: NextRequest) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const caller = await employees.clientScope(db, user.id)
 

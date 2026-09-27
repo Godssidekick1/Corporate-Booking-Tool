@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import { parsePageParams, pagedResponse } from '@/app/lib/pagination'
 import { db } from '@/app/lib/db'
 import * as reference from '@/app/lib/repositories/reference'
@@ -23,12 +23,7 @@ import { NextRequest } from 'next/server'
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const GET = route(async (req: NextRequest) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  await requireUser()
 
   const params = parsePageParams(req.nextUrl.searchParams)
   const ids = req.nextUrl.searchParams.get('ids')?.split(',').filter(Boolean) ?? []

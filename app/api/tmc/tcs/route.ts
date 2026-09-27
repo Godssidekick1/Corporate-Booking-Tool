@@ -1,5 +1,5 @@
-import { createClient } from '@/utils/supabase/server'
-import { authAdmin } from '@/utils/supabase/admin'
+import { requireUser } from '@/app/lib/auth/session'
+import { createAccount, sendInvite, AccountExists } from '@/app/lib/auth/flows'
 import { isPermissionKey } from '@/app/lib/permissions/permissionKeys'
 import { parsePageParams, pagedResponse } from '@/app/lib/pagination'
 import { NextRequest } from 'next/server'
@@ -36,12 +36,7 @@ function groupBy<T>(rows: readonly T[], key: (r: T) => string, value: (r: T) => 
 }
 
 export const GET = route(async (req: NextRequest) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const caller = await employees.accessProfile(db, user.id)
 
@@ -83,12 +78,7 @@ export const GET = route(async (req: NextRequest) => {
 })
 
 export const POST = route(async (req: NextRequest) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const caller = await employees.accessProfile(db, user.id)
 
@@ -126,34 +116,19 @@ export const POST = route(async (req: NextRequest) => {
     return Response.json({ error: 'A TC with this email already exists' }, { status: 409 })
   }
 
-  // Only for GoTrue: the account is invited, and rolled back, through the auth
-  // admin API. Table writes go through repositories.
-  const auth = authAdmin()
-
-  const { data: authData, error: inviteError } = await auth.inviteUserByEmail(
-    normalizedEmail,
-    {
-      redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/auth/set-password`,
-      data: { full_name, tmc_id: tmcId, role: 'tc' },
-    }
-  )
-  // GoTrue's message is meant for people ("already been registered") and is
-  // passed on as it always was. Database errors below are not.
-  if (inviteError || !authData.user) {
-    return Response.json({ error: inviteError?.message ?? 'Failed to create TC' }, { status: 500 })
-  }
-  const employeeId = authData.user.id
-
   try {
-    // One transaction for the row and its grants: a counsellor must never
-    // exist with only some of what they were given -- or, if a grant fails,
-    // at all, since the auth account is removed below.
-    await transaction(async tx => {
+    // One transaction for the account, the row, its grants and the invite:
+    // a counsellor must never exist with only some of what they were given,
+    // and no invite goes out for one that does not exist. The email is last.
+    const employeeId = await transaction(async tx => {
+      const { accountId } = await createAccount(tx, normalizedEmail, { createdBy: user.id })
       await employees.insertCounsellor(tx, {
-        id: employeeId, tmc_id: tmcId, full_name: full_name.trim(), email: normalizedEmail,
+        id: accountId, tmc_id: tmcId, full_name: full_name.trim(), email: normalizedEmail,
       })
-      await employees.grantPermissions(tx, employeeId, permissions, user.id)
-      await employees.grantClientAccess(tx, employeeId, clientIds, user.id)
+      await employees.grantPermissions(tx, accountId, permissions, user.id)
+      await employees.grantClientAccess(tx, accountId, clientIds, user.id)
+      await sendInvite(tx, accountId, user.id)
+      return accountId
     }, { tenantId: tmcId, userId: user.id })
 
     return Response.json({
@@ -163,7 +138,11 @@ export const POST = route(async (req: NextRequest) => {
     }, { status: 201 })
 
   } catch (err) {
-    await auth.deleteUser(employeeId)
+    // The address has an account already (at another TMC, or a client): a
+    // conflict, not a server failure. GoTrue answered this with a 500.
+    if (err instanceof AccountExists) {
+      return Response.json({ error: err.message }, { status: 409 })
+    }
     console.error('[tmc/tcs] create failed', err)
     return Response.json({ error: 'Failed to create TC' }, { status: 500 })
   }

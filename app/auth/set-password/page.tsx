@@ -1,202 +1,90 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/utils/supabase/client'
+import AuthShell, { authStyles as s } from '@/app/components/AuthShell'
 import PasswordInput from '@/app/components/PasswordInput'
 
-const supabase = createClient()
+// ── /auth/set-password ───────────────────────────────────────────────────────
+// Replacing a starting password an admin chose. proxy.ts sends anyone whose
+// account has must_change_password here from every protected page, until they
+// have. The flag is a server-owned column now. It used to sit in GoTrue's
+// user_metadata, where the user could clear it on themselves and skip this.
+//
+// The starting password is asked for again: /api/auth/password/change always
+// requires the current one.
+//
+// Invite and reset links do not come here; they set a password on
+// /auth/confirm.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MIN = 8
 
 export default function SetPasswordPage() {
   const router = useRouter()
+  const [current, setCurrent] = useState('')
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [sessionReady, setSessionReady] = useState(false)
-
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!session) {
-        router.replace('/login')
-        return
-      }
-      setSessionReady(true)
-    })
-  }, [router])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
-
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters.')
-      return
-    }
-    if (password !== confirm) {
-      setError('Passwords do not match.')
-      return
-    }
+    if (password.length < MIN) { setError(`Password must be at least ${MIN} characters.`); return }
+    if (password !== confirm) { setError('Passwords do not match.'); return }
 
     setLoading(true)
+    let navigating = false
     try {
-      // must_set_password is cleared in the same call that sets the password.
-      // It has to go, not just be ignored: proxy.ts redirects every protected
-      // route to this page while it is true, so leaving it set would trap the
-      // user here in a loop even after they had chosen a password.
-      const { error: updateError } = await supabase.auth.updateUser({
-        password,
-        data: { must_set_password: false },
+      const res = await fetch('/api/auth/password/change', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentPassword: current, newPassword: password }),
       })
-
-      if (updateError) {
-        setError(updateError.message)
-        return
-      }
-
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { router.replace('/login'); return }
-
-      // Flip invited -> active now that they've set their password.
-      // auth/callback no longer runs for this flow since invite links
-      // redirect to /login (hash-based tokens require a client page).
-      await fetch('/api/auth/activate', { method: 'POST' })
-
-      const res = await fetch('/api/me')
+      if (res.status === 401) { navigating = true; router.replace('/login'); return }
       const data = await res.json()
-      const role = data.employee?.role
+      if (!res.ok) { setError(data.error || 'Something went wrong. Please try again.'); return }
 
-      if (role === 'tmc_admin' || role == 'tc') {
-        router.replace('/tmc/dashboard')
-      } else {
-        router.replace('/dashboard')
-      }
+      const me = await (await fetch('/api/me')).json()
+      const role = me.employee?.role
+      navigating = true
+      router.replace(role === 'tmc_admin' || role === 'tc' ? '/tmc/dashboard' : '/dashboard')
+    } catch {
+      setError('Something went wrong. Please check your connection and try again.')
     } finally {
-      setLoading(false)
+      if (!navigating) setLoading(false)
     }
   }
 
   return (
-    <div style={styles.root}>
-      <div style={styles.panel}>
-        <div>
-          <div style={styles.wordmark}>
-            <span style={styles.wmMain}>TravelDesk</span>
-            <span style={styles.wmBy}>by Amadeus</span>
-          </div>
-          <p style={styles.tagline}>
-            You&rsquo;ve been invited to manage corporate travel for your organisation.
-          </p>
+    <AuthShell tagline="Your administrator set a starting password for you. Replace it with one only you know.">
+      <h1 style={s.heading}>Choose your password</h1>
+      <p style={s.sub}>Enter the starting password you were given, then a new one of at least {MIN} characters.</p>
+
+      <form onSubmit={handleSubmit} style={s.form}>
+        <div style={s.field}>
+          <label style={s.label} htmlFor="current">Starting password</label>
+          <PasswordInput id="current" autoComplete="current-password" value={current} onChange={setCurrent}
+            required style={s.input} />
         </div>
-        <p style={styles.panelFooter}>© {new Date().getFullYear()} Amadeus IT Group</p>
-      </div>
-
-      <div style={styles.formPanel}>
-        <div style={styles.card}>
-          <h1 style={styles.heading}>Set your password</h1>
-          <p style={styles.sub}>
-            Choose a password to secure your TravelDesk account.
-          </p>
-
-          <form onSubmit={handleSubmit} style={styles.form}>
-            <div style={styles.field}>
-              <label style={styles.label} htmlFor="password">Password</label>
-              <PasswordInput
-                id="password"
-                autoComplete="new-password"
-                value={password}
-                onChange={setPassword}
-                placeholder="Min. 8 characters"
-                required
-                disabled={!sessionReady}
-                style={styles.input}
-              />
-            </div>
-
-            <div style={styles.field}>
-              <label style={styles.label} htmlFor="confirm">Confirm password</label>
-              <PasswordInput
-                id="confirm"
-                autoComplete="new-password"
-                value={confirm}
-                onChange={setConfirm}
-                placeholder="Repeat your password"
-                required
-                disabled={!sessionReady}
-                style={styles.input}
-              />
-            </div>
-
-            {error && <p style={styles.error}>{error}</p>}
-
-            <button
-              type="submit"
-              disabled={loading || !sessionReady}
-              style={{
-                ...styles.button,
-                opacity: loading || !sessionReady ? 0.6 : 1,
-                cursor: loading || !sessionReady ? 'not-allowed' : 'pointer',
-              }}
-            >
-              {loading ? 'Setting password…' : 'Set password & continue →'}
-            </button>
-          </form>
+        <div style={s.field}>
+          <label style={s.label} htmlFor="password">New password</label>
+          <PasswordInput id="password" autoComplete="new-password" value={password} onChange={setPassword}
+            placeholder={`Min. ${MIN} characters`} required style={s.input} />
         </div>
-      </div>
-    </div>
+        <div style={s.field}>
+          <label style={s.label} htmlFor="confirm">Confirm new password</label>
+          <PasswordInput id="confirm" autoComplete="new-password" value={confirm} onChange={setConfirm}
+            placeholder="Repeat your password" required style={s.input} />
+        </div>
+
+        {error && <p style={s.error}>{error}</p>}
+
+        <button type="submit" disabled={loading} style={{ ...s.button, opacity: loading ? 0.6 : 1 }}>
+          {loading ? 'Saving…' : 'Save password & continue →'}
+        </button>
+      </form>
+    </AuthShell>
   )
-}
-
-const styles: Record<string, React.CSSProperties> = {
-  root: {
-    display: 'flex', minHeight: '100vh',
-    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
-    background: '#F7F8FC',
-  },
-  panel: {
-    width: '420px', flexShrink: 0, background: '#000835',
-    display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
-    padding: '48px 40px',
-  },
-  wordmark: { display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '24px' },
-  wmMain: { fontSize: '28px', fontWeight: 600, color: '#fff', letterSpacing: '-0.5px' },
-  wmBy: {
-    fontSize: '11px', color: 'rgba(255,255,255,0.38)',
-    letterSpacing: '0.6px', textTransform: 'uppercase' as const,
-  },
-  tagline: {
-    fontSize: '15px', lineHeight: '1.65',
-    color: 'rgba(255,255,255,0.55)', maxWidth: '260px', margin: 0,
-  },
-  panelFooter: { fontSize: '11px', color: 'rgba(255,255,255,0.2)', margin: 0 },
-  formPanel: {
-    flex: 1, display: 'flex',
-    alignItems: 'center', justifyContent: 'center',
-    padding: '40px 24px',
-  },
-  card: { width: '100%', maxWidth: '400px' },
-  heading: {
-    fontSize: '24px', fontWeight: 600, color: '#0A0A14',
-    margin: '0 0 8px', letterSpacing: '-0.3px',
-  },
-  sub: { fontSize: '14px', color: '#6B7280', margin: '0 0 32px', lineHeight: '1.6' },
-  form: { display: 'flex', flexDirection: 'column', gap: '20px' },
-  field: { display: 'flex', flexDirection: 'column', gap: '6px' },
-  label: { fontSize: '13px', fontWeight: 500, color: '#374151' },
-  input: {
-    height: '42px', padding: '0 12px',
-    fontSize: '14px', color: '#0A0A14',
-    background: '#fff', border: '1px solid #D1D5DB',
-    borderRadius: '8px', outline: 'none',
-  },
-  error: {
-    fontSize: '13px', color: '#DC2626',
-    background: '#FEF2F2', border: '1px solid #FECACA',
-    borderRadius: '6px', padding: '10px 12px', margin: 0,
-  },
-  button: {
-    height: '42px', background: '#000835', color: '#fff',
-    fontSize: '14px', fontWeight: 600,
-    border: 'none', borderRadius: '8px', marginTop: '4px',
-  },
 }

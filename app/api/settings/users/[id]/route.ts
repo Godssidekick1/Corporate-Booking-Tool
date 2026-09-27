@@ -1,6 +1,7 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
+import { endAllSessions } from '@/app/lib/auth/flows'
 import { NextRequest } from 'next/server'
-import { db } from '@/app/lib/db'
+import { db, transaction } from '@/app/lib/db'
 import * as employees from '@/app/lib/repositories/employees'
 import { route } from '@/app/lib/http/handler'
 
@@ -26,12 +27,7 @@ export const PATCH = route(async (
   { params }: { params: Promise<{ id: string }> }
 ) => {
   const { id } = await params
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const caller = await employees.clientScope(db, user.id)
 
@@ -113,7 +109,12 @@ export const PATCH = route(async (
     return Response.json({ error: 'No fields to update' }, { status: 400 })
   }
 
-  const updated = await employees.applyCorporateEdit(db, id, update)
+  // Deactivation signs the person out everywhere, in the same transaction.
+  const updated = await transaction(async tx => {
+    const row = await employees.applyCorporateEdit(tx, id, update)
+    if (row && update.status === 'deactivated') await endAllSessions(tx, id, 'employee_deactivated', user.id)
+    return row
+  })
 
   return Response.json({ ok: true, employee: updated })
 })

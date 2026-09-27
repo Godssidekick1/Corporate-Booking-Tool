@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import { NextRequest } from 'next/server'
 import { advanceApprovalChain } from '@/app/lib/approval-engine/resolveApprovalTier'
 import { db, transaction } from '@/app/lib/db'
@@ -32,12 +32,7 @@ export const PATCH = route(async (
   { params }: { params: Promise<{ approvalId: string }> }
 ) => {
   const { approvalId } = await params
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const caller = await employees.traveller(db, user.id)
 

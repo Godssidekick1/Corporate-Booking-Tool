@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import {
   normaliseClientGroup,
@@ -15,12 +15,7 @@ type Ctx = { params: Promise<{ id: string }> }
 
 export const PATCH = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const auth = await requireTmcPermission(db, user.id, 'manage_client_groups')
   if (!auth.authorized || !auth.tmcId) {
@@ -58,12 +53,7 @@ export const PATCH = route(async (req: NextRequest, { params }: Ctx) => {
 
 export const DELETE = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const auth = await requireTmcPermission(db, user.id, 'manage_client_groups')
   if (!auth.authorized || !auth.tmcId) {

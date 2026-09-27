@@ -77,8 +77,10 @@ Both are dropped locally, and stay dropped. Three reasons:
    meaningfully from this database in any case.
 
 **This is the only structural difference between `cbt_local` and production.**
-It reverses when GoTrue is self-hosted — a separate scheduled task before
-production, for which `auth_baseline.sql` is already captured.
+**Superseded in Stage 3.** Identity moved into this database (`public.accounts`),
+and migration `20260926000100` re-points both constraints at it. After
+`restore-local.ps1` runs the migrations, local and production have the same
+structure.
 
 ### `employees.auth_user_id` is not vestigial
 

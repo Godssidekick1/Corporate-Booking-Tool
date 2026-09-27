@@ -1,4 +1,4 @@
-import { createClient } from '@/utils/supabase/server'
+import { requireUser } from '@/app/lib/auth/session'
 import { NextRequest } from 'next/server'
 import { db } from '@/app/lib/db'
 import * as employees from '@/app/lib/repositories/employees'
@@ -21,12 +21,7 @@ import { route } from '@/app/lib/http/handler'
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const GET = route(async () => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const employee = await employees.tmcAccount(db, user.id)
 
@@ -80,7 +75,7 @@ export const GET = route(async () => {
       clients: clientIds.length,
       travellers,
       bookings: bookingCount,
-      lastSignInAt: lastSignIn(user),
+      lastSignInAt: user.lastSignInAt,
     },
   })
 })
@@ -97,18 +92,8 @@ function accountOf(employee: employees.TmcAccount, tmcName: string | null) {
   }
 }
 
-// Supabase tracks this on the auth user, not on our employees row.
-function lastSignIn(user: { last_sign_in_at?: string }): string | null {
-  return user.last_sign_in_at ?? null
-}
-
 export const PATCH = route(async (req: NextRequest) => {
-  const supabase = await createClient()
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return Response.json({ error: 'Not authenticated' }, { status: 401 })
-  }
+  const user = await requireUser()
 
   const employee = await employees.roleAndStatus(db, user.id)
 

@@ -34,9 +34,10 @@ export async function actors(): Promise<Actors> {
   if (cached) return cached
 
   // The TMC with the most clients is the one with the most to exercise.
+  // Staff of an ACTIVE TMC: a deactivated TMC's people cannot sign in at all.
   const tmcAdmin = await maybeOne<Actor>(db, sql`
-    select ${COLUMNS} from employees e
-    where e.role = 'tmc_admin' and e.status = 'active'
+    select ${COLUMNS} from employees e join tmcs t on t.id = e.tmc_id
+    where e.role = 'tmc_admin' and e.status = 'active' and t.status = 'active'
     order by (select count(*) from clients c where c.tmc_id = e.tmc_id) desc, e.created_at, e.id
     limit 1`)
   if (!tmcAdmin) throw new Error('[tests] no active tmc_admin in cbt_template')
@@ -62,8 +63,8 @@ export async function actors(): Promise<Actors> {
     byRole('employee'),
     maybeOne<{ id: string }>(db, sql`select user_id as id from platform_admins order by created_at, user_id limit 1`),
     maybeOne<Actor>(db, sql`
-      select ${COLUMNS} from employees e
-      where e.role = 'tmc_admin' and e.status = 'active' and e.tmc_id <> ${tmcAdmin.tmc_id}
+      select ${COLUMNS} from employees e join tmcs t on t.id = e.tmc_id
+      where e.role = 'tmc_admin' and e.status = 'active' and t.status = 'active' and e.tmc_id <> ${tmcAdmin.tmc_id}
       order by e.created_at, e.id limit 1`),
   ])
 

@@ -15,7 +15,7 @@ import { GET as centresGet, POST as centresPost, PATCH as centresPatch, DELETE a
 import { call } from '../harness/call'
 import { actors, type Actors } from '../harness/actors'
 import { resetDatabase } from '../harness/db'
-import { authCalls } from '../harness/authAdmin'
+import { outbox, linkIn } from '../harness/mail'
 import { db } from '@/app/lib/db'
 import { sql, many, maybeOne, one, exec } from '@/app/lib/db/sql'
 
@@ -24,7 +24,7 @@ import { sql, many, maybeOne, one, exec } from '@/app/lib/db/sql'
 // reaches the client, buckets, commercials, GST, mandatory info), and the
 // masters that group clients: buckets, client groups, cost centres.
 //
-// admin-access sends password resets through GoTrue, faked here.
+// admin-access emails password resets, which land in the fake outbox.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const HAS_DB = Boolean(process.env.DATABASE_URL)
@@ -192,12 +192,18 @@ d('tmc/clients', () => {
     expect(await post({ employeeId: traveller.id }))
       .toEqual({ status: 404, json: { error: 'That person is not an admin at this client' } })
 
-    const before = authCalls.length
+    // An admin with no sign-in account has nothing to reset.
+    await exec(db, sql`delete from accounts where id = ${a.corpAdmin.id}`)
+    expect(await post({ employeeId: a.corpAdmin.id }))
+      .toEqual({ status: 409, json: { error: 'That admin has no sign-in account yet. Invite them instead.' } })
+    expect(outbox).toEqual([])
+
+    await exec(db, sql`insert into accounts (id, email) values (${a.corpAdmin.id}, ${a.corpAdmin.email})`)
     const res = await post({ employeeId: a.corpAdmin.id })
     expect(res.status).toBe(200)
     expect((res.json as { message: string }).message).toBe(`Password reset sent to ${a.corpAdmin.email}.`)
-    const sent = authCalls.slice(before)
-    expect(sent.map(c => [c.method, c.args[0]])).toEqual([['resetPasswordForEmail', a.corpAdmin.email]])
+    expect(outbox.map(m => m.to)).toEqual([a.corpAdmin.email])
+    expect(linkIn(outbox[0]).type).toBe('reset')
   })
 
   // ── What reaches the client ────────────────────────────────────────────────
