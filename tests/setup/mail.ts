@@ -6,7 +6,7 @@ import { resetOutbox } from '../harness/mail'
 vi.mock('@/app/lib/mail', async () => {
   const { fakeSendMail } = await import('../harness/mail')
   class MailNotConfigured extends Error {}
-  return { sendMail: fakeSendMail, MailNotConfigured }
+  return { sendMail: fakeSendMail, MailNotConfigured, mailMode: () => 'log' as const }
 })
 
 beforeEach(() => resetOutbox())

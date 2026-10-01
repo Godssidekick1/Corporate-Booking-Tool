@@ -46,7 +46,18 @@ export function getPool(): Pool {
   // once looked healthy until some route misreported the first failed query;
   // this names the target in the boot log instead. Host and database only --
   // never the user or password.
-  const target = new URL(connectionString)
+  // Parsed here first, and the failure reported WITHOUT the value: Node's own
+  // "Invalid URL" error carries its input, which here includes the password,
+  // and would land in the server log.
+  let target: URL
+  try {
+    target = new URL(connectionString)
+  } catch {
+    throw new DbConfigurationError(
+      '[db] DATABASE_URL is not a valid URL. Characters such as / # ? @ : % in the password must be percent-encoded.',
+      'DATABASE_URL_INVALID'
+    )
+  }
   console.info(`[db] data -> PostgreSQL ${target.hostname}:${target.port || 5432}${target.pathname}` +
     ` (pool max ${serverless ? 3 : 10})`)
 

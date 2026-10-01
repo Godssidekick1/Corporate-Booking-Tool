@@ -32,9 +32,13 @@ interface PgErrorLike {
 // your account role". So it has a name of its own, and a 500 naming the
 // missing variable is what a log shows.
 export class DbConfigurationError extends Error {
-  constructor(message: string) {
+  // 'missing' (no DATABASE_URL) or 'invalid' (not a parseable URL). Lets
+  // /api/health say which without ever handling the value itself.
+  readonly code: 'DATABASE_URL_MISSING' | 'DATABASE_URL_INVALID'
+  constructor(message: string, code: 'DATABASE_URL_MISSING' | 'DATABASE_URL_INVALID' = 'DATABASE_URL_MISSING') {
     super(message)
     this.name = 'DbConfigurationError'
+    this.code = code
   }
 }
 

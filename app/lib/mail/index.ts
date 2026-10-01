@@ -31,9 +31,10 @@ export class MailNotConfigured extends Error {
   }
 }
 
-type Mode = 'smtp' | 'log' | 'none'
+export type MailMode = 'smtp' | 'log' | 'none'
 
-function mode(): Mode {
+// Which transport sendMail() would use. Exported for /api/health.
+export function mailMode(): MailMode {
   const explicit = process.env.MAIL_TRANSPORT
   if (explicit === 'smtp' || explicit === 'log') return explicit
   if (process.env.SMTP_URL) return 'smtp'
@@ -51,7 +52,7 @@ async function smtp(): Promise<Transporter> {
 }
 
 export async function sendMail(mail: Mail): Promise<void> {
-  const m = mode()
+  const m = mailMode()
   if (m === 'none') {
     throw new MailNotConfigured('set SMTP_URL and MAIL_FROM (or MAIL_TRANSPORT=log outside production)')
   }
