@@ -302,7 +302,8 @@ d('onboarding', () => {
       from employees e left join accounts a on a.id = e.auth_user_id
       where e.client_id = ${clientId} and e.role <> 'admin'`))
       .toEqual([{ email: 'peter@initech.example', status: 'active', onboarding_method: 'direct_create', has_account: true, no_password: true }])
-    // Only the admin was invited. Peter can sign in via "Forgot password".
+    // Only the admin was invited. Peter gets in once an admin sends him an
+    // invite; "Forgot password" does not activate an account.
     expect(invites()).toEqual(['bill@initech.example'])
   })
 

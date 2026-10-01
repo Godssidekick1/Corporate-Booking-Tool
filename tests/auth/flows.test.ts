@@ -263,6 +263,36 @@ d('auth flows', () => {
     }
   })
 
+  it('"Forgot password" never activates an account that has no password', async () => {
+    // An invite nobody accepted, or someone never invited at all: whoever reads
+    // that inbox must not be able to activate it without an admin.
+    const { accountId } = await transaction(tx =>
+      flows.createAccount(tx, 'never.activated@example.test', { createdBy: staff.id }))
+    expect(await flows.requestPasswordReset('never.activated@example.test', meta)).toEqual({ ok: true })
+    expect(outbox).toEqual([])
+
+    // An admin helping them in sends a fresh invite, not a reset.
+    const sent = await transaction(tx => flows.sendPasswordReset(tx, accountId, staff.id))
+    expect(sent).toEqual({ email: 'never.activated@example.test', kind: 'invite' })
+    const { token, type } = linkIn(outbox.at(-1)!)
+    expect(type).toBe('invite')
+    expect(await flows.inspectLink(token, meta)).toMatchObject({ ok: true, purpose: 'invite' })
+
+    await exec(db, sql`delete from accounts where id = ${accountId}`)
+  })
+
+  it('a reset link stops working if the account has no password', async () => {
+    await flows.requestPasswordReset(person.email, meta)
+    const { token } = linkIn(outbox.at(-1)!)
+    await exec(db, sql`update accounts set password_hash = null where id = ${person.id}`)
+    try {
+      expect(await flows.inspectLink(token, meta)).toMatchObject({ ok: false, status: 400 })
+      expect(await flows.completeLink(token, 'a brand new passphrase', meta)).toMatchObject({ ok: false, status: 400 })
+    } finally {
+      await setPassword(person.id, PASSWORD)
+    }
+  })
+
   // ── Invites ────────────────────────────────────────────────────────────────
 
   it('an invite is accepted by choosing a password; the employee becomes active', async () => {

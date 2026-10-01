@@ -98,7 +98,9 @@ export const POST = route(async (req: NextRequest, { params }: Ctx) => {
     ok: true,
     // The address is echoed so the UI can say where it went — a TMC staffer
     // needs to know whether it reached the address the client actually reads.
-    message: `Password reset sent to ${sent.email}.`,
+    message: sent.kind === 'invite'
+      ? `${sent.email} has not set a password yet, so a fresh invite was sent instead.`
+      : `Password reset sent to ${sent.email}.`,
     sentAt: new Date().toISOString(),
   })
 })

@@ -198,12 +198,22 @@ d('tmc/clients', () => {
       .toEqual({ status: 409, json: { error: 'That admin has no sign-in account yet. Invite them instead.' } })
     expect(outbox).toEqual([])
 
+    // An account that never set a password gets a fresh invite, not a reset:
+    // a reset is not a way to activate an account.
     await exec(db, sql`insert into accounts (id, email) values (${a.corpAdmin.id}, ${a.corpAdmin.email})`)
+    const invited = await post({ employeeId: a.corpAdmin.id })
+    expect(invited.status).toBe(200)
+    expect((invited.json as { message: string }).message)
+      .toBe(`${a.corpAdmin.email} has not set a password yet, so a fresh invite was sent instead.`)
+    expect(linkIn(outbox[0]).type).toBe('invite')
+
+    // One who has a password gets a reset.
+    await exec(db, sql`update accounts set password_hash = '$argon2id$placeholder' where id = ${a.corpAdmin.id}`)
     const res = await post({ employeeId: a.corpAdmin.id })
     expect(res.status).toBe(200)
     expect((res.json as { message: string }).message).toBe(`Password reset sent to ${a.corpAdmin.email}.`)
-    expect(outbox.map(m => m.to)).toEqual([a.corpAdmin.email])
-    expect(linkIn(outbox[0]).type).toBe('reset')
+    expect(outbox.map(m => m.to)).toEqual([a.corpAdmin.email, a.corpAdmin.email])
+    expect(linkIn(outbox[1]).type).toBe('reset')
   })
 
   // ── What reaches the client ────────────────────────────────────────────────

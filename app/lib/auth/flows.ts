@@ -202,6 +202,12 @@ export async function requestPasswordReset(rawEmail: unknown, meta: RequestMeta)
 
   const account = await accounts.byEmail(db, email)
   if (!account) return { ok: true }
+  // An account that has never had a password was never activated: it is an
+  // invite nobody accepted, or someone an admin chose not to invite. A reset
+  // would let whoever reads that inbox activate it without the admin. They
+  // get in only through an invite; an admin can send a fresh one
+  // (sendPasswordReset, below).
+  if (!account.password_hash) return { ok: true }
   const standing = await accounts.standingByAccount(db, account.id)
   if (!standing || refusal(standing)) return { ok: true }
 
@@ -212,15 +218,30 @@ export async function requestPasswordReset(rawEmail: unknown, meta: RequestMeta)
   return { ok: true }
 }
 
-// An admin resets someone else's password: the same email, sent on their
-// behalf. The admin never learns or chooses the password. Returns the address
-// it went to, or null when the person has no account to reset.
-export async function sendPasswordReset(q: Queryable, accountId: string, requestedBy: string): Promise<{ email: string } | null> {
+// An admin helps someone back in: the email is sent on their behalf, and the
+// admin never learns or chooses the password. A person who has a password
+// gets a reset link. One who never activated gets a fresh invite instead,
+// which is how an expired invite is resent. Returns the address and which
+// kind went, or null when the person has no account.
+export async function sendPasswordReset(
+  q: Queryable,
+  accountId: string,
+  requestedBy: string
+): Promise<{ email: string; kind: accounts.TokenPurpose } | null> {
   const account = await accounts.byId(q, accountId)
   if (!account) return null
-  await issueLink(q, account, 'reset', requestedBy)
-  await record(q, 'auth.reset_sent', account.id, requestedBy, null)
-  return { email: account.email }
+  const kind: accounts.TokenPurpose = account.password_hash ? 'reset' : 'invite'
+  await issueLink(q, account, kind, requestedBy)
+  await record(q, kind === 'reset' ? 'auth.reset_sent' : 'auth.invite_sent', account.id, requestedBy, null,
+    kind === 'invite' ? { resent: true } : {})
+  return { email: account.email, kind }
+}
+
+// A reset link only ever applies to an account that already has a password.
+// Guards links issued before that rule, and any issued by mistake.
+async function linkUsable(open: accounts.OpenToken): Promise<boolean> {
+  if (open.purpose !== 'reset') return true
+  return Boolean((await accounts.byId(db, open.account_id))?.password_hash)
 }
 
 // What a link is for, without spending it: the confirm page shows the address
@@ -228,7 +249,8 @@ export async function sendPasswordReset(q: Queryable, accountId: string, request
 export async function inspectLink(token: unknown, meta: RequestMeta): Promise<{ ok: true; email: string; purpose: accounts.TokenPurpose } | Failure> {
   const ipKey = throttle.keys.linkIp(meta.ip)
   if (await throttle.limited([{ key: ipKey, limit: throttle.LIMITS.linkPerIp }])) return fail(429, MESSAGES.tooMany)
-  const open = isToken(token) ? await accounts.openToken(db, tokenId(token)) : null
+  const found = isToken(token) ? await accounts.openToken(db, tokenId(token)) : null
+  const open = found && (await linkUsable(found)) ? found : null
   if (!open) {
     await throttle.note(ipKey)
     return fail(400, MESSAGES.badLink)
@@ -245,7 +267,8 @@ export async function completeLink(token: unknown, password: unknown, meta: Requ
   if (typeof password !== 'string') return fail(400, 'Choose a password.')
 
   const id = isToken(token) ? tokenId(token) : null
-  const open = id ? await accounts.openToken(db, id) : null
+  const found = id ? await accounts.openToken(db, id) : null
+  const open = found && (await linkUsable(found)) ? found : null
   if (!id || !open) {
     await throttle.note(ipKey)
     return fail(400, MESSAGES.badLink)
