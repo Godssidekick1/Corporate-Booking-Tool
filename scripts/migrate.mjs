@@ -123,7 +123,19 @@ export async function migrate(url, { status = false, log = console.log } = {}) {
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const args = process.argv.slice(2)
   const url = args.find(a => !a.startsWith('--')) ?? envUrl()
-  const target = new URL(url)
+  // Never echo the connection string: it carries the password. Node's own
+  // "Invalid URL" error prints its input in full, so parse failures are caught
+  // here and reported without it.
+  let target
+  try {
+    target = new URL(url)
+  } catch {
+    console.error(
+      '[migrate] DATABASE_URL is not a valid URL. Characters such as / # ? @ : % in the\n' +
+      '  password must be percent-encoded (/ -> %2F, # -> %23, ? -> %3F, @ -> %40, : -> %3A, % -> %25).'
+    )
+    process.exit(1)
+  }
   console.log(`[migrate] ${target.hostname}:${target.port || 5432}${target.pathname}`)
   try {
     const done = await migrate(url, { status: args.includes('--status') })
