@@ -246,7 +246,7 @@ d('onboarding', () => {
         policyGroupId: group.id,
       },
       employees: [
-        { email: 'one@globex.example', full_name: 'One', role: 'Manager', band: 'l2', department: ' Ops ' },
+        { email: 'one@globex.example', full_name: 'One', role: 'Finance', band: 'l2', department: ' Ops ' },
         { email: 'two@globex.example', full_name: 'Two' },
         { email: 'three@globex.example', full_name: 'Three', role: 'pilot' },
         { email: 'four@globex.example', full_name: 'Four', band: 'L9' },
@@ -279,7 +279,7 @@ d('onboarding', () => {
       // The admin goes on the most senior band.
       { email: 'cfo@globex.example', full_name: 'Hank', role: 'admin', status: 'invited', band_code: 'L3', band_rank: 3,
         department: null, onboarding_method: 'invite' },
-      { email: 'one@globex.example', full_name: 'One', role: 'manager', status: 'invited', band_code: 'L2', band_rank: 2,
+      { email: 'one@globex.example', full_name: 'One', role: 'finance', status: 'invited', band_code: 'L2', band_rank: 2,
         department: 'Ops', onboarding_method: 'invite' },
       { email: 'two@globex.example', full_name: 'Two', role: 'employee', status: 'invited', band_code: 'L1', band_rank: 1,
         department: null, onboarding_method: 'invite' },

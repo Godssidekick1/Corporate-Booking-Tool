@@ -38,10 +38,10 @@ export const GET = route(async (req: NextRequest) => {
 
   if (employee.role === 'admin') {
     employeeIds = await employees.idsInClient(db, employee.client_id)
-  } else if (employee.role === 'manager' || employee.role === 'finance') {
-    employeeIds = [employee.id, ...(await employees.directReportIds(db, employee.id))]
   } else {
-    employeeIds = [employee.id]
+    // Their own, and their direct reports' if they manage anyone: a manager is
+    // whoever others report to, not a role.
+    employeeIds = [employee.id, ...(await employees.directReportIds(db, employee.id))]
   }
 
   if (employeeIds.length === 0) {

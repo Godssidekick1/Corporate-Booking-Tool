@@ -268,8 +268,10 @@ d('people screens', () => {
     await exec(db, sql`update employees set status = 'active' where id = ${colleague2}`)
   })
 
-  it('settings/users/[id]: changes a role', async () => {
-    const res = await patchUser(colleague, { role: 'Manager' })
+  it('settings/users/[id]: changes a role; there is no manager role', async () => {
+    // A manager is whoever others report to, set as their reporting line.
+    expect((await patchUser(colleague, { role: 'manager' })).status).toBe(400)
+    const res = await patchUser(colleague, { role: 'Finance' })
     expect(res.status).toBe(200)
     expect(res.json).toMatchSnapshot()
   })

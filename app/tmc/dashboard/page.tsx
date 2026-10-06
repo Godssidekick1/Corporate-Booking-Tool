@@ -45,8 +45,10 @@ const BOOKING_MODES: { value: string; label: string }[] = [
   { value: 'cbt', label: 'CBT — Consultant-Booking' },
   { value: 'both', label: 'Hybrid — Both' },
 ]
-const VALID_ROLES = ['employee', 'manager', 'finance', 'admin']
-const ROLE_LABELS: Record<string, string> = { employee: 'Employee', manager: 'Manager', finance: 'Finance', admin: 'Corporate admin' }
+// No 'manager': a manager is an employee others report to, set as the
+// reporting line on Traveller profiles.
+const VALID_ROLES = ['employee', 'finance', 'admin']
+const ROLE_LABELS: Record<string, string> = { employee: 'Employee', finance: 'Finance', admin: 'Corporate admin' }
 const MAX_EMPLOYEES = 250
 const EMPTY_MANUAL = { full_name: '', email: '', role: 'employee', band: '' }
 

@@ -9,14 +9,14 @@ interface Employee {
   id: string
   full_name: string
   email: string
-  role: 'admin' | 'manager' | 'finance' | 'employee'
+  role: 'admin' | 'finance' | 'employee'
   status: string
   band_code: string | null
   department: string | null
   onboarding_method: string | null
 }
 
-const ROLES = ['employee', 'manager', 'finance', 'admin'] as const
+const ROLES = ['employee', 'finance', 'admin'] as const
 
 // Mirrors MIN_INITIAL_PASSWORD in app/api/employees/route.ts, which rejects
 // anything shorter. Checked here too so the admin finds out before submitting.

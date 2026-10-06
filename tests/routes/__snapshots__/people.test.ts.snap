@@ -43,7 +43,7 @@ exports[`people screens > employees/me: the traveller profile 1`] = `
 }
 `;
 
-exports[`people screens > settings/users/[id]: changes a role 1`] = `
+exports[`people screens > settings/users/[id]: changes a role; there is no manager role 1`] = `
 {
   "employee": {
     "band_code": "L3",
@@ -51,7 +51,7 @@ exports[`people screens > settings/users/[id]: changes a role 1`] = `
     "full_name": "Employee 1c5a5b",
     "id": "f86261c4-5ab5-4d5a-b436-5932de829ede",
     "manager_id": "d674c0fd-ccef-4077-87fe-5af32f06cabc",
-    "role": "manager",
+    "role": "finance",
     "status": "active",
   },
   "ok": true,

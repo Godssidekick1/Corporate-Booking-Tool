@@ -126,12 +126,13 @@ d('traveller bookings and trips', () => {
   })
 
   it('recent: a manager sees their direct reports too', async () => {
+    // A manager is an employee others report to -- no role to set. This used
+    // to need role 'manager', so an employee with a team saw only their own.
     const manager = await one<{ id: string }>(db, sql`
       select e.id from employees e
       where e.client_id = ${a.corpAdmin.client_id} and exists (select 1 from employees r where r.manager_id = e.id)
-        and e.role <> 'admin'
+        and e.role = 'employee'
       order by e.id limit 1`)
-    await exec(db, sql`update employees set role = 'manager' where id = ${manager.id}`)
     const reports = (await many<{ id: string }>(db, sql`select id from employees where manager_id = ${manager.id}`)).map(r => r.id)
     const res = await call(recentGet, { as: manager, url: '/api/bookings/recent?limit=50' })
     const expected = await one<{ n: number }>(db, sql`

@@ -66,7 +66,6 @@ const TOP_OF_HIERARCHY = '__top__'
 // need; everything else is filled in from their profile once they are listed.
 const ROLES: { value: string; label: string }[] = [
   { value: 'employee', label: 'Employee' },
-  { value: 'manager', label: 'Manager' },
   { value: 'finance', label: 'Finance' },
   { value: 'admin', label: 'Corporate admin' },
 ]

@@ -49,17 +49,24 @@ export async function actors(): Promise<Actors> {
     limit 1`)
   if (!corpAdmin) throw new Error('[tests] no active corporate admin in cbt_template')
 
+  // Someone who has finished first login, so the page gate lets them straight
+  // through: a traveller in their normal state, not mid-onboarding.
   const byRole = (role: string) => maybeOne<Actor>(db, sql`
     select ${COLUMNS} from employees e
     where e.role = ${role} and e.status = 'active'
-    order by e.created_at, e.id limit 1`)
+    order by e.first_login_completed desc, e.created_at, e.id limit 1`)
 
   const [tc, manager, employee, platformAdmin, otherTmcAdmin] = await Promise.all([
     maybeOne<Actor>(db, sql`
       select ${COLUMNS} from employees e
       where e.role = 'tc' and e.status = 'active'
       order by (e.tmc_id = ${tmcAdmin.tmc_id}) desc, e.created_at, e.id limit 1`),
-    byRole('manager'),
+    // A manager is an employee others report to; there is no manager role.
+    maybeOne<Actor>(db, sql`
+      select ${COLUMNS} from employees e
+      where e.status = 'active' and e.client_id is not null
+        and exists (select 1 from employees r where r.manager_id = e.id and r.status = 'active')
+      order by e.created_at, e.id limit 1`),
     byRole('employee'),
     maybeOne<{ id: string }>(db, sql`select user_id as id from platform_admins order by created_at, user_id limit 1`),
     maybeOne<Actor>(db, sql`

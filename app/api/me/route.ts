@@ -47,6 +47,8 @@ export const GET = route(async () => {
         employeeCount: 0,
         hasBookings: false,
         canSelfBook: false,
+        hasDirectReports: false,
+        isApprover: false,
         permissions: [],
         clientAccess: [],
       })
@@ -59,12 +61,13 @@ export const GET = route(async () => {
 
   // Corporate side only: the company, and the setup checklist's counts. The
   // policy count comes from client_policy_groups, where policy actually lives.
-  const [client, counts] = !isTmcSide && employee.client_id
+  const [client, counts, hasDirectReports] = !isTmcSide && employee.client_id
     ? await Promise.all([
         clients.summary(db, employee.client_id),
         clients.onboardingCounts(db, employee.client_id),
+        employees.hasDirectReports(db, employee.id),
       ])
-    : [null, { employees: 0, bookings: 0, policyGroups: 0 }]
+    : [null, { employees: 0, bookings: 0, policyGroups: 0 }, false]
 
   // For TCs, their granted permissions and client access, so the frontend can
   // render a restricted view of the TMC dashboard and settings. tmc_admin has
@@ -88,6 +91,10 @@ export const GET = route(async () => {
     // screens hide what the server would refuse. A CBT-only client's people
     // sign in for their trips and approvals; the travel desk books for them.
     canSelfBook: !isTmcSide && client?.booking_mode !== 'cbt',
+    // A manager is whoever has people reporting to them; there is no manager
+    // role. Approvers are they, finance and corporate admins.
+    hasDirectReports,
+    isApprover: !isTmcSide && (employee.role === 'admin' || employee.role === 'finance' || hasDirectReports),
     permissions,
     clientAccess,
   })

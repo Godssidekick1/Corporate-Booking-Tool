@@ -21,7 +21,8 @@ import * as employees from '@/app/lib/repositories/employees'
 //                   and the password must be changed at first sign-in.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const EMPLOYEE_ROLES = ['employee', 'manager', 'finance', 'admin'] as const
+// No 'manager': a manager is an employee others report to (manager_id).
+export const EMPLOYEE_ROLES = ['employee', 'finance', 'admin'] as const
 export type EmployeeRole = typeof EMPLOYEE_ROLES[number]
 
 export type AccountSetup = 'invite' | { password: string }

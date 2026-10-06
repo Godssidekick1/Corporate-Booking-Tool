@@ -7,7 +7,7 @@ interface Employee {
   id: string
   full_name: string
   email: string
-  role: 'admin' | 'manager' | 'finance' | 'employee'
+  role: 'admin' | 'finance' | 'employee'
   status: string
   client_id: string | null
   band_code: string | null
@@ -37,6 +37,10 @@ interface MeResponse {
   // see their trips and approvals here; booking links are hidden because the
   // server refuses them (clientGates.selfBooking).
   canSelfBook: boolean
+  // A manager is whoever has people reporting to them (there is no manager
+  // role). Approvers: they, finance and corporate admins.
+  hasDirectReports: boolean
+  isApprover: boolean
 }
 
 // ── Approval summary (manager/admin/finance) ────────────────────────────
@@ -140,14 +144,14 @@ function getChecklist(
   return canSelfBook ? items : items.filter(i => i.id !== 'booking')
 }
 
-function getNavItems(role: string, canSelfBook: boolean) {
+function getNavItems(role: string, canSelfBook: boolean, isApprover: boolean) {
   const base = [
     { label: 'Dashboard',   href: '/dashboard' },
     ...(canSelfBook ? [{ label: 'Book travel', href: '/book' }] : []),
     { label: 'My trips',    href: '/bookings' },
     { label: 'Travel profile', href: '/profile' },
   ]
-  if (role === 'admin' || role === 'manager' || role === 'finance') {
+  if (isApprover) {
     base.push({ label: 'Approvals', href: '/approvals' })
   }
   if (role === 'admin' || role === 'finance') {
@@ -181,11 +185,11 @@ export default function DashboardPage() {
       if (!r.ok || !data.ok) { router.replace('/login'); return }
       setMe(data)
 
-      // Fetch role-appropriate data once we know who's logged in — the
-      // approver summary only makes sense for admin/manager/finance, the
-      // actionable-bookings banner is relevant to everyone (an admin can
+      // Fetch what applies once we know who's logged in -- the approver
+      // summary only for approvers (admins, finance, anyone with direct
+      // reports); the actionable-bookings banner for everyone (an admin can
       // also be a traveler on their own bookings).
-      if (['admin', 'manager', 'finance'].includes(data.employee.role)) {
+      if (data.isApprover) {
         fetch('/api/approvals?summary=1')
           .then(res => res.json())
           .then(d => { if (d.ok) setApprovalSummary({ pendingCount: d.pendingCount, urgentCount: d.urgentCount ?? 0, oldestNames: d.oldestNames }) })
@@ -246,12 +250,12 @@ export default function DashboardPage() {
   const { employee, client } = me
   const { role, full_name, band_code } = employee
   const canSelfBook = me.canSelfBook !== false
-  const navItems = getNavItems(role, canSelfBook)
+  const navItems = getNavItems(role, canSelfBook, me.isApprover === true)
   const firstName = full_name?.split(' ')[0] ?? 'there'
   const checklist = getChecklist(client, me.employeeCount ?? 0, me.hasBookings ?? false, me.hasPolicy ?? false, canSelfBook)
   const completedCount = checklist.filter(i => i.done).length
   const showChecklist = role === 'admin' && !(client?.setup_completed ?? false)
-  const isApproverRole = role === 'admin' || role === 'manager' || role === 'finance'
+  const isApproverRole = me.isApprover === true
 
   const stats = isApproverRole
     ? [
@@ -409,11 +413,11 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {role === 'manager' && (
+        {role === 'employee' && me.hasDirectReports && (
           <div style={s.infoBanner}>
             <span style={s.infoBannerText}>
-              You can approve in-band booking requests from your direct reports.
-              High-value requests are routed to Finance automatically.
+              You approve booking requests from the people who report to you,
+              wherever your company&apos;s approval chain asks for their manager.
             </span>
           </div>
         )}

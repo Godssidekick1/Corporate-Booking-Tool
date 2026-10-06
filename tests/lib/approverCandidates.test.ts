@@ -7,7 +7,8 @@ import { sql, one, exec } from '@/app/lib/db/sql'
 
 // ── Who counts as a candidate ────────────────────────────────────────────────
 // The half of approver resolution that lives in SQL: active people only, at
-// THIS client only, in the right role, ranked by THIS client's bands. The
+// THIS client only, managers (anyone with an active direct report) and
+// admins, ranked by THIS client's bands. The
 // ranking itself is pickApprover's and is tested purely next to it.
 //
 // A scratch client of its own, so the template's real people cannot win by
@@ -46,18 +47,38 @@ d('approver candidates', () => {
         (${client}, 'L2', 'Two', 2), (${client}, 'L4', 'Four', 4), (${other}, 'L9', 'Nine', 9)`)
   })
 
+  // Someone reporting to `boss`; active unless told otherwise.
+  async function reportTo(boss: string, clientId: string, status = 'active') {
+    const id = await person(clientId, { role: 'employee', status })
+    await exec(db, sql`update employees set manager_id = ${boss} where id = ${id}`)
+    return id
+  }
+
   it('only active managers and admins at this client, ranked by its own bands', async () => {
-    const inactive = await person(client, { role: 'manager', status: 'deactivated', band: 'L2' })
-    const elsewhere = await person(other, { role: 'manager', band: 'L2' })
-    const employee = await person(client, { role: 'employee', band: 'L2' })
+    // A manager is an employee with an active direct report; there is no role.
+    const inactive = await person(client, { role: 'employee', status: 'deactivated', band: 'L2' })
+    await reportTo(inactive, client)
+    const elsewhere = await person(other, { role: 'employee', band: 'L2' })
+    await reportTo(elsewhere, other)
+    const noTeam = await person(client, { role: 'employee', band: 'L2' })
+    const teamGone = await person(client, { role: 'employee', band: 'L2' })
+    await reportTo(teamGone, client, 'deactivated')
     // Band L9 exists only at the OTHER client: no rank here, so excluded.
-    const foreignBand = await person(client, { role: 'manager', band: 'L9' })
+    const foreignBand = await person(client, { role: 'employee', band: 'L9' })
+    await reportTo(foreignBand, client)
     const admin = await person(client, { role: 'admin', band: 'L4' })
 
     const result = await resolveApproverForTier(db, tier({ min_band_rank: 1 }), 'traveller', client)
     // Every excluded person would outrank or tie the admin if they leaked in.
     expect(result).toEqual({ kind: 'approver', approverId: admin })
-    expect([inactive, elsewhere, employee, foreignBand]).not.toContain((result as { approverId: string }).approverId)
+    expect([inactive, elsewhere, noTeam, teamGone, foreignBand]).not.toContain((result as { approverId: string }).approverId)
+
+    // An employee with a team qualifies, and at L2 is the lowest qualifying rank.
+    // (With a 'manager' role this person was never a candidate.)
+    const manager = await person(client, { role: 'employee', band: 'L2' })
+    await reportTo(manager, client)
+    expect(await resolveApproverForTier(db, tier({ min_band_rank: 1 }), 'traveller', client))
+      .toEqual({ kind: 'approver', approverId: manager })
   })
 
   it('finance and admin steps take the longest-serving active holder of the role', async () => {
@@ -71,7 +92,7 @@ d('approver candidates', () => {
   })
 
   it('a manager step follows the traveller\'s own reporting line', async () => {
-    const boss = await person(client, { role: 'manager', band: 'L4' })
+    const boss = await person(client, { role: 'employee', band: 'L4' })
     const traveller = await person(client, { role: 'employee', band: 'L2' })
     await exec(db, sql`update employees set manager_id = ${boss} where id = ${traveller}`)
     expect(await resolveApproverForTier(db, tier({ approver_type: 'manager' }), traveller, client))

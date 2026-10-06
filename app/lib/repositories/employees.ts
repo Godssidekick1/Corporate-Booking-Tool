@@ -880,12 +880,22 @@ export async function reportingLine(db: Queryable, employeeId: string): Promise<
 
 export type RankedCandidate = Pick<Row<'employees'>, 'id' | 'band_code' | 'created_at'>
 
-// Active managers and admins at the client, for a rank-scoped step.
+// Active managers and admins at the client, for a rank-scoped step. A manager
+// is whoever has an active direct report -- the reporting line, not a role
+// (there is no 'manager' role; see 20261006000000_no_manager_role).
 export async function rankedApprovers(db: Queryable, clientId: string): Promise<RankedCandidate[]> {
   return many<RankedCandidate>(db, sql`
-    select id, band_code, created_at from employees
-    where client_id = ${clientId} and role in ('manager', 'admin') and status = 'active'
-    order by created_at, id`)
+    select e.id, e.band_code, e.created_at from employees e
+    where e.client_id = ${clientId} and e.status = 'active'
+      and (e.role = 'admin' or exists (
+        select 1 from employees r where r.manager_id = e.id and r.status = 'active'))
+    order by e.created_at, e.id`)
+}
+
+// Whether anyone active reports to this person -- what makes them a manager.
+export async function hasDirectReports(db: Queryable, employeeId: string): Promise<boolean> {
+  return (await one<{ yes: boolean }>(db, sql`
+    select exists (select 1 from employees where manager_id = ${employeeId} and status = 'active') as yes`)).yes
 }
 
 // The longest-serving active person in a role -- a finance or admin step.

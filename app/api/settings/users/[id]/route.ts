@@ -10,7 +10,8 @@ import { route } from '@/app/lib/http/handler'
 // (active <-> deactivated). Cannot be used to set status to 'invited' —
 // that only happens via the invite route itself.
 
-const VALID_ROLES = ['employee', 'manager', 'finance', 'admin'] as const
+// No 'manager': a manager is an employee others report to (manager_id).
+const VALID_ROLES = ['employee', 'finance', 'admin'] as const
 type ValidRole = typeof VALID_ROLES[number]
 
 const EDITABLE_STATUSES = ['active', 'deactivated'] as const

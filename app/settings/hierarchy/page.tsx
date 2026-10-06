@@ -20,7 +20,7 @@ interface Employee {
   id: string
   full_name: string
   email: string
-  role: 'admin' | 'manager' | 'finance' | 'employee'
+  role: 'admin' | 'finance' | 'employee'
   status: string
   band_code: string | null
   department: string | null
@@ -29,7 +29,7 @@ interface Employee {
 }
 
 const ROLE_LABEL: Record<string, string> = {
-  admin: 'Admin', manager: 'Manager', finance: 'Finance', employee: 'Employee',
+  admin: 'Admin', finance: 'Finance', employee: 'Employee',
 }
 
 export default function SettingsHierarchyPage() {
