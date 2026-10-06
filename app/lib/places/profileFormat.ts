@@ -26,6 +26,20 @@ export function todayInput(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
+// How people write nationalities ("Indian"), for values typed before the
+// country picker existed: the server converts them on save, and the picker
+// shows them as the country rather than flagging them. The picker sends codes.
+const DEMONYMS: Record<string, string> = {
+  indian: 'IN', american: 'US', british: 'GB', emirati: 'AE', singaporean: 'SG',
+  nepali: 'NP', nepalese: 'NP', 'sri lankan': 'LK', bangladeshi: 'BD', bhutanese: 'BT',
+  canadian: 'CA', australian: 'AU', german: 'DE', french: 'FR', japanese: 'JP',
+  chinese: 'CN', malaysian: 'MY', thai: 'TH', saudi: 'SA', omani: 'OM', qatari: 'QA',
+}
+
+export function countryForDemonym(value: string): string | null {
+  return DEMONYMS[value.trim().toLowerCase()] ?? null
+}
+
 // The gender a title implies, to fill the gender field in as the title is
 // chosen. MR and MSTR (a boy) are male; MRS and MS are female. Still editable:
 // it is a convenience, not a rule.

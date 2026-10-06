@@ -1,5 +1,6 @@
 import type { Queryable } from '@/app/lib/db'
 import * as reference from '@/app/lib/repositories/reference'
+import { countryForDemonym } from '@/app/lib/places/profileFormat'
 
 // ── normalisePlaces ──────────────────────────────────────────────────────────
 // Turns the place fields of a traveller profile into their canonical form, or
@@ -37,19 +38,10 @@ export type PlaceResult =
 
 export const DEFAULT_COUNTRY = 'IN'
 
-// How people write nationalities. Only for converting free text saved before
-// the picker existed; the picker itself sends codes.
-const DEMONYMS: Record<string, string> = {
-  indian: 'IN', american: 'US', british: 'GB', emirati: 'AE', singaporean: 'SG',
-  nepali: 'NP', nepalese: 'NP', 'sri lankan': 'LK', bangladeshi: 'BD', bhutanese: 'BT',
-  canadian: 'CA', australian: 'AU', german: 'DE', french: 'FR', japanese: 'JP',
-  chinese: 'CN', malaysian: 'MY', thai: 'TH', saudi: 'SA', omani: 'OM', qatari: 'QA',
-}
-
 export async function resolveCountryCode(db: Queryable, value: string): Promise<string | null> {
   const v = value.trim()
   if (!v) return null
-  const demonym = DEMONYMS[v.toLowerCase()]
+  const demonym = countryForDemonym(v)
   if (demonym) return demonym
   return (await reference.findCountry(db, v))?.code ?? null
 }

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import SearchableSelect from '@/app/components/SearchableSelect'
-import { toDateInput, fromDateInput } from '@/app/lib/places/profileFormat'
+import { toDateInput, fromDateInput, countryForDemonym } from '@/app/lib/places/profileFormat'
 
 // ── Place pickers ────────────────────────────────────────────────────────────
 // Country, state and city pickers over the GeoNames reference data (CC BY 4.0),
@@ -57,11 +57,13 @@ export function useRegions(country: string): Region[] {
   return regions.country === country ? regions.list : []
 }
 
-// A country code from a code or an English name, as older records hold either.
+// A country from a code, an English name or a nationality ("Indian"), as
+// older records hold any of them.
 export function findCountry(countries: Country[], value: string): Country | null {
   const v = value.trim().toLowerCase()
   if (!v) return null
-  return countries.find(c => c.code.toLowerCase() === v || c.name.toLowerCase() === v) ?? null
+  const code = (countryForDemonym(v) ?? v).toLowerCase()
+  return countries.find(c => c.code.toLowerCase() === code || c.name.toLowerCase() === v) ?? null
 }
 
 const note: React.CSSProperties = { fontSize: 11, color: '#B45309', margin: '4px 0 0' }
@@ -152,18 +154,50 @@ export function CitySelect({ country, state, value, onChange, disabled, strict =
   const [loaded, setLoaded] = useState<boolean | null>(null)
   const [loading, setLoading] = useState(false)
 
+  // State is only set when an answer arrives, never synchronously in an
+  // effect (react-hooks/set-state-in-effect).
+  const lookup = useCallback((q: string) => {
+    const params = new URLSearchParams({ country, search: q })
+    if (regionCode) params.set('region', regionCode)
+    return fetch(`/api/reference/cities?${params}`).then(r => r.json())
+      .then(d => (d.ok ? { loaded: d.loaded as boolean, cities: d.cities as City[] } : null))
+      .catch(() => null)
+  }, [country, regionCode])
+
+  // Typing: SearchableSelect debounces and calls this.
   const search = useCallback((q: string) => {
     if (!country) return
     setLoading(true)
-    const params = new URLSearchParams({ country, search: q })
-    if (regionCode) params.set('region', regionCode)
-    fetch(`/api/reference/cities?${params}`).then(r => r.json())
-      .then(d => { if (d.ok) { setResults(d.cities); setLoaded(d.loaded) } })
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [country, regionCode])
+    lookup(q).then(r => {
+      if (r) { setResults(r.cities); setLoaded(r.loaded) }
+      setLoading(false)
+    })
+  }, [country, lookup])
 
-  useEffect(() => { search('') }, [search])
+  // The opening list: the biggest places in the country / state.
+  useEffect(() => {
+    if (!country) return
+    let live = true
+    lookup('').then(r => { if (live && r) { setResults(r.cities); setLoaded(r.loaded) } })
+    return () => { live = false }
+  }, [country, lookup])
+
+  // Strict: say so when the saved value is not a real place in this state
+  // ("Ggn" for Gurugram), as the country and state pickers do, rather than
+  // leaving it to be refused on save. Keyed by what was checked, so a stale
+  // answer for an earlier value is never shown.
+  const checkKey = `${country}|${regionCode ?? ''}|${value.trim().toLowerCase()}`
+  const [checked, setChecked] = useState<{ key: string; unknown: boolean }>({ key: '', unknown: false })
+  useEffect(() => {
+    const v = value.trim()
+    if (!strict || !v || !country) return
+    let live = true
+    lookup(v).then(r => {
+      if (live && r) setChecked({ key: checkKey, unknown: r.loaded && !r.cities.some(c => c.name.toLowerCase() === v.toLowerCase()) })
+    })
+    return () => { live = false }
+  }, [strict, value, country, lookup, checkKey])
+  const unknown = strict && !!value.trim() && checked.key === checkKey && checked.unknown
 
   const options = useMemo(() => results.map(c => ({ id: c.name, label: c.name })), [results])
 
@@ -191,6 +225,7 @@ export function CitySelect({ country, state, value, onChange, disabled, strict =
         disabled={disabled || !country}
         allowFreeText={!strict}
       />
+      {unknown && <p style={note}>&ldquo;{value}&rdquo; isn&apos;t a place in {state || 'this country'}. Choose one.</p>}
       <p style={credit}>Place names: GeoNames (CC BY 4.0)</p>
     </div>
   )
