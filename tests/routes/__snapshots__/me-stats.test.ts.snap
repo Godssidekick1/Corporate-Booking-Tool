@@ -2,6 +2,7 @@
 
 exports[`GET /api/me > a corporate admin: profile, client and onboarding progress 1`] = `
 {
+  "canSelfBook": true,
   "client": {
     "booking_mode": "sbt",
     "country": "India",
@@ -44,6 +45,7 @@ exports[`GET /api/me > a corporate admin: profile, client and onboarding progres
 
 exports[`GET /api/me > a platform admin with no employees row is answered, not refused 1`] = `
 {
+  "canSelfBook": false,
   "client": null,
   "clientAccess": [],
   "employee": null,
@@ -57,6 +59,7 @@ exports[`GET /api/me > a platform admin with no employees row is answered, not r
 
 exports[`GET /api/me > a tc: permissions and client access for the restricted view 1`] = `
 {
+  "canSelfBook": false,
   "client": null,
   "clientAccess": [
     "b5005d4e-b813-4f10-ae59-1b0f5257357e",
@@ -94,6 +97,7 @@ exports[`GET /api/me > a tc: permissions and client access for the restricted vi
 
 exports[`GET /api/me > a tmc_admin: no client, no counts 1`] = `
 {
+  "canSelfBook": false,
   "client": null,
   "clientAccess": [],
   "employee": {

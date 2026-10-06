@@ -264,6 +264,7 @@ exports[`tmc/traveler-profiles > GET: the roster with trips, bands and cost cent
     {
       "band_code": "L4",
       "band_rank": 4,
+      "can_sign_in": false,
       "cost_centre": "IT101G",
       "department": "IT",
       "designation": "SWE",
@@ -296,6 +297,7 @@ exports[`tmc/traveler-profiles > GET: the roster with trips, bands and cost cent
     {
       "band_code": "L3",
       "band_rank": 3,
+      "can_sign_in": false,
       "cost_centre": "IT101G",
       "department": null,
       "designation": "SWE",
@@ -329,6 +331,7 @@ exports[`tmc/traveler-profiles > GET: the roster with trips, bands and cost cent
     {
       "band_code": "L5",
       "band_rank": 5,
+      "can_sign_in": false,
       "cost_centre": "IT101G",
       "department": "IT",
       "designation": "Head of IT",
@@ -362,6 +365,7 @@ exports[`tmc/traveler-profiles > GET: the roster with trips, bands and cost cent
     {
       "band_code": "L1",
       "band_rank": 1,
+      "can_sign_in": false,
       "cost_centre": "IT101G",
       "department": "IT",
       "designation": "Junior SWE",

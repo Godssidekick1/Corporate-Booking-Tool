@@ -397,11 +397,11 @@ export async function applyCorporateEdit(
 
 // ═══ TMC side: reporting lines and bands ════════════════════════════════════
 
-export type ReportingTarget = Pick<Row<'employees'>, 'id' | 'client_id' | 'full_name' | 'top_of_hierarchy'>
+export type ReportingTarget = Pick<Row<'employees'>, 'id' | 'client_id' | 'full_name' | 'email' | 'status' | 'top_of_hierarchy'>
 
 export async function reportingTarget(db: Queryable, employeeId: string): Promise<ReportingTarget | null> {
   return maybeOne<ReportingTarget>(db, sql`
-    select id, client_id, full_name, top_of_hierarchy from employees where id = ${employeeId}`)
+    select id, client_id, full_name, email, status, top_of_hierarchy from employees where id = ${employeeId}`)
 }
 
 export type ReportingEdit = Partial<Pick<Row<'employees'>,
@@ -658,7 +658,12 @@ export type ProfileJson = Record<string, unknown>
 export type TravellerRosterRow = Pick<Row<'employees'>,
   | 'id' | 'full_name' | 'email' | 'role' | 'status' | 'band_code' | 'band_rank' | 'department'
   | 'cost_centre' | 'designation' | 'manager_id' | 'top_of_hierarchy' | 'first_login_completed'
-> & { traveler_profile: ProfileJson | null }
+> & {
+  traveler_profile: ProfileJson | null
+  // Whether they have set a password, i.e. can sign in today. Someone invited
+  // and never accepted, or added before everyone got credentials, cannot.
+  can_sign_in: boolean
+}
 
 export async function travellerRoster(
   db: Queryable,
@@ -668,7 +673,8 @@ export async function travellerRoster(
   return listEmployees<TravellerRosterRow>(
     db,
     sql`id, full_name, email, role, status, band_code, band_rank, department, cost_centre,
-        designation, manager_id, top_of_hierarchy, traveler_profile, first_login_completed`,
+        designation, manager_id, top_of_hierarchy, traveler_profile, first_login_completed,
+        exists (select 1 from accounts a where a.id = employees.id and a.password_hash is not null) as can_sign_in`,
     sql`client_id = ${clientId}`,
     scope,
     [sql`full_name`, sql`email`, sql`department`, sql`designation`, sql`cost_centre`]

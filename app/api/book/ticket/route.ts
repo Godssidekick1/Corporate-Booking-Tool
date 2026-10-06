@@ -3,7 +3,7 @@ import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic } from '@/app/lib/amad
 import * as employees from '@/app/lib/repositories/employees'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
 import { route } from '@/app/lib/http/handler'
-import { loadClientGates } from '@/app/lib/clients/clientGates'
+import { loadClientGates, SELF_BOOKING_OFF } from '@/app/lib/clients/clientGates'
 import { classifyFlight } from '@/app/lib/rule-engine/classifyTrip'
 import { NextRequest } from 'next/server'
 import { db } from '@/app/lib/db'
@@ -77,6 +77,10 @@ export const POST = route(async (req: NextRequest) => {
   // ticketing out. The route is classified the same way the policy engine
   // classifies it, via the shared classifyFlight.
   const gates = await loadClientGates(db, employee.client_id)
+
+  if (!gates.selfBooking) {
+    return Response.json({ error: SELF_BOOKING_OFF }, { status: 403 })
+  }
   const itinerary = booking.itinerary as Parameters<typeof classifyFlight>[0] | null
 
   if (itinerary) {

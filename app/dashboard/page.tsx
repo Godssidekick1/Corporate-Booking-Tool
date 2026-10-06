@@ -33,6 +33,10 @@ interface MeResponse {
   // the "Confirm your travel policy" step below was permanently unticked no
   // matter how much policy a client actually had.
   hasPolicy: boolean
+  // False for a CBT-only client, whose travel desk books for them. They still
+  // see their trips and approvals here; booking links are hidden because the
+  // server refuses them (clientGates.selfBooking).
+  canSelfBook: boolean
 }
 
 // ── Approval summary (manager/admin/finance) ────────────────────────────
@@ -96,9 +100,10 @@ function getChecklist(
   client: Client | null,
   employeeCount: number,
   hasBookings: boolean,
-  hasPolicy: boolean
+  hasPolicy: boolean,
+  canSelfBook: boolean
 ) {
-  return [
+  const items = [
     {
       id: 'client',
       label: 'Company created',
@@ -132,12 +137,13 @@ function getChecklist(
       cta: 'Start booking',
     },
   ]
+  return canSelfBook ? items : items.filter(i => i.id !== 'booking')
 }
 
-function getNavItems(role: string) {
+function getNavItems(role: string, canSelfBook: boolean) {
   const base = [
     { label: 'Dashboard',   href: '/dashboard' },
-    { label: 'Book travel', href: '/book' },
+    ...(canSelfBook ? [{ label: 'Book travel', href: '/book' }] : []),
     { label: 'My trips',    href: '/bookings' },
     { label: 'Travel profile', href: '/profile' },
   ]
@@ -239,9 +245,10 @@ export default function DashboardPage() {
 
   const { employee, client } = me
   const { role, full_name, band_code } = employee
-  const navItems = getNavItems(role)
+  const canSelfBook = me.canSelfBook !== false
+  const navItems = getNavItems(role, canSelfBook)
   const firstName = full_name?.split(' ')[0] ?? 'there'
-  const checklist = getChecklist(client, me.employeeCount ?? 0, me.hasBookings ?? false, me.hasPolicy ?? false)
+  const checklist = getChecklist(client, me.employeeCount ?? 0, me.hasBookings ?? false, me.hasPolicy ?? false, canSelfBook)
   const completedCount = checklist.filter(i => i.done).length
   const showChecklist = role === 'admin' && !(client?.setup_completed ?? false)
   const isApproverRole = role === 'admin' || role === 'manager' || role === 'finance'
@@ -323,7 +330,7 @@ export default function DashboardPage() {
               })}
             </p>
           </div>
-          <a href="/book" style={s.bookBtn}>+ New booking</a>
+          {canSelfBook && <a href="/book" style={s.bookBtn}>+ New booking</a>}
         </div>
 
         {showChecklist && (
@@ -457,12 +464,14 @@ export default function DashboardPage() {
               icon="✈"
               title="No bookings yet"
               desc={
-                role === 'employee'
-                  ? 'Start a trip request and your manager will be notified for approval.'
-                  : 'When your team starts booking, their trips will appear here.'
+                !canSelfBook
+                  ? 'Your travel desk books trips for you. They will appear here once booked.'
+                  : role === 'employee'
+                    ? 'Start a trip request and your manager will be notified for approval.'
+                    : 'When your team starts booking, their trips will appear here.'
               }
-              cta="Make your first booking →"
-              ctaHref="/book"
+              cta={canSelfBook ? 'Make your first booking →' : undefined}
+              ctaHref={canSelfBook ? '/book' : undefined}
             />
           )}
         </Section>

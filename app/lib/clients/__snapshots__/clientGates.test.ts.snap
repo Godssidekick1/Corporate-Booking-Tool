@@ -27,6 +27,7 @@ exports[`loadClientGates > no client id is permissive 1`] = `
   ],
   "personalBookingsAllowed": false,
   "policyControlling": true,
+  "selfBooking": true,
 }
 `;
 
@@ -60,5 +61,6 @@ exports[`loadClientGates > reads a real client 1`] = `
   ],
   "personalBookingsAllowed": false,
   "policyControlling": true,
+  "selfBooking": true,
 }
 `;

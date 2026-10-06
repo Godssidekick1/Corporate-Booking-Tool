@@ -16,7 +16,7 @@ import type { PageParams } from '@/app/lib/pagination'
 // every booking, ticket, policy evaluation and form-of-payment resolution.
 
 export type ClientGateSettings = Pick<Row<'clients'>,
-  | 'status'
+  | 'status' | 'booking_mode'
   | 'booking_activation' | 'hold_activation' | 'dom_ticketing' | 'intl_ticketing'
   | 'policy_controlling' | 'personal_bookings_allowed'
   | 'agency_fop_allowed' | 'corporate_fop_allowed'
@@ -26,7 +26,7 @@ export type ClientGateSettings = Pick<Row<'clients'>,
 
 export async function gateSettings(db: Queryable, clientId: string): Promise<ClientGateSettings | null> {
   return maybeOne<ClientGateSettings>(db, sql`
-    select status,
+    select status, booking_mode,
            booking_activation, hold_activation, dom_ticketing, intl_ticketing,
            policy_controlling, personal_bookings_allowed,
            agency_fop_allowed, corporate_fop_allowed,

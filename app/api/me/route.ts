@@ -46,6 +46,7 @@ export const GET = route(async () => {
         client: null,
         employeeCount: 0,
         hasBookings: false,
+        canSelfBook: false,
         permissions: [],
         clientAccess: [],
       })
@@ -83,6 +84,10 @@ export const GET = route(async () => {
     employeeCount: counts.employees,
     hasBookings: counts.bookings > 0,
     hasPolicy: counts.policyGroups > 0,
+    // The rule clientGates.selfBooking enforces on every booking route, so the
+    // screens hide what the server would refuse. A CBT-only client's people
+    // sign in for their trips and approvals; the travel desk books for them.
+    canSelfBook: !isTmcSide && client?.booking_mode !== 'cbt',
     permissions,
     clientAccess,
   })

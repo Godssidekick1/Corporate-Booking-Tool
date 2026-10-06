@@ -1,6 +1,6 @@
 import { requireUser } from '@/app/lib/auth/session'
 import { onboardClient, OnboardClientInput } from '@/app/lib/onboarding/onboardClient'
-import { addEmployee, isEmployeeRole, setupForBookingMode } from '@/app/lib/onboarding/addEmployee'
+import { addEmployee, isEmployeeRole } from '@/app/lib/onboarding/addEmployee'
 import { inviteFailure } from '@/app/lib/onboarding/onboardTmc'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
@@ -11,9 +11,8 @@ import { db, transaction, isConstraint } from '@/app/lib/db'
 // ── POST /api/tmc/create-corporate/bulk ──────────────────────────────────────
 // Creates ONE client (with admin invite), then its employee roster in the same
 // request: rows typed into the onboarding form and rows from a CSV arrive here
-// alike. Every row gets an account (addEmployee); whether it is emailed an
-// invite follows the client's booking mode. Failures are reported per row and
-// never stop the rest.
+// alike. Every row gets an account and an invite (addEmployee), whatever the
+// booking mode. Failures are reported per row and never stop the rest.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const MAX_EMPLOYEES = 250
@@ -80,7 +79,6 @@ export const POST = route(async (req: NextRequest) => {
   }
 
   const clientId = clientResult.clientId
-  const setup = setupForBookingMode(client.bookingMode)
 
   if (employeeRows.length === 0) {
     return Response.json({
@@ -142,7 +140,7 @@ export const POST = route(async (req: NextRequest) => {
         role,
         department: row.department?.trim() || null,
         costCentre: row.cost_centre?.trim() || null,
-        setup,
+        setup: 'invite',
         createdBy: user.id,
       }), { tenantId: tmcId, userId: user.id })
       employeeResults.push({ email, status: 'created' })

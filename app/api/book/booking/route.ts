@@ -3,7 +3,7 @@ import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic, CustomerInfo } from '
 import * as employees from '@/app/lib/repositories/employees'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
 import { route } from '@/app/lib/http/handler'
-import { loadClientGates } from '@/app/lib/clients/clientGates'
+import { loadClientGates, SELF_BOOKING_OFF } from '@/app/lib/clients/clientGates'
 import { NextRequest } from 'next/server'
 import util from 'util'
 import { db } from '@/app/lib/db'
@@ -119,6 +119,9 @@ export const POST = route(async (req: NextRequest) => {
   // exactly what "hold" means. Both switches therefore land here.
   const gates = await loadClientGates(db, employee.client_id)
 
+  if (!gates.selfBooking) {
+    return Response.json({ error: SELF_BOOKING_OFF }, { status: 403 })
+  }
   if (!gates.bookingActivation) {
     return Response.json(
       { error: 'Booking is switched off for this account. Contact your travel desk.' },

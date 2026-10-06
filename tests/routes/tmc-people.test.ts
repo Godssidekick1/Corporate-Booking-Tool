@@ -7,6 +7,7 @@ import { GET as bandsGet, POST as bandsPost } from '@/app/api/tmc/bands/route'
 import { PATCH as bandPatch, DELETE as bandDelete } from '@/app/api/tmc/bands/[id]/route'
 import { GET as profilesGet } from '@/app/api/tmc/traveler-profiles/route'
 import { POST as addPerson } from '@/app/api/tmc/employees/route'
+import { POST as invitePerson } from '@/app/api/tmc/employees/[id]/invite/route'
 import { PATCH as profilePatch } from '@/app/api/tmc/traveler-profiles/[id]/route'
 import { GET as csvGet, POST as csvPost } from '@/app/api/tmc/traveler-profiles/csv/route'
 import { call } from '../harness/call'
@@ -574,14 +575,72 @@ d('tmc/employees POST', () => {
     expect(await add(person())).toEqual({ status: 409, json: { error: 'Someone at this client already has this email' } })
   })
 
-  it('a CBT-only client: an active account and no email', async () => {
+  it('a CBT-only client\'s person is invited too: everyone gets credentials', async () => {
     await exec(db, sql`update clients set booking_mode = 'cbt' where id = ${clientId}`)
-    const res = await add(person({ email: 'cbt.person@example.test', role: 'Manager' }))
+    const res = await add(person({ email: 'cbt.person@example.test', role: 'Finance' }))
     expect(res.status).toBe(201)
-    expect((res.json as { message: string }).message)
-      .toBe('Asha Rao added. No invite was emailed: the travel desk books for this client.')
-    expect(outbox).toEqual([])
+    expect((res.json as { message: string }).message).toBe('Asha Rao added. Invite sent to cbt.person@example.test.')
+    expect(outbox.map(m => [m.to, linkIn(m).type])).toEqual([['cbt.person@example.test', 'invite']])
     expect(await employee((res.json as { employeeId: string }).employeeId))
-      .toMatchObject({ role: 'manager', status: 'active', onboarding_method: 'direct_create' })
+      .toMatchObject({ role: 'finance', status: 'invited', onboarding_method: 'invite' })
+    await exec(db, sql`update clients set booking_mode = 'sbt' where id = ${clientId}`)
+  })
+})
+
+// ═══ Sending someone an invite ══════════════════════════════════════════════
+
+d('tmc/employees/[id]/invite', () => {
+  let a: Actors
+  let clientId: string
+  let person: { id: string; email: string; full_name: string }
+
+  beforeAll(async () => {
+    await resetDatabase()
+    a = await actors()
+    clientId = a.corpAdmin.client_id!
+    person = await one(db, sql`
+      select e.id, e.email, e.full_name from employees e join accounts acc on acc.id = e.id
+      where e.client_id = ${clientId} and e.id <> ${a.corpAdmin.id} and acc.password_hash is null
+        and e.status <> 'deactivated'
+      order by e.full_name, e.id limit 1`)
+  })
+
+  const invite = (id: string, as: Actors[keyof Actors] = a.tmcAdmin) =>
+    call(invitePerson, { as: as as never, method: 'POST', url: `/api/tmc/employees/${id}/invite`, params: { id } })
+
+  it('not found, TMC staff, another TMC, and corporate users are refused', async () => {
+    expect(await invite(NO_SUCH_ID)).toEqual({ status: 404, json: { error: 'Employee not found' } })
+    expect(await invite(a.tc!.id)).toEqual({ status: 404, json: { error: 'Employee not found' } })
+    expect(await invite(person.id, a.otherTmcAdmin!)).toEqual({ status: 404, json: { error: 'Employee not found for this TMC' } })
+    expect((await invite(person.id, a.corpAdmin)).status).toBe(403)
+    expect(outbox).toEqual([])
+  })
+
+  it('the roster says who cannot sign in yet', async () => {
+    const res = await call(profilesGet, { as: a.tmcAdmin, url: `/api/tmc/traveler-profiles?clientId=${clientId}&ids=${person.id}` })
+    expect((res.json as Paged<{ can_sign_in: boolean }>).items[0].can_sign_in).toBe(false)
+  })
+
+  it('emails an invite, and a second one retires the first link', async () => {
+    expect(await invite(person.id)).toEqual({ status: 200, json: { ok: true, message: `Invite sent to ${person.email}.` } })
+    expect(await invite(person.id)).toEqual({ status: 200, json: { ok: true, message: `Invite sent to ${person.email}.` } })
+    expect(outbox.map(m => [m.to, linkIn(m).type])).toEqual([[person.email, 'invite'], [person.email, 'invite']])
+    const live = await one<{ n: number }>(db, sql`
+      select count(*)::int as n from auth_tokens where account_id = ${person.id} and consumed_at is null`)
+    expect(live.n).toBe(1)
+  })
+
+  it('someone who can already sign in, or is deactivated, is not sent one', async () => {
+    await exec(db, sql`update accounts set password_hash = 'set' where id = ${person.id}`)
+    expect(await invite(person.id)).toEqual({
+      status: 409,
+      json: { error: `${person.full_name} can already sign in. A forgotten password can be reset from the sign-in page.` },
+    })
+    await exec(db, sql`update accounts set password_hash = null where id = ${person.id}`)
+    await exec(db, sql`update employees set status = 'deactivated' where id = ${person.id}`)
+    expect(await invite(person.id)).toEqual({
+      status: 409, json: { error: `${person.full_name} is deactivated. Reactivate them first.` },
+    })
+    expect(outbox).toEqual([])
   })
 })

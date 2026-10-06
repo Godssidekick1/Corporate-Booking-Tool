@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { useCanSelfBook } from '@/app/hooks/useCanSelfBook'
 
 interface Trip {
   id: string
@@ -29,6 +30,7 @@ const STATUS_LABEL: Record<string, string> = {
 
 export default function TripsListPage() {
   const router = useRouter()
+  const canSelfBook = useCanSelfBook()
   const [trips, setTrips] = useState<Trip[] | null>(null)
   const [error, setError] = useState('')
   const [creating, setCreating] = useState(false)
@@ -114,14 +116,24 @@ export default function TripsListPage() {
         <div style={s.header}>
           <div>
             <h1 style={s.heading}>Your trips</h1>
-            <p style={s.sub}>Pick up where you left off, or start something new.</p>
+            <p style={s.sub}>
+              {canSelfBook === false ? 'Trips your travel desk has booked for you.' : 'Pick up where you left off, or start something new.'}
+            </p>
           </div>
-          <button type="button" onClick={() => setShowNewTrip(true)} style={s.newTripBtn}>
-            + New trip
-          </button>
+          {canSelfBook && (
+            <button type="button" onClick={() => setShowNewTrip(true)} style={s.newTripBtn}>
+              + New trip
+            </button>
+          )}
         </div>
 
-        {showNewTrip && (
+        {canSelfBook === false && (
+          <div style={s.deskCard}>
+            <p style={s.deskText}>Your travel desk books travel for your company. Contact them to arrange a trip; it will appear here once booked.</p>
+          </div>
+        )}
+
+        {showNewTrip && canSelfBook && (
           <div style={s.newTripCard}>
             <form onSubmit={handleCreateTrip} style={s.newTripForm}>
               <div style={s.field}>
@@ -161,7 +173,11 @@ export default function TripsListPage() {
         {trips !== null && trips.length === 0 && (
           <div style={s.emptyCard}>
             <p style={s.emptyTitle}>No trips yet</p>
-            <p style={s.emptySub}>Create your first trip to start booking flights, hotels, and tracking expenses in one place.</p>
+            <p style={s.emptySub}>
+              {canSelfBook === false
+                ? 'Nothing booked yet.'
+                : 'Create your first trip to start booking flights, hotels, and tracking expenses in one place.'}
+            </p>
           </div>
         )}
 
@@ -255,6 +271,8 @@ const s: Record<string, React.CSSProperties> = {
   cancelBtn: { height: '36px', padding: '0 14px', background: '#fff', color: '#374151', fontSize: '13px', fontWeight: 500, border: '1px solid #D1D5DB', borderRadius: '8px', cursor: 'pointer' },
   createBtn: { height: '36px', padding: '0 16px', background: '#000835', color: '#fff', fontSize: '13px', fontWeight: 600, border: 'none', borderRadius: '8px', cursor: 'pointer' },
 
+  deskCard: { padding: '14px 16px', background: '#EEF2FF', border: '1px solid #C7D2FE', borderRadius: '12px', marginBottom: '16px' },
+  deskText: { fontSize: '13px', color: '#3730A3', margin: 0, lineHeight: 1.5 },
   errorCard: { padding: '16px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '12px', marginBottom: '16px' },
   errorTitle: { fontSize: '13px', color: '#DC2626', margin: 0 },
 

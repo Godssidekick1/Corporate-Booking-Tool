@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { useCanSelfBook } from '@/app/hooks/useCanSelfBook'
 
 interface Trip {
   id: string
@@ -38,6 +39,7 @@ interface Expense {
 export default function TripWorkspacePage() {
   const params = useParams<{ tripId: string }>()
   const router = useRouter()
+  const canSelfBook = useCanSelfBook()
   const tripId = params.tripId
 
   const [trip, setTrip] = useState<Trip | null>(null)
@@ -151,13 +153,15 @@ export default function TripWorkspacePage() {
         <div style={s.section}>
           <div style={s.sectionHeader}>
             <h2 style={s.sectionTitle}>✈ Flights</h2>
-            <button
-              type="button"
-              onClick={() => router.push(`/book/flights?tripId=${tripId}`)}
-              style={s.addBtn}
-            >
-              + Add flight
-            </button>
+            {canSelfBook && (
+              <button
+                type="button"
+                onClick={() => router.push(`/book/flights?tripId=${tripId}`)}
+                style={s.addBtn}
+              >
+                + Add flight
+              </button>
+            )}
           </div>
 
           {flightBookings.length === 0 ? (

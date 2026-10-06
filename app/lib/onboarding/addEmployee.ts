@@ -12,11 +12,11 @@ import * as employees from '@/app/lib/repositories/employees'
 // Run it inside the caller's transaction: the email goes LAST, so a refused
 // email rolls the account and the row back with it.
 //
-// How the account is set up:
+// Everyone gets credentials, whatever the client's booking mode: at a
+// CBT-only client the travel desk books for them, but they still sign in to see
+// their trips, bookings and approvals (booking itself is refused by
+// clientGates.selfBooking). How the account is set up:
 //   invite       -- emailed a link; 'invited' until they choose a password.
-//   no_email     -- a CBT-only client: the travel desk books for them, so
-//                   nobody is emailed. 'active', with no password yet, so
-//                   they cannot sign in until someone sends them an invite.
 //   { password } -- an admin set a starting password to pass on. 'active',
 //                   and the password must be changed at first sign-in.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -24,7 +24,7 @@ import * as employees from '@/app/lib/repositories/employees'
 export const EMPLOYEE_ROLES = ['employee', 'manager', 'finance', 'admin'] as const
 export type EmployeeRole = typeof EMPLOYEE_ROLES[number]
 
-export type AccountSetup = 'invite' | 'no_email' | { password: string }
+export type AccountSetup = 'invite' | { password: string }
 
 export interface NewClientEmployee {
   clientId: string
@@ -40,11 +40,6 @@ export interface NewClientEmployee {
 
 export function isEmployeeRole(role: string): role is EmployeeRole {
   return (EMPLOYEE_ROLES as readonly string[]).includes(role)
-}
-
-// What a client's booking mode means for someone added to it.
-export function setupForBookingMode(bookingMode: string | null | undefined): 'invite' | 'no_email' {
-  return bookingMode === 'cbt' ? 'no_email' : 'invite'
 }
 
 export async function addEmployee(tx: Queryable, e: NewClientEmployee): Promise<string> {

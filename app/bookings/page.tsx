@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useCanSelfBook } from '@/app/hooks/useCanSelfBook'
 import { formatTime, formatDayLabel } from '@/app/lib/book/types'
 
 // ── /bookings — "My trips" ────────────────────────────────────────────────────
@@ -173,6 +174,7 @@ function TripSection({ group, onMarkComplete, completingId }: {
 }
 
 export default function BookingsPage() {
+  const canSelfBook = useCanSelfBook()
   const [trips, setTrips] = useState<TripGroup[] | null>(null)
   const [ungrouped, setUngrouped] = useState<BookingSummary[]>([])
   const [error, setError] = useState('')
@@ -229,7 +231,7 @@ export default function BookingsPage() {
       <div style={s.root}>
         <div style={s.header}>
           <h1 style={s.heading}>My trips</h1>
-          <Link href="/book" style={s.newTripBtn}>+ New booking</Link>
+          {canSelfBook && <Link href="/book" style={s.newTripBtn}>+ New booking</Link>}
         </div>
 
         {error && (
@@ -254,8 +256,14 @@ export default function BookingsPage() {
           <div style={s.emptyState}>
             <div style={s.emptyIcon}>✈</div>
             <p style={s.emptyTitle}>No trips yet</p>
-            <p style={s.emptyDesc}>Create a trip to start booking flights, hotels, and tracking expenses in one place.</p>
-            <Link href="/book" style={s.emptyCta}>Start your first trip →</Link>
+            {canSelfBook === false ? (
+              <p style={s.emptyDesc}>Your travel desk books travel for your company. Contact them to arrange a trip; it will appear here once booked.</p>
+            ) : (
+              <>
+                <p style={s.emptyDesc}>Create a trip to start booking flights, hotels, and tracking expenses in one place.</p>
+                <Link href="/book" style={s.emptyCta}>Start your first trip →</Link>
+              </>
+            )}
           </div>
         )}
 

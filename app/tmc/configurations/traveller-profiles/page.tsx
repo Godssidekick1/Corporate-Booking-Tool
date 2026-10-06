@@ -53,6 +53,9 @@ interface Employee {
   traveler_profile: TravelerProfile | null
   trips: number
   profileComplete: boolean
+  // Whether they have set a password. Invited and never accepted, or added
+  // before every employee got credentials: they need an invite to sign in.
+  can_sign_in: boolean
 }
 
 const TITLES = ['MR', 'MRS', 'MS', 'MSTR']
@@ -110,6 +113,7 @@ export default function TravellerProfilesPage() {
   const [dirty, setDirty] = useState(false)
 
   const [saving, setSaving] = useState(false)
+  const [inviting, setInviting] = useState(false)
   const [importing, setImporting] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -274,6 +278,16 @@ export default function TravellerProfilesPage() {
       roster.refetch()
       showSuccess(d.message)
     } finally { setAddBusy(false) }
+  }
+
+  async function sendInvite() {
+    if (!draft) return
+    setInviting(true); setError('')
+    try {
+      const d = await fetch(`/api/tmc/employees/${draft.id}/invite`, { method: 'POST' }).then(r => r.json())
+      if (!d.ok) { setError(d.error || 'Could not send the invite.'); return }
+      showSuccess(d.message)
+    } finally { setInviting(false) }
   }
 
   function downloadCsv() {
@@ -508,6 +522,7 @@ export default function TravellerProfilesPage() {
                       <div style={s.nameRow}>
                         <span style={s.name}>{emp.full_name}</span>
                         {!emp.profileComplete && <span style={s.incompleteDot} title="Profile incomplete" />}
+                        {!emp.can_sign_in && emp.status !== 'deactivated' && <span style={s.noLogin}>Can&apos;t sign in yet</span>}
                       </div>
                       <div style={s.email}>{emp.email}</div>
                     </td>
@@ -581,6 +596,21 @@ export default function TravellerProfilesPage() {
                       <button onClick={closePanel} style={s.closeBtn} aria-label="Close">✕</button>
                     </div>
                   </div>
+
+                  {!draft.can_sign_in && draft.status !== 'deactivated' && (
+                    <div style={s.inviteBanner}>
+                      <span>
+                        {draft.full_name} hasn&apos;t set a password yet, so they can&apos;t sign in to see
+                        their trips and approvals. A new invite replaces any earlier link.
+                      </span>
+                      <button
+                        onClick={sendInvite} disabled={inviting}
+                        style={{ ...s.ghostBtn, flexShrink: 0, opacity: inviting ? 0.5 : 1 }}
+                      >
+                        {inviting ? 'Sending…' : 'Send invite'}
+                      </button>
+                    </div>
+                  )}
 
                   <h3 style={s.sectionHeading}>Corporate</h3>
                   <div style={s.grid}>
@@ -779,6 +809,8 @@ const s: Record<string, React.CSSProperties> = {
   name: { fontSize: 13, fontWeight: 500, color: '#111827' },
   email: { fontSize: 11, color: '#9CA3AF' },
   meta: { fontSize: 11, color: '#6B7280', marginTop: 2 },
+  noLogin: { fontSize: 10, fontWeight: 600, color: '#92400E', background: '#FEF3C7', borderRadius: 4, padding: '1px 6px' },
+  inviteBanner: { display: 'flex', alignItems: 'center', gap: 12, background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 12px', fontSize: 12, color: '#92400E', lineHeight: 1.5, marginBottom: 6 },
   incompleteDot: { width: 6, height: 6, borderRadius: '50%', background: '#F59E0B', flexShrink: 0 },
   badge: { display: 'inline-block', padding: '2px 7px', background: '#EEF2FF', color: '#3730A3', fontSize: 10, fontWeight: 700, borderRadius: 4 },
   trips: { fontSize: 12, fontWeight: 600, color: '#374151' },

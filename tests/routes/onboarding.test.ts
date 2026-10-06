@@ -290,7 +290,7 @@ d('onboarding', () => {
   // Changed deliberately in Stage 3 (finding 7): every employee gets an account,
   // as POST /api/employees always gave one. A CBT-only roster used to get none,
   // so those people could never sign in, not even to see their own trips.
-  it('create corporate: a CBT-only client\'s roster get accounts, but no email', async () => {
+  it('create corporate: a CBT-only client\'s roster is invited too', async () => {
     const res = await onboard({
       client: { corporateName: 'Initech', adminEmail: 'bill@initech.example', adminName: 'Bill', bands: BANDS, bookingMode: 'cbt' },
       employees: [{ email: 'peter@initech.example', full_name: 'Peter', band: 'L1' }],
@@ -301,10 +301,10 @@ d('onboarding', () => {
       select e.email, e.status, e.onboarding_method, a.id = e.id as has_account, a.password_hash is null as no_password
       from employees e left join accounts a on a.id = e.auth_user_id
       where e.client_id = ${clientId} and e.role <> 'admin'`))
-      .toEqual([{ email: 'peter@initech.example', status: 'active', onboarding_method: 'direct_create', has_account: true, no_password: true }])
-    // Only the admin was invited. Peter gets in once an admin sends him an
-    // invite; "Forgot password" does not activate an account.
-    expect(invites()).toEqual(['bill@initech.example'])
+      .toEqual([{ email: 'peter@initech.example', status: 'invited', onboarding_method: 'invite', has_account: true, no_password: true }])
+    // Everyone gets credentials whatever the booking mode: the travel desk
+    // books for Peter, but he signs in to see his trips and approvals.
+    expect(invites().sort()).toEqual(['bill@initech.example', 'peter@initech.example'])
   })
 
   it('create corporate: roster bands are the client\'s own codes, and blank means the least senior', async () => {

@@ -47,6 +47,11 @@ export interface ClientGates {
   // delete. Their bookings are financial records and their PNRs are real, so
   // the row survives and the access stops. See DELETE /api/tmc/clients/[id].
   active: boolean
+  // Whether this client's people may book travel for themselves. False for a
+  // CBT-only client, where the travel desk books on their behalf: they still
+  // sign in to see their trips, bookings and approvals, but cannot search,
+  // price, book, ticket or start a trip. Hybrid and SBT clients self-book.
+  selfBooking: boolean
   bookingActivation: boolean
   holdActivation: boolean
   domTicketing: boolean
@@ -82,6 +87,7 @@ const PERMISSIVE: ClientGates = {
   // Fails open with everything else: an unreadable row must not read as
   // "this company has been shut off". Only an explicit 'inactive' does that.
   active: true,
+  selfBooking: true,
   bookingActivation: true,
   holdActivation: true,
   domTicketing: true,
@@ -163,6 +169,7 @@ export async function loadClientGates(
 
     return {
       active,
+      selfBooking: data.booking_mode !== 'cbt',
       // `!== false` rather than a truthy test: a column that is missing because
       // the migration has not run yet reads as undefined, and undefined must
       // mean "allowed" here, not "blocked".
@@ -181,4 +188,13 @@ export async function loadClientGates(
     console.error('[clientGates] could not read settings, allowing through', { clientId, error })
     return PERMISSIVE
   }
+}
+
+// The refusal every self-booking route gives a CBT-only client's people. One
+// sentence so the search page, the price page and a stale tab all say the same.
+export const SELF_BOOKING_OFF =
+  'Your travel desk books travel for your company. Contact them to arrange a trip.'
+
+export async function canSelfBook(db: Queryable, clientId: string | null | undefined): Promise<boolean> {
+  return (await loadClientGates(db, clientId)).selfBooking
 }

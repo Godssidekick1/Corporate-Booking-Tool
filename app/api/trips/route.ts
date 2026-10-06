@@ -1,3 +1,4 @@
+import { canSelfBook, SELF_BOOKING_OFF } from '@/app/lib/clients/clientGates'
 import { requireUser } from '@/app/lib/auth/session'
 import { NextRequest } from 'next/server'
 import { db } from '@/app/lib/db'
@@ -36,6 +37,12 @@ export const GET = route(async () => {
 
 export const POST = route(async (req: NextRequest) => {
   const user = await requireUser()
+
+  // A CBT-only client's people sign in to see their trips, but the travel desk
+  // books for them (clientGates.selfBooking).
+  if (!(await canSelfBook(db, user.employee?.clientId))) {
+    return Response.json({ error: SELF_BOOKING_OFF }, { status: 403 })
+  }
 
   const employee = await employees.traveller(db, user.id)
 

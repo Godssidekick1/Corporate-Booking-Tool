@@ -1,7 +1,7 @@
 import { requireUser } from '@/app/lib/auth/session'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { parsePageParams, pagedResponse } from '@/app/lib/pagination'
-import { addEmployee, isEmployeeRole, setupForBookingMode } from '@/app/lib/onboarding/addEmployee'
+import { addEmployee, isEmployeeRole } from '@/app/lib/onboarding/addEmployee'
 import { inviteFailure } from '@/app/lib/onboarding/onboardTmc'
 import { NextRequest } from 'next/server'
 import { db, transaction, isConstraint } from '@/app/lib/db'
@@ -86,9 +86,8 @@ export const GET = route(async (req: NextRequest) => {
 // reporting line, passport and contact details) is filled in on Traveller
 // profiles afterwards.
 //
-// Same rules as every other way people are added (addEmployee): an SBT or
-// hybrid client's person is emailed an invite; a CBT-only client's is not,
-// since the travel desk books for them.
+// Same rules as every other way people are added (addEmployee): they are
+// emailed an invite to set a password, whatever the client's booking mode.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface AddBody {
@@ -147,19 +146,15 @@ export const POST = route(async (req: NextRequest) => {
     return Response.json({ error: 'Someone at this client already has this email' }, { status: 409 })
   }
 
-  const setup = setupForBookingMode((await clients.bookingMode(db, clientId))?.booking_mode)
-
   try {
     const employeeId = await transaction(
-      tx => addEmployee(tx, { clientId, band, email, fullName, role, setup, createdBy: user.id }),
+      tx => addEmployee(tx, { clientId, band, email, fullName, role, setup: 'invite', createdBy: user.id }),
       { tenantId: auth.tmcId, userId: user.id }
     )
     return Response.json({
       ok: true,
       employeeId,
-      message: setup === 'invite'
-        ? `${fullName} added. Invite sent to ${email}.`
-        : `${fullName} added. No invite was emailed: the travel desk books for this client.`,
+      message: `${fullName} added. Invite sent to ${email}.`,
     }, { status: 201 })
   } catch (err) {
     const failure = inviteFailure(err)
