@@ -53,7 +53,10 @@ function unzipSingle(buf) {
 const args = process.argv.slice(2)
 const fileAt = args.indexOf('--file')
 const file = fileAt >= 0 ? args[fileAt + 1] : null
-const url = args.find((a, i) => !a.startsWith('--') && i !== fileAt + 1) ?? envValue('DATABASE_URL')
+// The database address is the one argument that is neither a flag nor the
+// value after --file. (Testing `i !== fileAt + 1` alone skipped the FIRST
+// argument whenever --file was absent, since fileAt is then -1.)
+const url = args.find((a, i) => !a.startsWith('--') && (fileAt < 0 || i !== fileAt + 1)) ?? envValue('DATABASE_URL')
 if (!url) {
   console.error('usage: node scripts/load-cities.mjs [database url] [--file cities500.zip]   (or set DATABASE_URL)')
   process.exit(1)
@@ -67,25 +70,35 @@ try {
   process.exit(1)
 }
 
-let raw
-if (file) {
-  raw = readFileSync(file)
-} else {
-  console.log(`downloading ${SOURCE}`)
-  const res = await fetch(SOURCE)
-  if (!res.ok) { console.error(`download failed: HTTP ${res.status}`); process.exit(1) }
-  raw = Buffer.from(await res.arrayBuffer())
-}
-const text = (raw[0] === 0x50 && raw[1] === 0x4b ? unzipSingle(raw) : raw).toString('utf8')
-
+// Connect (and check the tables exist) BEFORE the 14 MB download, so a wrong
+// address or an unmigrated database fails in a second, not after a minute.
 const client = new pg.Client({
   connectionString: url,
   ssl: host === 'localhost' || host === '127.0.0.1' ? undefined : { rejectUnauthorized: false },
 })
-await client.connect()
+try {
+  await client.connect()
+} catch (err) {
+  console.error(`[cities] cannot reach the database at ${host}: ${err.code ?? err.message}`)
+  if (host === 'localhost' || host === '127.0.0.1') {
+    console.error('[cities] Is PostgreSQL running? From WSL, "localhost" is WSL itself, not Windows: run this from PowerShell instead.')
+  }
+  process.exit(1)
+}
 try {
   const known = new Set((await client.query('select code from countries')).rows.map(r => r.code))
   if (known.size === 0) throw new Error('countries is empty -- run `npm run migrate` first')
+
+  let raw
+  if (file) {
+    raw = readFileSync(file)
+  } else {
+    console.log(`downloading ${SOURCE}`)
+    const res = await fetch(SOURCE)
+    if (!res.ok) throw new Error(`download failed: HTTP ${res.status}`)
+    raw = Buffer.from(await res.arrayBuffer())
+  }
+  const text = (raw[0] === 0x50 && raw[1] === 0x4b ? unzipSingle(raw) : raw).toString('utf8')
 
   // geonameid, name, asciiname, ..., feature code [7], country [8], admin1 [10], population [14]
   const rows = []

@@ -21,24 +21,27 @@
 -- Unchanged: existing profile values. The routes convert what they can match
 -- (a country name or code) as profiles are next saved; the screens flag the rest.
 -- Row-level security on, no policies, like every other table.
+--
+-- Safe to apply twice (if not exists / on conflict do nothing): it was once run
+-- by hand in pgAdmin, and the runner must still be able to record it after.
 -- ─────────────────────────────────────────────────────────────────────────────
 
-create table public.countries (
+create table if not exists public.countries (
   code       char(2) primary key,
   iso3       char(3) not null,
   name       text not null,
   phone_code text
 );
 
-create table public.regions (
+create table if not exists public.regions (
   country_code char(2) not null references public.countries (code),
   code         text not null,
   name         text not null,
   primary key (country_code, code)
 );
-create index regions_country_name on public.regions (country_code, lower(name));
+create index if not exists regions_country_name on public.regions (country_code, lower(name));
 
-create table public.cities (
+create table if not exists public.cities (
   id           integer primary key,            -- GeoNames geonameid
   country_code char(2) not null references public.countries (code),
   region_code  text,
@@ -47,8 +50,8 @@ create table public.cities (
   population   integer not null default 0
 );
 -- Prefix search within a country ("mum" -> Mumbai), biggest places first.
-create index cities_country_prefix on public.cities (country_code, lower(ascii_name) text_pattern_ops);
-create index cities_country_region on public.cities (country_code, region_code);
+create index if not exists cities_country_prefix on public.cities (country_code, lower(ascii_name) text_pattern_ops);
+create index if not exists cities_country_region on public.cities (country_code, region_code);
 
 alter table public.countries enable row level security;
 alter table public.regions enable row level security;
@@ -306,7 +309,8 @@ insert into public.countries (code, iso3, name, phone_code) values
   ('YT', 'MYT', 'Mayotte', '262'),
   ('ZA', 'ZAF', 'South Africa', '27'),
   ('ZM', 'ZMB', 'Zambia', '260'),
-  ('ZW', 'ZWE', 'Zimbabwe', '263');
+  ('ZW', 'ZWE', 'Zimbabwe', '263')
+on conflict (code) do nothing;
 
 insert into public.regions (country_code, code, name) values
   ('AD', '02', 'Canillo'),
@@ -808,7 +812,8 @@ insert into public.regions (country_code, code, name) values
   ('CD', '22', 'Lualaba'),
   ('CD', '23', 'Kasai-Central'),
   ('CD', '24', 'Mai-Ndombe'),
-  ('CD', '25', 'Mongala');
+  ('CD', '25', 'Mongala')
+on conflict (country_code, code) do nothing;
 
 insert into public.regions (country_code, code, name) values
   ('CD', '26', 'Nord-Ubangi'),
@@ -1310,7 +1315,8 @@ insert into public.regions (country_code, code, name) values
   ('FJ', '03', 'Northern'),
   ('FJ', '04', 'Rotuma'),
   ('FJ', '05', 'Western'),
-  ('FM', '01', 'Kosrae');
+  ('FM', '01', 'Kosrae')
+on conflict (country_code, code) do nothing;
 
 insert into public.regions (country_code, code, name) values
   ('FM', '02', 'Pohnpei State'),
@@ -1812,7 +1818,8 @@ insert into public.regions (country_code, code, name) values
   ('JP', '01', 'Aichi'),
   ('JP', '02', 'Akita'),
   ('JP', '03', 'Aomori'),
-  ('JP', '04', 'Chiba');
+  ('JP', '04', 'Chiba')
+on conflict (country_code, code) do nothing;
 
 insert into public.regions (country_code, code, name) values
   ('JP', '05', 'Ehime'),
@@ -2314,7 +2321,8 @@ insert into public.regions (country_code, code, name) values
   ('MH', '330', 'Namdrik Atoll'),
   ('MH', '340', 'Namu Atoll'),
   ('MH', '350', 'Rongelap Atoll'),
-  ('MH', '360', 'Rongrik Atoll');
+  ('MH', '360', 'Rongrik Atoll')
+on conflict (country_code, code) do nothing;
 
 insert into public.regions (country_code, code, name) values
   ('MH', '385', 'Taka Atoll'),
@@ -2816,7 +2824,8 @@ insert into public.regions (country_code, code, name) values
   ('PE', '09', 'Huancavelica'),
   ('PE', '10', 'Huánuco Department'),
   ('PE', '11', 'Ica'),
-  ('PE', '12', 'Junin');
+  ('PE', '12', 'Junin')
+on conflict (country_code, code) do nothing;
 
 insert into public.regions (country_code, code, name) values
   ('PE', '13', 'La Libertad'),
@@ -3318,7 +3327,8 @@ insert into public.regions (country_code, code, name) values
   ('SI', '54', 'Urban Municipality of Krško'),
   ('SI', '55', 'Municipality of Kungota'),
   ('SI', '57', 'Municipality of Laško'),
-  ('SI', '61', 'Ljubljana');
+  ('SI', '61', 'Ljubljana')
+on conflict (country_code, code) do nothing;
 
 insert into public.regions (country_code, code, name) values
   ('SI', '62', 'Municipality of Ljubno'),
@@ -3820,7 +3830,8 @@ insert into public.regions (country_code, code, name) values
   ('TR', '70', 'Hakkâri'),
   ('TR', '71', 'Konya'),
   ('TR', '72', 'Mardin'),
-  ('TR', '73', 'Niğde Province');
+  ('TR', '73', 'Niğde Province')
+on conflict (country_code, code) do nothing;
 
 insert into public.regions (country_code, code, name) values
   ('TR', '74', 'Siirt'),
@@ -4187,4 +4198,5 @@ insert into public.regions (country_code, code, name) values
   ('ZW', '07', 'Matabeleland South Province'),
   ('ZW', '08', 'Masvingo Province'),
   ('ZW', '09', 'Bulawayo'),
-  ('ZW', '10', 'Harare');
+  ('ZW', '10', 'Harare')
+on conflict (country_code, code) do nothing;
