@@ -112,7 +112,7 @@ const s: Record<string, React.CSSProperties> = {
     borderBottom: '2px solid transparent', fontSize: 13, color: '#6B7280',
     cursor: 'pointer', marginBottom: -1,
   },
-  tabActive: { color: '#000835', fontWeight: 600, borderBottomColor: '#000835' },
+  tabActive: { color: '#000835', fontWeight: 600, borderBottom: '2px solid #000835' },
   tabCount: { marginLeft: 6, fontSize: 11, color: '#6B7280', background: '#F3F4F6', borderRadius: 10, padding: '1px 7px' },
   tabHint: { fontSize: 12.5, color: '#9CA3AF', lineHeight: 1.6, margin: '-10px 0 18px', maxWidth: 680 },
 }

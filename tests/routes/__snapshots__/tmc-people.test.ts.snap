@@ -212,11 +212,11 @@ exports[`tmc/traveler-profiles > [id] PATCH: merges the profile, keeping what th
 `;
 
 exports[`tmc/traveler-profiles > CSV GET: the roster as the upload template 1`] = `
-"email,full_name,band,cost_centre,department,designation,title,gender,date_of_birth,passport_number,passport_expiry,nationality,issuing_country,mobile,address,city,state,zip_code
-employee.12be2c@example.test,Edited Name,L4,IT101G,,Lead,,,02/02/1992,,,,,,,New City,,
-employee.1c5a5b@example.test,Employee 1c5a5b,L3,IT101G,,SWE,MR,Male,1990-01-01,X0000000,2035-01-01,IN,IN,9999999999,Test Address,Gurugram,Haryana,Test Address
-employee.4ae427@example.test,Employee 4ae427,L5,IT101G,IT,Head of IT,MR,Male,1990-01-01,X0000000,2035-01-01,IN,IN,9999999999,Test Address,Gurugram,Haryana,Test Address
-employee.8bebd3@example.test,Employee 8bebd3,L1,IT101G,IT,Junior SWE,MR,Male,1990-01-01,X0000000,2035-01-01,,India,9999999999,Test Address,Gurugram,Haryana,Test Address"
+"email,full_name,band,cost_centre,department,designation,title,gender,date_of_birth,passport_number,passport_expiry,nationality,issuing_country,mobile,address,city,state,zip_code,country
+employee.12be2c@example.test,Edited Name,L4,IT101G,,Lead,,,02/02/1992,,,,,,,New City,,,
+employee.1c5a5b@example.test,Employee 1c5a5b,L3,IT101G,,SWE,MR,Male,1990-01-01,X0000000,2035-01-01,IN,IN,9999999999,Test Address,Gurugram,Haryana,Test Address,
+employee.4ae427@example.test,Employee 4ae427,L5,IT101G,IT,Head of IT,MR,Male,1990-01-01,X0000000,2035-01-01,IN,IN,9999999999,Test Address,Gurugram,Haryana,Test Address,
+employee.8bebd3@example.test,Employee 8bebd3,L1,IT101G,IT,Junior SWE,MR,Male,1990-01-01,X0000000,2035-01-01,,India,9999999999,Test Address,Gurugram,Haryana,Test Address,"
 `;
 
 exports[`tmc/traveler-profiles > GET: the roster with trips, bands and cost centres 1`] = `

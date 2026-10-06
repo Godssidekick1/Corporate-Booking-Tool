@@ -352,7 +352,7 @@ const s: Record<string, React.CSSProperties> = {
     fontSize: '13px', fontWeight: 600, color: '#6B7280', background: '#fff', border: '1px solid #E5E7EB',
     borderRadius: '8px', padding: '8px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px',
   },
-  tabActive: { color: '#000835', borderColor: '#000835', background: '#EEF2FF' },
+  tabActive: { color: '#000835', border: '1px solid #000835', background: '#EEF2FF' },
   tabBadge: {
     fontSize: '10px', fontWeight: 700, color: '#fff', background: '#000835',
     borderRadius: '999px', padding: '1px 7px', minWidth: '16px', textAlign: 'center' as const,

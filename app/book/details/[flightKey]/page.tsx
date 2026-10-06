@@ -9,6 +9,8 @@ import {
   LegSeatMap, SeatCell, journeysOf, journeyLabel,
 } from '@/app/lib/book/types'
 import { countryNameFromCode } from '@/app/lib/data/countryCodes'
+import { CountrySelect } from '@/app/components/places/PlacePickers'
+import { genderForTitle } from '@/app/lib/places/profileFormat'
 import { mealCodesFor, mealLabel, fromProfilePreference, NO_MEAL_PREFERENCE } from '@/app/lib/book/mealCodes'
 import { ButtonBusy, BusyOverlay } from '@/app/components/FlowLoader'
 import { classifyTrip } from '@/app/lib/rule-engine/classifyTrip'
@@ -1055,7 +1057,11 @@ export default function BookingDetailsPage() {
               <div style={s.grid3}>
                 <div style={s.field}>
                   <label style={s.label}>Title</label>
-                  <select value={passenger.title} disabled={locked} onChange={e => updatePassenger(i, 'title', e.target.value)} style={{ ...s.input, ...(locked ? s.inputLocked : {}) }}>
+                  <select value={passenger.title} disabled={locked} onChange={e => {
+                    updatePassenger(i, 'title', e.target.value)
+                    const g = genderForTitle(e.target.value)
+                    if (g) updatePassenger(i, 'gender', g)
+                  }} style={{ ...s.input, ...(locked ? s.inputLocked : {}) }}>
                     {passenger.paxType === 'INF' ? (
                       <>
                         <option value="MSTR">Master</option>
@@ -1082,7 +1088,7 @@ export default function BookingDetailsPage() {
                   <input
                     type="date" required disabled={locked} value={passenger.dateOfBirth}
                     onChange={e => updatePassenger(i, 'dateOfBirth', e.target.value)}
-                    style={{ ...s.input, ...(locked ? s.inputLocked : {}), borderColor: fieldErrors[`passenger-${i}-dob`] ? '#DC2626' : undefined }}
+                    style={{ ...s.input, ...(locked ? s.inputLocked : {}), ...(fieldErrors[`passenger-${i}-dob`] ? s.inputError : {}) }}
                   />
                   {fieldErrors[`passenger-${i}-dob`] && (
                     <p style={s.fieldError}>{fieldErrors[`passenger-${i}-dob`]}</p>
@@ -1114,11 +1120,11 @@ export default function BookingDetailsPage() {
                     </div>
                     <div style={s.field}>
                       <label style={s.label}>Issuing country</label>
-                      <input type="text" required disabled={locked} value={passenger.issuingCountry} onChange={e => updatePassenger(i, 'issuingCountry', e.target.value.toUpperCase())} style={{ ...s.input, ...(locked ? s.inputLocked : {}) }} maxLength={2} placeholder="IN" />
+                      <CountrySelect disabled={locked} value={passenger.issuingCountry} onChange={v => updatePassenger(i, 'issuingCountry', v)} />
                     </div>
                     <div style={s.field}>
                       <label style={s.label}>Nationality</label>
-                      <input type="text" required disabled={locked} value={passenger.nationality} onChange={e => updatePassenger(i, 'nationality', e.target.value.toUpperCase())} style={{ ...s.input, ...(locked ? s.inputLocked : {}) }} maxLength={2} placeholder="IN" />
+                      <CountrySelect disabled={locked} value={passenger.nationality} onChange={v => updatePassenger(i, 'nationality', v)} />
                     </div>
                   </div>
 
@@ -1239,7 +1245,7 @@ export default function BookingDetailsPage() {
                 <label style={s.label}>Email</label>
                 <input
                   type="email" required disabled={isSelfBooking} value={email} onChange={e => setEmail(e.target.value)}
-                  style={{ ...s.input, ...(isSelfBooking ? s.inputLocked : {}), borderColor: fieldErrors['contact-email'] ? '#DC2626' : undefined }}
+                  style={{ ...s.input, ...(isSelfBooking ? s.inputLocked : {}), ...(fieldErrors['contact-email'] ? s.inputError : {}) }}
                 />
                 {fieldErrors['contact-email'] && <p style={s.fieldError}>{fieldErrors['contact-email']}</p>}
               </div>
@@ -1247,7 +1253,7 @@ export default function BookingDetailsPage() {
                 <label style={s.label}>Mobile</label>
                 <input
                   type="tel" required disabled={isSelfBooking} value={mobile} onChange={e => setMobile(e.target.value)}
-                  style={{ ...s.input, ...(isSelfBooking ? s.inputLocked : {}), borderColor: fieldErrors['contact-mobile'] ? '#DC2626' : undefined }}
+                  style={{ ...s.input, ...(isSelfBooking ? s.inputLocked : {}), ...(fieldErrors['contact-mobile'] ? s.inputError : {}) }}
                   placeholder="10-digit number"
                 />
                 {fieldErrors['contact-mobile'] && <p style={s.fieldError}>{fieldErrors['contact-mobile']}</p>}
@@ -1543,6 +1549,7 @@ const s: Record<string, React.CSSProperties> = {
   label: { fontSize: '11px', fontWeight: 500, color: '#374151' },
   input: { width: '100%', height: '38px', padding: '0 10px', fontSize: '13px', color: '#111827', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '7px', outline: 'none' },
   inputLocked: { background: '#F3F4F6', color: '#6B7280', cursor: 'not-allowed' },
+  inputError: { border: '1px solid #DC2626' },
   fieldError: { fontSize: '10.5px', color: '#DC2626', margin: '2px 0 0' },
 
   // ── Seat selection styles ────────────────────────────────────────────────

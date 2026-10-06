@@ -3,7 +3,7 @@
 // Written by scripts/generate-db-types.mjs from the live database schema.
 // Re-run after any schema change:  node scripts/generate-db-types.mjs
 //
-// 46 tables, 1 view(s), 483 columns.
+// 49 tables, 1 view(s), 496 columns.
 
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json }
 
@@ -182,6 +182,14 @@ export interface Tables {
     created_by: string | null
     created_at: string
   }
+  cities: {
+    id: number
+    country_code: string
+    region_code: string | null
+    name: string
+    ascii_name: string
+    population: number
+  }
   client_default_approval_templates: {
     client_id: string
     category: string
@@ -335,6 +343,12 @@ export interface Tables {
     code: string
     name: string
     created_at: string
+  }
+  countries: {
+    code: string
+    iso3: string
+    name: string
+    phone_code: string | null
   }
   deal_code_assignments: {
     id: string
@@ -527,6 +541,11 @@ export interface Tables {
     sell_total: number
     created_at: string
     expires_at: string
+  }
+  regions: {
+    country_code: string
+    code: string
+    name: string
   }
   schema_migrations: {
     filename: string

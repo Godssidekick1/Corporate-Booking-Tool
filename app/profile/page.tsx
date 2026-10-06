@@ -3,6 +3,8 @@
 import { useEffect, useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
+import { CountrySelect, RegionSelect, CitySelect, DateField } from '@/app/components/places/PlacePickers'
+import { genderForTitle, todayInput } from '@/app/lib/places/profileFormat'
 
 // ── /profile ───────────────────────────────────────────────────────────────
 // Employee's own travel details, filled in once and reused to autofill
@@ -20,16 +22,12 @@ import Link from 'next/link'
 interface FormState {
   title: string
   gender: string
-  dobDay: string
-  dobMonth: string
-  dobYear: string
+  dateOfBirth: string             // DD/MM/YYYY, as stored
   hasPassport: boolean
   passportNumber: string
   issuingCountry: string
   nationality: string
-  passportExpiryDay: string
-  passportExpiryMonth: string
-  passportExpiryYear: string
+  passportExpiryDate: string      // DD/MM/YYYY
   mealPreference: '' | 'Non-Veg' | 'Veg' | 'Vegan' | 'Eggetarian'
   email: string
   mobile: string
@@ -37,32 +35,19 @@ interface FormState {
   city: string
   state: string
   zipCode: string
+  country: string                 // address country, ISO code
 }
 
 function emptyForm(): FormState {
   return {
     title: 'MR', gender: 'Male',
-    dobDay: '', dobMonth: '', dobYear: '',
+    dateOfBirth: '',
     hasPassport: false,
     passportNumber: '', issuingCountry: 'IN', nationality: 'IN',
-    passportExpiryDay: '', passportExpiryMonth: '', passportExpiryYear: '',
+    passportExpiryDate: '',
     mealPreference: '',
-    email: '', mobile: '', address: '', city: '', state: '', zipCode: '',
+    email: '', mobile: '', address: '', city: '', state: '', zipCode: '', country: 'IN',
   }
-}
-
-// DD/MM/YYYY <-> separate day/month/year fields. Kept as three plain number
-// inputs rather than <input type="date"> so someone entering their own
-// birth year isn't fighting a date-picker widget defaulting to today.
-function toDdMmYyyy(day: string, month: string, year: string): string | undefined {
-  if (!day || !month || !year) return undefined
-  return `${day.padStart(2, '0')}/${month.padStart(2, '0')}/${year}`
-}
-
-function fromDdMmYyyy(value: string | undefined): [string, string, string] {
-  if (!value) return ['', '', '']
-  const [d, m, y] = value.split('/')
-  return [d ?? '', m ?? '', y ?? '']
 }
 
 export default function ProfilePage() {
@@ -109,17 +94,15 @@ function ProfilePageInner() {
       setFullName(data.fullName ?? '')
       const p = data.travelerProfile
       if (p) {
-        const [dobDay, dobMonth, dobYear] = fromDdMmYyyy(p.dateOfBirth)
-        const [expDay, expMonth, expYear] = fromDdMmYyyy(p.passportExpiryDate)
         setForm({
           title: p.title ?? 'MR',
           gender: p.gender ?? 'Male',
-          dobDay, dobMonth, dobYear,
+          dateOfBirth: p.dateOfBirth ?? '',
           hasPassport: Boolean(p.passportNumber),
           passportNumber: p.passportNumber ?? '',
           issuingCountry: p.issuingCountry ?? 'IN',
           nationality: p.nationality ?? 'IN',
-          passportExpiryDay: expDay, passportExpiryMonth: expMonth, passportExpiryYear: expYear,
+          passportExpiryDate: p.passportExpiryDate ?? '',
           mealPreference: p.mealPreference ?? '',
           email: p.email ?? '',
           mobile: p.mobile ?? '',
@@ -127,6 +110,7 @@ function ProfilePageInner() {
           city: p.city ?? '',
           state: p.state ?? '',
           zipCode: p.zipCode ?? '',
+          country: p.country ?? 'IN',
         })
       }
     } catch {
@@ -145,15 +129,13 @@ function ProfilePageInner() {
     setError('')
     setSaved(false)
 
-    const dateOfBirth = toDdMmYyyy(form.dobDay, form.dobMonth, form.dobYear)
+    const dateOfBirth = form.dateOfBirth
     if (!dateOfBirth) {
       setError('Please enter your complete date of birth.')
       return
     }
 
-    const passportExpiryDate = form.hasPassport
-      ? toDdMmYyyy(form.passportExpiryDay, form.passportExpiryMonth, form.passportExpiryYear)
-      : undefined
+    const passportExpiryDate = form.hasPassport ? form.passportExpiryDate || undefined : undefined
     if (form.hasPassport && (!form.passportNumber || !passportExpiryDate)) {
       setError('Please complete all passport fields, or turn off "I have a passport" if you don\u2019t want to save one.')
       return
@@ -194,6 +176,7 @@ function ProfilePageInner() {
           city: form.city.trim(),
           state: form.state.trim(),
           zipCode: form.zipCode.trim(),
+          country: form.country,
         }),
       })
       const data = await res.json()
@@ -251,7 +234,16 @@ function ProfilePageInner() {
             <div style={s.row}>
               <div style={s.field}>
                 <label style={s.label}>Title</label>
-                <select value={form.title} onChange={e => update('title', e.target.value)} style={s.input}>
+                <select
+                  value={form.title}
+                  onChange={e => {
+                    update('title', e.target.value)
+                    // MR is male, MRS / MS female: filled in, still editable.
+                    const g = genderForTitle(e.target.value)
+                    if (g) update('gender', g)
+                  }}
+                  style={s.input}
+                >
                   <option value="MR">Mr</option>
                   <option value="MRS">Mrs</option>
                   <option value="MS">Ms</option>
@@ -268,11 +260,7 @@ function ProfilePageInner() {
 
             <div style={s.field}>
               <label style={s.label}>Date of birth</label>
-              <div style={s.dobRow}>
-                <input type="number" placeholder="DD" min={1} max={31} value={form.dobDay} onChange={e => update('dobDay', e.target.value)} style={s.dobInput} required />
-                <input type="number" placeholder="MM" min={1} max={12} value={form.dobMonth} onChange={e => update('dobMonth', e.target.value)} style={s.dobInput} required />
-                <input type="number" placeholder="YYYY" min={1900} max={new Date().getFullYear()} value={form.dobYear} onChange={e => update('dobYear', e.target.value)} style={{ ...s.dobInput, width: '76px' }} required />
-              </div>
+              <DateField value={form.dateOfBirth} onChange={v => update('dateOfBirth', v)} max={todayInput()} style={{ ...s.input, maxWidth: '200px' }} />
             </div>
 
             <div style={s.field}>
@@ -312,12 +300,25 @@ function ProfilePageInner() {
 
             <div style={s.row}>
               <div style={s.field}>
-                <label style={s.label}>City</label>
-                <input type="text" required value={form.city} onChange={e => update('city', e.target.value)} style={s.input} />
+                <label style={s.label}>Country</label>
+                <CountrySelect
+                  value={form.country}
+                  onChange={v => { if (v !== form.country) setForm(prev => ({ ...prev, country: v, state: '', city: '' })) }}
+                />
               </div>
               <div style={s.field}>
                 <label style={s.label}>State</label>
-                <input type="text" required value={form.state} onChange={e => update('state', e.target.value)} style={s.input} />
+                <RegionSelect
+                  country={form.country} value={form.state}
+                  onChange={v => setForm(prev => ({ ...prev, state: v, city: v === prev.state ? prev.city : '' }))}
+                />
+              </div>
+            </div>
+
+            <div style={s.row}>
+              <div style={s.field}>
+                <label style={s.label}>City</label>
+                <CitySelect strict country={form.country} state={form.state} value={form.city} onChange={v => update('city', v)} />
               </div>
               <div style={s.field}>
                 <label style={s.label}>ZIP code</label>
@@ -344,20 +345,16 @@ function ProfilePageInner() {
                 <div style={s.row}>
                   <div style={s.field}>
                     <label style={s.label}>Issuing country</label>
-                    <input type="text" required={form.hasPassport} value={form.issuingCountry} onChange={e => update('issuingCountry', e.target.value.toUpperCase())} style={s.input} maxLength={2} placeholder="IN" />
+                    <CountrySelect value={form.issuingCountry} onChange={v => update('issuingCountry', v)} />
                   </div>
                   <div style={s.field}>
                     <label style={s.label}>Nationality</label>
-                    <input type="text" required={form.hasPassport} value={form.nationality} onChange={e => update('nationality', e.target.value.toUpperCase())} style={s.input} maxLength={2} placeholder="IN" />
+                    <CountrySelect value={form.nationality} onChange={v => update('nationality', v)} />
                   </div>
                 </div>
                 <div style={s.field}>
                   <label style={s.label}>Passport expiry</label>
-                  <div style={s.dobRow}>
-                    <input type="number" placeholder="DD" min={1} max={31} value={form.passportExpiryDay} onChange={e => update('passportExpiryDay', e.target.value)} style={s.dobInput} required={form.hasPassport} />
-                    <input type="number" placeholder="MM" min={1} max={12} value={form.passportExpiryMonth} onChange={e => update('passportExpiryMonth', e.target.value)} style={s.dobInput} required={form.hasPassport} />
-                    <input type="number" placeholder="YYYY" value={form.passportExpiryYear} onChange={e => update('passportExpiryYear', e.target.value)} style={{ ...s.dobInput, width: '76px' }} required={form.hasPassport} />
-                  </div>
+                  <DateField value={form.passportExpiryDate} onChange={v => update('passportExpiryDate', v)} min={todayInput()} style={{ ...s.input, maxWidth: '200px' }} />
                 </div>
               </>
             )}
@@ -405,12 +402,6 @@ const s: Record<string, React.CSSProperties> = {
     height: '40px', border: '1px solid #D1D5DB', borderRadius: '8px', padding: '0 12px',
     fontSize: '13.5px', color: '#111827', outline: 'none', width: '100%', boxSizing: 'border-box' as const,
   },
-  dobRow: { display: 'flex', gap: '8px' },
-  dobInput: {
-    height: '40px', width: '56px', border: '1px solid #D1D5DB', borderRadius: '8px', padding: '0 10px',
-    fontSize: '13.5px', color: '#111827', outline: 'none', textAlign: 'center' as const,
-  },
-
   submitBtn: {
     height: '48px', width: '100%', background: '#000835', color: '#fff', fontSize: '14px', fontWeight: 700,
     border: 'none', borderRadius: '10px', cursor: 'pointer', letterSpacing: '0.2px',

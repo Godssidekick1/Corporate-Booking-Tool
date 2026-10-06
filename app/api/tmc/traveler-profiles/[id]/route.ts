@@ -4,6 +4,7 @@ import { NextRequest } from 'next/server'
 import { db } from '@/app/lib/db'
 import * as employees from '@/app/lib/repositories/employees'
 import * as clients from '@/app/lib/repositories/clients'
+import { normalisePlaces } from '@/app/lib/places/normalisePlaces'
 import { route } from '@/app/lib/http/handler'
 
 // ── PATCH /api/tmc/traveler-profiles/[id] ────────────────────────────────────
@@ -26,7 +27,7 @@ const PROFILE_FIELDS = [
   'title', 'gender', 'dateOfBirth',
   'passportNumber', 'issuingCountry', 'nationality', 'passportExpiryDate',
   'mealPreference',
-  'email', 'mobile', 'address', 'city', 'state', 'zipCode',
+  'email', 'mobile', 'address', 'city', 'state', 'zipCode', 'country',
 ] as const
 
 interface UpdateBody {
@@ -110,6 +111,12 @@ export const PATCH = route(async (
       const value = body.profile[field]
       incoming[field] = typeof value === 'string' ? value.trim() : value
     }
+
+    // Countries become ISO codes, states and cities their real names; a
+    // place that does not exist is refused rather than stored.
+    const places = await normalisePlaces(db, incoming as Record<string, string>, existing as Record<string, string>)
+    if (!places.ok) return Response.json({ error: places.error, field: places.field }, { status: 422 })
+    Object.assign(incoming, places.fields)
 
     update.traveler_profile = { ...existing, ...incoming }
   }

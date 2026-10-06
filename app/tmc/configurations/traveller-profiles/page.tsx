@@ -6,6 +6,8 @@ import SearchableSelect from '@/app/components/SearchableSelect'
 import Pagination from '@/app/components/Pagination'
 import { SkeletonTable } from '@/app/components/Skeleton'
 import { usePagedList } from '@/app/hooks/usePagedList'
+import { CountrySelect, RegionSelect, CitySelect, DateField } from '@/app/components/places/PlacePickers'
+import { genderForTitle, todayInput } from '@/app/lib/places/profileFormat'
 
 // ── /tmc/configurations/traveller-profiles ─────────────────────────────────────────
 // One screen for everything a travel desk maintains about a client's people:
@@ -35,6 +37,7 @@ interface TravelerProfile {
   city?: string
   state?: string
   zipCode?: string
+  country?: string
 }
 
 interface Employee {
@@ -72,20 +75,25 @@ const ROLES: { value: string; label: string }[] = [
 const EMPTY_PERSON = { fullName: '', email: '', role: 'employee', band: '' }
 
 // Grouped so the panel reads as sections rather than one long column of inputs.
-const PROFILE_SECTIONS: { heading: string; fields: { key: keyof TravelerProfile; label: string; placeholder?: string }[] }[] = [
+// How each field is entered. Countries, states and cities are picked from the
+// GeoNames lists, dates from a calendar: typed free text is how a profile ended
+// up with nationality "Indian", which the airline does not accept.
+type FieldKind = 'text' | 'pastDate' | 'futureDate' | 'country' | 'state' | 'city'
+
+const PROFILE_SECTIONS: { heading: string; fields: { key: keyof TravelerProfile; label: string; placeholder?: string; kind?: FieldKind }[] }[] = [
   {
     heading: 'Identity',
     fields: [
-      { key: 'dateOfBirth', label: 'Date of birth', placeholder: 'DD/MM/YYYY' },
-      { key: 'nationality', label: 'Nationality', placeholder: 'Indian' },
+      { key: 'dateOfBirth', label: 'Date of birth', kind: 'pastDate' },
+      { key: 'nationality', label: 'Nationality', kind: 'country' },
     ],
   },
   {
     heading: 'Passport',
     fields: [
       { key: 'passportNumber', label: 'Passport number' },
-      { key: 'passportExpiryDate', label: 'Expiry', placeholder: 'DD/MM/YYYY' },
-      { key: 'issuingCountry', label: 'Issuing country' },
+      { key: 'passportExpiryDate', label: 'Expiry', kind: 'futureDate' },
+      { key: 'issuingCountry', label: 'Issuing country', kind: 'country' },
     ],
   },
   {
@@ -94,8 +102,9 @@ const PROFILE_SECTIONS: { heading: string; fields: { key: keyof TravelerProfile;
       { key: 'mobile', label: 'Mobile' },
       { key: 'email', label: 'Contact email' },
       { key: 'address', label: 'Address' },
-      { key: 'city', label: 'City' },
-      { key: 'state', label: 'State' },
+      { key: 'country', label: 'Country', kind: 'country' },
+      { key: 'state', label: 'State', kind: 'state' },
+      { key: 'city', label: 'City', kind: 'city' },
       { key: 'zipCode', label: 'Postcode' },
     ],
   },
@@ -696,7 +705,12 @@ export default function TravellerProfilesPage() {
                     <Field label="Title">
                       <select
                         value={draft.traveler_profile?.title ?? ''}
-                        onChange={e => editProfile('title', e.target.value)}
+                        onChange={e => {
+                          editProfile('title', e.target.value)
+                          // MR / MSTR are male, MRS / MS female: filled in, still editable.
+                          const g = genderForTitle(e.target.value)
+                          if (g) editProfile('gender', g)
+                        }}
                         style={s.input}
                       >
                         <option value="">—</option>
@@ -719,17 +733,44 @@ export default function TravellerProfilesPage() {
                     <div key={section.heading}>
                       <h4 style={s.subHeading}>{section.heading}</h4>
                       <div style={s.grid}>
-                        {section.fields.map(f => (
-                          <Field key={f.key} label={f.label}>
-                            <input
-                              type="text"
-                              value={draft.traveler_profile?.[f.key] ?? ''}
-                              onChange={e => editProfile(f.key, e.target.value)}
-                              placeholder={f.placeholder}
-                              style={s.input}
-                            />
-                          </Field>
-                        ))}
+                        {section.fields.map(f => {
+                          const p = draft.traveler_profile ?? {}
+                          const value = p[f.key] ?? ''
+                          // The address country decides which states and cities are offered.
+                          const country = p.country || 'IN'
+                          return (
+                            <Field key={f.key} label={f.label}>
+                              {f.kind === 'pastDate' || f.kind === 'futureDate' ? (
+                                <DateField
+                                  value={value} onChange={v => editProfile(f.key, v)} style={s.input}
+                                  max={f.kind === 'pastDate' ? todayInput() : undefined}
+                                  min={f.kind === 'futureDate' ? todayInput() : undefined}
+                                />
+                              ) : f.kind === 'country' ? (
+                                <CountrySelect
+                                  value={f.key === 'country' ? (value || 'IN') : value}
+                                  onChange={v => {
+                                    editProfile(f.key, v)
+                                    // A new address country: the old state and city no longer apply.
+                                    if (f.key === 'country' && v !== country) { editProfile('state', ''); editProfile('city', '') }
+                                  }}
+                                />
+                              ) : f.kind === 'state' ? (
+                                <RegionSelect
+                                  country={country} value={value}
+                                  onChange={v => { editProfile('state', v); if (v !== p.state) editProfile('city', '') }}
+                                />
+                              ) : f.kind === 'city' ? (
+                                <CitySelect strict country={country} state={p.state} value={value} onChange={v => editProfile('city', v)} />
+                              ) : (
+                                <input
+                                  type="text" value={value} placeholder={f.placeholder} style={s.input}
+                                  onChange={e => editProfile(f.key, e.target.value)}
+                                />
+                              )}
+                            </Field>
+                          )
+                        })}
                       </div>
                     </div>
                   ))}

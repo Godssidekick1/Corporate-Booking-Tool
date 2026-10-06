@@ -5,6 +5,7 @@ import { db } from '@/app/lib/db'
 import * as employees from '@/app/lib/repositories/employees'
 import * as clients from '@/app/lib/repositories/clients'
 import { route } from '@/app/lib/http/handler'
+import { normalisePlaces } from '@/app/lib/places/normalisePlaces'
 
 // ── /api/tmc/traveler-profiles/csv ───────────────────────────────────────────
 // GET  ?clientId=   downloads the current roster as CSV
@@ -28,7 +29,7 @@ const COLUMNS = [
   'email', 'full_name', 'band', 'cost_centre', 'department', 'designation',
   'title', 'gender', 'date_of_birth',
   'passport_number', 'passport_expiry', 'nationality', 'issuing_country',
-  'mobile', 'address', 'city', 'state', 'zip_code',
+  'mobile', 'address', 'city', 'state', 'zip_code', 'country',
 ] as const
 
 // CSV column -> traveler_profile key. Anything absent here is a column on
@@ -46,6 +47,7 @@ const PROFILE_COLUMN_MAP: Record<string, string> = {
   city: 'city',
   state: 'state',
   zip_code: 'zipCode',
+  country: 'country',
 }
 
 function escapeCell(value: unknown): string {
@@ -197,6 +199,15 @@ export const POST = route(async (req: NextRequest) => {
       if (trimmed) profilePatch[key] = trimmed
       else delete existingProfile[key]
     }
+
+    // Same checks as the screens: country names or codes become ISO codes, and
+    // a state or city that does not exist fails the row, not the file.
+    const places = await normalisePlaces(db, profilePatch as Record<string, string>, existingProfile as Record<string, string>)
+    if (!places.ok) {
+      errors.push({ row: rowNumber, email, error: places.error })
+      continue
+    }
+    Object.assign(profilePatch, places.fields)
 
     if (Object.keys(profilePatch).length > 0 || row.date_of_birth !== undefined) {
       update.traveler_profile = { ...existingProfile, ...profilePatch }

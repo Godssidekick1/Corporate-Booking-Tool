@@ -21,17 +21,18 @@ export interface TravelerProfile {
   gender: string                 // "Male" | "Female"
   dateOfBirth: string            // "DD/MM/YYYY" — matches PassengerDetail.DateOfBirth format
   passportNumber?: string        // optional — only relevant for international travel
-  issuingCountry?: string
-  nationality?: string
+  issuingCountry?: string        // ISO 3166 code ('IN'), as the airline takes it
+  nationality?: string           // ISO 3166 code
   passportExpiryDate?: string    // "DD/MM/YYYY"
   mealPreference?: string        // matches PassengerDetail.MealCode
   // Contact details — mirrors CustomerInfo exactly, matching format below.
   email?: string
   mobile?: string
   address?: string
-  city?: string
-  state?: string
+  city?: string                  // a GeoNames place name, once cities are loaded
+  state?: string                 // the region's own name (app/lib/places)
   zipCode?: string
+  country?: string               // address country, ISO code; India when absent
 }
 
 export interface StopInfo {

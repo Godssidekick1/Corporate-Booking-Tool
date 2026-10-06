@@ -29,7 +29,7 @@ const employee = (id: string) => maybeOne<Record<string, unknown>>(db, sql`selec
 const VALID_PROFILE = {
   title: 'MR', gender: 'Male', dateOfBirth: '01/01/1990',
   email: 'traveller@example.test', mobile: '9999999999',
-  address: 'Test Address', city: 'Testcity', state: 'Teststate', zipCode: '400001',
+  address: 'Test Address', city: 'Mumbai', state: 'maharashtra', zipCode: '400001',
 }
 
 d('people screens', () => {
@@ -117,7 +117,8 @@ d('people screens', () => {
     expect(res.json).toMatchSnapshot()
     const row = await employee(a.corpAdmin.id)
     expect(row?.first_login_completed).toBe(true)
-    expect((row?.traveler_profile as { city: string }).city).toBe('Testcity')
+    // A real state, stored under its own name.
+    expect(row?.traveler_profile).toMatchObject({ city: 'Mumbai', state: 'Maharashtra' })
   })
 
   // ── POST /api/employees ────────────────────────────────────────────────────

@@ -1,10 +1,10 @@
-import { sql, many, maybeOne, one, exec, type Queryable } from '@/app/lib/db/sql'
+import { sql, empty, many, maybeOne, one, exec, type Queryable } from '@/app/lib/db/sql'
 import { searchAcross, page } from '@/app/lib/db/fragments'
 import type { Row } from '@/app/lib/db/types.generated'
 import type { PageParams } from '@/app/lib/pagination'
 
 // ── Reference data ───────────────────────────────────────────────────────────
-// Owns: airlines, amadeus_session.
+// Owns: airlines, amadeus_session, countries, regions, cities.
 //
 // Global rather than tenant-scoped: which airlines exist is a fact about the
 // world, and the Amadeus session belongs to the shared agency account.
@@ -127,4 +127,77 @@ export async function saveAmadeusSession(db: Queryable, sessionId: string, expir
 
 export async function deleteAmadeusSession(db: Queryable): Promise<void> {
   await exec(db, sql`delete from amadeus_session where id = ${SESSION_ROW_ID}`)
+}
+
+// ═══ Places: countries, regions, cities ═════════════════════════════════════
+// GeoNames reference data (CC BY 4.0). Countries and regions are inserted by
+// 20261007000000_places; cities by scripts/load-cities.mjs.
+
+export type Country = Pick<Row<'countries'>, 'code' | 'name'>
+export type Region = Pick<Row<'regions'>, 'code' | 'name'>
+export type City = Pick<Row<'cities'>, 'id' | 'name' | 'region_code'>
+
+export async function listCountries(db: Queryable): Promise<Country[]> {
+  return many<Country>(db, sql`select code, name from countries order by name`)
+}
+
+export async function listRegions(db: Queryable, countryCode: string): Promise<Region[]> {
+  return many<Region>(db, sql`
+    select code, name from regions where country_code = ${countryCode} order by name`)
+}
+
+// A country by its code, ISO3 code or English name, case-insensitively.
+export async function findCountry(db: Queryable, value: string): Promise<Country | null> {
+  return maybeOne<Country>(db, sql`
+    select code, name from countries
+    where upper(code) = upper(${value}) or upper(iso3) = upper(${value}) or lower(name) = lower(${value})
+    limit 1`)
+}
+
+// A region of a country by its name or code, case-insensitively.
+export async function findRegion(db: Queryable, countryCode: string, value: string): Promise<Region | null> {
+  return maybeOne<Region>(db, sql`
+    select code, name from regions
+    where country_code = ${countryCode} and (lower(name) = lower(${value}) or lower(code) = lower(${value}))
+    order by (lower(name) = lower(${value})) desc
+    limit 1`)
+}
+
+export async function hasCities(db: Queryable, countryCode: string): Promise<boolean> {
+  return (await one<{ yes: boolean }>(db, sql`
+    select exists (select 1 from cities where country_code = ${countryCode}) as yes`)).yes
+}
+
+// Places in a country (optionally one region) whose name starts with the
+// search, biggest first: "mum" finds Mumbai before Mumbra.
+export async function searchCities(
+  db: Queryable,
+  countryCode: string,
+  opts: { regionCode?: string | null; search?: string; limit?: number }
+): Promise<City[]> {
+  const prefix = (opts.search ?? '').trim().toLowerCase().replace(/[\\%_]/g, c => `\\${c}`)
+  return many<City>(db, sql`
+    select id, name, region_code from cities
+    where country_code = ${countryCode}
+      ${opts.regionCode ? sql`and region_code = ${opts.regionCode}` : empty}
+      ${prefix ? sql`and (lower(ascii_name) like ${prefix + '%'} or lower(name) like ${prefix + '%'})` : empty}
+    order by population desc, name, id
+    limit ${opts.limit ?? 20}`)
+}
+
+// A place by name within a country (and region, when given), case-insensitive
+// on the local or ASCII spelling. The biggest wins where names repeat.
+export async function findCity(
+  db: Queryable,
+  countryCode: string,
+  regionCode: string | null,
+  value: string
+): Promise<City | null> {
+  return maybeOne<City>(db, sql`
+    select id, name, region_code from cities
+    where country_code = ${countryCode}
+      ${regionCode ? sql`and region_code = ${regionCode}` : empty}
+      and (lower(name) = lower(${value}) or lower(ascii_name) = lower(${value}))
+    order by population desc, id
+    limit 1`)
 }

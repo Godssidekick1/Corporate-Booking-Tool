@@ -4,6 +4,7 @@ import type { TravelerProfile } from '@/app/lib/book/types'
 import { db } from '@/app/lib/db'
 import * as employees from '@/app/lib/repositories/employees'
 import { route } from '@/app/lib/http/handler'
+import { normalisePlaces } from '@/app/lib/places/normalisePlaces'
 
 // ── GET / PATCH /api/employees/me ─────────────────────────────────────────────
 // Self-service profile endpoint — an employee reading/writing their OWN
@@ -114,6 +115,7 @@ function validateTravelerProfile(body: unknown): { profile?: TravelerProfile; er
       city: (b.city as string).trim(),
       state: (b.state as string).trim(),
       zipCode: (b.zipCode as string).trim(),
+      country: (b.country as string) || undefined,
     },
   }
 }
@@ -127,6 +129,13 @@ export const PATCH = route(async (req: NextRequest) => {
   if (validationError || !profile) {
     return Response.json({ error: validationError }, { status: 400 })
   }
+
+  // Countries become ISO codes (what the airline takes), states and cities
+  // their real names; a place that does not exist is refused.
+  const { nationality, issuingCountry, country, state, city } = profile
+  const places = await normalisePlaces(db, { nationality, issuingCountry, country, state, city })
+  if (!places.ok) return Response.json({ error: places.error, field: places.field }, { status: 422 })
+  Object.assign(profile, places.fields)
 
   let updated: employees.SavedTravellerProfile | null
   try {
