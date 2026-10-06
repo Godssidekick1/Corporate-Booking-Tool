@@ -6,6 +6,7 @@ import { GET as branchGet, PATCH as branchPatch, DELETE as branchDelete } from '
 import { GET as bandsGet, POST as bandsPost } from '@/app/api/tmc/bands/route'
 import { PATCH as bandPatch, DELETE as bandDelete } from '@/app/api/tmc/bands/[id]/route'
 import { GET as profilesGet } from '@/app/api/tmc/traveler-profiles/route'
+import { POST as addPerson } from '@/app/api/tmc/employees/route'
 import { PATCH as profilePatch } from '@/app/api/tmc/traveler-profiles/[id]/route'
 import { GET as csvGet, POST as csvPost } from '@/app/api/tmc/traveler-profiles/csv/route'
 import { call } from '../harness/call'
@@ -518,5 +519,69 @@ d('tmc/traveler-profiles', () => {
       traveler_profile: { city: 'Keep', state: 'Goa' },
     })
     expect((await employee(p2.id))?.traveler_profile).not.toHaveProperty('mobile')
+  })
+})
+
+// ═══ Adding a person by hand ════════════════════════════════════════════════
+
+d('tmc/employees POST', () => {
+  let a: Actors
+  let clientId: string
+
+  beforeAll(async () => {
+    await resetDatabase()
+    a = await actors()
+    clientId = a.corpAdmin.client_id!
+  })
+
+  const add = (body: Record<string, unknown>, as: Actors[keyof Actors] = a.tmcAdmin) =>
+    call(addPerson, { as: as as never, method: 'POST', url: '/api/tmc/employees', body })
+  const person = (over: Record<string, unknown> = {}) =>
+    ({ clientId, fullName: ' Asha Rao ', email: ' Asha.Rao@Example.Test ', role: 'employee', band: 'l2', ...over })
+
+  it('401 signed out; clientId required; corporate users and other TMCs are refused', async () => {
+    expect((await call(addPerson, { method: 'POST', url: '/api/tmc/employees', body: person() })).status).toBe(401)
+    expect(await add({ fullName: 'X' })).toEqual({ status: 400, json: { error: 'clientId is required' } })
+    expect((await add(person(), a.corpAdmin)).status).toBe(403)
+    expect(await add(person(), a.otherTmcAdmin!)).toEqual({ status: 404, json: { error: 'Client not found for this TMC' } })
+  })
+
+  it('validates before writing anything', async () => {
+    expect(await add(person({ fullName: ' ' }))).toEqual({ status: 400, json: { error: 'Name and email are required' } })
+    expect(await add(person({ email: 'not-an-email' }))).toEqual({ status: 400, json: { error: 'Invalid email address' } })
+    expect(await add(person({ role: 'overlord' }))).toEqual({ status: 400, json: { error: 'Invalid role: overlord' } })
+    expect(await add(person({ band: ' ' }))).toEqual({ status: 400, json: { error: 'Band is required' } })
+    expect(await add(person({ band: 'Z9' })))
+      .toEqual({ status: 422, json: { error: 'Band "Z9" is not configured for this client' } })
+    expect(outbox).toEqual([])
+  })
+
+  it('an SBT client: an invited account, band matched case-insensitively, invite emailed', async () => {
+    await exec(db, sql`update clients set booking_mode = 'sbt' where id = ${clientId}`)
+    const res = await add(person())
+    expect(res.status).toBe(201)
+    const { employeeId, message } = res.json as { employeeId: string; message: string }
+    expect(message).toBe('Asha Rao added. Invite sent to asha.rao@example.test.')
+    expect(outbox.map(m => [m.to, linkIn(m).type])).toEqual([['asha.rao@example.test', 'invite']])
+    expect(await employee(employeeId)).toMatchObject({
+      client_id: clientId, auth_user_id: employeeId, full_name: 'Asha Rao', email: 'asha.rao@example.test',
+      role: 'employee', status: 'invited', onboarding_method: 'invite',
+      band_code: 'L2', band_rank: 2, first_login_completed: false,
+    })
+  })
+
+  it('the same email again is a 409', async () => {
+    expect(await add(person())).toEqual({ status: 409, json: { error: 'Someone at this client already has this email' } })
+  })
+
+  it('a CBT-only client: an active account and no email', async () => {
+    await exec(db, sql`update clients set booking_mode = 'cbt' where id = ${clientId}`)
+    const res = await add(person({ email: 'cbt.person@example.test', role: 'Manager' }))
+    expect(res.status).toBe(201)
+    expect((res.json as { message: string }).message)
+      .toBe('Asha Rao added. No invite was emailed: the travel desk books for this client.')
+    expect(outbox).toEqual([])
+    expect(await employee((res.json as { employeeId: string }).employeeId))
+      .toMatchObject({ role: 'manager', status: 'active', onboarding_method: 'direct_create' })
   })
 })

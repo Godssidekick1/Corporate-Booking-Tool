@@ -1,5 +1,6 @@
 import { requireUser } from '@/app/lib/auth/session'
-import { createAccount, sendInvite, AccountExists } from '@/app/lib/auth/flows'
+import { AccountExists } from '@/app/lib/auth/flows'
+import { addEmployee, isEmployeeRole } from '@/app/lib/onboarding/addEmployee'
 import { NextRequest } from 'next/server'
 import { db, transaction, isConstraint } from '@/app/lib/db'
 import * as employees from '@/app/lib/repositories/employees'
@@ -22,9 +23,6 @@ import { route } from '@/app/lib/http/handler'
 // failure anywhere leaves nothing behind. (With GoTrue the account lived in
 // another system and had to be deleted by hand when the row failed.)
 // ─────────────────────────────────────────────────────────────────────────────
-
-const VALID_ROLES = ['employee', 'manager', 'finance', 'admin'] as const
-type ValidRole = typeof VALID_ROLES[number]
 
 interface CreateEmployeeBody {
   email: string
@@ -89,12 +87,14 @@ export const POST = route(async (req: NextRequest) => {
     return Response.json({ error: 'Invalid email address' }, { status: 400 })
   }
 
-  const normalizedRole = role.toLowerCase() as ValidRole
-  if (!VALID_ROLES.includes(normalizedRole)) {
+  const normalizedRole = role.toLowerCase()
+  if (!isEmployeeRole(normalizedRole)) {
     return Response.json({ error: `Invalid role: ${role}` }, { status: 400 })
   }
 
-  const bandRow = await employees.bandByCode(db, clientId, band.toUpperCase())
+  // Matched as the client named it, case-insensitively. Uppercasing here meant
+  // a client whose bands are "Band 1".."Band 4" could never add anyone.
+  const bandRow = await employees.bandByCode(db, clientId, band.trim())
 
   if (!bandRow) {
     return Response.json({ error: `Band ${band} not found for this client` }, { status: 422 })
@@ -116,33 +116,17 @@ export const POST = route(async (req: NextRequest) => {
   // someone's behalf is a booking arrangement, not a reason to deny them a
   // login.
   try {
-    const employeeId = await transaction(async tx => {
-      const { accountId } = await createAccount(tx, normalizedEmail, {
-        password: method === 'direct' ? password : undefined,
-        createdBy: user.id,
-      })
-      await employees.insert(tx, {
-        id: accountId,
-        auth_user_id: accountId,
-        client_id: clientId,
-        band_id: bandRow.id,
-        band_code: bandRow.code,
-        band_rank: bandRow.rank,
-        email: normalizedEmail,
-        full_name,
-        role: normalizedRole,
-        // A directly-created account can already sign in, so there is no
-        // acceptance step left to wait on. An invited one stays 'invited' until
-        // they choose a password from the invite (/auth/confirm).
-        status: method === 'direct' ? 'active' : 'invited',
-        onboarding_method: method === 'direct' ? 'direct_create' : 'invite',
-        first_login_completed: false,
-        department: department ?? null,
-        cost_centre: cost_centre ?? null,
-      })
-      if (method === 'invite') await sendInvite(tx, accountId, user.id)
-      return accountId
-    })
+    const employeeId = await transaction(tx => addEmployee(tx, {
+      clientId,
+      band: bandRow,
+      email: normalizedEmail,
+      fullName: full_name,
+      role: normalizedRole,
+      department,
+      costCentre: cost_centre,
+      setup: method === 'direct' ? { password: password! } : 'invite',
+      createdBy: user.id,
+    }))
 
     return Response.json({
       ok: true,

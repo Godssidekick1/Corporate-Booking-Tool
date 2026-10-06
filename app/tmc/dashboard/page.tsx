@@ -12,14 +12,6 @@ interface Employee {
   tmc_id: string
 }
 
-interface Client {
-  id: string
-  name: string
-  status: string
-  setup_completed: boolean
-  created_at: string
-}
-
 interface client_group {
   id: string
   name: string
@@ -33,13 +25,16 @@ interface PolicyGroupOption {
   bandRanks: number[]
 }
 
-interface CsvEmployeeRow {
+// One person to add with the client: typed into the form or read from a CSV.
+// Both go through the same band check and the same endpoint.
+interface RosterRow {
   email: string
   full_name: string
   role: string
   band: string
   department: string
   cost_centre: string
+  _source: 'manual' | 'csv'
   _valid: boolean
   _error?: string
 }
@@ -51,7 +46,9 @@ const BOOKING_MODES: { value: string; label: string }[] = [
   { value: 'both', label: 'Hybrid — Both' },
 ]
 const VALID_ROLES = ['employee', 'manager', 'finance', 'admin']
+const ROLE_LABELS: Record<string, string> = { employee: 'Employee', manager: 'Manager', finance: 'Finance', admin: 'Corporate admin' }
 const MAX_EMPLOYEES = 250
+const EMPTY_MANUAL = { full_name: '', email: '', role: 'employee', band: '' }
 
 const initialForm = {
   corporateName: '', adminName: '', adminEmail: '',
@@ -71,9 +68,7 @@ const initialBands: BandDraft[] = [
 export default function TmcDashboardPage() {
   const [employee, setEmployee] = useState<Employee | null>(null)
   const [permissions, setPermissions] = useState<string[]>([])
-  const [clients, setClients] = useState<Client[]>([])
   const [client_groups, setclient_groups] = useState<client_group[]>([])
-  const [loading, setLoading] = useState(true)
   const [showInviteForm, setShowInviteForm] = useState(false)
   const [form, setForm] = useState(initialForm)
   const [submitting, setSubmitting] = useState(false)
@@ -83,8 +78,10 @@ export default function TmcDashboardPage() {
   const [bands, setBands] = useState<BandDraft[]>(initialBands)
   const [policyGroups, setPolicyGroups] = useState<PolicyGroupOption[]>([])
 
-  // CSV state
-  const [csvRows, setCsvRows] = useState<CsvEmployeeRow[]>([])
+  // Employees to add: rows typed in and rows from a CSV, in one list.
+  const [rosterRows, setRosterRows] = useState<RosterRow[]>([])
+  const [manual, setManual] = useState(EMPTY_MANUAL)
+  const [manualError, setManualError] = useState('')
   const [csvFileName, setCsvFileName] = useState('')
   const [csvError, setCsvError] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -92,23 +89,23 @@ export default function TmcDashboardPage() {
   useEffect(() => {
     Promise.all([
       fetch('/api/me').then(r => r.json()),
-      fetch('/api/tmc/clients').then(r => r.json()),
       fetch('/api/tmc/client-groups').then(r => r.json()),
       // Existing policy groups, so a new client can reuse one at creation
       // instead of being left unprotected until someone links one later.
       fetch('/api/tmc/policy-groups').then(r => r.json()),
-    ]).then(([meData, clientsData, client_groupsData, policyGroupsData]) => {
+    ]).then(([meData, client_groupsData, policyGroupsData]) => {
       if (meData.ok) {
         setEmployee(meData.employee)
         setPermissions(meData.permissions ?? [])
       }
-      if (clientsData.ok) setClients(clientsData.items)
       if (client_groupsData.ok) setclient_groups(client_groupsData.items)
       if (policyGroupsData.ok) setPolicyGroups(policyGroupsData.groups)
-    }).finally(() => setLoading(false))
+    })
   }, [])
 
-  const canCreateClient = canAccess(employee?.role, permissions, 'manage_users')
+  // manage_clients, the permission the create endpoint checks. This read
+  // manage_users, so a counsellor with only that saw the form and got a 403.
+  const canCreateClient = canAccess(employee?.role, permissions, 'manage_clients')
 
   const firstName = employee?.full_name?.split(' ')[0] ?? '…'
 
@@ -119,7 +116,9 @@ export default function TmcDashboardPage() {
   function resetForm() {
     setForm(initialForm)
     setBands(initialBands)
-    setCsvRows([])
+    setRosterRows([])
+    setManual(EMPTY_MANUAL)
+    setManualError('')
     setCsvFileName('')
     setCsvError('')
     if (fileInputRef.current) fileInputRef.current.value = ''
@@ -137,13 +136,13 @@ export default function TmcDashboardPage() {
       complete: (results) => {
         const raw = results.data as Record<string, string>[]
 
-        if (raw.length > MAX_EMPLOYEES) {
-          setCsvError(`This file has ${raw.length} rows. Maximum is ${MAX_EMPLOYEES}.`)
-          setCsvRows([])
+        const typedIn = rosterRows.filter(r => r._source === 'manual').length
+        if (raw.length + typedIn > MAX_EMPLOYEES) {
+          setCsvError(`This file has ${raw.length} rows${typedIn ? ` and ${typedIn} are already typed in` : ''}. Maximum is ${MAX_EMPLOYEES}.`)
           return
         }
 
-        const parsed: CsvEmployeeRow[] = raw.map(row => {
+        const parsed: RosterRow[] = raw.map(row => {
           const email = (row.email || '').trim().toLowerCase()
           const full_name = (row.full_name || row.name || '').trim()
           const role = (row.role || 'employee').trim().toLowerCase()
@@ -163,11 +162,12 @@ export default function TmcDashboardPage() {
 
           return {
             email, full_name, role, band, department, cost_centre,
-            _valid: !error, _error: error,
+            _source: 'csv', _valid: !error, _error: error,
           }
         })
 
-        setCsvRows(parsed)
+        // A new file replaces the previous file's rows, never the typed-in ones.
+        setRosterRows(prev => [...prev.filter(r => r._source === 'manual'), ...parsed])
       },
       error: (err) => {
         setCsvError(`Could not parse file: ${err.message}`)
@@ -178,7 +178,7 @@ export default function TmcDashboardPage() {
   // Band validity depends on the ladder being edited on this same form, so it
   // is derived at render rather than frozen at parse time — editing a band code
   // re-validates the roster immediately instead of failing server-side.
-  const validatedCsvRows = useMemo(() => {
+  const validatedRows = useMemo(() => {
     const byLowerCode = new Map(
       bands.filter(b => b.code.trim()).map(b => [b.code.trim().toLowerCase(), b.code.trim()])
     )
@@ -186,7 +186,7 @@ export default function TmcDashboardPage() {
       (lowest, b) => (!lowest || b.rank < lowest.rank ? b : lowest), null
     )
 
-    return csvRows.map(row => {
+    return rosterRows.map(row => {
       if (row._error) return row
 
       const raw = row.band.trim()
@@ -208,24 +208,47 @@ export default function TmcDashboardPage() {
 
       return { ...row, band: resolved, _valid: true, _error: undefined }
     })
-  }, [csvRows, bands])
+  }, [rosterRows, bands])
 
-  const validCsvCount = validatedCsvRows.filter(r => r._valid).length
-  const invalidCsvCount = validatedCsvRows.length - validCsvCount
+  const validCount = validatedRows.filter(r => r._valid).length
+  const invalidCount = validatedRows.length - validCount
+
+  function addManualRow() {
+    const email = manual.email.trim().toLowerCase()
+    const full_name = manual.full_name.trim()
+    if (!full_name || !email.includes('@')) { setManualError('Enter a name and a valid email.'); return }
+    if (!manual.band) { setManualError('Choose a band.'); return }
+    if (email === form.adminEmail.trim().toLowerCase()) {
+      setManualError('That is the corporate admin, who is added automatically.'); return
+    }
+    if (rosterRows.some(r => r.email === email)) { setManualError('That email is already on the list.'); return }
+    if (rosterRows.length >= MAX_EMPLOYEES) { setManualError(`At most ${MAX_EMPLOYEES} people at once.`); return }
+
+    setRosterRows(prev => [...prev, {
+      email, full_name, role: manual.role, band: manual.band, department: '', cost_centre: '',
+      _source: 'manual', _valid: true,
+    }])
+    setManual(EMPTY_MANUAL)
+    setManualError('')
+  }
+
+  function removeRow(index: number) {
+    setRosterRows(prev => prev.filter((_, i) => i !== index))
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setFormError('')
     setFormSuccess('')
 
-    if (invalidCsvCount > 0) {
-      setFormError(`Fix ${invalidCsvCount} invalid row(s) in the employee list before submitting.`)
+    if (invalidCount > 0) {
+      setFormError(`Fix or remove ${invalidCount} invalid row(s) in the employee list before submitting.`)
       return
     }
 
     setSubmitting(true)
     try {
-      const employeesPayload = validatedCsvRows.filter(r => r._valid).map(r => ({
+      const employeesPayload = validatedRows.filter(r => r._valid).map(r => ({
         email: r.email, full_name: r.full_name, role: r.role,
         band: r.band, department: r.department || undefined, cost_centre: r.cost_centre || undefined,
       }))
@@ -295,9 +318,6 @@ export default function TmcDashboardPage() {
       setFormSuccess(`"${form.corporateName}" created. Invite sent to ${form.adminEmail}.${empSummary}`)
       resetForm()
       setShowInviteForm(false)
-
-      const clientsData = await fetch('/api/tmc/clients').then(r => r.json())
-      if (clientsData.ok) setClients(clientsData.clients)
     } finally {
       setSubmitting(false)
     }
@@ -328,8 +348,8 @@ export default function TmcDashboardPage() {
               <button type="button" onClick={() => { setShowInviteForm(false); resetForm() }} style={s.closeBtn}>✕</button>
             </div>
             <p style={s.formSub}>
-              We'll create the client, seed default bands, and send the admin an invite.
-              Optionally upload a CSV to add their employee roster at the same time.
+              We&apos;ll create the client with its bands and send the admin an invite.
+              Optionally add their employees now, one by one or from a CSV.
             </p>
 
             {/* ── client_group ── */}
@@ -417,9 +437,44 @@ export default function TmcDashboardPage() {
               <Field label="Admin work email" name="adminEmail" value={form.adminEmail} onChange={handleFormChange} required type="email" placeholder="jane@acmecorp.com" />
             </div>
 
-            {/* ── Employee CSV ── */}
-            <SectionLabel>Employee roster (optional)</SectionLabel>
+            {/* ── Employees: typed in or from a CSV ── */}
+            <SectionLabel>Employees (optional)</SectionLabel>
             <div style={s.csvUploadBox}>
+              {/* Just what a booking needs; the rest is filled in on Traveller
+                  profiles once the client exists. Enter adds the row rather than
+                  submitting the whole client form. */}
+              <div
+                style={s.manualRow}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addManualRow() } }}
+              >
+                <input
+                  placeholder="Full name" value={manual.full_name} style={{ ...s.input, ...s.manualInput }} disabled={submitting}
+                  onChange={e => setManual(m => ({ ...m, full_name: e.target.value }))}
+                />
+                <input
+                  placeholder="Work email" type="email" value={manual.email} style={{ ...s.input, ...s.manualInput }} disabled={submitting}
+                  onChange={e => setManual(m => ({ ...m, email: e.target.value }))}
+                />
+                <select
+                  value={manual.role} style={{ ...s.input, ...s.manualInput }} disabled={submitting}
+                  onChange={e => setManual(m => ({ ...m, role: e.target.value }))}
+                >
+                  {VALID_ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+                </select>
+                <select
+                  value={manual.band} style={{ ...s.input, ...s.manualInput }} disabled={submitting}
+                  onChange={e => setManual(m => ({ ...m, band: e.target.value }))}
+                >
+                  <option value="">Band…</option>
+                  {bands.filter(b => b.code.trim()).map(b => (
+                    <option key={b.code} value={b.code.trim()}>{b.code.trim()}{b.label.trim() ? ` — ${b.label.trim()}` : ''}</option>
+                  ))}
+                </select>
+                <button type="button" onClick={addManualRow} disabled={submitting} style={{ ...s.ghostBtn, ...s.addRowBtn }}>+ Add</button>
+              </div>
+              {manualError && <p style={s.error}>{manualError}</p>}
+
+              <p style={s.csvOr}>or upload a CSV</p>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -429,29 +484,32 @@ export default function TmcDashboardPage() {
               />
               <p style={s.csvHint}>
                 CSV columns: <code>email, full_name, role, band, department, cost_centre</code>.
-                Role defaults to "employee", band defaults to "L1" if omitted. Max {MAX_EMPLOYEES} rows.
+                Role defaults to &quot;employee&quot;; an empty band means the most junior one. Max {MAX_EMPLOYEES} people in all.
               </p>
-              {csvFileName && !csvError && (
+              {validatedRows.length > 0 && (
                 <div style={s.csvSummary}>
-                  <span>{csvFileName} — {validatedCsvRows.length} rows</span>
-                  {validCsvCount > 0 && <span style={s.csvOk}>{validCsvCount} valid</span>}
-                  {invalidCsvCount > 0 && <span style={s.csvBad}>{invalidCsvCount} invalid</span>}
+                  <span>
+                    {validatedRows.length} {validatedRows.length === 1 ? 'person' : 'people'} to add
+                    {csvFileName && !csvError ? ` (incl. ${csvFileName})` : ''}
+                  </span>
+                  {validCount > 0 && <span style={s.csvOk}>{validCount} valid</span>}
+                  {invalidCount > 0 && <span style={s.csvBad}>{invalidCount} invalid</span>}
                 </div>
               )}
               {csvError && <p style={s.error}>{csvError}</p>}
 
-              {validatedCsvRows.length > 0 && (
+              {validatedRows.length > 0 && (
                 <div style={s.csvPreviewWrap}>
                   <table style={s.csvTable}>
                     <thead>
                       <tr>
-                        {['Email', 'Name', 'Role', 'Band', 'Status'].map(h => (
-                          <th key={h} style={s.csvTh}>{h}</th>
+                        {['Email', 'Name', 'Role', 'Band', 'Status', ''].map((h, i) => (
+                          <th key={i} style={s.csvTh}>{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {validatedCsvRows.slice(0, 20).map((row, i) => (
+                      {validatedRows.slice(0, 20).map((row, i) => (
                         <tr key={i} style={{ background: row._valid ? 'transparent' : '#FEF2F2' }}>
                           <td style={s.csvTd}>{row.email || '—'}</td>
                           <td style={s.csvTd}>{row.full_name || '—'}</td>
@@ -462,12 +520,20 @@ export default function TmcDashboardPage() {
                               ? <span style={s.csvOk}>✓ valid</span>
                               : <span style={s.csvBad}>{row._error}</span>}
                           </td>
+                          <td style={s.csvTd}>
+                            <button
+                              type="button" onClick={() => removeRow(i)} disabled={submitting}
+                              style={s.removeBtn} aria-label={`Remove ${row.email}`}
+                            >
+                              ✕
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
-                  {validatedCsvRows.length > 20 && (
-                    <p style={s.csvMoreNote}>+ {validatedCsvRows.length - 20} more rows not shown</p>
+                  {validatedRows.length > 20 && (
+                    <p style={s.csvMoreNote}>+ {validatedRows.length - 20} more rows not shown</p>
                   )}
                 </div>
               )}
@@ -767,6 +833,11 @@ const s: Record<string, React.CSSProperties> = {
   formActions: { display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '20px' },
   ghostBtn: { height: '38px', padding: '0 16px', backgroundColor: 'transparent', color: '#6B7280', fontSize: '13px', border: '1px solid #D1D5DB', borderRadius: '8px', cursor: 'pointer' },
   csvUploadBox: { background: '#F9FAFB', border: '1px dashed #D1D5DB', borderRadius: '8px', padding: '14px' },
+  manualRow: { display: 'grid', gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 1.4fr) minmax(0, 0.9fr) minmax(0, 0.9fr) auto', gap: '8px', alignItems: 'center' },
+  manualInput: { width: '100%', minWidth: 0, boxSizing: 'border-box' },
+  addRowBtn: { whiteSpace: 'nowrap' },
+  csvOr: { fontSize: '11px', fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '14px 0 8px' },
+  removeBtn: { background: 'none', border: 'none', color: '#9CA3AF', fontSize: '12px', cursor: 'pointer', padding: '2px 6px' },
   fileInput: { fontSize: '12px', marginBottom: '8px' },
   csvHint: { fontSize: '11px', color: '#9CA3AF', margin: '0 0 8px', lineHeight: '1.5' },
   csvSummary: { display: 'flex', gap: '10px', alignItems: 'center', fontSize: '12px', color: '#374151', marginBottom: '10px' },

@@ -1,6 +1,6 @@
 import { requireUser } from '@/app/lib/auth/session'
-import { createAccount, sendInvite } from '@/app/lib/auth/flows'
 import { onboardClient, OnboardClientInput } from '@/app/lib/onboarding/onboardClient'
+import { addEmployee, isEmployeeRole, setupForBookingMode } from '@/app/lib/onboarding/addEmployee'
 import { inviteFailure } from '@/app/lib/onboarding/onboardTmc'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { NextRequest } from 'next/server'
@@ -9,15 +9,14 @@ import { route } from '@/app/lib/http/handler'
 import { db, transaction, isConstraint } from '@/app/lib/db'
 
 // ── POST /api/tmc/create-corporate/bulk ──────────────────────────────────────
-// Creates ONE client (with admin invite), then bulk-creates its employee
-// roster from CSV rows in the same request. What a row becomes depends on the
-// client's booking mode: for a CBT-only client, a traveller profile with no
-// account (the TMC books for them); otherwise an invited account, one invite
-// email per row. Failures are reported per row and never stop the file.
+// Creates ONE client (with admin invite), then its employee roster in the same
+// request: rows typed into the onboarding form and rows from a CSV arrive here
+// alike. Every row gets an account (addEmployee); whether it is emailed an
+// invite follows the client's booking mode. Failures are reported per row and
+// never stop the rest.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const MAX_EMPLOYEES = 250
-const VALID_ROLES = ['employee', 'manager', 'finance', 'admin'] as const
 
 interface EmployeeCsvRow {
   email: string
@@ -81,7 +80,7 @@ export const POST = route(async (req: NextRequest) => {
   }
 
   const clientId = clientResult.clientId
-  const isCbtOnly = client.bookingMode === 'cbt'
+  const setup = setupForBookingMode(client.bookingMode)
 
   if (employeeRows.length === 0) {
     return Response.json({
@@ -121,8 +120,8 @@ export const POST = route(async (req: NextRequest) => {
       continue
     }
 
-    const role = (row.role?.toLowerCase() || 'employee') as typeof VALID_ROLES[number]
-    if (!VALID_ROLES.includes(role)) {
+    const role = row.role?.toLowerCase() || 'employee'
+    if (!isEmployeeRole(role)) {
       employeeResults.push({ email, status: 'failed', error: `Invalid role: ${row.role}` })
       continue
     }
@@ -134,37 +133,18 @@ export const POST = route(async (req: NextRequest) => {
       continue
     }
 
-    const profile = {
-      client_id: clientId,
-      band_id: band.id,
-      band_code: band.code,
-      band_rank: band.rank,
-      email,
-      full_name: fullName,
-      role,
-      first_login_completed: false,
-      department: row.department?.trim() || null,
-      cost_centre: row.cost_centre?.trim() || null,
-    }
-
-    // Every employee gets an account, as POST /api/employees does. This import
-    // used to give a CBT-only client's people none, so they could never sign
-    // in at all, not even to see their own trips.
-    //   SBT / hybrid: invited by email, 'invited' until they set a password.
-    //   CBT only:     no email (a counsellor books for them), 'active'. They
-    //                 can still sign in any time via "Forgot password".
     try {
-      await transaction(async tx => {
-        const { accountId } = await createAccount(tx, email, { createdBy: user.id })
-        await employees.insert(tx, {
-          ...profile,
-          id: accountId,
-          auth_user_id: accountId,
-          status: isCbtOnly ? 'active' : 'invited',
-          onboarding_method: isCbtOnly ? 'direct_create' : 'invite',
-        })
-        if (!isCbtOnly) await sendInvite(tx, accountId, user.id)
-      }, { tenantId: tmcId, userId: user.id })
+      await transaction(tx => addEmployee(tx, {
+        clientId,
+        band,
+        email,
+        fullName,
+        role,
+        department: row.department?.trim() || null,
+        costCentre: row.cost_centre?.trim() || null,
+        setup,
+        createdBy: user.id,
+      }), { tenantId: tmcId, userId: user.id })
       employeeResults.push({ email, status: 'created' })
     } catch (err) {
       employeeResults.push({ email, status: 'failed', error: inviteFailure(err)?.error ?? rowError(err) })

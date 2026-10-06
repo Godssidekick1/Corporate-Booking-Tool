@@ -59,6 +59,16 @@ const TITLES = ['MR', 'MRS', 'MS', 'MSTR']
 const GENDERS = ['Male', 'Female']
 const TOP_OF_HIERARCHY = '__top__'
 
+// Adding someone by hand takes only what a booking and the approval engine
+// need; everything else is filled in from their profile once they are listed.
+const ROLES: { value: string; label: string }[] = [
+  { value: 'employee', label: 'Employee' },
+  { value: 'manager', label: 'Manager' },
+  { value: 'finance', label: 'Finance' },
+  { value: 'admin', label: 'Corporate admin' },
+]
+const EMPTY_PERSON = { fullName: '', email: '', role: 'employee', band: '' }
+
 // Grouped so the panel reads as sections rather than one long column of inputs.
 const PROFILE_SECTIONS: { heading: string; fields: { key: keyof TravelerProfile; label: string; placeholder?: string }[] }[] = [
   {
@@ -104,6 +114,11 @@ export default function TravellerProfilesPage() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [importReport, setImportReport] = useState<{ updated: number; skipped: number; errors: { row: number; email: string; error: string }[] } | null>(null)
+
+  const [adding, setAdding] = useState(false)
+  const [newPerson, setNewPerson] = useState(EMPTY_PERSON)
+  const [addError, setAddError] = useState('')
+  const [addBusy, setAddBusy] = useState(false)
 
   const fileRef = useRef<HTMLInputElement>(null)
   const successTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -238,6 +253,29 @@ export default function TravellerProfilesPage() {
     } finally { setSaving(false) }
   }
 
+  // A different client means different bands, so a half-filled form doesn't
+  // carry across.
+  function chooseClient(id: string) {
+    setClientId(id)
+    setAdding(false); setNewPerson(EMPTY_PERSON); setAddError('')
+  }
+
+  async function addPerson(e: React.FormEvent) {
+    e.preventDefault()
+    setAddBusy(true); setAddError('')
+    try {
+      const d = await fetch('/api/tmc/employees', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId, ...newPerson }),
+      }).then(r => r.json())
+
+      if (!d.ok) { setAddError(d.error || 'Could not add this person.'); return }
+      setAdding(false); setNewPerson(EMPTY_PERSON)
+      roster.refetch()
+      showSuccess(d.message)
+    } finally { setAddBusy(false) }
+  }
+
   function downloadCsv() {
     // A plain navigation rather than fetch + blob: the route already sets
     // Content-Disposition, so the browser handles the filename and save dialog.
@@ -298,7 +336,7 @@ export default function TravellerProfilesPage() {
               clients cannot scan an unfiltered dropdown. */}
           <SearchableSelect
             value={clientId}
-            onChange={setClientId}
+            onChange={chooseClient}
             options={clients.map(c => ({ id: c.id, label: c.name }))}
             placeholder="Select a client…"
             emptyMessage="No clients match"
@@ -307,6 +345,13 @@ export default function TravellerProfilesPage() {
 
         {clientId && (
           <div style={s.toolbarActions}>
+            <button
+              onClick={() => { setAdding(true); setAddError('') }}
+              disabled={adding}
+              style={{ ...s.primaryBtn, opacity: adding ? 0.5 : 1 }}
+            >
+              + Add person
+            </button>
             <button onClick={downloadCsv} style={s.ghostBtn}>↓ Export CSV</button>
             <button
               onClick={() => fileRef.current?.click()}
@@ -328,6 +373,73 @@ export default function TravellerProfilesPage() {
 
       {error && <div style={s.errorBanner}>⚠ {error}</div>}
       {success && <div style={s.successBanner}>✓ {success}</div>}
+
+      {adding && clientId && (
+        <form onSubmit={addPerson} style={s.addCard}>
+          <div style={s.addHead}>
+            <h2 style={s.addTitle}>Add a person</h2>
+            <p style={s.addHint}>
+              Cost centre, reporting line and passport details can be added from
+              their profile once they&apos;re on the list.
+            </p>
+          </div>
+          <div style={s.addGrid}>
+            <Field label="Full name">
+              <input
+                style={s.input} required autoFocus
+                value={newPerson.fullName}
+                onChange={e => setNewPerson(p => ({ ...p, fullName: e.target.value }))}
+              />
+            </Field>
+            <Field label="Work email">
+              <input
+                style={s.input} required type="email"
+                value={newPerson.email}
+                onChange={e => setNewPerson(p => ({ ...p, email: e.target.value }))}
+              />
+            </Field>
+            <Field label="Role">
+              <select
+                style={s.input}
+                value={newPerson.role}
+                onChange={e => setNewPerson(p => ({ ...p, role: e.target.value }))}
+              >
+                {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+              </select>
+            </Field>
+            <Field label="Band">
+              <select
+                style={s.input} required
+                value={newPerson.band}
+                onChange={e => setNewPerson(p => ({ ...p, band: e.target.value }))}
+              >
+                <option value="">Choose a band…</option>
+                {bands.map(b => (
+                  <option key={b.id} value={b.code}>{b.code}{b.label && b.label !== b.code ? ` — ${b.label}` : ''}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          {!roster.loading && bands.length === 0 && (
+            <div style={s.warnBanner}>This client has no bands yet. Add its bands first, then add people to them.</div>
+          )}
+          {addError && <div style={s.errorBanner}>⚠ {addError}</div>}
+          <div style={s.addActions}>
+            <button
+              type="button" style={s.ghostBtn}
+              onClick={() => { setAdding(false); setNewPerson(EMPTY_PERSON); setAddError('') }}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit" disabled={addBusy || bands.length === 0}
+              style={{ ...s.primaryBtn, opacity: addBusy || bands.length === 0 ? 0.5 : 1 }}
+            >
+              {addBusy ? 'Adding…' : 'Add person'}
+            </button>
+          </div>
+        </form>
+      )}
 
       {importReport && (
         <div style={importReport.skipped > 0 ? s.warnBanner : s.successBanner}>
@@ -629,6 +741,13 @@ const s: Record<string, React.CSSProperties> = {
   successBanner: { background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#065F46', marginBottom: 14 },
   warnBanner: { background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 8, padding: '11px 14px', fontSize: 12, color: '#92400E', marginBottom: 14, lineHeight: 1.6 },
   errorList: { margin: '6px 0 0', paddingLeft: 18 },
+
+  addCard: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: 10, padding: '16px 18px', marginBottom: 16 },
+  addHead: { marginBottom: 12 },
+  addTitle: { fontSize: 14, fontWeight: 600, color: '#111827', margin: '0 0 2px' },
+  addHint: { fontSize: 12, color: '#9CA3AF', margin: 0 },
+  addGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 14 },
+  addActions: { display: 'flex', justifyContent: 'flex-end', gap: 8 },
 
   // Refetch state: the table holds its position and fades, so a search reads
   // as the rows updating rather than the page rebuilding.

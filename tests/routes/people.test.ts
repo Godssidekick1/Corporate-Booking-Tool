@@ -184,6 +184,26 @@ d('people screens', () => {
     expect(row).toMatchObject({ status: 'active', onboarding_method: 'direct_create' })
   })
 
+  it('employees POST: a band the client named in mixed case is found as typed', async () => {
+    // Was uppercased before an exact match, so "Band 9" looked for "BAND 9" and
+    // a client that names its own bands could never add anyone.
+    await exec(db, sql`
+      insert into bands (client_id, code, label, rank) values (${a.corpAdmin.client_id}, 'Band 9', 'Band 9', 9)`)
+    const res = await call(createEmployee, {
+      as: a.corpAdmin, method: 'POST', url: '/api/employees',
+      body: newEmployee({ email: 'banded@example.test', band: 'Band 9' }),
+    })
+    expect(res.status).toBe(201)
+    const id = (res.json as { employeeId: string }).employeeId
+    expect(await employee(id)).toMatchObject({ band_code: 'Band 9', band_rank: 9 })
+
+    // Gone again, so the rosters snapshotted below are unchanged.
+    await exec(db, sql`delete from employees where id = ${id}`)
+    await exec(db, sql`delete from auth_tokens where account_id = ${id}`)
+    await exec(db, sql`delete from accounts where id = ${id}`)
+    await exec(db, sql`delete from bands where client_id = ${a.corpAdmin.client_id} and code = 'Band 9'`)
+  })
+
   // ── GET /api/settings/users ────────────────────────────────────────────────
 
   it('settings/users: only a corporate admin', async () => {

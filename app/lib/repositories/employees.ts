@@ -245,9 +245,15 @@ export type Band = Pick<Row<'bands'>, 'id' | 'code' | 'rank'>
 
 // Codes are matched exactly; callers that accept free-typed input normalise
 // the case themselves.
+// Case-insensitive: clients name their own bands ("Band 3", "L2"), and a person
+// typing "band 3" means the same band. An exact match wins should a client
+// ever hold codes differing only in case.
 export async function bandByCode(db: Queryable, clientId: string, code: string): Promise<Band | null> {
   return maybeOne<Band>(db, sql`
-    select id, code, rank from bands where client_id = ${clientId} and code = ${code}`)
+    select id, code, rank from bands
+    where client_id = ${clientId} and lower(code) = lower(${code})
+    order by (code = ${code}) desc, id
+    limit 1`)
 }
 
 export async function findByEmailInClient(
