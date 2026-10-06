@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import SearchableSelect from '@/app/components/SearchableSelect'
 import Tabs, { useUrlTab } from '@/app/components/Tabs'
 import StepApprovers, { type TemplateStep } from './StepApprovers'
 import DirectChain from './DirectChain'
@@ -472,10 +473,15 @@ function AssignTemplate({ clients, chains, onChanged, onError, onSuccess }: {
         </div>
         <div style={s.field}>
           <label style={s.label}>Client</label>
-          <select value={clientId} onChange={e => setClientId(e.target.value)} style={{ ...s.input, width: 240 }}>
-            <option value="">Select a client…</option>
-            {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          <div style={{ width: 280 }}>
+            <SearchableSelect
+              value={clientId}
+              onChange={setClientId}
+              options={clients.map(c => ({ id: c.id, label: c.name }))}
+              placeholder="Select a client…"
+              emptyMessage="No clients match"
+            />
+          </div>
         </div>
         <div style={s.field}>
           <label style={s.label}>For</label>

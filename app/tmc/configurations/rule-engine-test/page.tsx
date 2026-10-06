@@ -125,20 +125,19 @@ export default function RuleEngineTestPage() {
         <div style={s.fields}>
           <div style={s.field}>
             <label style={s.label}>Client</label>
-            <select
+            <SearchableSelect
               value={selectedClientId}
-              onChange={e => {
-                setSelectedClientId(e.target.value)
+              onChange={id => {
+                setSelectedClientId(id)
                 // The chosen employee belongs to the previous client's roster.
                 // The effect that used to clear this went with the roster fetch.
                 setSelectedEmployeeId('')
               }}
-              style={s.input}
+              options={clients.map(c => ({ id: c.id, label: c.name }))}
+              placeholder={loadingClients ? 'Loading…' : 'Select a client…'}
+              emptyMessage="No clients match"
               disabled={loadingClients}
-            >
-              <option value="">{loadingClients ? 'Loading…' : 'Select a client…'}</option>
-              {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            />
           </div>
 
           <div style={s.field}>
