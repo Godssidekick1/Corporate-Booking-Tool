@@ -1,104 +1,58 @@
-// ── India-focused location data ──────────────────────────────────────────────
-// Single source of truth for every city/country dropdown in the app.
-// Scoped to India for now, per current market focus — extend when the
-// product actually expands beyond India rather than pre-building a full
-// worldwide list nobody uses yet.
+// ── GST state codes ──────────────────────────────────────────────────────────
+// India's 28 states and 8 union territories by the GST state code -- the first
+// two digits of every GSTIN registered there. The names are exactly GeoNames'
+// names for India's regions (the state pickers' list), so a picked state looks
+// up directly. Place lists themselves come from GeoNames (app/lib/repositories/
+// reference.ts); this file keeps only what GeoNames does not carry.
+// ─────────────────────────────────────────────────────────────────────────────
 
-export interface StateWithCities {
-  state: string
-  // The GST state code — the first two digits of every GSTIN registered there.
-  // Kept beside the name because there is nowhere else sensible for the map to
-  // live, and the branch master needs it to tell a GSTIN and a state apart when
-  // they disagree.
-  gstCode: string
-  cities: string[]
+const GST_STATE_CODES: Record<string, string> = {
+  'Andaman and Nicobar Islands':              '35',
+  'Andhra Pradesh':                           '37',
+  'Arunachal Pradesh':                        '12',
+  'Assam':                                    '18',
+  'Bihar':                                    '10',
+  'Chandigarh':                               '04',
+  'Chhattisgarh':                             '22',
+  'Dadra and Nagar Haveli and Daman and Diu': '26',
+  'Delhi':                                    '07',
+  'Goa':                                      '30',
+  'Gujarat':                                  '24',
+  'Haryana':                                  '06',
+  'Himachal Pradesh':                         '02',
+  'Jammu and Kashmir':                        '01',
+  'Jharkhand':                                '20',
+  'Karnataka':                                '29',
+  'Kerala':                                   '32',
+  'Ladakh':                                   '38',
+  'Lakshadweep':                              '31',
+  'Madhya Pradesh':                           '23',
+  'Maharashtra':                              '27',
+  'Manipur':                                  '14',
+  'Meghalaya':                                '17',
+  'Mizoram':                                  '15',
+  'Nagaland':                                 '13',
+  'Odisha':                                   '21',
+  'Puducherry':                               '34',
+  'Punjab':                                   '03',
+  'Rajasthan':                                '08',
+  'Sikkim':                                   '11',
+  'Tamil Nadu':                               '33',
+  'Telangana':                                '36',
+  'Tripura':                                  '16',
+  'Uttar Pradesh':                            '09',
+  'Uttarakhand':                              '05',
+  'West Bengal':                              '19',
 }
 
-// All 28 states and 8 union territories. Previously 13, which was merely
-// limiting for a client's address and an outright blocker for a branch: GST
-// registers per state, so a TMC in Assam or Odisha could not record its own
-// office at all.
-//
-// Cities are SUGGESTIONS, not a whitelist. A branch can sit in a town this list
-// has never heard of, so every city input accepts free text.
-export const INDIAN_STATES_AND_CITIES: StateWithCities[] = [
-  { state: 'Andaman and Nicobar Islands', gstCode: '35', cities: ['Port Blair'] },
-  { state: 'Andhra Pradesh',              gstCode: '37', cities: ['Visakhapatnam', 'Vijayawada', 'Guntur', 'Tirupati', 'Nellore'] },
-  { state: 'Arunachal Pradesh',           gstCode: '12', cities: ['Itanagar', 'Naharlagun'] },
-  { state: 'Assam',                       gstCode: '18', cities: ['Guwahati', 'Silchar', 'Dibrugarh', 'Jorhat'] },
-  { state: 'Bihar',                       gstCode: '10', cities: ['Patna', 'Gaya', 'Bhagalpur', 'Muzaffarpur'] },
-  { state: 'Chandigarh',                  gstCode: '04', cities: ['Chandigarh'] },
-  { state: 'Chhattisgarh',                gstCode: '22', cities: ['Raipur', 'Bhilai', 'Bilaspur'] },
-  { state: 'Dadra and Nagar Haveli and Daman and Diu', gstCode: '26', cities: ['Daman', 'Silvassa', 'Diu'] },
-  { state: 'Delhi',                       gstCode: '07', cities: ['New Delhi', 'Delhi'] },
-  { state: 'Goa',                         gstCode: '30', cities: ['Panaji', 'Margao', 'Vasco da Gama'] },
-  { state: 'Gujarat',                     gstCode: '24', cities: ['Ahmedabad', 'Surat', 'Vadodara', 'Rajkot', 'Gandhinagar'] },
-  { state: 'Haryana',                     gstCode: '06', cities: ['Gurugram', 'Faridabad', 'Panipat', 'Karnal'] },
-  { state: 'Himachal Pradesh',            gstCode: '02', cities: ['Shimla', 'Dharamshala', 'Manali'] },
-  { state: 'Jammu and Kashmir',           gstCode: '01', cities: ['Srinagar', 'Jammu'] },
-  { state: 'Jharkhand',                   gstCode: '20', cities: ['Ranchi', 'Jamshedpur', 'Dhanbad'] },
-  { state: 'Karnataka',                   gstCode: '29', cities: ['Bengaluru', 'Mysuru', 'Mangaluru', 'Hubballi', 'Belagavi'] },
-  { state: 'Kerala',                      gstCode: '32', cities: ['Kochi', 'Thiruvananthapuram', 'Kozhikode', 'Thrissur'] },
-  { state: 'Ladakh',                      gstCode: '38', cities: ['Leh', 'Kargil'] },
-  { state: 'Lakshadweep',                 gstCode: '31', cities: ['Kavaratti'] },
-  { state: 'Madhya Pradesh',              gstCode: '23', cities: ['Bhopal', 'Indore', 'Gwalior', 'Jabalpur'] },
-  { state: 'Maharashtra',                 gstCode: '27', cities: ['Mumbai', 'Pune', 'Nagpur', 'Nashik', 'Aurangabad'] },
-  { state: 'Manipur',                     gstCode: '14', cities: ['Imphal'] },
-  { state: 'Meghalaya',                   gstCode: '17', cities: ['Shillong'] },
-  { state: 'Mizoram',                     gstCode: '15', cities: ['Aizawl'] },
-  { state: 'Nagaland',                    gstCode: '13', cities: ['Kohima', 'Dimapur'] },
-  { state: 'Odisha',                      gstCode: '21', cities: ['Bhubaneswar', 'Cuttack', 'Rourkela', 'Puri'] },
-  { state: 'Puducherry',                  gstCode: '34', cities: ['Puducherry', 'Karaikal'] },
-  { state: 'Punjab',                      gstCode: '03', cities: ['Ludhiana', 'Amritsar', 'Jalandhar', 'Mohali'] },
-  { state: 'Rajasthan',                   gstCode: '08', cities: ['Jaipur', 'Udaipur', 'Jodhpur', 'Kota'] },
-  { state: 'Sikkim',                      gstCode: '11', cities: ['Gangtok'] },
-  { state: 'Tamil Nadu',                  gstCode: '33', cities: ['Chennai', 'Coimbatore', 'Madurai', 'Tiruchirappalli', 'Salem'] },
-  { state: 'Telangana',                   gstCode: '36', cities: ['Hyderabad', 'Warangal', 'Nizamabad'] },
-  { state: 'Tripura',                     gstCode: '16', cities: ['Agartala'] },
-  { state: 'Uttar Pradesh',               gstCode: '09', cities: ['Lucknow', 'Noida', 'Kanpur', 'Varanasi', 'Agra', 'Ghaziabad'] },
-  { state: 'Uttarakhand',                 gstCode: '05', cities: ['Dehradun', 'Haridwar', 'Rishikesh'] },
-  { state: 'West Bengal',                 gstCode: '19', cities: ['Kolkata', 'Howrah', 'Siliguri', 'Durgapur'] },
-]
-
-export const INDIAN_STATES: string[] = INDIAN_STATES_AND_CITIES.map(s => s.state)
-
-const STATE_BY_GST_CODE = new Map(INDIAN_STATES_AND_CITIES.map(s => [s.gstCode, s.state]))
-const GST_CODE_BY_STATE = new Map(INDIAN_STATES_AND_CITIES.map(s => [s.state, s.gstCode]))
-
-// Cities for one state, for narrowing the suggestion list once a state is
-// chosen. Unknown state -> every city, so the field still helps rather than
-// going empty.
-export function citiesForState(state: string): string[] {
-  return INDIAN_STATES_AND_CITIES.find(s => s.state === state)?.cities ?? ALL_INDIAN_CITIES
-}
+const STATE_BY_GST_CODE = new Map(Object.entries(GST_STATE_CODES).map(([state, code]) => [code, state]))
 
 export function stateForGstCode(code: string): string | null {
   return STATE_BY_GST_CODE.get(code) ?? null
 }
 
 export function gstCodeForState(state: string): string | null {
-  return GST_CODE_BY_STATE.get(state) ?? null
-}
-
-// Flat list, for a simple single-level city dropdown when state isn't needed separately
-export const ALL_INDIAN_CITIES: string[] = INDIAN_STATES_AND_CITIES
-  .flatMap(s => s.cities)
-  .sort()
-
-export const COMMON_COUNTRIES: string[] = [
-  'India',
-  'United Arab Emirates',
-  'Singapore',
-  'United Kingdom',
-  'United States',
-]
-
-export function isValidIndianCity(city: string): boolean {
-  return ALL_INDIAN_CITIES.includes(city)
-}
-
-export function isValidCountry(country: string): boolean {
-  return COMMON_COUNTRIES.includes(country)
+  return GST_STATE_CODES[state] ?? null
 }
 
 export interface Airport {

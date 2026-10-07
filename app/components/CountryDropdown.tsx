@@ -1,49 +1,22 @@
 'use client'
 
-import SearchableSelect from './SearchableSelect'
-import { COMMON_COUNTRIES } from '@/app/lib/data/locations'
+import { CountrySelect } from '@/app/components/places/PlacePickers'
 
 // ── CountryDropdown ──────────────────────────────────────────────────────────
-// Typable, wrapping SearchableSelect so there is one dropdown pattern in the app
-// rather than a plain <select> here and a combobox everywhere else.
+// The country of an address (client, client group, branch, GST registration),
+// stored by its English name ("India") as those records always have been.
 //
-// Unlike the city field this is NOT free text: the country list is short,
-// deliberate, and drives real behaviour elsewhere (which airports are offered,
-// which currency). An unrecognised country is a mistake, not a gap in our data,
-// so the existing warning is kept.
+// Every country in the GeoNames list, not a short hand-made one. Still a
+// closed list: the country drives the state list below it, so a saved value
+// that is not a country is shown with a note, never silently blanked.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface CountryDropdownProps {
   value: string
   onChange: (value: string) => void
-  id?: string
-  name?: string
   disabled?: boolean
 }
 
 export default function CountryDropdown({ value, onChange, disabled }: CountryDropdownProps) {
-  const isInvalid = value !== '' && !COMMON_COUNTRIES.includes(value)
-
-  return (
-    <div>
-      <SearchableSelect
-        value={value}
-        onChange={onChange}
-        options={COMMON_COUNTRIES.map(country => ({ id: country, label: country }))}
-        selectedLabel={value}
-        placeholder="Search countries…"
-        emptyMessage="No countries match"
-        disabled={disabled}
-      />
-      {isInvalid && (
-        <p style={errorStyle}>
-          &ldquo;{value}&rdquo; isn&rsquo;t a recognised country. Please pick one from the list.
-        </p>
-      )}
-    </div>
-  )
-}
-
-const errorStyle: React.CSSProperties = {
-  fontSize: '11px', color: '#DC2626', margin: '4px 0 0',
+  return <CountrySelect by="name" value={value} onChange={onChange} disabled={disabled} placeholder="Search countries…" />
 }

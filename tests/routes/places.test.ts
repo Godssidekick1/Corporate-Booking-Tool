@@ -5,6 +5,7 @@ import { GET as citiesGet } from '@/app/api/reference/cities/route'
 import { PATCH as profilePatch } from '@/app/api/tmc/traveler-profiles/[id]/route'
 import { normalisePlaces } from '@/app/lib/places/normalisePlaces'
 import { genderForTitle, toDateInput, fromDateInput } from '@/app/lib/places/profileFormat'
+import { gstCodeForState, stateForGstCode } from '@/app/lib/data/locations'
 import { call } from '../harness/call'
 import { actors, type Actors } from '../harness/actors'
 import { resetDatabase } from '../harness/db'
@@ -49,6 +50,15 @@ d('places', () => {
     expect((await call(regionsGet, { as: a.employee!, url: '/api/reference/regions' })).status).toBe(400)
     const regions = (await call(regionsGet, { as: a.employee!, url: '/api/reference/regions?country=in' })).json as { regions: { name: string }[] }
     expect(regions.regions.map(r => r.name)).toEqual(expect.arrayContaining(['Maharashtra', 'Goa', 'Karnataka']))
+  })
+
+  it('every Indian state on the picker has a GST code, and every GST state is on the picker', async () => {
+    // The state pickers list GeoNames names; GSTIN checks look them up by name.
+    const regions = (await call(regionsGet, { as: a.employee!, url: '/api/reference/regions?country=IN' })).json as { regions: { name: string }[] }
+    const names = regions.regions.map(r => r.name)
+    expect(names.filter(n => !gstCodeForState(n))).toEqual([])
+    expect(names).toHaveLength(36)
+    expect(stateForGstCode('35')).toBe('Andaman and Nicobar Islands')
   })
 
   it('countries become ISO codes; text typed before the picker converts', async () => {

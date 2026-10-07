@@ -300,13 +300,17 @@ export default function CorporateSettingsPage() {
               <input value={form.address_2 ?? ''} onChange={e => set('address_2', e.target.value)} style={s.input} />
             </Field>
             <Field label="Country">
-              <CountryDropdown value={form.country ?? ''} onChange={v => set('country', v)} />
+              {/* A new country's states are different ones: clear state and city. */}
+              <CountryDropdown value={form.country ?? ''} onChange={v => {
+                if (v !== (form.country ?? '')) { set('state', null); set('city', null) }
+                set('country', v)
+              }} />
             </Field>
             <Field label="State">
-              <StateDropdown value={form.state ?? ''} onChange={v => set('state', v)} />
+              <StateDropdown value={form.state ?? ''} onChange={v => set('state', v)} country={form.country ?? undefined} />
             </Field>
             <Field label="City">
-              <CityDropdown value={form.city ?? ''} onChange={v => set('city', v)} state={form.state ?? undefined} />
+              <CityDropdown value={form.city ?? ''} onChange={v => set('city', v)} country={form.country ?? undefined} state={form.state ?? undefined} />
             </Field>
             <Field label="Pincode">
               <input value={form.pincode ?? ''} onChange={e => set('pincode', e.target.value)} style={s.input} />

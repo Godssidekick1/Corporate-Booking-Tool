@@ -5,15 +5,6 @@ recorded with the item; remove an item once it ships.
 
 ## Next up (fixes)
 
-- **Configurations pages freeze on refresh or deep link.** Any page under
-  `/tmc/configurations/*` loaded directly never hydrates (nothing clickable);
-  reached by clicking through the app it works. Reproduced on dev and on a
-  production build. Pre-existing.
-- **Older place dropdowns onto GeoNames.** `CountryDropdown`, `StateDropdown`
-  and `CityDropdown` (client page, GST tab, branches, client groups, company
-  settings) still use the short hand-made list in `app/lib/data/locations.ts`.
-  Keep the GST state codes working (names already match, including
-  "Andaman and Nicobar Islands").
 - **Full airports dataset.** Booking search cannot find many airports, and
   domestic vs international (policy) is decided from the same short list.
   Candidate: OurAirports (public domain), airports with IATA codes.

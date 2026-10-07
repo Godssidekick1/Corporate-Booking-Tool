@@ -8,8 +8,7 @@ import {
   FlatFlightResult, formatTime, formatDayLabel, SelectedSeat, TravelerProfile,
   LegSeatMap, SeatCell, journeysOf, journeyLabel,
 } from '@/app/lib/book/types'
-import { countryNameFromCode } from '@/app/lib/data/countryCodes'
-import { CountrySelect } from '@/app/components/places/PlacePickers'
+import { CountrySelect, findCountry, useCountries } from '@/app/components/places/PlacePickers'
 import { genderForTitle } from '@/app/lib/places/profileFormat'
 import { mealCodesFor, mealLabel, fromProfilePreference, NO_MEAL_PREFERENCE } from '@/app/lib/book/mealCodes'
 import { ButtonBusy, BusyOverlay } from '@/app/components/FlowLoader'
@@ -355,6 +354,7 @@ function travelerLabel(passenger: PassengerForm, index: number): string {
 
 export default function BookingDetailsPage() {
   const router = useRouter()
+  const countries = useCountries()
   const params = useParams<{ flightKey: string }>()
   const flightKey = decodeURIComponent(params.flightKey)
 
@@ -781,7 +781,9 @@ export default function BookingDetailsPage() {
             City: city,
             State: state,
             CountryCode: passengers[0]?.nationality ?? 'IN',
-            CountryName: countryNameFromCode(passengers[0]?.nationality ?? 'IN'), // Amadeus rejects empty CountryName (ModelState validation)
+            // Amadeus rejects an empty CountryName (ModelState validation);
+            // an unmatched code is sent as itself rather than as nothing.
+            CountryName: findCountry(countries, passengers[0]?.nationality || 'IN')?.name ?? (passengers[0]?.nationality || 'IN'),
             ZipCode: zipCode,
             PassengerDetails: passengers.map((p, i) => ({
               Title: p.title,

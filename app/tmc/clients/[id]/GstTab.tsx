@@ -236,13 +236,16 @@ export default function GstTab({ clientId, onCount }: {
             </Field>
 
             <Field label="Country">
-              <CountryDropdown value={draft.country ?? ''} onChange={v => setField('country', v)} />
+              <CountryDropdown value={draft.country ?? ''} onChange={v => {
+                if (v !== (draft.country ?? '')) { setField('state', null); setField('city', null) }
+                setField('country', v)
+              }} />
             </Field>
             <Field label="State" hint="Has to agree with the GSTIN's first two digits.">
-              <StateDropdown value={draft.state ?? ''} onChange={v => setField('state', v)} />
+              <StateDropdown value={draft.state ?? ''} onChange={v => setField('state', v)} country={draft.country ?? undefined} />
             </Field>
             <Field label="City">
-              <CityDropdown value={draft.city ?? ''} onChange={v => setField('city', v)} state={draft.state ?? undefined} />
+              <CityDropdown value={draft.city ?? ''} onChange={v => setField('city', v)} country={draft.country ?? undefined} state={draft.state ?? undefined} />
             </Field>
 
             <Field label="Zip">

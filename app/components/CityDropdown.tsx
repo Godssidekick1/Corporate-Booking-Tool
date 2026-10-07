@@ -1,58 +1,36 @@
 'use client'
 
-import SearchableSelect from './SearchableSelect'
-import { ALL_INDIAN_CITIES, citiesForState } from '@/app/lib/data/locations'
+import { CitySelect } from '@/app/components/places/PlacePickers'
+import { useCountryCode } from '@/app/components/StateDropdown'
 
 // ── CityDropdown ─────────────────────────────────────────────────────────────
-// Typable, wrapping SearchableSelect rather than being a second dropdown
-// pattern of its own.
+// Places in the address's country (and state, once chosen), searched over the
+// GeoNames list on the server.
 //
-// A CITY IS A SUGGESTION, NOT A WHITELIST. The old version rendered a plain
-// <select> whose value silently became '' for anything not on a 40-entry list,
-// then complained the value "isn't a recognized city". A branch or a client can
-// sit in a town this list has never heard of, and the list is ours, not theirs
-// — so an unlisted value is kept, shown, and flagged as unrecognised rather than
-// discarded.
-//
-// `state` narrows the suggestions once one is chosen; without it, every city.
+// A CITY IS A SUGGESTION, NOT A WHITELIST. A branch or a client can sit in a
+// town no list has heard of, so when nothing matches, what was typed is kept
+// (Enter). Traveller addresses are the strict case; see CitySelect.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface CityDropdownProps {
   value: string
   onChange: (value: string) => void
-  id?: string
-  name?: string
-  disabled?: boolean
+  // The country by name or ISO code, as the form holds it. Blank → India.
+  country?: string
   state?: string
+  disabled?: boolean
 }
 
-export default function CityDropdown({ value, onChange, disabled, state }: CityDropdownProps) {
-  const suggestions = state ? citiesForState(state) : ALL_INDIAN_CITIES
-  const unlisted = value !== '' && !ALL_INDIAN_CITIES.includes(value)
-
+export default function CityDropdown({ value, onChange, country, state, disabled }: CityDropdownProps) {
+  const code = useCountryCode(country)
   return (
-    <div>
-      <SearchableSelect
-        value={value}
-        onChange={onChange}
-        // The id IS the city name here: there is no separate key, and using the
-        // name as the id lets a free-typed value round-trip unchanged.
-        options={suggestions.map(city => ({ id: city, label: city }))}
-        selectedLabel={value}
-        allowFreeText
-        placeholder={state ? `Search cities in ${state}…` : 'Search or type a city…'}
-        emptyMessage="No suggestions — type the city name"
-        disabled={disabled}
-      />
-      {unlisted && (
-        <p style={noteStyle}>
-          &ldquo;{value}&rdquo; isn&rsquo;t in our list. It has been kept — check the spelling.
-        </p>
-      )}
-    </div>
+    <CitySelect
+      country={code}
+      state={state}
+      value={value}
+      onChange={onChange}
+      disabled={disabled}
+      placeholder={state ? `Search cities in ${state}…` : 'Search or type a city…'}
+    />
   )
-}
-
-const noteStyle: React.CSSProperties = {
-  fontSize: '11px', color: '#92400E', margin: '4px 0 0',
 }

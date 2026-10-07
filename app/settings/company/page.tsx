@@ -1,8 +1,6 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import CityDropdown from '@/app/components/CityDropdown'
-import CountryDropdown from '@/app/components/CountryDropdown'  
 
 interface Client {
   id: string

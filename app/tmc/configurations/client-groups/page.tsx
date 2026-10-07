@@ -228,11 +228,14 @@ export default function TmcClientGroupsPage() {
             </div>
             <div style={s.field}>
               <label style={s.label}>Country</label>
-              <CountryDropdown value={form.country} onChange={v => set('country', v)} />
+              <CountryDropdown value={form.country} onChange={v => {
+                if (v !== form.country) { set('bill_to_state', ''); set('city', '') }
+                set('country', v)
+              }} />
             </div>
             <div style={s.field}>
               <label style={s.label}>State</label>
-              <StateDropdown value={form.bill_to_state} onChange={v => set('bill_to_state', v)} />
+              <StateDropdown value={form.bill_to_state} onChange={v => set('bill_to_state', v)} country={form.country} />
             </div>
             <div style={s.field}>
               <label style={s.label}>City</label>
@@ -240,6 +243,7 @@ export default function TmcClientGroupsPage() {
               <CityDropdown
                 value={form.city}
                 onChange={v => set('city', v)}
+                country={form.country}
                 state={form.bill_to_state || undefined}
               />
             </div>

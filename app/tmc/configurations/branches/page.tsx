@@ -283,13 +283,16 @@ export default function BranchesPage() {
               </div>
               <div style={s.field}>
                 <label style={s.label}>Country</label>
-                <CountryDropdown value={form.country} onChange={v => set('country', v)} />
+                <CountryDropdown value={form.country} onChange={v => {
+                  if (v !== form.country) { set('gst_state', ''); set('gst_city', '') }
+                  set('country', v)
+                }} />
               </div>
               <div style={s.field}>
                 <label style={s.label}>State</label>
                 {/* Closed list, unlike city: the GSTIN's first two digits have to
                     agree with something, and free text could never be checked. */}
-                <StateDropdown value={form.gst_state ?? ''} onChange={v => set('gst_state', v)} />
+                <StateDropdown value={form.gst_state ?? ''} onChange={v => set('gst_state', v)} country={form.country} />
               </div>
               <div style={s.row}>
                 <div style={{ ...s.field, flex: 2 }}>
@@ -297,6 +300,7 @@ export default function BranchesPage() {
                   <CityDropdown
                     value={form.gst_city ?? ''}
                     onChange={v => set('gst_city', v)}
+                    country={form.country}
                     state={form.gst_state ?? undefined}
                   />
                 </div>
