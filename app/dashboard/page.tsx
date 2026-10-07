@@ -352,7 +352,7 @@ export default function DashboardPage() {
                   <div style={{
                     ...s.checkDot,
                     background: item.done ? '#22C55E' : '#fff',
-                    borderColor: item.done ? '#22C55E' : '#D1D5DB',
+                    border: `2px solid ${item.done ? '#22C55E' : '#D1D5DB'}`,
                   }}>
                     {item.done && <span style={s.checkMark}>✓</span>}
                   </div>

@@ -167,7 +167,7 @@ function BandRow({
         onKeyDown={onKeyDown}
         placeholder="A1"
         disabled={disabled}
-        style={{ ...s.input, borderColor: duplicate ? '#FCA5A5' : '#D1D5DB' }}
+        style={{ ...s.input, border: `1px solid ${duplicate ? '#FCA5A5' : '#D1D5DB'}` }}
       />
       <input
         type="text"

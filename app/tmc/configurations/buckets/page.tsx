@@ -329,7 +329,7 @@ const s: Record<string, React.CSSProperties> = {
   split: { display: 'flex', gap: 20, alignItems: 'flex-start', flexWrap: 'wrap' },
   list: { width: 260, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 6 },
   card: { textAlign: 'left', background: '#fff', border: '1px solid var(--color-line)', borderLeft: '3px solid transparent', borderRadius: 8, padding: '10px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 3 },
-  cardOn: { borderLeftColor: 'var(--color-rail)', background: '#F5F6FF' },
+  cardOn: { borderLeft: '3px solid var(--color-rail)', background: '#F5F6FF' },
   cardName: { fontSize: 13, fontWeight: 600, color: 'var(--color-ink)' },
   cardMeta: { fontSize: 11, color: 'var(--color-secondary)' },
 

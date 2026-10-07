@@ -1558,7 +1558,7 @@ const s: Record<string, React.CSSProperties> = {
     fontSize: '12px', fontWeight: 600, color: '#6B7280', background: '#fff', border: '1px solid #E5E7EB',
     borderRadius: '8px', padding: '8px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px',
   },
-  travelerTabActive: { color: '#000835', borderColor: '#000835', background: '#EEF2FF' },
+  travelerTabActive: { color: '#000835', border: '1px solid #000835', background: '#EEF2FF' },
   travelerTabDot: { width: '6px', height: '6px', borderRadius: '50%', background: '#22C55E', display: 'inline-block' },
 
   legTabs: { display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' as const },
@@ -1566,7 +1566,7 @@ const s: Record<string, React.CSSProperties> = {
     fontSize: '12px', fontWeight: 600, color: '#6B7280', background: '#fff', border: '1px solid #E5E7EB',
     borderRadius: '8px', padding: '8px 12px', cursor: 'pointer',
   },
-  legTabActive: { color: '#000835', borderColor: '#000835', background: '#EEF2FF' },
+  legTabActive: { color: '#000835', border: '1px solid #000835', background: '#EEF2FF' },
   legTabJourney: { color: '#9CA3AF', fontWeight: 500 },
   fieldHint: { display: 'block', fontSize: '11px', color: '#9CA3AF', marginTop: '4px', lineHeight: 1.4 },
 

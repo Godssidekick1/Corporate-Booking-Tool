@@ -683,7 +683,7 @@ export default function TmcPolicyPage() {
                             <span style={{ ...s.categoryDot, background: cat.textColor }} />
                             <span style={{ ...s.categoryLabel, color: cat.textColor }}>{cat.label}</span>
                             {total > 0 && (
-                              <span style={{ ...s.categoryBadge, color: cat.textColor, borderColor: cat.textColor + '40', background: cat.textColor + '12' }}>
+                              <span style={{ ...s.categoryBadge, color: cat.textColor, border: `1px solid ${cat.textColor}40`, background: cat.textColor + '12' }}>
                                 {set} / {total} set
                               </span>
                             )}

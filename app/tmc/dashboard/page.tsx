@@ -740,7 +740,7 @@ function Tile({ label, value, sub, warn }: {
   warn?: boolean
 }) {
   return (
-    <div style={{ ...st.tile, borderColor: warn ? '#FDE68A' : '#E5E7EB' }}>
+    <div style={{ ...st.tile, border: `1px solid ${warn ? '#FDE68A' : '#E5E7EB'}` }}>
       <span style={st.tileLabel}>{label}</span>
       <span style={{ ...st.tileValue, color: warn ? '#92400E' : '#0A0A14' }}>{value}</span>
       {sub && <span style={st.tileSub}>{sub}</span>}

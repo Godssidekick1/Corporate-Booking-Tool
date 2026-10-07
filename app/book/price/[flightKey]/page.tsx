@@ -526,7 +526,7 @@ export default function SelectFarePage() {
                     ...s.fareCard,
                     ...(isActive ? s.fareCardActive : {}),
                     ...(hasMultipleFares ? s.fareCardScrollItem : s.fareCardStatic),
-                    ...(verdictColor ? { borderColor: verdictColor.border, borderWidth: '2px' } : {}),
+                    ...(verdictColor ? { border: `2px solid ${verdictColor.border}` } : {}),
                   }}
                 >
                   <div style={s.fareCardTopRow}>
@@ -556,7 +556,7 @@ export default function SelectFarePage() {
                         variable-length — it belongs in the panel below, where it
                         cannot stretch one card past its neighbours. */}
                     {verdictColor && (
-                      <span style={{ ...s.fareVerdictChip, color: verdictColor.color, background: verdictColor.bg, borderColor: verdictColor.border }}>
+                      <span style={{ ...s.fareVerdictChip, color: verdictColor.color, background: verdictColor.bg, border: `1px solid ${verdictColor.border}` }}>
                         <span style={{ ...s.fareVerdictDot, background: verdictColor.color }} />
                         {verdictColor.label}
                       </span>
@@ -769,7 +769,7 @@ const s: Record<string, React.CSSProperties> = {
     padding: '11px 12px', background: '#F9FAFB', border: '1.5px solid #E5E7EB', borderRadius: '10px',
     cursor: 'pointer', textAlign: 'left' as const,
   },
-  fareCardActive: { background: '#EEF2FF', borderColor: '#000835' },
+  fareCardActive: { background: '#EEF2FF', border: '1.5px solid #000835' },
   fareCardStatic: { cursor: 'default' },
   // Every card now holds the same four things — name, price, tags, one gist
   // line — so they are the same size by construction rather than by being

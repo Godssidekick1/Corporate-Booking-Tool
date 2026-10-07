@@ -1051,7 +1051,7 @@ const s: Record<string, React.CSSProperties> = {
   chipRow: { display: 'flex', gap: 6, flexWrap: 'wrap' },
   assignChip: { display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fff', border: '1px solid var(--color-line-strong)', borderRadius: 6, padding: '4px 8px', fontSize: 12 },
   // A suspended mapping stays visible but reads as switched off.
-  assignChipOff: { opacity: 0.5, borderStyle: 'dashed' },
+  assignChipOff: { opacity: 0.5, border: '1px dashed var(--color-line-strong)' },
   chipX: { background: 'none', border: 'none', color: '#9CA3AF', fontSize: 15, lineHeight: 1, cursor: 'pointer', padding: 0 },
 
   backdrop: { position: 'fixed', inset: 0, background: 'rgba(10,10,20,0.28)', zIndex: 40 },

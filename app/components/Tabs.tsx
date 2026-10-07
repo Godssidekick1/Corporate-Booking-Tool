@@ -108,7 +108,10 @@ export function useUrlTab<T extends string>(
 const s: Record<string, React.CSSProperties> = {
   tabRow: { display: 'flex', gap: 0, marginBottom: 20, borderBottom: '1px solid #E5E7EB' },
   tabBtn: {
-    padding: '9px 16px', background: 'transparent', border: 'none',
+    // Three sides off and the bottom set, rather than border: 'none' plus a
+    // borderBottom that changes: shorthand and longhand of one property side
+    // by side make React warn when the active tab moves.
+    padding: '9px 16px', background: 'transparent', borderTop: 'none', borderLeft: 'none', borderRight: 'none',
     borderBottom: '2px solid transparent', fontSize: 13, color: '#6B7280',
     cursor: 'pointer', marginBottom: -1,
   },

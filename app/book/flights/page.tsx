@@ -867,7 +867,7 @@ const s: Record<string, React.CSSProperties> = {
   sortRow: { display: 'flex', alignItems: 'center', gap: '6px' },
   sortLabel: { fontSize: '11px', color: '#9CA3AF', marginRight: '2px' },
   sortBtn: { fontSize: '11px', fontWeight: 500, color: '#6B7280', background: '#fff', border: '1px solid #E5E7EB', borderRadius: '7px', padding: '5px 10px', cursor: 'pointer' },
-  sortBtnActive: { color: '#fff', background: '#000835', borderColor: '#000835' },
+  sortBtnActive: { color: '#fff', background: '#000835', border: '1px solid #000835' },
 
   filterBar: {
     display: 'flex', flexWrap: 'wrap' as const, alignItems: 'flex-start', gap: '20px',
@@ -880,9 +880,9 @@ const s: Record<string, React.CSSProperties> = {
     fontSize: '12px', fontWeight: 500, color: '#374151', background: '#F9FAFB',
     border: '1px solid #E5E7EB', borderRadius: '8px', padding: '6px 11px', cursor: 'pointer',
   },
-  filterChipActive: { color: '#fff', background: '#000835', borderColor: '#000835', fontWeight: 600 },
+  filterChipActive: { color: '#fff', background: '#000835', border: '1px solid #000835', fontWeight: 600 },
   // Matches nothing, so it cannot be clicked into an empty results list.
-  filterChipDead: { color: '#D1D5DB', background: '#F9FAFB', borderColor: '#F3F4F6', cursor: 'not-allowed' },
+  filterChipDead: { color: '#D1D5DB', background: '#F9FAFB', border: '1px solid #F3F4F6', cursor: 'not-allowed' },
   filterChipCount: { opacity: 0.6, fontVariantNumeric: 'tabular-nums' },
   clearFiltersBtn: {
     fontSize: '12px', fontWeight: 600, color: '#DC2626', background: 'none', border: 'none',
