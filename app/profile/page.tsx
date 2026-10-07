@@ -78,6 +78,15 @@ function ProfilePageInner() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState(false)
+  // Set once the save succeeded and the dashboard is opening: the button stays
+  // busy until it does, instead of turning back into "Save and continue" and
+  // looking as though nothing happened.
+  const [leaving, setLeaving] = useState(false)
+
+  // The next page, compiled and loaded while the form is being filled in.
+  useEffect(() => {
+    if (isFirstLogin) router.prefetch('/dashboard')
+  }, [isFirstLogin, router])
 
   useEffect(() => {
     loadProfile()
@@ -186,7 +195,9 @@ function ProfilePageInner() {
       }
       setSaved(true)
       if (isFirstLogin) {
-        router.push('/dashboard')
+        setLeaving(true)
+        // replace: Back should not return to a step that is already done.
+        router.replace('/dashboard')
       }
     } catch {
       setError('Something went wrong saving your profile.')
@@ -360,8 +371,8 @@ function ProfilePageInner() {
             )}
           </div>
 
-          <button type="submit" disabled={saving} style={s.submitBtn}>
-            {saving ? 'Saving…' : isFirstLogin ? 'Save and continue →' : 'Save profile'}
+          <button type="submit" disabled={saving || leaving} style={s.submitBtn}>
+            {leaving ? 'Opening your dashboard…' : saving ? 'Saving…' : isFirstLogin ? 'Save and continue →' : 'Save profile'}
           </button>
         </form>
       </div>

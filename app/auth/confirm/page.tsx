@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import AuthShell, { authStyles as s } from '@/app/components/AuthShell'
 import PasswordInput from '@/app/components/PasswordInput'
@@ -37,26 +37,42 @@ export default function AuthConfirmPage() {
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
 
+  // The token is read ONCE. React runs effects twice in development, and the
+  // first run removes it from the address bar -- so a second read found
+  // nothing and flashed "Link not recognized" (with a "Back to sign in"
+  // button) until the first run's answer arrived.
+  const tokenRef = useRef<string | null>(null)
+
   useEffect(() => {
-    const params = new URLSearchParams(window.location.hash.slice(1))
-    const token = params.get('token')
-    // Out of the address bar (and so out of history and screenshots) at once.
-    window.history.replaceState(null, '', window.location.pathname)
-    if (!token) {
-      setState({ kind: 'missing' })
-      return
+    if (tokenRef.current === null) {
+      tokenRef.current = new URLSearchParams(window.location.hash.slice(1)).get('token') ?? ''
+      // Out of the address bar (and so out of history and screenshots) at once.
+      window.history.replaceState(null, '', window.location.pathname)
     }
-    fetch('/api/auth/verify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token }),
-    })
-      .then(r => r.json())
-      .then(data => setState(data.ok
-        ? { kind: 'ready', token, email: data.email, purpose: data.purpose }
-        : { kind: 'dead', error: data.error }))
-      .catch(() => setState({ kind: 'dead', error: 'Something went wrong. Please check your connection and reload.' }))
-  }, [])
+    const token = tokenRef.current
+
+    // Where people go next, compiled and loaded while they type a password.
+    router.prefetch('/profile')
+    router.prefetch('/dashboard')
+
+    // Every outcome arrives through the promise, so nothing is set
+    // synchronously here and a superseded run cannot overwrite a later one.
+    let live = true
+    const check: Promise<State> = !token
+      ? Promise.resolve({ kind: 'missing' })
+      : fetch('/api/auth/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token }),
+        })
+          .then(r => r.json())
+          .then((data): State => data.ok
+            ? { kind: 'ready', token, email: data.email, purpose: data.purpose }
+            : { kind: 'dead', error: data.error })
+          .catch((): State => ({ kind: 'dead', error: 'Something went wrong. Please check your connection and reload.' }))
+    check.then(next => { if (live) setState(next) })
+    return () => { live = false }
+  }, [router])
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()

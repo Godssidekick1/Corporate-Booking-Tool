@@ -68,6 +68,7 @@ export default function TripsListPage() {
       return
     }
     setCreating(true)
+    let navigating = false
     try {
       const res = await fetch('/api/trips', {
         method: 'POST',
@@ -79,11 +80,14 @@ export default function TripsListPage() {
         setCreateError(data.error || 'Could not create trip.')
         return
       }
+      // Stays busy until the trip page opens: the trip already exists, and a
+      // button that flips back to "Create trip" invites a second one.
+      navigating = true
       router.push(`/trips/${data.trip.id}`)
     } catch {
       setCreateError('Something went wrong creating this trip.')
     } finally {
-      setCreating(false)
+      if (!navigating) setCreating(false)
     }
   }
 
@@ -151,7 +155,7 @@ export default function TripsListPage() {
                   Cancel
                 </button>
                 <button type="submit" disabled={creating} style={{ ...s.createBtn, opacity: creating ? 0.7 : 1 }}>
-                  {creating ? 'Creating…' : 'Create trip →'}
+                  {creating ? 'Opening your trip…' : 'Create trip →'}
                 </button>
               </div>
             </form>
