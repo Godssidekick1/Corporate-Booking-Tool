@@ -201,3 +201,62 @@ export async function findCity(
     order by population desc, id
     limit 1`)
 }
+
+// ═══ Airports ════════════════════════════════════════════════════════════════
+// OurAirports (public domain), inserted by 20261008000000_airports.
+
+export interface Airport {
+  code: string
+  name: string
+  city: string
+  country_code: string
+  country: string
+}
+
+// Lower-case ASCII, as the *_search columns hold it: "São" finds Sao Paulo.
+function foldSearch(s: string): string {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim()
+}
+
+// Airports matching a code, city, airport name or country, best match first:
+// the exact code, then a code starting with it, a city starting with it, a city
+// containing it, an airport name starting with it, containing it, then a
+// country starting with it. Within each, airports with airline service and
+// bigger airports first. With no search, India's served airports.
+export async function searchAirports(db: Queryable, search: string, limit = 40): Promise<Airport[]> {
+  const q = foldSearch(search)
+  const like = q.replace(/[\\%_]/g, c => `\\${c}`)
+  const code = q.toUpperCase()
+  const codePrefix = /^[a-z]{1,3}$/.test(q)
+  return many<Airport>(db, sql`
+    select a.code, a.name, a.city, a.country_code, c.name as country
+    from airports a join countries c on c.code = a.country_code
+    where ${q
+      ? sql`(a.code = ${code}
+          ${codePrefix ? sql`or a.code like ${code + '%'}` : empty}
+          or a.city_search like ${'%' + like + '%'}
+          or a.name_search like ${'%' + like + '%'}
+          or lower(c.name) like ${like + '%'})`
+      : sql`a.country_code = 'IN' and a.scheduled`}
+    order by
+      case
+        when a.code = ${code} then 0
+        when ${codePrefix} and a.code like ${code + '%'} then 1
+        when a.city_search like ${like + '%'} then 2
+        when a.city_search like ${'%' + like + '%'} then 3
+        when a.name_search like ${like + '%'} then 4
+        when a.name_search like ${'%' + like + '%'} then 5
+        else 6
+      end,
+      a.scheduled desc,
+      case a.kind when 'large_airport' then 0 when 'medium_airport' then 1 else 2 end,
+      a.city, a.code
+    limit ${limit}`)
+}
+
+export async function findAirport(db: Queryable, code: string): Promise<Airport | null> {
+  return maybeOne<Airport>(db, sql`
+    select a.code, a.name, a.city, a.country_code, c.name as country
+    from airports a join countries c on c.code = a.country_code
+    where a.code = ${code.trim().toUpperCase()}`)
+}

@@ -15,9 +15,9 @@ import {
 // INTAIRBSP). Getting it wrong is wrong four times over.
 //
 // The provider gives no country code -- Amadeus airport objects carry only
-// AirportCode/AirportName/CityName -- so this is inferred from a curated list.
-// That list being incomplete is expected, and the failure direction is
-// deliberate: an unknown airport reads as INTERNATIONAL, which asks for a
+// AirportCode/AirportName/CityName -- so this is inferred from the list of
+// India's IATA codes (OurAirports). For a code it does not know, the failure
+// direction is deliberate: an unknown airport reads as INTERNATIONAL, which asks for a
 // passport that is not needed rather than skipping one that is.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -26,6 +26,15 @@ describe('isIndianAirport', () => {
     expect(isIndianAirport('DEL')).toBe(true)
     expect(isIndianAirport('BOM')).toBe(true)
     expect(isIndianAirport('BLR')).toBe(true)
+  })
+
+  it('knows every Indian airport, not only the big ones', () => {
+    // Coimbatore, Rajkot (Hirasar), Mopa and Pakyong were missing from the old
+    // hand-made list, so a DEL-CJB booking read as international.
+    for (const code of ['CJB', 'HSR', 'GOX', 'PYG', 'IXZ', 'AGX']) expect(isIndianAirport(code)).toBe(true)
+    expect(classifyTrip([{ origin: 'DEL', destination: 'CJB' }])).toBe('domestic')
+    // Neighbours stay international.
+    for (const code of ['KTM', 'CMB', 'DAC', 'MLE', 'CGP']) expect(isIndianAirport(code)).toBe(false)
   })
 
   it('is case-insensitive', () => {

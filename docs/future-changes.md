@@ -3,12 +3,6 @@
 A running list of agreed work that is not done yet. Newest decisions are
 recorded with the item; remove an item once it ships.
 
-## Next up (fixes)
-
-- **Full airports dataset.** Booking search cannot find many airports, and
-  domestic vs international (policy) is decided from the same short list.
-  Candidate: OurAirports (public domain), airports with IATA codes.
-
 ## Employee dashboard (redesign)
 
 - **The "Finish setting up TravelDesk" checklist stays after every step is
@@ -42,9 +36,8 @@ recorded with the item; remove an item once it ships.
 
 ## Operational (one-off)
 
-- Run `npm run migrate` and `node scripts/load-cities.mjs` on the hosted
-  database; run `npm run migrate` locally to record the two migrations that
-  were applied by hand.
+- Run `npm run migrate` (places, no-manager, airports) and then
+  `node scripts/load-cities.mjs` on the hosted database. Local is up to date.
 - Remove leftover Supabase environment variables on Vercel; rotate the
   database password.
 

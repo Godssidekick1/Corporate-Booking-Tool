@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest'
 import { GET as countriesGet } from '@/app/api/reference/countries/route'
 import { GET as regionsGet } from '@/app/api/reference/regions/route'
 import { GET as citiesGet } from '@/app/api/reference/cities/route'
+import { GET as airportsGet } from '@/app/api/reference/airports/route'
 import { PATCH as profilePatch } from '@/app/api/tmc/traveler-profiles/[id]/route'
 import { normalisePlaces } from '@/app/lib/places/normalisePlaces'
 import { genderForTitle, toDateInput, fromDateInput } from '@/app/lib/places/profileFormat'
@@ -112,5 +113,44 @@ d('places', () => {
     expect((await patch({ nationality: 'Indian', state: 'maharashtra', city: 'MUMBAI' })).status).toBe(200)
     const saved = await one<{ p: Record<string, string> }>(db, sql`select traveler_profile as p from employees where id = ${id}`)
     expect(saved.p).toMatchObject({ nationality: 'IN', state: 'Maharashtra', city: 'Mumbai' })
+  })
+})
+
+d('airports', () => {
+  let a: Actors
+  beforeAll(async () => { a = await actors() })
+
+  type Found = { code: string; city: string; country: string }
+  const search = async (q: string) =>
+    ((await call(airportsGet, { as: a.employee!, url: `/api/reference/airports?search=${encodeURIComponent(q)}` })).json as { airports: Found[] }).airports
+
+  it('only for signed-in users', async () => {
+    expect((await call(airportsGet, { url: '/api/reference/airports?search=del' })).status).toBe(401)
+  })
+
+  it('best match first: the code, then the city, then the airport name or country', async () => {
+    expect((await search('BOM'))[0].code).toBe('BOM')
+    expect((await search('mumbai'))[0].code).toBe('BOM')
+    expect((await search('coimbatore'))[0].code).toBe('CJB')
+    expect((await search('heathrow'))[0].code).toBe('LHR')
+    // Accents need not be typed.
+    expect((await search('sao paulo')).map(r => r.code)).toEqual(expect.arrayContaining(['GRU', 'CGH']))
+    expect((await search('nepal')).map(r => r.country)).toContain('Nepal')
+    expect(await search('zzqx')).toEqual([])
+    // LIKE wildcards are text, not patterns.
+    expect(await search('%')).toEqual([])
+    expect(await search('_')).toEqual([])
+  })
+
+  it('with no search, India\'s served airports', async () => {
+    const list = await search('')
+    expect(list.length).toBeGreaterThan(20)
+    expect(list.every(r => r.country === 'India')).toBe(true)
+  })
+
+  it('one airport by code, or null', async () => {
+    const del = (await call(airportsGet, { as: a.employee!, url: '/api/reference/airports?code=del' })).json
+    expect(del).toMatchObject({ ok: true, airport: { code: 'DEL', city: 'New Delhi', country_code: 'IN', country: 'India' } })
+    expect((await call(airportsGet, { as: a.employee!, url: '/api/reference/airports?code=ZZZ' })).json).toEqual({ ok: true, airport: null })
   })
 })

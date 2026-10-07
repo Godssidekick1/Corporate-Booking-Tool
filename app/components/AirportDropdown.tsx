@@ -1,17 +1,19 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { AIRPORTS, Airport } from '@/app/lib/data/locations'
+import { useEffect, useId, useRef, useState } from 'react'
 
 // ── AirportDropdown ────────────────────────────────────────────────────────
-// A real searchable combobox — type a city, airport name, or code, and the
-// closest matches appear in a dropdown. Replaces what used to be a plain
-// grouped <select> (which only supported browser-native jump-to-first-letter,
-// not real search across city/name/code).
+// A real searchable combobox — type a city, airport name, code or country, and
+// the closest matches appear in a dropdown.
 //
-// Keeps the exact same prop interface as the old version (value/onChange/
-// exclude/dropdownStyle) so callers (book/flights) don't need to change at
-// all — this is a drop-in replacement.
+// The airports are searched on the server (/api/reference/airports, ~5,500
+// airports with IATA codes from OurAirports) rather than shipped to the
+// browser: the old hand-made list of ~150 is why many real airports could not
+// be searched at all. Ranking happens there: exact code, then code prefix,
+// city, airport name, country; served and bigger airports first.
+//
+// Same props as before (value/onChange/exclude/dropdownStyle), so callers
+// (book/flights) did not change. `value` is the IATA code.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface AirportDropdownProps {
@@ -24,101 +26,88 @@ interface AirportDropdownProps {
   dropdownStyle?: React.CSSProperties
 }
 
+interface Airport { code: string; name: string; city: string; country_code: string; country: string }
+
 function airportLabel(a: Airport): string {
   return `${a.city} (${a.code}) — ${a.name}`
 }
 
-// Ranks matches so the most useful result is first: exact code match beats
-// city-starts-with beats city-contains beats name-contains. A plain
-// substring filter alone (no ranking) would put e.g. "New Delhi" below
-// "Newark" for a query like "new" purely on array order, which reads as
-// broken even though it's technically "matching."
-function rankMatch(a: Airport, query: string): number {
-  const q = query.toLowerCase().trim()
-  if (!q) return 0
-  const code = a.code.toLowerCase()
-  const city = a.city.toLowerCase()
-  const name = a.name.toLowerCase()
-
-  if (code === q) return 0
-  if (code.startsWith(q)) return 1
-  if (city.startsWith(q)) return 2
-  if (city.includes(q)) return 3
-  if (name.startsWith(q)) return 4
-  if (name.includes(q)) return 5
-  return -1 // no match
+// One lookup per code per page, shared by both pickers on the search form.
+const byCode = new Map<string, Promise<Airport | null>>()
+function lookup(code: string): Promise<Airport | null> {
+  if (!byCode.has(code)) {
+    byCode.set(code, fetch(`/api/reference/airports?code=${encodeURIComponent(code)}`)
+      .then(r => r.json())
+      .then(d => (d.ok ? (d.airport as Airport | null) : null))
+      .catch(() => { byCode.delete(code); return null }))
+  }
+  return byCode.get(code)!
 }
 
 export default function AirportDropdown({
   value, onChange, id, label, disabled, exclude, dropdownStyle,
 }: AirportDropdownProps) {
-  const selected = AIRPORTS.find(a => a.code === value) ?? null
+  // What each code is, once known: undefined = not looked up yet, null = no
+  // such airport.
+  const [known, setKnown] = useState<Record<string, Airport | null>>({})
+  const selected = value ? known[value] : null
 
-  const [query, setQuery] = useState(selected ? airportLabel(selected) : '')
+  const [query, setQuery] = useState('')
   const [isOpen, setIsOpen] = useState(false)
   const [highlightedIndex, setHighlightedIndex] = useState(0)
+  const [found, setFound] = useState<{ q: string; airports: Airport[] } | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const listId = useId()
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // Keep the displayed text in sync if `value` changes from outside (e.g.
-  // the search page's swap-origin-destination button).
+  // A code set from outside (a saved search, a popular route, the swap
+  // button) is looked up for its label.
   useEffect(() => {
-    const current = AIRPORTS.find(a => a.code === value) ?? null
-    setQuery(current ? airportLabel(current) : '')
-  }, [value])
+    if (!value || value in known) return
+    let live = true
+    lookup(value).then(a => { if (live) setKnown(k => ({ ...k, [value]: a })) })
+    return () => { live = false }
+  }, [value, known])
 
-  const results = useMemo(() => {
-    if (!isOpen) return []
-    const isShowingSelectedLabel = selected && query === airportLabel(selected)
-    const effectiveQuery = isShowingSelectedLabel ? '' : query
-
-    return AIRPORTS
-      .filter(a => a.code !== exclude)
-      .map(a => ({ airport: a, rank: rankMatch(a, effectiveQuery) }))
-      .filter(r => effectiveQuery === '' || r.rank >= 0)
-      // Ties broken by city name, which is what fixes the "random order"
-      // complaint. rankMatch returns 0 for EVERY airport when the query is
-      // empty, so the sort was a no-op and the list came back in whatever
-      // order the array happened to be written in — India by traffic, then
-      // international by region. Sensible to whoever wrote it, arbitrary to
-      // anyone reading it. Equal-ranked matches now sort alphabetically.
-      .sort((x, y) => x.rank - y.rank || x.airport.city.localeCompare(y.airport.city))
-      // Was 8. On a list this size that silently hid most matches — typing "ba"
-      // showed eight of them with no indication there were more, which is the
-      // "even fewer in the dropdown" half of the problem. The list scrolls, so
-      // the cap only exists to stop the DOM growing without bound.
-      .slice(0, 60)
-      .map(r => r.airport)
-  }, [query, isOpen, exclude, selected])
+  // While open the box shows what is typed; closed, the chosen airport.
+  const shown = isOpen ? query : selected ? airportLabel(selected) : value
+  // Opening the box puts the chosen airport's label in it, selected; that is
+  // not a search, so it lists the default suggestions instead.
+  const search = selected && query === airportLabel(selected) ? '' : query.trim()
 
   useEffect(() => {
-    setHighlightedIndex(0)
-  }, [results])
+    if (!isOpen) return
+    let live = true
+    const t = setTimeout(() => {
+      fetch(`/api/reference/airports?search=${encodeURIComponent(search)}`)
+        .then(r => r.json())
+        .then(d => { if (live && d.ok) { setFound({ q: search, airports: d.airports }); setHighlightedIndex(0) } })
+        .catch(() => {})
+    }, search ? 200 : 0)
+    return () => { live = false; clearTimeout(t) }
+  }, [isOpen, search])
+
+  const results = (found?.airports ?? []).filter(a => a.code !== exclude)
+  const searching = isOpen && found?.q !== search
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setIsOpen(false)
-        // Reverting to the selected airport's label on blur-without-pick
-        // avoids leaving a half-typed query showing as if it were the
-        // actual selection.
-        setQuery(selected ? airportLabel(selected) : '')
-      }
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setIsOpen(false)
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [selected])
+  }, [])
 
   function selectAirport(airport: Airport) {
+    setKnown(k => ({ ...k, [airport.code]: airport }))
     onChange(airport.code)
-    setQuery(airportLabel(airport))
     setIsOpen(false)
     inputRef.current?.blur()
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (!isOpen) {
-      if (e.key === 'ArrowDown' || e.key === 'Enter') setIsOpen(true)
+      if (e.key === 'ArrowDown' || e.key === 'Enter') { setQuery(selected ? airportLabel(selected) : ''); setIsOpen(true) }
       return
     }
     if (e.key === 'ArrowDown') {
@@ -129,14 +118,13 @@ export default function AirportDropdown({
       setHighlightedIndex(i => Math.max(i - 1, 0))
     } else if (e.key === 'Enter') {
       e.preventDefault()
-      if (results[highlightedIndex]) selectAirport(results[highlightedIndex])
+      if (results[highlightedIndex] && !searching) selectAirport(results[highlightedIndex])
     } else if (e.key === 'Escape') {
       setIsOpen(false)
-      setQuery(selected ? airportLabel(selected) : '')
     }
   }
 
-  const isInvalid = value !== '' && !selected
+  const isInvalid = value !== '' && known[value] === null
 
   const defaultStyle: React.CSSProperties = {
     height: '38px', padding: '0 10px', fontSize: '13px', color: '#111827',
@@ -155,14 +143,17 @@ export default function AirportDropdown({
         role="combobox"
         aria-expanded={isOpen}
         aria-autocomplete="list"
+        aria-controls={listId}
         autoComplete="off"
-        value={query}
+        value={shown}
         disabled={disabled}
         placeholder="City, airport, or code…"
         onFocus={() => {
+          setQuery(selected ? airportLabel(selected) : '')
           setIsOpen(true)
           // Selecting all text on focus so typing immediately replaces the
           // current selection's label, rather than requiring a manual clear.
+          // The text is the same label either side of this render.
           inputRef.current?.select()
         }}
         onChange={e => {
@@ -175,10 +166,12 @@ export default function AirportDropdown({
       />
 
       {isOpen && results.length > 0 && (
-        <div style={dropdownWrapStyle}>
+        <div id={listId} role="listbox" style={dropdownWrapStyle}>
           {results.map((a, i) => (
             <div
               key={a.code}
+              role="option"
+              aria-selected={i === highlightedIndex}
               // onMouseDown (not onClick) fires before the input's onBlur/
               // click-outside handler, so the pick registers before the
               // dropdown closes itself out from under the click.
@@ -188,20 +181,20 @@ export default function AirportDropdown({
             >
               <span style={optionCityStyle}>{a.city}</span>
               <span style={optionCodeStyle}>{a.code}</span>
-              <span style={optionNameStyle}>{a.name}</span>
+              <span style={optionNameStyle}>{a.name}{a.country_code !== 'IN' ? ` · ${a.country}` : ''}</span>
             </div>
           ))}
         </div>
       )}
 
-      {isOpen && query.trim() !== '' && results.length === 0 && (
+      {isOpen && search !== '' && !searching && results.length === 0 && (
         <div style={dropdownWrapStyle}>
-          <div style={emptyStyle}>No airports match "{query}"</div>
+          <div style={emptyStyle}>No airports match &ldquo;{query}&rdquo;</div>
         </div>
       )}
 
       {isInvalid && !isOpen && (
-        <p style={errorStyle}>Unrecognised airport "{value}".</p>
+        <p style={errorStyle}>Unrecognised airport &ldquo;{value}&rdquo;.</p>
       )}
     </div>
   )
