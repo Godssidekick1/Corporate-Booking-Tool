@@ -51,9 +51,10 @@ export default function AuthConfirmPage() {
     }
     const token = tokenRef.current
 
-    // Where people go next, compiled and loaded while they type a password.
-    router.prefetch('/profile')
-    router.prefetch('/dashboard')
+    // NO router.prefetch of where they go next: before the password is set
+    // there is no session, so the proxy would answer with a redirect to /login,
+    // and a prefetched static page is kept for five minutes -- the navigation
+    // after saving would replay it.
 
     // Every outcome arrives through the promise, so nothing is set
     // synchronously here and a superseded run cannot overwrite a later one.
@@ -72,7 +73,7 @@ export default function AuthConfirmPage() {
           .catch((): State => ({ kind: 'dead', error: 'Something went wrong. Please check your connection and reload.' }))
     check.then(next => { if (live) setState(next) })
     return () => { live = false }
-  }, [router])
+  }, [])
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()

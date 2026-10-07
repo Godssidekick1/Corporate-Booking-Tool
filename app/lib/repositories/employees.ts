@@ -842,12 +842,6 @@ export async function idsInClient(db: Queryable, clientId: string | null): Promi
   return rows.map(r => r.id)
 }
 
-export async function directReportIds(db: Queryable, managerId: string): Promise<string[]> {
-  const rows = await many<{ id: string }>(db, sql`
-    select id from employees where manager_id = ${managerId} order by id`)
-  return rows.map(r => r.id)
-}
-
 export async function namesByIds(db: Queryable, employeeIds: readonly string[]): Promise<Map<string, string>> {
   if (employeeIds.length === 0) return new Map()
   const rows = await many<{ id: string; full_name: string }>(db, sql`

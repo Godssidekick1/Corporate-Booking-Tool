@@ -83,10 +83,21 @@ function ProfilePageInner() {
   // looking as though nothing happened.
   const [leaving, setLeaving] = useState(false)
 
-  // The next page, compiled and loaded while the form is being filled in.
+  // NO router.prefetch('/dashboard') here. Until this form is saved, the proxy
+  // answers /dashboard with a redirect back to this page, and a prefetch of a
+  // static page is kept for five minutes -- so the navigation after saving
+  // replayed that redirect and "Opening your dashboard…" never finished.
+  //
+  // Safety net: should the dashboard still not have opened after a while, say
+  // so and give the button back rather than spinning forever.
   useEffect(() => {
-    if (isFirstLogin) router.prefetch('/dashboard')
-  }, [isFirstLogin, router])
+    if (!leaving) return
+    const t = setTimeout(() => {
+      setLeaving(false)
+      setError('Your profile is saved, but the dashboard did not open. Press the button again to continue.')
+    }, 8000)
+    return () => clearTimeout(t)
+  }, [leaving])
 
   useEffect(() => {
     loadProfile()

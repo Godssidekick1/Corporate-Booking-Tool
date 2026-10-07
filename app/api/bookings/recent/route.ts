@@ -11,10 +11,13 @@ import { route } from '@/app/lib/http/handler'
 // /api/bookings (which powers /bookings — "My trips", always personal-
 // scoped) because visibility here depends on role:
 //
-//   employee — own bookings only
-//   manager / finance — own bookings, plus bookings made by their direct
-//                        reports (employees.manager_id === this employee)
-//   admin — every booking in the client
+//   admin — every booking in the client (oversight of the company's travel)
+//   everyone else — their own bookings only
+//
+// A manager's view of their team is NOT here: a report's booking awaiting
+// their decision belongs under Pending approvals, where they can act on it.
+// Listing it again as one of "your" recent bookings showed a manager someone
+// else's trip as though it were theirs.
 //
 // Returns a slim projection (route/dates/status/fare/traveler name) rather
 // than full traveler_snapshot/itinerary — enough for a preview card list,
@@ -34,15 +37,9 @@ export const GET = route(async (req: NextRequest) => {
   const limitParam = Number(searchParams.get('limit'))
   const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 50) : 5
 
-  let employeeIds: string[]
-
-  if (employee.role === 'admin') {
-    employeeIds = await employees.idsInClient(db, employee.client_id)
-  } else {
-    // Their own, and their direct reports' if they manage anyone: a manager is
-    // whoever others report to, not a role.
-    employeeIds = [employee.id, ...(await employees.directReportIds(db, employee.id))]
-  }
+  const employeeIds = employee.role === 'admin'
+    ? await employees.idsInClient(db, employee.client_id)
+    : [employee.id]
 
   if (employeeIds.length === 0) {
     return Response.json({ ok: true, bookings: [] })

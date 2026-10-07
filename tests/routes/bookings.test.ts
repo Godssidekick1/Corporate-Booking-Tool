@@ -125,19 +125,26 @@ d('traveller bookings and trips', () => {
     expect(rows.every(r => r.isOwn)).toBe(true)
   })
 
-  it('recent: a manager sees their direct reports too', async () => {
-    // A manager is an employee others report to -- no role to set. This used
-    // to need role 'manager', so an employee with a team saw only their own.
+  it('recent: a manager sees only their own; a report\'s booking waits in their approvals', async () => {
+    // A report's trip used to be listed among the manager's "recent bookings",
+    // as though it were theirs. It belongs under Pending approvals.
     const manager = await one<{ id: string }>(db, sql`
       select e.id from employees e
       where e.client_id = ${a.corpAdmin.client_id} and exists (select 1 from employees r where r.manager_id = e.id)
         and e.role = 'employee'
       order by e.id limit 1`)
-    const reports = (await many<{ id: string }>(db, sql`select id from employees where manager_id = ${manager.id}`)).map(r => r.id)
+    const report = await one<{ id: string }>(db, sql`
+      select id from employees where manager_id = ${manager.id} order by id limit 1`)
+    // Make sure the report has a booking, so leaking it would show.
+    await exec(db, sql`
+      update bookings set employee_id = ${report.id}
+      where id = (select id from bookings where client_id = ${a.corpAdmin.client_id} and employee_id <> ${manager.id} order by created_at, id limit 1)`)
+
     const res = await call(recentGet, { as: manager, url: '/api/bookings/recent?limit=50' })
-    const expected = await one<{ n: number }>(db, sql`
-      select count(*)::int as n from bookings where employee_id = any(${[manager.id, ...reports]})`)
-    expect((res.json as { bookings: unknown[] }).bookings).toHaveLength(Math.min(expected.n, 50))
+    const rows = (res.json as { bookings: { isOwn: boolean }[] }).bookings
+    expect(rows.every(r => r.isOwn)).toBe(true)
+    const own = await one<{ n: number }>(db, sql`select count(*)::int as n from bookings where employee_id = ${manager.id}`)
+    expect(rows).toHaveLength(Math.min(own.n, 50))
   })
 
   it('actionable: bookings waiting on the traveller', async () => {
