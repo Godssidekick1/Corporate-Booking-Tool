@@ -58,6 +58,8 @@ export default function AirportDropdown({
   const [found, setFound] = useState<{ q: string; airports: Airport[] } | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const listId = useId()
+  // Enter pressed before the server answered: pick its first answer instead.
+  const pendingEnter = useRef(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   // A code set from outside (a saved search, a popular route, the swap
@@ -90,6 +92,16 @@ export default function AirportDropdown({
   const results = (found?.airports ?? []).filter(a => a.code !== exclude)
   const searching = isOpen && found?.q !== search
 
+  // Enter while a search is out. The rows on screen answer an older query, and
+  // ignoring the key reads as it not registering -- so it waits for the answer.
+  useEffect(() => {
+    if (searching || !pendingEnter.current) return
+    pendingEnter.current = false
+    if (results[0]) selectAirport(results[0])
+    // selectAirport reads the current props; only the answer arriving matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searching, found])
+
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) setIsOpen(false)
@@ -118,7 +130,8 @@ export default function AirportDropdown({
       setHighlightedIndex(i => Math.max(i - 1, 0))
     } else if (e.key === 'Enter') {
       e.preventDefault()
-      if (results[highlightedIndex] && !searching) selectAirport(results[highlightedIndex])
+      if (searching) pendingEnter.current = true
+      else if (results[highlightedIndex]) selectAirport(results[highlightedIndex])
     } else if (e.key === 'Escape') {
       setIsOpen(false)
     }
@@ -156,9 +169,20 @@ export default function AirportDropdown({
           // The text is the same label either side of this render.
           inputRef.current?.select()
         }}
+        // Still focused after Escape: a click opens it again.
+        onMouseDown={() => {
+          if (!isOpen && document.activeElement === inputRef.current) {
+            setQuery(selected ? airportLabel(selected) : '')
+            setIsOpen(true)
+          }
+        }}
         onChange={e => {
-          setQuery(e.target.value)
+          // Typing into the closed box (focused, showing the chosen airport)
+          // starts a new search with what was typed.
+          const v = e.target.value
+          setQuery(!isOpen && shown && v.startsWith(shown) ? v.slice(shown.length) : v)
           setIsOpen(true)
+          pendingEnter.current = false
           if (value) onChange('') // typing invalidates the previous selection until a new one is picked
         }}
         onKeyDown={handleKeyDown}

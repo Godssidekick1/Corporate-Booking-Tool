@@ -137,6 +137,14 @@ d('airports', () => {
     expect((await search('sao paulo')).map(r => r.code)).toEqual(expect.arrayContaining(['GRU', 'CGH']))
     expect((await search('nepal')).map(r => r.country)).toContain('Nepal')
     expect(await search('zzqx')).toEqual([])
+    // A whole-word match beats a code: "goa" is Goa's two airports, then
+    // Genoa (whose code is GOA). Old names and Indian states find airports too.
+    expect((await search('goa')).slice(0, 3).map(r => r.code)).toEqual(expect.arrayContaining(['GOI', 'GOX', 'GOA']))
+    expect((await search('goa')).slice(0, 2).map(r => r.city).sort()).toEqual(['Mopa', 'Vasco da Gama'])
+    expect((await search('bombay'))[0].code).toBe('BOM')
+    expect((await search('bangalore'))[0].code).toBe('BLR')
+    expect((await search('kerala')).map(r => r.code)).toEqual(expect.arrayContaining(['COK', 'TRV', 'CCJ', 'CNN']))
+    expect((await search('del'))[0].code).toBe('DEL')
     // LIKE wildcards are text, not patterns.
     expect(await search('%')).toEqual([])
     expect(await search('_')).toEqual([])

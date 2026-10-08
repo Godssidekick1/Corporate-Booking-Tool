@@ -215,14 +215,19 @@ export interface Airport {
 
 // Lower-case ASCII, as the *_search columns hold it: "São" finds Sao Paulo.
 function foldSearch(s: string): string {
-  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim()
+  return s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/\s+/g, ' ').trim()
 }
 
-// Airports matching a code, city, airport name or country, best match first:
-// the exact code, then a code starting with it, a city starting with it, a city
-// containing it, an airport name starting with it, containing it, then a
-// country starting with it. Within each, airports with airline service and
-// bigger airports first. With no search, India's served airports.
+// Airports matching a code, city, airport name, other name ("bombay"), Indian
+// state or country, best match first:
+//   0  the whole thing: the code, the city, a term, or the airport name's first
+//      word(s) -- "goa" is Goa's two airports and Genoa (code GOA)
+//   1  a code starting with it        2  a city starting with it
+//   3  a term starting with it        4  a city containing it
+//   5  an airport name starting with it, 6 containing it, 7 a country
+// Within each: airports with airline service, then India's (this is an Indian
+// TMC's tool: "goa" means Goa before Genoa), then bigger ones. With no search,
+// India's served airports.
 export async function searchAirports(db: Queryable, search: string, limit = 40): Promise<Airport[]> {
   const q = foldSearch(search)
   const like = q.replace(/[\\%_]/g, c => `\\${c}`)
@@ -236,19 +241,23 @@ export async function searchAirports(db: Queryable, search: string, limit = 40):
           ${codePrefix ? sql`or a.code like ${code + '%'}` : empty}
           or a.city_search like ${'%' + like + '%'}
           or a.name_search like ${'%' + like + '%'}
+          or a.terms_search like ${'%|' + like + '%'}
           or lower(c.name) like ${like + '%'})`
       : sql`a.country_code = 'IN' and a.scheduled`}
     order by
       case
-        when a.code = ${code} then 0
+        when a.code = ${code} or a.city_search = ${q} or a.terms_search like ${'%|' + like + '|%'}
+          or a.name_search = ${q} or a.name_search like ${like + ' %'} then 0
         when ${codePrefix} and a.code like ${code + '%'} then 1
         when a.city_search like ${like + '%'} then 2
-        when a.city_search like ${'%' + like + '%'} then 3
-        when a.name_search like ${like + '%'} then 4
-        when a.name_search like ${'%' + like + '%'} then 5
-        else 6
+        when a.terms_search like ${'%|' + like + '%'} then 3
+        when a.city_search like ${'%' + like + '%'} then 4
+        when a.name_search like ${like + '%'} then 5
+        when a.name_search like ${'%' + like + '%'} then 6
+        else 7
       end,
       a.scheduled desc,
+      (a.country_code = 'IN') desc,
       case a.kind when 'large_airport' then 0 when 'medium_airport' then 1 else 2 end,
       a.city, a.code
     limit ${limit}`)

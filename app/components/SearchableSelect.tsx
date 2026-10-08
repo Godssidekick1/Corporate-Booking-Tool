@@ -68,7 +68,13 @@ export default function SearchableSelect({
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [highlightIndex, setHighlightIndex] = useState(0)
+  // The query the server was last asked about. Until the answer for the
+  // current query is in, the rows on screen belong to an older one.
+  const [sentQuery, setSentQuery] = useState<string | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  // Enter pressed before the server answered: pick its first answer instead.
+  const pendingEnter = useRef(false)
 
   const selected = options.find(o => o.id === value) ?? null
 
@@ -106,9 +112,23 @@ export default function SearchableSelect({
   // up instead of a timer each screen has to remember to clear.
   useEffect(() => {
     if (!onSearch) return
-    const t = setTimeout(() => onSearch(query), 220)
+    const t = setTimeout(() => { setSentQuery(query); onSearch(query) }, 220)
     return () => clearTimeout(t)
   }, [query, onSearch])
+
+  const stale = Boolean(onSearch) && (query !== sentQuery || loading)
+
+  // Enter during a search. Picking the row on screen would pick an answer to
+  // an older query (typing "Pune" quickly and pressing Enter took "Mumbai"),
+  // and ignoring it reads as the key not registering -- so it waits.
+  useEffect(() => {
+    if (stale || !pendingEnter.current) return
+    pendingEnter.current = false
+    if (rows[0]) pick(rows[0])
+    else if (allowFreeText) { commitFreeText(); close() }
+    // pick / commitFreeText read the current props; only the answer arriving matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stale, rows])
 
   useEffect(() => {
     // Reset the keyboard cursor whenever the visible list changes, or arrowing
@@ -139,6 +159,10 @@ export default function SearchableSelect({
     // The clear row is a sentinel, not a real id — it maps back to the empty
     // string the rest of the app already uses for "not set".
     onChange(option.id === CLEAR_ID ? '' : option.id)
+    close()
+  }
+
+  function close() {
     setQuery('')
     setOpen(false)
   }
@@ -164,6 +188,7 @@ export default function SearchableSelect({
       setHighlightIndex(i => Math.max(i - 1, 0))
     } else if (e.key === 'Enter') {
       e.preventDefault()
+      if (stale) { pendingEnter.current = true; return }
       // A highlighted suggestion always wins over the raw text — otherwise
       // typing "Mumb" and pressing Enter would store "Mumb" rather than the
       // Mumbai sitting highlighted in front of them.
@@ -182,12 +207,22 @@ export default function SearchableSelect({
   return (
     <div ref={rootRef} style={s.root}>
       <input
+        ref={inputRef}
         type="text"
         value={displayValue}
         placeholder={placeholder}
         disabled={disabled}
         onFocus={() => { setOpen(true); setQuery('') }}
-        onChange={e => { setQuery(e.target.value); setOpen(true) }}
+        // Still focused after a pick or Escape: a click opens it again.
+        onMouseDown={() => { if (!open && document.activeElement === inputRef.current) { setOpen(true); setQuery('') } }}
+        onChange={e => {
+          // Typing into the closed box (focused, showing the chosen label)
+          // starts a new search with what was typed, not "Mumbaip".
+          const v = e.target.value
+          setQuery(!open && displayValue && v.startsWith(displayValue) ? v.slice(displayValue.length) : v)
+          setOpen(true)
+          pendingEnter.current = false
+        }}
         onKeyDown={handleKeyDown}
         style={{ ...s.input, ...(disabled ? s.inputDisabled : {}) }}
       />
