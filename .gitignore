@@ -57,3 +57,6 @@ schema/*_data.sql
 schema/*.dump
 schema/restore_*.log
 *.backup
+
+# npm run scale output
+tests/scale/last-run.md

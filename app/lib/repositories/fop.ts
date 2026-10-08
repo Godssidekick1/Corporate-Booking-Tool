@@ -1,5 +1,5 @@
 import { sql, empty, join, many, maybeOne, one, exec, type Queryable, type Sql } from '@/app/lib/db/sql'
-import { assignments, insertColumns, page, searchAcross } from '@/app/lib/db/fragments'
+import { assignments, insertColumns, page, searchAcross, reaching, type ReachTarget } from '@/app/lib/db/fragments'
 import type { PageParams } from '@/app/lib/pagination'
 import type { Row } from '@/app/lib/db/types.generated'
 import type { ResolvableFop } from '@/app/lib/fop/resolveFop'
@@ -22,6 +22,15 @@ export async function assignmentsForTmc(db: Queryable, tmcId: string): Promise<F
   return many<FopAssignment>(db, sql`
     select id, fop_id, kind, client_id, client_group_id, bucket_id, is_active
     from fop_assignments where tmc_id = ${tmcId}
+    order by id`)
+}
+
+// Only the assignments that reach one client (its own, its group's, its
+// buckets'). The booking path asks this rather than for the whole TMC.
+export async function assignmentsReaching(db: Queryable, tmcId: string, target: ReachTarget): Promise<FopAssignment[]> {
+  return many<FopAssignment>(db, sql`
+    select id, fop_id, kind, client_id, client_group_id, bucket_id, is_active
+    from fop_assignments where tmc_id = ${tmcId} and ${reaching(target)}
     order by id`)
 }
 

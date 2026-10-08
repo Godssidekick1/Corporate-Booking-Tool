@@ -8,6 +8,7 @@ import {
 } from '@/app/lib/commercials/resolveCommercials'
 import { KIND_LABELS, type CommercialKind } from '@/app/lib/commercials/calcOnByKind'
 import { NextRequest } from 'next/server'
+import { reachIndex } from '@/app/lib/assignments/reachIndex'
 import { db } from '@/app/lib/db'
 import * as clients from '@/app/lib/repositories/clients'
 import * as commercials from '@/app/lib/repositories/commercials'
@@ -117,6 +118,10 @@ export const GET = route(async (req: NextRequest) => {
 
   const ruleById = new Map(rules.map(r => [r.id, r]))
 
+  // Indexed once by target: filtering every assignment for every client was
+  // clients x assignments (npm run scale).
+  const reachingOf = reachIndex(assignmentRows)
+
   // ── "It depends on the flight" ─────────────────────────────────────────────
   // This view deliberately resolves with NO itinerary, so every dimension a real
   // booking narrows on — category, airline, cabin, class — is left open and a
@@ -146,11 +151,7 @@ export const GET = route(async (req: NextRequest) => {
   const rows: CoverageRow[] = clientRows.map(client => {
     const bucketIds = bucketsByClient.get(client.id) ?? []
 
-    const reaching = assignmentRows.filter(a => {
-      if (a.kind === 'client') return a.client_id === client.id
-      if (a.kind === 'bucket') return a.bucket_id !== null && bucketIds.includes(a.bucket_id)
-      return a.client_group_id !== null && a.client_group_id === client.client_group_id
-    })
+    const reaching = reachingOf(client.id, client.client_group_id, bucketIds)
 
     const assignments: ResolvableAssignment[] = reaching.map(a => ({
       rule_id: a.rule_id,

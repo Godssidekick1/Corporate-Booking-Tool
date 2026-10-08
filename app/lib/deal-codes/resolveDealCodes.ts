@@ -135,6 +135,20 @@ function indistinguishable(a: ResolutionCandidate, b: ResolutionCandidate): bool
   )
 }
 
+// One id -> deal map per deal list, reused while the same list is passed in
+// again: the coverage report resolves every client of a TMC against one list,
+// and rebuilding a 5,000-entry map per client cost seconds (npm run scale).
+const dealIndexes = new WeakMap<object, Map<string, ResolveInput['deals'][number]>>()
+function dealIndex(deals: ResolveInput['deals']): Map<string, ResolveInput['deals'][number]> {
+  let index = dealIndexes.get(deals)
+  if (!index) {
+    // Last occurrence wins, as new Map(deals.map(...)) did.
+    index = new Map(deals.map(d => [d.id, d]))
+    dealIndexes.set(deals, index)
+  }
+  return index
+}
+
 export function resolveDealCodes(input: ResolveInput): ResolvedDealCode[] {
   const {
     deals,
@@ -145,7 +159,7 @@ export function resolveDealCodes(input: ResolveInput): ResolvedDealCode[] {
   } = input
   const bookingDate = input.bookingDate ?? todayIso()
 
-  const dealsById = new Map(deals.map(d => [d.id, d]))
+  const dealsById = dealIndex(deals)
 
   // 1. Reach + 2. Live + 3. Match, in one pass.
   //

@@ -119,3 +119,31 @@ export function insertColumns<K extends string>(
   if (names.length === 0) throw new Error('[db] insert with no columns')
   return sql`(${join(names)}) values (${join(values)})`
 }
+
+// ── reaching ─────────────────────────────────────────────────────────────────
+// The assignments (deal codes, forms of payment, commercial rules) that reach
+// one client: assigned to the client itself, to its client group, or to a
+// bucket it is in. For an assignment table, which all share the columns
+// kind / client_id / client_group_id / bucket_id.
+//
+//   sql`select … from deal_code_assignments where tmc_id = ${tmcId} and ${reaching(target)}`
+//
+// The client's buckets are looked up in the same statement, so the caller does
+// not need them first. Indexed by 20261009000100_assignment_reach_indexes.
+//
+// `= any(array(subquery))`, not `in (subquery)`: the array form is computed
+// once up front, which lets PostgreSQL combine the three partial indexes
+// (BitmapOr). With `in` it read the whole table -- 6.9 ms vs 0.3 ms at
+// 50,000 assignments, and the gap grows with the table.
+export interface ReachTarget {
+  clientId: string
+  groupId: string | null
+}
+
+export function reaching(t: ReachTarget): Sql {
+  return sql`(
+    (kind = 'client' and client_id = ${t.clientId})
+    ${t.groupId ? sql`or (kind = 'client_group' and client_group_id = ${t.groupId})` : empty}
+    or (kind = 'bucket' and bucket_id = any(array(select bucket_id from bucket_clients where client_id = ${t.clientId})))
+  )`
+}

@@ -10,6 +10,7 @@ import {
 } from '@/app/lib/deal-codes/resolveDealCodes'
 import { parsePageParams, paginateInMemory } from '@/app/lib/pagination'
 import { NextRequest } from 'next/server'
+import { reachIndex } from '@/app/lib/assignments/reachIndex'
 import { db } from '@/app/lib/db'
 
 // ── GET /api/tmc/deal-codes/effective ────────────────────────────────────────
@@ -90,16 +91,16 @@ export const GET = route(async (req: NextRequest) => {
     else bucketsByClient.set(m.client_id, [m.bucket_id])
   }
 
+  // Indexed once by target: filtering every assignment for every client was
+  // clients x assignments (21 s at 10,000 x 50,000, npm run scale).
+  const reachingOf = reachIndex(assignmentRows)
+
   const rows: CoverageRow[] = []
 
   for (const client of clientRows) {
     const clientBuckets = bucketsByClient.get(client.id) ?? []
 
-    const reaching = assignmentRows.filter(a => {
-      if (a.kind === 'client') return a.client_id === client.id
-      if (a.kind === 'bucket') return a.bucket_id !== null && clientBuckets.includes(a.bucket_id)
-      return a.client_group_id !== null && a.client_group_id === client.client_group_id
-    })
+    const reaching = reachingOf(client.id, client.client_group_id, clientBuckets)
 
     if (reaching.length === 0) continue
 

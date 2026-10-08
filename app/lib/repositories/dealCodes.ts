@@ -1,5 +1,5 @@
 import { sql, empty, join, many, maybeOne, one, exec, type Queryable, type Sql } from '@/app/lib/db/sql'
-import { assignments, searchAcross } from '@/app/lib/db/fragments'
+import { assignments, searchAcross, reaching, type ReachTarget } from '@/app/lib/db/fragments'
 import type { Row } from '@/app/lib/db/types.generated'
 import type { ResolvableDeal, AssignmentKind } from '@/app/lib/deal-codes/resolveDealCodes'
 
@@ -23,6 +23,15 @@ export async function assignmentsForTmc(db: Queryable, tmcId: string): Promise<D
   return many<DealAssignment>(db, sql`
     select id, deal_code_id, kind, client_id, client_group_id, bucket_id
     from deal_code_assignments where tmc_id = ${tmcId}
+    order by id`)
+}
+
+// Only the assignments that reach one client (its own, its group's, its
+// buckets'). The booking path asks this rather than for the whole TMC.
+export async function assignmentsReaching(db: Queryable, tmcId: string, target: ReachTarget): Promise<DealAssignment[]> {
+  return many<DealAssignment>(db, sql`
+    select id, deal_code_id, kind, client_id, client_group_id, bucket_id
+    from deal_code_assignments where tmc_id = ${tmcId} and ${reaching(target)}
     order by id`)
 }
 

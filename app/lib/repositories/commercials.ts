@@ -1,5 +1,5 @@
 import { sql, empty, join, many, maybeOne, one, exec, type Queryable, type Sql } from '@/app/lib/db/sql'
-import { searchAcross, assignments, insertColumns } from '@/app/lib/db/fragments'
+import { searchAcross, assignments, insertColumns, reaching, type ReachTarget } from '@/app/lib/db/fragments'
 import type { Row } from '@/app/lib/db/types.generated'
 import type { ResolvableRule } from '@/app/lib/commercials/resolveCommercials'
 import type { CommercialKind } from '@/app/lib/commercials/calcOnByKind'
@@ -33,6 +33,27 @@ export async function assignmentsForTmc(db: Queryable, tmcId: string): Promise<R
     select rule_id, kind, client_id, client_group_id, bucket_id
     from commercial_rule_assignments where tmc_id = ${tmcId}
     order by id`)
+}
+
+// Only the assignments that reach one client (its own, its group's, its
+// buckets'). The booking path asks this rather than for the whole TMC.
+export async function assignmentsReaching(db: Queryable, tmcId: string, target: ReachTarget): Promise<RuleAssignment[]> {
+  return many<RuleAssignment>(db, sql`
+    select rule_id, kind, client_id, client_group_id, bucket_id
+    from commercial_rule_assignments where tmc_id = ${tmcId} and ${reaching(target)}
+    order by id`)
+}
+
+// The rules named by some assignments, in the order rulesForTmc gives. A rule
+// only ever applies through an assignment (resolveCommercials walks the
+// assignments), so this is all a booking needs -- not every rule in the TMC.
+export async function rulesByIds(db: Queryable, tmcId: string, ruleIds: readonly string[]): Promise<ResolvableRule[]> {
+  if (ruleIds.length === 0) return []
+  return many<ResolvableRule>(db, sql`
+    select id, kind, category_id, airline_code, cabin, rbd_spec, fare_type, calc_type, calc_on, rate,
+           calc_basis, exclude_tax_codes, include_ssr, active, valid_from, valid_to, created_at
+    from commercial_rules where tmc_id = ${tmcId} and id = any(${[...ruleIds]})
+    order by created_at, id`)
 }
 
 // ═══ The rules master ═══════════════════════════════════════════════════════

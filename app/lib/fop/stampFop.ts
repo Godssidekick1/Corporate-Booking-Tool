@@ -47,7 +47,7 @@ export async function stampFop(
     const [fops, bucketIds, assignmentRows] = await Promise.all([
       fopRepo.forResolution(db, client.tmc_id),
       clients.bucketIdsOfClient(db, clientId),
-      fopRepo.assignmentsForTmc(db, client.tmc_id),
+      fopRepo.assignmentsReaching(db, client.tmc_id, { clientId, groupId: client.client_group_id }),
     ])
 
     if (fops.length === 0) return null

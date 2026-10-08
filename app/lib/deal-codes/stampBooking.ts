@@ -49,7 +49,9 @@ export async function stampDealCodes(
 
     const [bucketIds, assignmentRows] = await Promise.all([
       clients.bucketIdsOfClient(db, clientId),
-      dealCodes.assignmentsForTmc(db, client.tmc_id),
+      // Only what reaches this client, not the whole TMC: at 50,000
+      // assignments that was 121 ms on every pricing request (npm run scale).
+      dealCodes.assignmentsReaching(db, client.tmc_id, { clientId, groupId: client.client_group_id }),
     ])
 
     const reaching = assignmentRows.filter(a => {

@@ -73,8 +73,8 @@ export const GET = route(async (
 
   const [bucketIds, dealRows, fopRows] = await Promise.all([
     clients.bucketIdsOfClient(db, id),
-    dealCodes.assignmentsForTmc(db, tmcId),
-    fop.assignmentsForTmc(db, tmcId),
+    dealCodes.assignmentsReaching(db, tmcId, { clientId: id, groupId: client.client_group_id }),
+    fop.assignmentsReaching(db, tmcId, { clientId: id, groupId: client.client_group_id }),
   ])
 
   // Does this assignment row reach this client at all?

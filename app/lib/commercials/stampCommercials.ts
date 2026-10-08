@@ -117,15 +117,15 @@ export async function loadCommercialContext(
     if (!client?.tmc_id) return EMPTY_CONTEXT
     const tmcId = client.tmc_id
 
-    const [gates, rules, bucketIds, assignmentRows, categoryIdByCode] = await Promise.all([
+    // Only the assignments that reach this client, and then only the rules
+    // they name -- not every rule and assignment in the TMC (npm run scale:
+    // 2,000 rules were loaded to price a client that 31 of them reach).
+    const [gates, bucketIds, assignmentRows, categoryIdByCode] = await Promise.all([
       loadClientGates(db, clientId),
-      commercials.rulesForTmc(db, tmcId),
       clients.bucketIdsOfClient(db, clientId),
-      commercials.assignmentsForTmc(db, tmcId),
+      commercials.assignmentsReaching(db, tmcId, { clientId, groupId: client.client_group_id }),
       dealCodes.categoryIdsByCode(db, tmcId),
     ])
-
-    if (rules.length === 0) return EMPTY_CONTEXT
 
     // Which assignments actually reach this client. Same three-branch filter
     // stampFop and stampDealCodes use, kept identical on purpose: three copies
@@ -142,10 +142,13 @@ export async function loadCommercialContext(
     // fetching every bucket in the TMC to label two of them.
     const usedBucketIds = [...new Set(reaching.map(a => a.bucket_id).filter((b): b is string => Boolean(b)))]
 
-    const [buckets, groupName] = await Promise.all([
+    const [rules, buckets, groupName] = await Promise.all([
+      commercials.rulesByIds(db, tmcId, [...new Set(reaching.map(a => a.rule_id))]),
       clients.bucketLabels(db, usedBucketIds),
       clients.groupNames(db, client.client_group_id ? [client.client_group_id] : []),
     ])
+
+    if (rules.length === 0) return EMPTY_CONTEXT
 
     const assignments: ResolvableAssignment[] = reaching.map(a => ({
       rule_id: a.rule_id,

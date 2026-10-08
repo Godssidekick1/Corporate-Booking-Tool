@@ -204,6 +204,20 @@ function indistinguishable(a: Candidate, b: Candidate): boolean {
   )
 }
 
+// One id -> rule map per rule list, reused while the same list is passed in
+// again (the coverage report passes one list for every client).
+const ruleIndexes = new WeakMap<readonly ResolvableRule[], Map<string, ResolvableRule>>()
+function ruleIndex(rules: readonly ResolvableRule[]): Map<string, ResolvableRule> {
+  let index = ruleIndexes.get(rules)
+  if (!index) {
+    index = new Map()
+    // First occurrence wins, as rules.find() did.
+    for (const r of rules) if (!index.has(r.id)) index.set(r.id, r)
+    ruleIndexes.set(rules, index)
+  }
+  return index
+}
+
 export function resolveCommercials(input: ResolveCommercialsInput): ResolvedCommercials {
   const {
     rules,
@@ -222,8 +236,13 @@ export function resolveCommercials(input: ResolveCommercialsInput): ResolvedComm
   // same rule does not appear as its own competitor.
   const strongest = new Map<string, Candidate>()
 
+  // By id, not rules.find() per assignment: the coverage report resolves every
+  // client of a TMC against the same rule list, and a scan of 2,000 rules for
+  // each of their assignments added up to seconds (npm run scale).
+  const ruleById = ruleIndex(rules)
+
   for (const assignment of assignments) {
-    const rule = rules.find(r => r.id === assignment.rule_id)
+    const rule = ruleById.get(assignment.rule_id)
     if (!rule) continue
 
     const candidate: Candidate = {

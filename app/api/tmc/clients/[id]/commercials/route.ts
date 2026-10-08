@@ -75,10 +75,9 @@ export const GET = route(async (
     return Response.json({ error: 'Client not found' }, { status: 404 })
   }
 
-  const [rules, bucketIds, assignmentRows] = await Promise.all([
-    commercials.rulesForTmc(db, tmcId),
+  const [bucketIds, assignmentRows] = await Promise.all([
     clients.bucketIdsOfClient(db, id),
-    commercials.assignmentsForTmc(db, tmcId),
+    commercials.assignmentsReaching(db, tmcId, { clientId: id, groupId: client.client_group_id }),
   ])
 
   const reaching = assignmentRows.filter(a => {
@@ -89,7 +88,8 @@ export const GET = route(async (
 
   const usedBucketIds = [...new Set(reaching.map(a => a.bucket_id).filter((b): b is string => Boolean(b)))]
 
-  const [buckets, groupName] = await Promise.all([
+  const [rules, buckets, groupName] = await Promise.all([
+    commercials.rulesByIds(db, tmcId, [...new Set(reaching.map(a => a.rule_id))]),
     clients.bucketLabels(db, usedBucketIds),
     clients.groupNames(db, client.client_group_id ? [client.client_group_id] : []),
   ])
