@@ -3,30 +3,26 @@
 A running list of agreed work that is not done yet. Newest decisions are
 recorded with the item; remove an item once it ships.
 
-## Next up: hardening and scale (agreed 2026-10-08)
+## Hardening and scale: what is left (pass of 2026-10-08)
 
-SQL injection is not the risk: every query is parameterised through the `sql`
-tagged template (no raw-SQL escape hatch; ESLint keeps the driver inside
-repositories). The real gaps, in order:
+Done in that pass: `npm run scale` harness and results (docs/scale-results.md);
+booking-time lookups fetch only what reaches the client; coverage reports
+indexed (21 s -> 0.9 s at 10k clients); reach indexes; restricted `cbt_app`
+role, with the test suite running as it (docs/database-roles.md); automated
+cross-tenant leak sweep over every route (tests/security); rate limits on
+search, coverage, CSV and the public ticket link; verified database TLS when
+`DATABASE_CA_CERT` is set.
 
-1. **Measure first.** A script that seeds a large synthetic TMC (about 10k
-   clients, 5k deal codes, 50k assignments) and times the heavy endpoints.
-2. **Booking-time resolution loads the whole TMC.** `stampBooking`,
-   `stampFop`, `stampCommercials` read every assignment of the TMC on each
-   price / add-passenger, then filter to one client. Fetch only what reaches
-   the client (its id, its group, its buckets) in SQL.
-3. **Coverage and lists are computed in memory.** Deal-code and commercial
-   coverage, the FOP list and two more endpoints use `paginateInMemory` over
-   every client x every assignment. Page clients in SQL, resolve only the page.
-4. **Indexes.** Assignment tables have no index leading on `bucket_id`
-   (`(rule_id, bucket_id)` etc.); confirm every hot query with EXPLAIN.
-5. **Tenant isolation lives only in app code.** The app connects as the table
-   owner; RLS is on with no policies. Add a least-privilege app role and real
-   policies on `app.current_tenant_id` (already set by `transaction()`), with
-   tests that fail when a query forgets the tenant.
-6. **DB TLS** verifies nothing (`rejectUnauthorized: false` in `pool.ts`);
-   verify the certificate wherever the connection crosses a network.
-7. **Rate limits** exist for sign-in only; add them to search / list APIs.
+- **Switch each environment to the restricted login** and set
+  `DATABASE_CA_CERT` (steps in docs/database-roles.md). Until then the code is
+  ready but the app still connects as the owner.
+- **Real row-level security policies** (tenant predicates replacing the
+  allow-all `app_access` policies), with every request run in a tenant-scoped
+  transaction. Planned with the hosting move; the leak sweep guards the gap.
+- **Coverage reports page in SQL.** They still resolve every client to count
+  rows (about 0.9 s at 10k clients); page clients in SQL when a TMC gets there.
+- **Leak sweep covers GET and DELETE only.** POST / PATCH cross-tenant writes
+  are covered by the per-route tests, not swept.
 
 ## Employee dashboard (redesign)
 
