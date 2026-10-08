@@ -17,6 +17,9 @@ import { outbox, linkIn } from '../harness/mail'
 import { db } from '@/app/lib/db'
 import { sql, many, maybeOne, one, exec } from '@/app/lib/db/sql'
 
+const nameOf = async (id: string) =>
+  (await one<{ full_name: string }>(db, sql`select full_name from employees where id = ${id}`)).full_name
+
 // ── The TMC's people and structure ───────────────────────────────────────────
 // Travel counsellors, branches, a client's bands, and the traveller-profile
 // roster (list, edit, CSV round trip).
@@ -246,9 +249,12 @@ d('tmc/branches', () => {
     })
     expect(res.status).toBe(200)
     const { branch } = res.json as { branch: Record<string, unknown> }
-    const { id, created_at, ...rest } = branch
+    const { id, created_at, updated_at, ...rest } = branch
     expect(typeof id).toBe('string')
     expect(typeof created_at).toBe('string')
+    expect(typeof updated_at).toBe('string')
+    // Whoever created it is the last to have changed it.
+    expect(rest.updated_by_name).toBe(await nameOf(a.tmcAdmin.id))
     expect(rest).toMatchSnapshot()
   })
 
@@ -277,7 +283,19 @@ d('tmc/branches', () => {
   it('[id] GET: the branch and who works there', async () => {
     const res = await call(branchGet, { as: a.tmcAdmin, ...at(headOffice) })
     expect(res.status).toBe(200)
-    expect(res.json).toMatchSnapshot()
+    // Demoted as head office by the POST above: changed now, by that admin.
+    const { branch: { updated_at, ...branch }, ...rest } = res.json as { branch: Record<string, unknown> }
+    expect(typeof updated_at).toBe('string')
+    expect(branch.updated_by_name).toBe(await nameOf(a.tmcAdmin.id))
+    expect({ ...rest, branch }).toMatchSnapshot()
+  })
+
+  it('GET: filtered by status', async () => {
+    const res = await call(branchesGet, { as: a.tmcAdmin, url: '/api/tmc/branches?status=inactive' })
+    const inactive = (res.json as Paged<{ status: string }>).items
+    expect(inactive.every(b => b.status === 'inactive')).toBe(true)
+    const all = (await call(branchesGet, { as: a.tmcAdmin, url: '/api/tmc/branches?status=whatever' })).json as Paged<unknown>
+    expect(all.total).toBeGreaterThan(inactive.length)
   })
 
   it('[id] PATCH: validation and duplicates', async () => {
@@ -304,7 +322,23 @@ d('tmc/branches', () => {
   it('[id] DELETE: refused while someone works there', async () => {
     const res = await call(branchDelete, { as: a.tmcAdmin, method: 'DELETE', ...at(headOffice) })
     expect(res.status).toBe(409)
-    expect((res.json as { error: string }).error).toMatch(/^1 person works out of ".+"\. Move them/)
+    // The head office also settles payment methods: deleting it would have
+    // quietly unlinked those too.
+    expect((res.json as { error: string }).error)
+      .toMatch(/^".+" is still in use: 1 person works out of it and \d+ payment methods are settled through it\. Move them/)
+  })
+
+  it('[id] DELETE: refused while a client uses it, which would silently unlink it', async () => {
+    const b = (await post({ name: 'Billing Only' })).json as { branch: { id: string } }
+    const client = await one<{ id: string; branch_id: string | null }>(db, sql`
+      select id, branch_id from clients where tmc_id = ${a.tmcAdmin.tmc_id} order by id limit 1`)
+    await exec(db, sql`update clients set branch_id = ${b.branch.id} where id = ${client.id}`)
+    const res = await call(branchDelete, { as: a.tmcAdmin, method: 'DELETE', ...at(b.branch.id) })
+    expect(res.status).toBe(409)
+    expect((res.json as { error: string }).error).toBe(
+      '"Billing Only" is still in use: 1 client is billed through it. Move them to another branch first, or set this one inactive to retire it without losing its history.')
+    await exec(db, sql`update clients set branch_id = ${client.branch_id} where id = ${client.id}`)
+    expect((await call(branchDelete, { as: a.tmcAdmin, method: 'DELETE', ...at(b.branch.id) })).status).toBe(200)
   })
 
   it('[id] DELETE: an empty branch is removed', async () => {

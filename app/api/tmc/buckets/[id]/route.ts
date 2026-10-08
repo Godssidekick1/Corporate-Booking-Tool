@@ -6,12 +6,14 @@ import { db, transaction, isConstraint } from '@/app/lib/db'
 import * as clients from '@/app/lib/repositories/clients'
 import * as dealCodes from '@/app/lib/repositories/dealCodes'
 import * as fop from '@/app/lib/repositories/fop'
+import * as commercials from '@/app/lib/repositories/commercials'
 import { route } from '@/app/lib/http/handler'
 
 // ── /api/tmc/buckets/[id] ────────────────────────────────────────────────────
-// GET     the bucket, its client members, and which deal codes target it
-// PATCH   rename / re-describe, or replace the whole membership list
-// DELETE  refused while any deal code targets it
+// GET     the bucket, its client members, and what is assigned through it
+//         (deal codes, forms of payment, commercial rules)
+// PATCH   rename / re-describe and/or replace the whole membership list
+// DELETE  refused while anything is assigned through it
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Ctx = { params: Promise<{ id: string }> }
@@ -41,14 +43,16 @@ export const GET = route(async (req: NextRequest, { params }: Ctx) => {
     return Response.json({ error: check.error }, { status: check.status })
   }
 
-  const [memberIds, dealIds] = await Promise.all([
+  const [memberIds, dealIds, fops, rules] = await Promise.all([
     clients.memberIds(db, id),
     dealCodes.idsForBucket(db, id),
+    fop.forBucket(db, id),
+    commercials.rulesForBucket(db, id),
   ])
 
-  // Which codes this bucket hands out. Read-only here — assignment is edited on
-  // the deal, so there is one place that decides reach rather than two that can
-  // disagree.
+  // What this bucket hands out. Read-only here — assignment is edited on the
+  // deal code, payment method or rule, so there is one place that decides
+  // reach rather than two that can disagree.
   const [members, deals] = await Promise.all([
     clients.clientsByIds(db, memberIds),
     dealCodes.labels(db, dealIds),
@@ -59,6 +63,8 @@ export const GET = route(async (req: NextRequest, { params }: Ctx) => {
     bucket: check.bucket,
     clients: members,
     dealCodes: deals,
+    fops,
+    commercialRules: rules,
   })
 })
 
@@ -94,17 +100,12 @@ export const PATCH = route(async (req: NextRequest, { params }: Ctx) => {
   if (body.code !== undefined) update.code = body.code?.trim().toUpperCase() || null
   if (body.description !== undefined) update.description = body.description?.trim() || null
 
-  if (Object.keys(update).length > 0) {
-    try {
-      await clients.updateBucket(db, id, update)
-    } catch (err) {
-      if (isConstraint(err, 'unique')) return Response.json(DUPLICATE_BUCKET, { status: 409 })
-      throw err
-    }
-  }
-
+  let clientIds: string[] | undefined
   if (body.clientIds !== undefined) {
-    const clientIds = body.clientIds
+    if (!Array.isArray(body.clientIds)) {
+      return Response.json({ error: 'clientIds must be an array' }, { status: 400 })
+    }
+    clientIds = [...new Set(body.clientIds.filter(Boolean))]
 
     // Every id checked against this TMC before anything is written: client_id is
     // a plain FK, so another tenant's client would satisfy it and silently join
@@ -118,12 +119,23 @@ export const PATCH = route(async (req: NextRequest, { params }: Ctx) => {
         )
       }
     }
+  }
 
-    // Replace wholesale. Delete-then-insert rather than a diff: the list is
-    // small, and a diff has more ways to be subtly wrong than this has to be
-    // slow. In one transaction, so a failed insert does not leave the bucket
-    // empty -- which would silently revoke what it hands out from every member.
-    await transaction(tx => clients.replaceMembers(tx, id, clientIds), { tenantId: tmcId, userId: user.id })
+  // Details and members in one transaction: the editor saves both at once, and
+  // a failed member insert must not leave the bucket empty -- which would
+  // silently revoke what it hands out from every member. Members are replaced
+  // wholesale (delete-then-insert): the list is small, and a diff has more ways
+  // to be subtly wrong than this has to be slow.
+  if (Object.keys(update).length === 0 && clientIds === undefined) return Response.json({ ok: true })
+  try {
+    await transaction(async tx => {
+      if (Object.keys(update).length > 0) await clients.updateBucket(tx, id, update)
+      if (clientIds !== undefined) await clients.replaceMembers(tx, id, clientIds)
+      await clients.touchBuckets(tx, [id], user.id)
+    }, { tenantId: tmcId, userId: user.id })
+  } catch (err) {
+    if (isConstraint(err, 'unique')) return Response.json(DUPLICATE_BUCKET, { status: 409 })
+    throw err
   }
 
   return Response.json({ ok: true })
@@ -140,30 +152,30 @@ export const DELETE = route(async (req: NextRequest, { params }: Ctx) => {
 
   const { bucket } = check
 
-  // Both assignment tables cascade on bucket_id, so deleting would silently
-  // revoke everything this bucket hands out. Refused with the counts instead.
+  // All three assignment tables cascade on bucket_id, so deleting would
+  // silently revoke everything this bucket hands out. Refused with the counts.
   //
-  // Forms of payment were missing from this check until buckets became the only
-  // grouping mechanism: deal codes were guarded, FOP mappings were not, and
-  // deleting a bucket quietly changed how other clients' tickets got paid for.
-  const [dealCount, fopCount] = await Promise.all([
+  // Forms of payment, then commercial rules, were missing from this check:
+  // deleting a bucket quietly changed how other clients' tickets were paid for,
+  // and then which markups and fees applied to them.
+  const [dealCount, fopCount, ruleCount] = await Promise.all([
     dealCodes.countForBucket(db, id),
     fop.countForBucket(db, id),
+    commercials.countForBucket(db, id),
   ])
 
-  const blockers: string[] = []
-  if (dealCount > 0) {
-    blockers.push(`${dealCount} deal code${dealCount > 1 ? 's' : ''}`)
-  }
-  if (fopCount > 0) {
-    blockers.push(`${fopCount} form${fopCount > 1 ? 's' : ''} of payment`)
-  }
+  const blockers = [
+    [dealCount, 'deal code', 'deal codes'],
+    [fopCount, 'form of payment', 'forms of payment'],
+    [ruleCount, 'commercial rule', 'commercial rules'],
+  ] as const
+  const named = blockers.filter(([n]) => n > 0).map(([n, one, many]) => `${n} ${n === 1 ? one : many}`)
 
-  if (blockers.length > 0) {
+  if (named.length > 0) {
+    const total = dealCount + fopCount + ruleCount
+    const list = named.length === 1 ? named[0] : `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]}`
     return Response.json(
-      {
-        error: `${blockers.join(' and ')} ${blockers.length === 1 && !blockers[0].includes('s') ? 'is' : 'are'} assigned to "${bucket.name}". Remove those assignments before deleting it.`,
-      },
+      { error: `${list} ${total === 1 ? 'is' : 'are'} assigned to "${bucket.name}". Remove those assignments before deleting it.` },
       { status: 409 }
     )
   }

@@ -26,11 +26,14 @@ export const GET = route(async (req: NextRequest) => {
 
   const params = parsePageParams(req.nextUrl.searchParams)
   const ids = req.nextUrl.searchParams.get('ids')?.split(',').filter(Boolean) ?? []
+  const status = req.nextUrl.searchParams.get('status')
 
   const { rows, total } = await tmcs.branches(
     db,
     auth.tmcId,
-    ids.length > 0 ? { ids } : { search: params.search, page: params }
+    ids.length > 0
+      ? { ids }
+      : { search: params.search, page: params, status: (BRANCH_STATUSES as readonly string[]).includes(status ?? '') ? status : null }
   )
 
   // How many counsellors sit at each. Shown so the consequence of retiring a
@@ -133,7 +136,7 @@ export const POST = route(async (req: NextRequest) => {
       // Clearing the flag elsewhere BEFORE inserting, or the partial unique
       // index rejects the row. In the same transaction, so a rejected insert
       // does not leave the TMC with no head office at all.
-      if (body.is_head_office) await tmcs.demoteHeadOffice(tx, tmcId)
+      if (body.is_head_office) await tmcs.demoteHeadOffice(tx, tmcId, user.id)
       return tmcs.insertBranch(tx, tmcId, user.id, {
         ...branchFields(body),
         status: body.status ?? 'active',

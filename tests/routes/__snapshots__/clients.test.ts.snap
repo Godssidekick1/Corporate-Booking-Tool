@@ -2,7 +2,7 @@
 
 exports[`tmc/buckets and tmc/client-groups > bucket [id] DELETE: refused while anything is assigned to it; an unused one goes 1`] = `
 {
-  "error": "1 deal code and 1 form of payment are assigned to "Corps with vibes". Remove those assignments before deleting it.",
+  "error": "1 deal code, 1 form of payment and 2 commercial rules are assigned to "Corps with vibes". Remove those assignments before deleting it.",
 }
 `;
 
@@ -14,6 +14,8 @@ exports[`tmc/buckets and tmc/client-groups > bucket [id]: another TMC cannot see
     "id": "6f7ba956-97a4-4f1a-8f49-6d20fca39332",
     "name": "Corps with vibes",
     "tmc_id": "426e0538-f739-4563-872f-f01b3d327c7c",
+    "updated_at": "2026-09-03T08:30:54.755Z",
+    "updated_by_name": null,
   },
   "clients": [
     {
@@ -32,12 +34,39 @@ exports[`tmc/buckets and tmc/client-groups > bucket [id]: another TMC cannot see
       "status": "active",
     },
   ],
+  "commercialRules": [
+    {
+      "active": true,
+      "airline_code": "AI",
+      "calc_type": "percent",
+      "id": "e538b45f-c7e2-48d5-8cde-26ffaf04bfe9",
+      "kind": "markup",
+      "rate": 20,
+    },
+    {
+      "active": true,
+      "airline_code": "6E",
+      "calc_type": "fixed",
+      "id": "2d4e5674-4eb4-46b7-bd69-6b237571e8dd",
+      "kind": "processing_fee",
+      "rate": 1200,
+    },
+  ],
   "dealCodes": [
     {
       "airline_code": "AI",
       "code": "IN456787",
       "code_type": "PF",
       "id": "abc50b26-092b-4fb6-9580-11aad201aedd",
+    },
+  ],
+  "fops": [
+    {
+      "fop_code": "2",
+      "fop_type": "card",
+      "id": "e0e0a41c-7bb3-42eb-9ab6-2cd44a608f2d",
+      "label": "Credit AMEX",
+      "payer": "agency",
     },
   ],
   "ok": true,
@@ -53,8 +82,17 @@ exports[`tmc/buckets and tmc/client-groups > buckets: with client and deal-code 
       "created_at": "2026-09-03T08:30:54.755Z",
       "dealCodeCount": 1,
       "description": "AssigningDealCodes",
+      "fopCount": 1,
       "id": "6f7ba956-97a4-4f1a-8f49-6d20fca39332",
+      "memberPreview": [
+        "Arjun K",
+        "BCG",
+        "Lenskart",
+      ],
       "name": "Corps with vibes",
+      "ruleCount": 2,
+      "updated_at": "2026-09-03T08:30:54.755Z",
+      "updated_by_name": null,
     },
     {
       "clientCount": 2,
@@ -62,8 +100,16 @@ exports[`tmc/buckets and tmc/client-groups > buckets: with client and deal-code 
       "created_at": "2026-09-09T07:19:15.539Z",
       "dealCodeCount": 0,
       "description": null,
+      "fopCount": 1,
       "id": "4fa30930-0973-4d12-a158-a4e606e0fcc5",
+      "memberPreview": [
+        "ekjd",
+        "Lenskart",
+      ],
       "name": "kj",
+      "ruleCount": 0,
+      "updated_at": "2026-09-09T07:19:15.539Z",
+      "updated_by_name": null,
     },
     {
       "clientCount": 3,
@@ -71,8 +117,17 @@ exports[`tmc/buckets and tmc/client-groups > buckets: with client and deal-code 
       "created_at": "2026-09-08T09:55:03.227Z",
       "dealCodeCount": 1,
       "description": "SMEs FOPs",
+      "fopCount": 1,
       "id": "327db3fc-c62d-4c94-81d8-0916227e7558",
+      "memberPreview": [
+        "Arjun K",
+        "ekjd",
+        "Flip",
+      ],
       "name": "SMEs",
+      "ruleCount": 0,
+      "updated_at": "2026-09-08T09:55:03.227Z",
+      "updated_by_name": null,
     },
   ],
   "ok": true,

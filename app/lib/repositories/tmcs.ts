@@ -34,17 +34,19 @@ export async function tmcName(db: Queryable, tmcId: string): Promise<Pick<Row<'t
 export type Branch = Pick<Row<'branches'>,
   | 'id' | 'name' | 'branch_no' | 'profit_centre_code' | 'gst_number' | 'gst_name' | 'gst_email'
   | 'gst_contact' | 'gst_address_1' | 'gst_address_2' | 'country' | 'gst_state' | 'gst_city'
-  | 'gst_zip' | 'iata_number' | 'office_id' | 'is_head_office' | 'status' | 'created_at'
->
+  | 'gst_zip' | 'iata_number' | 'office_id' | 'is_head_office' | 'status' | 'created_at' | 'updated_at'
+> & { updated_by_name: string | null }
 
+// Read from `branches b` joined to who last changed it (BRANCH_FROM).
 const BRANCH = sql`
-  id, name, branch_no, profit_centre_code, gst_number, gst_name, gst_email, gst_contact,
-  gst_address_1, gst_address_2, country, gst_state, gst_city, gst_zip, iata_number, office_id,
-  is_head_office, status, created_at`
+  b.id, b.name, b.branch_no, b.profit_centre_code, b.gst_number, b.gst_name, b.gst_email, b.gst_contact,
+  b.gst_address_1, b.gst_address_2, b.country, b.gst_state, b.gst_city, b.gst_zip, b.iata_number, b.office_id,
+  b.is_head_office, b.status, b.created_at, b.updated_at, u.full_name as updated_by_name`
+const BRANCH_FROM = sql`branches b left join employees u on u.id = b.updated_by`
 
 export type BranchListScope =
   | { ids: readonly string[] }
-  | { search: string; page: Pick<PageParams, 'from' | 'to'> }
+  | { search: string; page: Pick<PageParams, 'from' | 'to'>; status?: string | null }
 
 export async function branches(
   db: Queryable,
@@ -53,22 +55,24 @@ export async function branches(
 ): Promise<{ rows: Branch[]; total: number }> {
   if ('ids' in scope && scope.ids.length === 0) return { rows: [], total: 0 }
   const filter = 'ids' in scope
-    ? sql`tmc_id = ${tmcId} and id = any(${[...scope.ids]})`
-    : sql`tmc_id = ${tmcId} ${searchAcross([sql`name`, sql`branch_no`, sql`gst_city`, sql`gst_state`], scope.search)}`
+    ? sql`b.tmc_id = ${tmcId} and b.id = any(${[...scope.ids]})`
+    : sql`b.tmc_id = ${tmcId}
+        ${searchAcross([sql`b.name`, sql`b.branch_no`, sql`b.gst_city`, sql`b.gst_state`], scope.search)}
+        ${scope.status ? sql`and b.status = ${scope.status}` : empty}`
   const limit = 'ids' in scope ? empty : page(scope.page)
 
   const [rows, count] = await Promise.all([
     // Head office first, then alphabetical: it is the one a desk looks for.
     many<Branch>(db, sql`
-      select ${BRANCH} from branches where ${filter}
-      order by is_head_office desc, name, id ${limit}`),
-    one<{ n: number }>(db, sql`select count(*)::int as n from branches where ${filter}`),
+      select ${BRANCH} from ${BRANCH_FROM} where ${filter}
+      order by b.is_head_office desc, b.name, b.id ${limit}`),
+    one<{ n: number }>(db, sql`select count(*)::int as n from branches b where ${filter}`),
   ])
   return { rows, total: count.n }
 }
 
 export async function branch(db: Queryable, branchId: string): Promise<Branch | null> {
-  return maybeOne<Branch>(db, sql`select ${BRANCH} from branches where id = ${branchId}`)
+  return maybeOne<Branch>(db, sql`select ${BRANCH} from ${BRANCH_FROM} where b.id = ${branchId}`)
 }
 
 // A branch, only if it is this TMC's -- another tenant's is indistinguishable
@@ -105,25 +109,32 @@ export async function insertBranch(
   createdBy: string,
   fields: BranchFields
 ): Promise<Branch> {
-  const columns = { ...BRANCH_WRITABLE, tmc_id: sql`tmc_id`, created_by: sql`created_by` }
+  const columns = { ...BRANCH_WRITABLE, tmc_id: sql`tmc_id`, created_by: sql`created_by`, updated_by: sql`updated_by` }
   return one<Branch>(db, sql`
-    insert into branches ${insertColumns(columns, { ...fields, tmc_id: tmcId, created_by: createdBy })}
-    returning ${BRANCH}`)
+    with b as (
+      insert into branches ${insertColumns(columns, { ...fields, tmc_id: tmcId, created_by: createdBy, updated_by: createdBy })}
+      returning *
+    )
+    select ${BRANCH} from b left join employees u on u.id = b.updated_by`)
 }
 
-export async function updateBranch(db: Queryable, branchId: string, fields: BranchFields): Promise<Branch> {
-  const columns = { ...BRANCH_WRITABLE, updated_at: sql`updated_at` }
+export async function updateBranch(db: Queryable, branchId: string, updatedBy: string, fields: BranchFields): Promise<Branch> {
+  const columns = { ...BRANCH_WRITABLE, updated_at: sql`updated_at`, updated_by: sql`updated_by` }
   return one<Branch>(db, sql`
-    update branches set ${assignments(columns, { ...fields, updated_at: new Date().toISOString() })}
-    where id = ${branchId}
-    returning ${BRANCH}`)
+    with b as (
+      update branches set ${assignments(columns, { ...fields, updated_at: new Date().toISOString(), updated_by: updatedBy })}
+      where id = ${branchId}
+      returning *
+    )
+    select ${BRANCH} from b left join employees u on u.id = b.updated_by`)
 }
 
 // A TMC has at most one head office (partial unique index). Clearing the
 // incumbent first is what lets "make this the head office" succeed.
-export async function demoteHeadOffice(db: Queryable, tmcId: string, exceptBranchId?: string): Promise<void> {
+// The demoted branch has changed too, and by the same person.
+export async function demoteHeadOffice(db: Queryable, tmcId: string, updatedBy: string, exceptBranchId?: string): Promise<void> {
   await exec(db, sql`
-    update branches set is_head_office = false
+    update branches set is_head_office = false, updated_at = now(), updated_by = ${updatedBy}
     where tmc_id = ${tmcId} and is_head_office
     ${exceptBranchId ? sql`and id <> ${exceptBranchId}` : empty}`)
 }

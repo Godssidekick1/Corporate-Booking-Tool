@@ -40,6 +40,29 @@ export async function countForBucket(db: Queryable, bucketId: string): Promise<n
     select count(*)::int as n from fop_assignments where bucket_id = ${bucketId}`)).n
 }
 
+export async function countByBucket(db: Queryable, bucketIds: readonly string[]): Promise<Map<string, number>> {
+  if (bucketIds.length === 0) return new Map()
+  const rows = await many<{ bucket_id: string; n: number }>(db, sql`
+    select bucket_id, count(*)::int as n from fop_assignments
+    where bucket_id = any(${[...bucketIds]}) group by bucket_id`)
+  return new Map(rows.map(r => [r.bucket_id, r.n]))
+}
+
+export async function forBucket(db: Queryable, bucketId: string): Promise<FopLabel[]> {
+  return many<FopLabel>(db, sql`
+    select f.id, f.fop_code, f.label, f.payer, f.fop_type
+    from fop_assignments a join forms_of_payment f on f.id = a.fop_id
+    where a.bucket_id = ${bucketId}
+    order by f.fop_code, f.id`)
+}
+
+// Forms of payment settled through a branch (forms_of_payment.branch_id is
+// SET NULL on delete, so deleting a branch would quietly unlink them).
+export async function countForBranch(db: Queryable, branchId: string): Promise<number> {
+  return (await one<{ n: number }>(db, sql`
+    select count(*)::int as n from forms_of_payment where branch_id = ${branchId}`)).n
+}
+
 // ═══ Resolution ═════════════════════════════════════════════════════════════
 
 // Every form of payment at the TMC, as resolveFop ranks them. The card

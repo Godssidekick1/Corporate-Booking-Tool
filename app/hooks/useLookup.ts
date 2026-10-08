@@ -144,7 +144,18 @@ export function useLookup(endpoint: string, selectedId: string, options: Options
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [endpoint, selectedId, enabled])
 
-  const onSearch = useCallback((q: string) => setQuery(q), [])
+  // A new query is loading from the moment it is asked for, not from the
+  // effect a render later: in between, the old results would read as the
+  // answer to the new query (Enter in the picker took the top OLD result --
+  // "bcg" added "bosch mumbai").
+  const queryRef = useRef(query)
+  const enabledRef = useRef(enabled)
+  useEffect(() => { enabledRef.current = enabled }, [enabled])
+  const onSearch = useCallback((q: string) => {
+    if (q !== queryRef.current && enabledRef.current) setLoading(true)
+    queryRef.current = q
+    setQuery(q)
+  }, [])
 
   return { options: items, onSearch, loading, selectedLabel }
 }

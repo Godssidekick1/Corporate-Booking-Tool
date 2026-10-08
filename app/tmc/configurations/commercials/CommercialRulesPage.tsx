@@ -8,6 +8,7 @@ import Pagination from '@/app/components/Pagination'
 import Tabs, { useUrlTab } from '@/app/components/Tabs'
 import { SkeletonTable } from '@/app/components/Skeleton'
 import { usePagedList } from '@/app/hooks/usePagedList'
+import { useLookup } from '@/app/hooks/useLookup'
 import {
   CALC_ON_BY_KIND, CALC_ON_LABELS, CALC_TYPES, CABINS, CABIN_LABELS,
   FARE_TYPES, FARE_TYPE_LABELS, CALC_BASES, CALC_BASIS_LABELS,
@@ -88,7 +89,11 @@ function coverageCell(rate: string | null, off: boolean): { text: string; muted:
 }
 
 interface Category { id: string; code: string; label: string }
-interface Named { id: string; name: string }
+const TARGET_ENDPOINT = {
+  client: '/api/tmc/clients',
+  bucket: '/api/tmc/buckets',
+  client_group: '/api/tmc/client-groups',
+} as const
 interface Assignment { id: string; kind: string; targetId: string; targetName: string; via: string }
 
 const STATUS_STYLE: Record<CommercialStatus, React.CSSProperties> = {
@@ -138,9 +143,6 @@ export default function CommercialRulesPage({ kind }: { kind: CommercialKind }) 
   })
 
   const [categories, setCategories] = useState<Category[]>([])
-  const [clients, setClients] = useState<Named[]>([])
-  const [groups, setGroups] = useState<Named[]>([])
-  const [buckets, setBuckets] = useState<Named[]>([])
 
   const [selected, setSelected] = useState<Rule | null>(null)
   const [creating, setCreating] = useState(false)
@@ -155,18 +157,15 @@ export default function CommercialRulesPage({ kind }: { kind: CommercialKind }) 
   const [success, setSuccess] = useState('')
 
   useEffect(() => {
-    Promise.all([
-      fetch('/api/tmc/deal-code-categories').then(r => r.json()),
-      fetch('/api/tmc/clients').then(r => r.json()),
-      fetch('/api/tmc/client-groups').then(r => r.json()),
-      fetch('/api/tmc/buckets').then(r => r.json()),
-    ]).then(([cats, cl, gr, bk]) => {
+    fetch('/api/tmc/deal-code-categories').then(r => r.json()).then(cats => {
       if (cats.ok) setCategories(cats.categories)
-      if (cl.ok) setClients(cl.items ?? [])
-      if (gr.ok) setGroups(gr.items ?? [])
-      if (bk.ok) setBuckets(bk.items ?? [])
     })
   }, [])
+
+  // Assignment targets are searched on the server. They used to be loaded once
+  // with no paging, which returned only the first 10 clients, groups or
+  // buckets: an eleventh could not be assigned from here.
+  const targetLookup = useLookup(TARGET_ENDPOINT[assignKind], assignTarget)
 
   const isFee = kind === 'processing_fee'
   const calcOnOptions = CALC_ON_BY_KIND[kind]
@@ -290,9 +289,6 @@ export default function CommercialRulesPage({ kind }: { kind: CommercialKind }) 
     await fetch(`/api/tmc/commercial-rule-assignments?id=${id}`, { method: 'DELETE' })
     rules.refetch()
   }
-
-  const targetOptions = (assignKind === 'client' ? clients : assignKind === 'bucket' ? buckets : groups)
-    .map(t => ({ id: t.id, label: t.name }))
 
   const needsTaxLines = CALC_ON_NEEDS_TAX_LINES.includes(form.calc_on as CalcOn)
 
@@ -705,7 +701,10 @@ export default function CommercialRulesPage({ kind }: { kind: CommercialKind }) 
                     <SearchableSelect
                       value={assignTarget}
                       onChange={setAssignTarget}
-                      options={targetOptions}
+                      options={targetLookup.options}
+                      onSearch={targetLookup.onSearch}
+                      loading={targetLookup.loading}
+                      selectedLabel={targetLookup.selectedLabel}
                       placeholder="Search…"
                       emptyMessage="No matches"
                     />

@@ -19,6 +19,9 @@ import { outbox, linkIn } from '../harness/mail'
 import { db } from '@/app/lib/db'
 import { sql, many, maybeOne, one, exec } from '@/app/lib/db/sql'
 
+const nameOf = async (id: string) =>
+  (await one<{ full_name: string }>(db, sql`select full_name from employees where id = ${id}`)).full_name
+
 // ── Clients and how they are configured ──────────────────────────────────────
 // The client list and detail, Corporate Settings sub-screens (admins, what
 // reaches the client, buckets, commercials, GST, mandatory info), and the
@@ -37,9 +40,10 @@ interface Paged<T> { items: T[]; total: number }
 // Strips the fields a freshly created row gets from the clock or a sequence,
 // so the rest of it can be snapshotted.
 function fresh<T extends Record<string, unknown>>(row: T) {
-  const { id, created_at, ...rest } = row
+  const { id, created_at, updated_at, ...rest } = row
   expect(typeof id).toBe('string')
   if (created_at !== undefined) expect(typeof created_at).toBe('string')
+  if (updated_at !== undefined) expect(typeof updated_at).toBe('string')
   return rest
 }
 
@@ -275,6 +279,8 @@ d('tmc/clients/[id] configuration', () => {
     expect(names).toEqual(['SMEs', 'kj'].sort())
     const rows = await many<{ bucket_id: string }>(db, sql`select bucket_id from bucket_clients where client_id = ${bcg}`)
     expect(rows.map(r => r.bucket_id).sort()).toEqual([...want].sort())
+    // A bucket the client joined counts as changed, by this admin.
+    expect(await one(db, sql`select updated_by from buckets where id = ${want[1]}`)).toEqual({ updated_by: a.tmcAdmin.id })
   })
 
   // ── GST ────────────────────────────────────────────────────────────────────
@@ -407,7 +413,10 @@ d('tmc/buckets and tmc/client-groups', () => {
     const res = await post({ name: ' North Desk ', code: ' nd ', description: '' })
     expect(res.status).toBe(200)
     const bucket = (res.json as { bucket: Record<string, unknown> }).bucket
-    expect(fresh(bucket)).toEqual({ name: 'North Desk', code: 'ND', description: null, clientCount: 0, dealCodeCount: 0 })
+    expect(fresh(bucket)).toEqual({
+      name: 'North Desk', code: 'ND', description: null, updated_by_name: await nameOf(a.tmcAdmin.id),
+      clientCount: 0, memberPreview: [], dealCodeCount: 0, fopCount: 0, ruleCount: 0,
+    })
     expect(await post({ name: 'North Desk' })).toEqual({ status: 409, json: { error: 'A bucket with that name already exists' } })
   })
 
@@ -436,6 +445,46 @@ d('tmc/buckets and tmc/client-groups', () => {
     const members = await many<{ client_id: string }>(db, sql`
       select client_id from bucket_clients where bucket_id = ${id} order by client_id`)
     expect(members.map(m => m.client_id)).toEqual([clientIds[0], clientIds[1]].sort())
+    expect(await p({ clientIds: 'all' })).toEqual({ status: 400, json: { error: 'clientIds must be an array' } })
+  })
+
+  it('bucket [id] PATCH: records who changed it, and when', async () => {
+    const id = await bucketNamed('North Desk')
+    await exec(db, sql`update buckets set updated_at = '2020-01-01', updated_by = null where id = ${id}`)
+    const res = await call(bucketPatch, { as: a.tmcAdmin, method: 'PATCH', ...at('/api/tmc/buckets', id), body: { clientIds: [clientIds[0]] } })
+    expect(res.status).toBe(200)
+    const row = await one<{ by: string; recent: boolean }>(db, sql`
+      select updated_by as by, updated_at > now() - interval '1 minute' as recent from buckets where id = ${id}`)
+    expect(row).toEqual({ by: a.tmcAdmin.id, recent: true })
+  })
+
+  it('buckets: filtered by what uses them', async () => {
+    const names = async (usedBy: string) =>
+      ((await call(bucketsGet, { as: a.tmcAdmin, url: `/api/tmc/buckets?usedBy=${usedBy}` })).json as Paged<{ name: string }>)
+        .items.map(b => b.name)
+    expect(await names('commercials')).toContain('Corps with vibes')
+    expect(await names('none')).toContain('North Desk')
+    expect(await names('none')).not.toContain('Corps with vibes')
+    expect(await names('deal_codes')).not.toContain('North Desk')
+  })
+
+  it('bucket [id] DELETE: refused while a commercial rule reaches clients through it', async () => {
+    // commercial_rule_assignments.bucket_id cascades: before this check, deleting
+    // the bucket silently removed the rule from every member client.
+    const id = (await one<{ id: string }>(db, sql`
+      insert into buckets (tmc_id, name) values (${a.tmcAdmin.tmc_id}, 'Rules Only') returning id`)).id
+    const rule = await one<{ id: string }>(db, sql`
+      select id from commercial_rules where tmc_id = ${a.tmcAdmin.tmc_id} order by id limit 1`)
+    await exec(db, sql`
+      insert into commercial_rule_assignments (tmc_id, rule_id, kind, bucket_id)
+      values (${a.tmcAdmin.tmc_id}, ${rule.id}, 'bucket', ${id})`)
+    expect(await call(bucketDelete, { as: a.tmcAdmin, method: 'DELETE', ...at('/api/tmc/buckets', id) })).toEqual({
+      status: 409,
+      json: { error: '1 commercial rule is assigned to "Rules Only". Remove those assignments before deleting it.' },
+    })
+    expect(await one(db, sql`select count(*)::int as n from commercial_rule_assignments where bucket_id = ${id}`)).toEqual({ n: 1 })
+    await exec(db, sql`delete from commercial_rule_assignments where bucket_id = ${id}`)
+    await exec(db, sql`delete from buckets where id = ${id}`)
   })
 
   it('bucket [id] DELETE: refused while anything is assigned to it; an unused one goes', async () => {

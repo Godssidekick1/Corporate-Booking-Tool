@@ -3,6 +3,31 @@
 A running list of agreed work that is not done yet. Newest decisions are
 recorded with the item; remove an item once it ships.
 
+## Next up: hardening and scale (agreed 2026-10-08)
+
+SQL injection is not the risk: every query is parameterised through the `sql`
+tagged template (no raw-SQL escape hatch; ESLint keeps the driver inside
+repositories). The real gaps, in order:
+
+1. **Measure first.** A script that seeds a large synthetic TMC (about 10k
+   clients, 5k deal codes, 50k assignments) and times the heavy endpoints.
+2. **Booking-time resolution loads the whole TMC.** `stampBooking`,
+   `stampFop`, `stampCommercials` read every assignment of the TMC on each
+   price / add-passenger, then filter to one client. Fetch only what reaches
+   the client (its id, its group, its buckets) in SQL.
+3. **Coverage and lists are computed in memory.** Deal-code and commercial
+   coverage, the FOP list and two more endpoints use `paginateInMemory` over
+   every client x every assignment. Page clients in SQL, resolve only the page.
+4. **Indexes.** Assignment tables have no index leading on `bucket_id`
+   (`(rule_id, bucket_id)` etc.); confirm every hot query with EXPLAIN.
+5. **Tenant isolation lives only in app code.** The app connects as the table
+   owner; RLS is on with no policies. Add a least-privilege app role and real
+   policies on `app.current_tenant_id` (already set by `transaction()`), with
+   tests that fail when a query forgets the tenant.
+6. **DB TLS** verifies nothing (`rejectUnauthorized: false` in `pool.ts`);
+   verify the certificate wherever the connection crosses a network.
+7. **Rate limits** exist for sign-in only; add them to search / list APIs.
+
 ## Employee dashboard (redesign)
 
 - **The "Finish setting up TravelDesk" checklist stays after every step is

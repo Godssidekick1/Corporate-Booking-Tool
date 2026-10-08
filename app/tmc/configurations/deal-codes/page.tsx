@@ -7,6 +7,7 @@ import AirlineDropdown from '@/app/components/AirlineDropdown'
 import Pagination from '@/app/components/Pagination'
 import { SkeletonTable } from '@/app/components/Skeleton'
 import { usePagedList } from '@/app/hooks/usePagedList'
+import { useLookup } from '@/app/hooks/useLookup'
 import { formatFlightSpec } from '@/app/lib/deal-codes/flightSpec'
 import { STATUS_LABELS, type DealCodeStatus } from '@/app/lib/deal-codes/dealCodeStatus'
 
@@ -47,7 +48,11 @@ interface DealCode {
   targetCount: number
 }
 interface Assignment { id: string; kind: string; targetId: string; targetName: string }
-interface Named { id: string; name: string }
+const TARGET_ENDPOINT = {
+  client: '/api/tmc/clients',
+  bucket: '/api/tmc/buckets',
+  client_group: '/api/tmc/client-groups',
+} as const
 // Coverage is the OUTCOME of resolution, not a definition: one row per client
 // per airline per type, carrying only the winner. It deliberately shares no
 // columns with the master beside it — category, flight and the date windows
@@ -113,9 +118,6 @@ export default function DealCodesPage() {
   const [form, setForm] = useState(EMPTY_FORM)
   const [assignments, setAssignments] = useState<Assignment[]>([])
 
-  const [clients, setClients] = useState<Named[]>([])
-  const [groups, setGroups] = useState<Named[]>([])
-  const [buckets, setBuckets] = useState<Named[]>([])
   const [assignKind, setAssignKind] = useState<'client' | 'client_group' | 'bucket'>('client')
   const [assignTarget, setAssignTarget] = useState('')
 
@@ -129,18 +131,15 @@ export default function DealCodesPage() {
   const [success, setSuccess] = useState('')
 
   useEffect(() => {
-    Promise.all([
-      fetch('/api/tmc/deal-code-categories').then(r => r.json()),
-      fetch('/api/tmc/clients').then(r => r.json()),
-      fetch('/api/tmc/client-groups').then(r => r.json()),
-      fetch('/api/tmc/buckets').then(r => r.json()),
-    ]).then(([cats, cl, gr, bk]) => {
+    fetch('/api/tmc/deal-code-categories').then(r => r.json()).then(cats => {
       if (cats.ok) setCategories(cats.categories)
-      if (cl.ok) setClients(cl.items ?? [])
-      if (gr.ok) setGroups(gr.items ?? [])
-      if (bk.ok) setBuckets(bk.items ?? [])
     })
   }, [])
+
+  // Assignment targets are searched on the server. They used to be loaded once
+  // with no paging, which returned only the first 10 clients, groups or
+  // buckets: an eleventh could not be assigned from here.
+  const targetLookup = useLookup(TARGET_ENDPOINT[assignKind], assignTarget)
 
   const category = categories.find(c => c.id === form.category_id)
   const allowedTypes = category?.allowedTypes ?? CODE_TYPES.map(t => t.value)
@@ -678,8 +677,10 @@ export default function DealCodesPage() {
                       <SearchableSelect
                         value={assignTarget}
                         onChange={setAssignTarget}
-                        options={(assignKind === 'client' ? clients : assignKind === 'bucket' ? buckets : groups)
-                          .map(o => ({ id: o.id, label: o.name }))}
+                        options={targetLookup.options}
+                        onSearch={targetLookup.onSearch}
+                        loading={targetLookup.loading}
+                        selectedLabel={targetLookup.selectedLabel}
                         placeholder="Search…"
                         emptyMessage="No matches"
                       />

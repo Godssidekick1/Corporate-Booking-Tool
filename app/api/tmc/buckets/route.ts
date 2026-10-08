@@ -5,6 +5,8 @@ import { NextRequest } from 'next/server'
 import { db, isConstraint } from '@/app/lib/db'
 import * as clients from '@/app/lib/repositories/clients'
 import * as dealCodes from '@/app/lib/repositories/dealCodes'
+import * as fop from '@/app/lib/repositories/fop'
+import * as commercials from '@/app/lib/repositories/commercials'
 import { route } from '@/app/lib/http/handler'
 
 // ── /api/tmc/buckets ─────────────────────────────────────────────────────────
@@ -15,9 +17,7 @@ import { route } from '@/app/lib/http/handler'
 // distribution decision someone made on purpose ("Tier 1 corporates", "North
 // India desk"), cuts across groups, and exists to be targeted by masters.
 //
-// Named generically because forms of payment and markup will target the same
-// table. Building this as `deal_code_buckets` would mean an identical second
-// concept within months.
+// Deal codes, forms of payment and commercial rules all target buckets.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const GET = route(async (req: NextRequest) => {
@@ -30,20 +30,26 @@ export const GET = route(async (req: NextRequest) => {
 
   const params = parsePageParams(req.nextUrl.searchParams)
   const ids = req.nextUrl.searchParams.get('ids')?.split(',').filter(Boolean) ?? []
+  // ?usedBy=deal_codes|fops|commercials|none -- what assigns something through it.
+  const usedBy = req.nextUrl.searchParams.get('usedBy')
+  const use = (clients.BUCKET_USES as readonly string[]).includes(usedBy ?? '') ? usedBy as clients.BucketUse : null
 
   const { rows, total } = await clients.bucketsForTmc(
     db,
     auth.tmcId,
-    ids.length > 0 ? { ids } : { search: params.search, page: params }
+    ids.length > 0 ? { ids } : { search: params.search, page: params, usedBy: use }
   )
 
   const bucketIds = rows.map(b => b.id)
 
-  // How many deal codes point at each bucket. Shown so the consequence of
+  // What reaches clients through each bucket. Shown so the consequence of
   // adding a client to it is legible before you do it.
-  const [clientCount, dealCount] = await Promise.all([
+  const [clientCount, preview, dealCount, fopCount, ruleCount] = await Promise.all([
     clients.memberCounts(db, bucketIds),
+    clients.memberPreview(db, bucketIds),
     dealCodes.countByBucket(db, bucketIds),
+    fop.countByBucket(db, bucketIds),
+    commercials.countByBucket(db, bucketIds),
   ])
 
   return Response.json(
@@ -51,7 +57,10 @@ export const GET = route(async (req: NextRequest) => {
       rows.map(b => ({
         ...b,
         clientCount: clientCount.get(b.id) ?? 0,
+        memberPreview: preview.get(b.id) ?? [],
         dealCodeCount: dealCount.get(b.id) ?? 0,
+        fopCount: fopCount.get(b.id) ?? 0,
+        ruleCount: ruleCount.get(b.id) ?? 0,
       })),
       total,
       params
@@ -89,7 +98,10 @@ export const POST = route(async (req: NextRequest) => {
       description: body.description?.trim() || null,
       created_by: user.id,
     })
-    return Response.json({ ok: true, bucket: { ...created, clientCount: 0, dealCodeCount: 0 } })
+    return Response.json({
+      ok: true,
+      bucket: { ...created, clientCount: 0, memberPreview: [], dealCodeCount: 0, fopCount: 0, ruleCount: 0 },
+    })
   } catch (err) {
     if (isConstraint(err, 'unique')) return Response.json(DUPLICATE_BUCKET, { status: 409 })
     throw err

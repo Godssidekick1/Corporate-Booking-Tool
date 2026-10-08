@@ -130,6 +130,33 @@ export async function targetCounts(db: Queryable, tmcId: string): Promise<Map<st
   return new Map(rows.map(r => [r.rule_id, r.n]))
 }
 
+// ── Through a bucket ────────────────────────────────────────────────────────
+// bucket_id cascades on delete, so the bucket master shows -- and refuses to
+// delete while there are -- the rules that reach clients through a bucket.
+
+export async function countByBucket(db: Queryable, bucketIds: readonly string[]): Promise<Map<string, number>> {
+  if (bucketIds.length === 0) return new Map()
+  const rows = await many<{ bucket_id: string; n: number }>(db, sql`
+    select bucket_id, count(*)::int as n from commercial_rule_assignments
+    where bucket_id = any(${[...bucketIds]}) group by bucket_id`)
+  return new Map(rows.map(r => [r.bucket_id, r.n]))
+}
+
+export async function countForBucket(db: Queryable, bucketId: string): Promise<number> {
+  return (await one<{ n: number }>(db, sql`
+    select count(*)::int as n from commercial_rule_assignments where bucket_id = ${bucketId}`)).n
+}
+
+export type RuleLabel = Pick<Row<'commercial_rules'>, 'id' | 'kind' | 'airline_code' | 'calc_type' | 'rate' | 'active'>
+
+export async function rulesForBucket(db: Queryable, bucketId: string): Promise<RuleLabel[]> {
+  return many<RuleLabel>(db, sql`
+    select r.id, r.kind, r.airline_code, r.calc_type, r.rate, r.active
+    from commercial_rule_assignments a join commercial_rules r on r.id = a.rule_id
+    where a.bucket_id = ${bucketId}
+    order by r.kind, r.airline_code nulls first, r.id`)
+}
+
 export type NewAssignment = Pick<Row<'commercial_rule_assignments'>,
   'rule_id' | 'kind' | 'client_id' | 'client_group_id' | 'bucket_id'>
 

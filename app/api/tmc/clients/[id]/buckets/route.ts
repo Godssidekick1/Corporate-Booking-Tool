@@ -84,7 +84,14 @@ export const PUT = route(async (req: NextRequest, { params }: Ctx) => {
   // Delete-then-insert, together: a failed insert must not leave the client
   // in no buckets at all -- which silently removes every deal code and form of
   // payment that reached them through one.
-  await transaction(tx => clients.replaceBucketsOfClient(tx, id, bucketIds), { tenantId: tmcId, userId })
+  // The buckets the client joined or left have changed membership: marked as
+  // updated by this person, as an edit on the bucket master would be.
+  await transaction(async tx => {
+    const before = await clients.bucketIdsOfClient(tx, id)
+    await clients.replaceBucketsOfClient(tx, id, bucketIds)
+    const changed = [...bucketIds.filter(b => !before.includes(b)), ...before.filter(b => !bucketIds.includes(b))]
+    await clients.touchBuckets(tx, changed, userId)
+  }, { tenantId: tmcId, userId })
 
   return Response.json({ ok: true, buckets: await clients.bucketsOfClient(db, id) })
 })

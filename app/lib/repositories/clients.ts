@@ -437,33 +437,71 @@ export async function groupNames(db: Queryable, groupIds: readonly string[]): Pr
 // A bucket is a curated set of clients that masters (deal codes, forms of
 // payment, commercials) are assigned to.
 
-export type Bucket = Pick<Row<'buckets'>, 'id' | 'name' | 'code' | 'description' | 'created_at'>
-export type BucketRecord = Pick<Row<'buckets'>, 'id' | 'tmc_id' | 'name' | 'code' | 'description'>
+// Who last changed it: updated_by's name, read with the row.
+type Updated = { updated_at: string; updated_by_name: string | null }
+export type Bucket = Pick<Row<'buckets'>, 'id' | 'name' | 'code' | 'description' | 'created_at'> & Updated
+export type BucketRecord = Pick<Row<'buckets'>, 'id' | 'tmc_id' | 'name' | 'code' | 'description'> & Updated
 export type BucketLabel = Pick<Row<'buckets'>, 'id' | 'name' | 'code'>
+
+// What a bucket is used by, for the master's filter. 'none': nothing at all.
+export const BUCKET_USES = ['deal_codes', 'fops', 'commercials', 'none'] as const
+export type BucketUse = typeof BUCKET_USES[number]
+
+const USED_BY: Record<Exclude<BucketUse, 'none'>, Sql> = {
+  deal_codes: sql`exists (select 1 from deal_code_assignments x where x.bucket_id = b.id)`,
+  fops: sql`exists (select 1 from fop_assignments x where x.bucket_id = b.id)`,
+  commercials: sql`exists (select 1 from commercial_rule_assignments x where x.bucket_id = b.id)`,
+}
+
+const BUCKET_COLUMNS = sql`b.id, b.name, b.code, b.description, b.created_at, b.updated_at, u.full_name as updated_by_name`
 
 export async function bucketsForTmc(
   db: Queryable,
   tmcId: string,
-  scope: SimpleScope
+  scope: SimpleScope & { usedBy?: BucketUse | null }
 ): Promise<{ rows: Bucket[]; total: number }> {
   if ('ids' in scope && scope.ids.length === 0) return { rows: [], total: 0 }
+  const use = scope.usedBy === 'none'
+    ? sql`and not ${USED_BY.deal_codes} and not ${USED_BY.fops} and not ${USED_BY.commercials}`
+    : scope.usedBy ? sql`and ${USED_BY[scope.usedBy]}` : empty
   const filter = 'ids' in scope
-    ? sql`tmc_id = ${tmcId} and id = any(${[...scope.ids]})`
-    : sql`tmc_id = ${tmcId} ${searchAcross([sql`name`, sql`code`], scope.search)}`
+    ? sql`b.tmc_id = ${tmcId} and b.id = any(${[...scope.ids]})`
+    : sql`b.tmc_id = ${tmcId} ${searchAcross([sql`b.name`, sql`b.code`], scope.search)} ${use}`
   const limit = 'ids' in scope ? empty : page(scope.page)
 
   const [rows, count] = await Promise.all([
     many<Bucket>(db, sql`
-      select id, name, code, description, created_at from buckets where ${filter}
-      order by name, id ${limit}`),
-    one<{ n: number }>(db, sql`select count(*)::int as n from buckets where ${filter}`),
+      select ${BUCKET_COLUMNS} from buckets b left join employees u on u.id = b.updated_by
+      where ${filter}
+      order by b.name, b.id ${limit}`),
+    one<{ n: number }>(db, sql`select count(*)::int as n from buckets b where ${filter}`),
   ])
   return { rows, total: count.n }
 }
 
 export async function bucketInTmc(db: Queryable, bucketId: string, tmcId: string): Promise<BucketRecord | null> {
   return maybeOne<BucketRecord>(db, sql`
-    select id, tmc_id, name, code, description from buckets where id = ${bucketId} and tmc_id = ${tmcId}`)
+    select b.id, b.tmc_id, b.name, b.code, b.description, b.updated_at, u.full_name as updated_by_name
+    from buckets b left join employees u on u.id = b.updated_by
+    where b.id = ${bucketId} and b.tmc_id = ${tmcId}`)
+}
+
+// Marks buckets as changed by someone: their details or their member clients.
+export async function touchBuckets(db: Queryable, bucketIds: readonly string[], userId: string): Promise<void> {
+  if (bucketIds.length === 0) return
+  await exec(db, sql`
+    update buckets set updated_at = now(), updated_by = ${userId} where id = any(${[...bucketIds]})`)
+}
+
+// The first few member names of each bucket, alphabetically, for the list.
+export async function memberPreview(db: Queryable, bucketIds: readonly string[], perBucket = 3): Promise<Map<string, string[]>> {
+  if (bucketIds.length === 0) return new Map()
+  const rows = await many<{ bucket_id: string; names: string[] }>(db, sql`
+    select bucket_id, (array_agg(name order by name, id))[1:${perBucket}] as names
+    from (select bc.bucket_id, c.name, c.id from bucket_clients bc join clients c on c.id = bc.client_id
+          where bc.bucket_id = any(${[...bucketIds]})) m
+    group by bucket_id`)
+  return new Map(rows.map(r => [r.bucket_id, r.names]))
 }
 
 export async function bucketIdsInTmc(db: Queryable, tmcId: string, bucketIds: readonly string[]): Promise<string[]> {
@@ -478,9 +516,12 @@ export async function insertBucket(
   b: Pick<Row<'buckets'>, 'tmc_id' | 'name' | 'code' | 'description' | 'created_by'>
 ): Promise<Bucket> {
   return one<Bucket>(db, sql`
-    insert into buckets (tmc_id, name, code, description, created_by)
-    values (${b.tmc_id}, ${b.name}, ${b.code}, ${b.description}, ${b.created_by})
-    returning id, name, code, description, created_at`)
+    with b as (
+      insert into buckets (tmc_id, name, code, description, created_by, updated_by)
+      values (${b.tmc_id}, ${b.name}, ${b.code}, ${b.description}, ${b.created_by}, ${b.created_by})
+      returning *
+    )
+    select ${BUCKET_COLUMNS} from b left join employees u on u.id = b.updated_by`)
 }
 
 export type BucketEdit = Partial<Pick<Row<'buckets'>, 'name' | 'code' | 'description'>>
@@ -540,6 +581,11 @@ export async function replaceBucketsOfClient(db: Queryable, clientId: string, bu
   await exec(db, sql`
     insert into bucket_clients (bucket_id, client_id)
     select b, ${clientId} from unnest(${[...bucketIds]}::uuid[]) as b`)
+}
+
+// Clients billed through a branch (clients.branch_id is SET NULL on delete).
+export async function countForBranch(db: Queryable, branchId: string): Promise<number> {
+  return (await one<{ n: number }>(db, sql`select count(*)::int as n from clients where branch_id = ${branchId}`)).n
 }
 
 export async function bucketLabels(db: Queryable, bucketIds: readonly string[]): Promise<Map<string, BucketLabel>> {

@@ -65,6 +65,7 @@ exports[`tmc/branches > [id] GET: the branch and who works there 1`] = `
     "office_id": "GGNIN23U",
     "profit_centre_code": "312",
     "status": "active",
+    "updated_by_name": "Employee 281282",
   },
   "ok": true,
   "staff": [
@@ -103,6 +104,8 @@ exports[`tmc/branches > GET: the TMC's branches with staff counts 1`] = `
       "profit_centre_code": "312",
       "staffCount": 1,
       "status": "active",
+      "updated_at": "2026-09-07T10:02:18.849Z",
+      "updated_by_name": null,
     },
   ],
   "ok": true,
@@ -133,6 +136,7 @@ exports[`tmc/branches > POST: creates a branch, normalising codes 1`] = `
   "profit_centre_code": null,
   "staffCount": 0,
   "status": "active",
+  "updated_by_name": "Employee 281282",
 }
 `;
 
