@@ -21,6 +21,23 @@ import { DbConfigurationError } from './errors'
 
 let pool: Pool | null = null
 
+// ── TLS ──────────────────────────────────────────────────────────────────────
+// Loopback is plaintext. Anything else is TLS, and the server's certificate is
+// VERIFIED when its CA is configured:
+//   DATABASE_CA_CERT  the CA certificate itself (PEM text; \n escapes allowed,
+//                     for hosts whose env vars are single-line)
+// Without it the connection is encrypted but the server is not authenticated,
+// so someone able to intercept the network could pose as the database. That
+// is still how the Supabase-hosted test database is reached; it is announced
+// once in the log rather than refused, so it cannot pass unnoticed.
+export function tlsOptions(hostname: string): { ca?: string; rejectUnauthorized: boolean } | undefined {
+  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') return undefined
+  const ca = process.env.DATABASE_CA_CERT?.replace(/\\n/g, '\n').trim()
+  if (ca) return { ca, rejectUnauthorized: true }
+  console.warn(`[db] TLS to ${hostname} is NOT verifying the server certificate. Set DATABASE_CA_CERT to the database's CA certificate.`)
+  return { rejectUnauthorized: false }
+}
+
 export function getPool(): Pool {
   if (pool) return pool
 
@@ -77,12 +94,7 @@ export function getPool(): Pool {
     // Fail fast rather than hanging a request forever on an unreachable
     // database -- a 500 with a clear message beats a spinner that never stops.
     connectionTimeoutMillis: 10_000,
-    // Local development is plaintext over loopback; a deployed database is
-    // reached over TLS. Driven by the URL rather than hardcoded so the same
-    // code serves both.
-    ssl: connectionString.includes('localhost') || connectionString.includes('127.0.0.1')
-      ? undefined
-      : { rejectUnauthorized: false },
+    ssl: tlsOptions(target.hostname),
   })
 
   // An idle client erroring (a network blip, a server restart) otherwise

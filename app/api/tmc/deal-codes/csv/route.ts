@@ -2,6 +2,7 @@ import { requireUser } from '@/app/lib/auth/session'
 import * as dealCodes from '@/app/lib/repositories/dealCodes'
 import type { NewDealCode } from '@/app/lib/repositories/dealCodes'
 import { route } from '@/app/lib/http/handler'
+import { rateLimited } from '@/app/lib/http/rateLimit'
 import { requireTmcPermission } from '@/app/lib/permissions/requireTmcPermission'
 import { validateFlightSpec } from '@/app/lib/deal-codes/flightSpec'
 import { CODE_TYPES, CODE_TYPE_LABELS, type CodeType } from '../route'
@@ -40,6 +41,8 @@ function escapeCell(value: unknown): string {
 
 export const GET = route(async () => {
   const user = await requireUser()
+  const limited = await rateLimited('csv', user.id)
+  if (limited) return limited
 
   const auth = await requireTmcPermission(db, user.id, 'manage_deal_codes')
   if (!auth.authorized || !auth.tmcId) {
@@ -94,6 +97,8 @@ function parseDate(value: string | undefined): string | null {
 
 export const POST = route(async (req: NextRequest) => {
   const user = await requireUser()
+  const limited = await rateLimited('csv', user.id)
+  if (limited) return limited
 
   const auth = await requireTmcPermission(db, user.id, 'manage_deal_codes')
   if (!auth.authorized || !auth.tmcId) {

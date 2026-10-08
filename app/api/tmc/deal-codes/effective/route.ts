@@ -2,6 +2,7 @@ import { requireUser } from '@/app/lib/auth/session'
 import * as dealCodes from '@/app/lib/repositories/dealCodes'
 import * as clients from '@/app/lib/repositories/clients'
 import { route } from '@/app/lib/http/handler'
+import { rateLimited } from '@/app/lib/http/rateLimit'
 import { requireTmcPermission, getAccessibleClientIds } from '@/app/lib/permissions/requireTmcPermission'
 import {
   resolveDealCodes,
@@ -45,6 +46,8 @@ interface CoverageRow {
 
 export const GET = route(async (req: NextRequest) => {
   const user = await requireUser()
+  const limited = await rateLimited('coverage', user.id)
+  if (limited) return limited
 
   const auth = await requireTmcPermission(db, user.id, 'manage_deal_codes')
   if (!auth.authorized || !auth.tmcId) {

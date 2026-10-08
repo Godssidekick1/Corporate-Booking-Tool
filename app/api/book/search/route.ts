@@ -3,6 +3,7 @@ import { requireUser } from '@/app/lib/auth/session'
 import { db } from '@/app/lib/db'
 import * as employees from '@/app/lib/repositories/employees'
 import { route } from '@/app/lib/http/handler'
+import { rateLimited } from '@/app/lib/http/rateLimit'
 import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic } from '@/app/lib/amadeus/client'
 import { harvestAirlines } from '@/app/lib/reference/harvestAirlines'
 import {
@@ -185,6 +186,8 @@ function isValidTravelDate(value: string): boolean {
 
 export const POST = route(async (req: NextRequest) => {
   const user = await requireUser()
+  const limited = await rateLimited('search', user.id)
+  if (limited) return limited
 
   // A CBT-only client's people sign in to see their trips, but the travel desk
   // books for them (clientGates.selfBooking).

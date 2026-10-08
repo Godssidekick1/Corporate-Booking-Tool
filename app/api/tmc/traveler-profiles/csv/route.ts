@@ -5,6 +5,7 @@ import { db } from '@/app/lib/db'
 import * as employees from '@/app/lib/repositories/employees'
 import * as clients from '@/app/lib/repositories/clients'
 import { route } from '@/app/lib/http/handler'
+import { rateLimited } from '@/app/lib/http/rateLimit'
 import { normalisePlaces } from '@/app/lib/places/normalisePlaces'
 
 // ── /api/tmc/traveler-profiles/csv ───────────────────────────────────────────
@@ -59,6 +60,8 @@ function escapeCell(value: unknown): string {
 
 export const GET = route(async (req: NextRequest) => {
   const user = await requireUser()
+  const limited = await rateLimited('csv', user.id)
+  if (limited) return limited
 
   const clientId = req.nextUrl.searchParams.get('clientId')
   if (!clientId) {
@@ -111,6 +114,8 @@ interface ImportBody {
 
 export const POST = route(async (req: NextRequest) => {
   const user = await requireUser()
+  const limited = await rateLimited('csv', user.id)
+  if (limited) return limited
 
   const body: ImportBody = await req.json()
   const { clientId, rows } = body

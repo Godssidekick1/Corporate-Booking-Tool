@@ -13,6 +13,7 @@ import { db } from '@/app/lib/db'
 import * as clients from '@/app/lib/repositories/clients'
 import * as commercials from '@/app/lib/repositories/commercials'
 import { route } from '@/app/lib/http/handler'
+import { rateLimited } from '@/app/lib/http/rateLimit'
 
 // ── GET /api/tmc/commercial-rules/effective ──────────────────────────────────
 // What each client actually ends up with: one row per client, carrying the
@@ -77,6 +78,8 @@ function describeRule(resolved: ResolvedRule | null): string | null {
 
 export const GET = route(async (req: NextRequest) => {
   const user = await requireUser()
+  const limited = await rateLimited('coverage', user.id)
+  if (limited) return limited
 
   const auth = await requireTmcPermission(db, user.id, 'manage_commercials')
   if (!auth.authorized || !auth.tmcId) {

@@ -2,6 +2,8 @@ import { round2 } from '@/app/lib/commercials/fareComponents'
 import { db } from '@/app/lib/db'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
 import { route } from '@/app/lib/http/handler'
+import { rateLimited } from '@/app/lib/http/rateLimit'
+import { clientIp } from '@/app/lib/auth/request'
 import { visibleLines, ADJUSTMENT_LABELS } from '@/app/lib/commercials/adjustment'
 import type { CommercialsRecord } from '@/app/lib/commercials/composeSellPrice'
 import { travellerItinerary } from '@/app/lib/book/travellerView'
@@ -64,6 +66,11 @@ export const GET = route(async (
   { params }: { params: Promise<{ token: string }> }
 ) => {
   const { token } = await params
+
+  // Reachable without signing in, so limited per IP: guessing tokens costs
+  // a scanner its rate, not just its luck.
+  const limited = await rateLimited('ticket', clientIp(req))
+  if (limited) return limited
 
   // Length-checked before it reaches the database. A token is 32 hex
   // characters; anything else is a probe, and answering it with the same 404
