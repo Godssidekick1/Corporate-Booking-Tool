@@ -48,6 +48,40 @@ d('schema', () => {
     expect(open.map(r => r.t)).toEqual([])
   })
 
+  it('the app role can reach every table: each has its app_access policy', async () => {
+    // Row-level security denies by default, so a new table without the policy
+    // would be invisible to the application (which connects as cbt_app).
+    const missing = await rows<{ t: string }>(`
+      select c.relname as t from pg_class c join pg_namespace n on n.oid = c.relnamespace
+       where n.nspname = 'public' and c.relkind in ('r', 'p') and c.relrowsecurity
+         and not exists (select 1 from pg_policies p
+                          where p.schemaname = 'public' and p.tablename = c.relname
+                            and p.policyname = 'app_access' and 'cbt_app' = any(p.roles))
+       order by 1`)
+    expect(missing.map(r => r.t)).toEqual([])
+  })
+
+  it('the suite really runs as the restricted role, which cannot create a table', async () => {
+    expect(await rows<{ u: string }>('select current_user as u')).toEqual([{ u: 'cbt_app_test' }])
+    await expect(rows('create table should_not_exist (x int)')).rejects.toThrow(/permission denied/)
+  })
+
+  it('the app role cannot change the schema or the migration history', async () => {
+    const powers = await rows<{ super: boolean; bypass: boolean; createrole: boolean; createdb: boolean }>(`
+      select rolsuper as super, rolbypassrls as bypass, rolcreaterole as createrole, rolcreatedb as createdb
+        from pg_roles where rolname = 'cbt_app'`)
+    expect(powers).toEqual([{ super: false, bypass: false, createrole: false, createdb: false }])
+    const owns = await rows<{ t: string }>(`
+      select c.relname as t from pg_class c join pg_namespace n on n.oid = c.relnamespace
+       where n.nspname = 'public' and pg_get_userbyid(c.relowner) = 'cbt_app'`)
+    expect(owns).toEqual([])
+    const writes = await rows<{ p: string }>(`
+      select privilege_type as p from information_schema.role_table_grants
+       where table_schema = 'public' and table_name = 'schema_migrations' and grantee = 'cbt_app'
+       order by 1`)
+    expect(writes.map(r => r.p)).toEqual(['SELECT'])
+  })
+
   it("Supabase's API roles hold no privilege on public", async () => {
     const granted = await rows<{ g: string }>(`
       select grantee || ' ' || privilege_type || ' ' || table_name as g

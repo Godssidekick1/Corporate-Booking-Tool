@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitest/config'
 import { fileURLToPath } from 'node:url'
 import { readFileSync, existsSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
 
 // ── .env.local ───────────────────────────────────────────────────────────────
 // Next.js loads this automatically; Vitest does not, and Vite's own env
@@ -37,8 +38,22 @@ function withDatabase(url: string, database: string): string {
 }
 
 const devUrl = process.env.DATABASE_URL
-const testUrl = devUrl ? withDatabase(devUrl, 'cbt_test') : undefined
 const adminUrl = devUrl ? withDatabase(devUrl, 'postgres') : undefined
+
+// THE TESTS RUN AS THE RESTRICTED APP ROLE, not as the owner: a login in role
+// cbt_app (20261009000300_app_role), so the whole suite proves the app works
+// with row-and-nothing-else access -- and fails if a table is left without
+// its access policy. The login is re-passworded at random on every run by
+// tests/setup/database.ts; nothing is stored anywhere.
+const appPassword = randomBytes(18).toString('base64url')
+process.env.TEST_APP_PASSWORD = appPassword
+function asAppRole(url: string): string {
+  const u = new URL(url)
+  u.username = 'cbt_app_test'
+  u.password = appPassword
+  return u.toString()
+}
+const testUrl = devUrl ? asAppRole(withDatabase(devUrl, 'cbt_test')) : undefined
 
 // ── Vitest ───────────────────────────────────────────────────────────────────
 // The safety net for the PostgreSQL migration. 562 PostgREST call sites are

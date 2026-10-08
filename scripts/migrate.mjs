@@ -5,6 +5,7 @@
 //   node scripts/migrate.mjs              apply pending migrations
 //   node scripts/migrate.mjs --status     list applied / pending, change nothing
 //   node scripts/migrate.mjs <url> [...]  target a URL instead of DATABASE_URL
+//   (MIGRATE_DATABASE_URL, when set, is used before DATABASE_URL)
 //
 // WHY: migrations used to be pasted into pgAdmin by hand, and nothing recorded
 // which had run where. That is how two identical unique indexes ended up on
@@ -32,13 +33,17 @@ const DIR = join(process.cwd(), 'db', 'migrations')
 // An arbitrary constant, shared by every run against the same database.
 const LOCK_KEY = 7_302_025
 
+// MIGRATE_DATABASE_URL first: once the app runs as the restricted cbt_app login
+// (docs/database-roles.md), DATABASE_URL can no longer change the schema, and
+// migrations need the owner's connection.
 function envUrl() {
-  if (process.env.DATABASE_URL) return process.env.DATABASE_URL
   const envPath = join(process.cwd(), '.env.local')
-  if (existsSync(envPath)) {
-    for (const line of readFileSync(envPath, 'utf8').split(/\r?\n/)) {
-      const m = line.match(/^\s*DATABASE_URL\s*=\s*(.*)\s*$/)
-      if (m) return m[1].replace(/^["']|["']$/g, '')
+  const file = existsSync(envPath) ? readFileSync(envPath, 'utf8').split(/\r?\n/) : []
+  for (const name of ['MIGRATE_DATABASE_URL', 'DATABASE_URL']) {
+    if (process.env[name]) return process.env[name]
+    for (const line of file) {
+      const m = line.match(/^\s*([A-Z_]+)\s*=\s*(.*)\s*$/)
+      if (m && m[1] === name) return m[2].replace(/^["']|["']$/g, '')
     }
   }
   throw new Error('DATABASE_URL not set. Pass a connection string or add it to .env.local.')
