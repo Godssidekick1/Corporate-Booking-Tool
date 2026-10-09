@@ -100,6 +100,23 @@ function todayIso(): string {
   return `${now.getFullYear()}-${month}-${day}`
 }
 
+// flightSpecBreadth parses the spec text with a regex, and the comparator below
+// asks for it twice per comparison: sorting the coverage report's ~700,000
+// candidates (10,000 clients) re-parsed the same few thousand strings millions
+// of times, most of a 2 s rebuild (npm run scale). Keyed by the text, so a
+// cached answer is the answer; emptied if it ever grows past the limit.
+const breadths = new Map<string, number>()
+function breadth(spec: string | null): number {
+  if (!spec) return flightSpecBreadth(spec)
+  let b = breadths.get(spec)
+  if (b === undefined) {
+    if (breadths.size >= 50_000) breadths.clear()
+    b = flightSpecBreadth(spec)
+    breadths.set(spec, b)
+  }
+  return b
+}
+
 // ── compareCandidates ────────────────────────────────────────────────────────
 // Negative => a wins. The order of these tests IS the precedence rule.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -116,8 +133,8 @@ function compareCandidates(a: ResolutionCandidate, b: ResolutionCandidate): numb
   // true, so subtracting returned NaN whenever both deals were filed against
   // the whole airline -- the common case. A comparator returning NaN makes
   // Array.sort behave arbitrarily, and the recency tie-break below never ran.
-  const aBreadth = flightSpecBreadth(a.deal.flight_spec)
-  const bBreadth = flightSpecBreadth(b.deal.flight_spec)
+  const aBreadth = breadth(a.deal.flight_spec)
+  const bBreadth = breadth(b.deal.flight_spec)
   if (aBreadth !== bBreadth) return aBreadth < bBreadth ? -1 : 1
 
   // Most recently negotiated. Deals get renegotiated annually and the new one
@@ -130,7 +147,7 @@ function compareCandidates(a: ResolutionCandidate, b: ResolutionCandidate): numb
 function indistinguishable(a: ResolutionCandidate, b: ResolutionCandidate): boolean {
   return (
     KIND_RANK[a.kind] === KIND_RANK[b.kind] &&
-    flightSpecBreadth(a.deal.flight_spec) === flightSpecBreadth(b.deal.flight_spec) &&
+    breadth(a.deal.flight_spec) === breadth(b.deal.flight_spec) &&
     a.deal.created_at === b.deal.created_at
   )
 }
