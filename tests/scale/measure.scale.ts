@@ -8,6 +8,13 @@ import { GET as dealCoverageGet } from '@/app/api/tmc/deal-codes/effective/route
 import { GET as ruleCoverageGet } from '@/app/api/tmc/commercial-rules/effective/route'
 import { GET as fopsGet } from '@/app/api/tmc/forms-of-payment/route'
 import { GET as fopMappingGet } from '@/app/api/tmc/fop-assignments/route'
+import { GET as tmcEmployeesGet } from '@/app/api/tmc/employees/route'
+import { GET as tmcStatsGet } from '@/app/api/tmc/stats/route'
+import { GET as settingsUsersGet } from '@/app/api/settings/users/route'
+import { GET as myBookingsGet } from '@/app/api/bookings/route'
+import { GET as recentBookingsGet } from '@/app/api/bookings/recent/route'
+import { GET as myTripsGet } from '@/app/api/trips/route'
+import { GET as approvalsGet } from '@/app/api/approvals/route'
 import { stampDealCodes } from '@/app/lib/deal-codes/stampBooking'
 import { stampFop } from '@/app/lib/fop/stampFop'
 import { loadCommercialContext } from '@/app/lib/commercials/stampCommercials'
@@ -72,7 +79,10 @@ describe('scale', () => {
   beforeAll(async () => {
     a = await actors()
     const t0 = performance.now()
-    volumes = await seedScale(process.env.DATABASE_URL!, a.tmcAdmin.tmc_id!, sizesFromEnv())
+    // The corporate admin becomes the heavy person: a frequent traveller and
+    // a busy approver, measured as themselves.
+    volumes = await seedScale(process.env.DATABASE_URL!, a.tmcAdmin.tmc_id!, sizesFromEnv(),
+      { employeeId: a.corpAdmin.id, clientId: a.corpAdmin.client_id! })
     console.info(`[scale] seeded in ${Math.round((performance.now() - t0) / 1000)} s`)
     // The scale client most deal codes reach directly: a realistic heavy case.
     clientId = (await one<{ id: string }>(db, sql`
@@ -83,12 +93,13 @@ describe('scale', () => {
   it('measures', async () => {
     // The per-minute limits would refuse a measurement loop; this measures
     // the endpoint, not the limiter.
-    const admin = (url: string, handler: unknown) => async () => {
+    const admin = (url: string, handler: unknown, as: { id: string } = a.tmcAdmin) => async () => {
       await exec(db, sql`delete from rate_limits`)
-      const res = await call(handler, { as: a.tmcAdmin, url })
+      const res = await call(handler, { as, url })
       if (res.status !== 200) throw new Error(`${url} -> ${res.status} ${JSON.stringify(res.json).slice(0, 200)}`)
-      const json = res.json as { total?: number; items?: unknown[] }
-      return `total ${json.total ?? '?'}, ${JSON.stringify(json).length.toLocaleString('en-IN')} bytes`
+      const json = res.json as { total?: number; historyTotal?: number; pendingTotal?: number }
+      const total = json.total ?? (json.pendingTotal !== undefined ? `${json.pendingTotal} pending / ${json.historyTotal} decided` : '?')
+      return `total ${total}, ${JSON.stringify(json).length.toLocaleString('en-IN')} bytes`
     }
 
     // Budgets: a list page a person waits on, 300 ms; a booking-time lookup,
@@ -143,6 +154,20 @@ describe('scale', () => {
       if (failed.length) throw new Error(`${failed.length} of 20 failed: ${failed[0].status}`)
       return '20 x 200'
     })
+
+    // ── What grows every working day ──────────────────────────────────────
+    const heavy = a.corpAdmin
+    await measure('TMC: one large client employees (page 1)', 300, admin(`/api/tmc/employees?page=1&clientId=${a.corpAdmin.client_id}`, tmcEmployeesGet))
+    await measure('TMC dashboard stats', 300, admin('/api/tmc/stats', tmcStatsGet))
+    await measure('Corporate users list (page 1)', 300, admin('/api/settings/users?page=1', settingsUsersGet, heavy))
+    await measure('Corporate users, hierarchy (capped 1,000)', 300, admin('/api/settings/users?all=true', settingsUsersGet, heavy))
+    await measure('Heavy traveller: my trips (page 1)', 300, admin('/api/bookings?page=1', myBookingsGet, heavy))
+    await measure('Heavy traveller: my trips (page 40)', 300, admin('/api/bookings?page=40', myBookingsGet, heavy))
+    await measure('Heavy traveller: trips picker (page 1)', 300, admin('/api/trips?page=1', myTripsGet, heavy))
+    await measure('Heavy traveller: recent bookings', 300, admin('/api/bookings/recent?limit=50', recentBookingsGet, heavy))
+    await measure('Heavy approver: queue + history (page 1)', 300, admin('/api/approvals', approvalsGet, heavy))
+    await measure('Heavy approver: history page 300', 300, admin('/api/approvals?historyPage=300', approvalsGet, heavy))
+    await measure('Heavy approver: dashboard summary', 300, admin('/api/approvals?summary=1', approvalsGet, heavy))
 
     await measure('Forms of payment list (page 1)', 300, admin('/api/tmc/forms-of-payment?page=1', fopsGet))
     await measure('FOP mapping list (page 1)', 300, admin('/api/tmc/fop-assignments?page=1', fopMappingGet))

@@ -25,6 +25,14 @@ export interface ScaleSizes {
   fopAssignments: number
   rules: number
   ruleAssignments: number
+  employees: number
+  trips: number
+  bookings: number
+  heavyClientPeople: number
+  heavyTrips: number
+  heavyBookings: number
+  heavyPending: number
+  heavyDecided: number
 }
 
 const int = (name: string, fallback: number) => {
@@ -44,6 +52,14 @@ export function sizesFromEnv(): ScaleSizes {
     fopAssignments: int('SCALE_FOP_ASSIGNMENTS', 10_000),
     rules: int('SCALE_RULES', 2_000),
     ruleAssignments: int('SCALE_RULE_ASSIGNMENTS', 20_000),
+    employees: int('SCALE_EMPLOYEES', 50_000),
+    trips: int('SCALE_TRIPS', 15_000),
+    bookings: int('SCALE_BOOKINGS', 60_000),
+    heavyClientPeople: int('SCALE_HEAVY_CLIENT_PEOPLE', 5_000),
+    heavyTrips: int('SCALE_HEAVY_TRIPS', 500),
+    heavyBookings: int('SCALE_HEAVY_BOOKINGS', 2_000),
+    heavyPending: int('SCALE_HEAVY_PENDING', 5_000),
+    heavyDecided: int('SCALE_HEAVY_DECIDED', 20_000),
   }
 }
 
@@ -70,6 +86,15 @@ async function cloneRows(
     from (select * from ${table} where ${protoWhere} limit 1) p, generate_series(1, $1::int) g`, [count])
 }
 
+// A numbered lookup table (id, rn) the generators pick rows from by rn, once
+// per generated row -- so it is indexed on rn: unindexed, 60,000 bookings each
+// scanning 50,000 people is three billion row visits.
+async function lookup(c: pg.Client, name: string, select: string, params: unknown[] = []): Promise<void> {
+  await c.query(`create temp table ${name} as ${select}`, params)
+  await c.query(`create index on ${name} (rn)`)
+  await c.query(`analyze ${name}`)
+}
+
 // Spreads assignments over the three target kinds: 70% clients, 15% client
 // groups, 15% buckets. Owner and target come from two different hashes of g,
 // so pairs do not repeat; the odd duplicate (partial unique indexes) is skipped.
@@ -86,7 +111,13 @@ async function assign(c: pg.Client, table: string, ownerColumn: string, owners: 
     on conflict do nothing`, [count])
 }
 
-export async function seedScale(connectionString: string, tmcId: string, n: ScaleSizes): Promise<Record<string, number>> {
+// The heavy person: an employee of a real client of the TMC, who becomes a
+// frequent traveller and a busy approver.
+export interface HeavyPerson { employeeId: string; clientId: string }
+
+export async function seedScale(
+  connectionString: string, tmcId: string, n: ScaleSizes, h: HeavyPerson
+): Promise<Record<string, number>> {
   const c = new pg.Client({ connectionString })
   await c.connect()
   try {
@@ -96,7 +127,7 @@ export async function seedScale(connectionString: string, tmcId: string, n: Scal
     await c.query(`
       insert into client_groups (tmc_id, name)
       select current_setting('scale.tmc')::uuid, 'Scale group ' || g from generate_series(1, $1::int) g`, [n.groups])
-    await c.query(`create temp table s_groups as
+    await lookup(c, 's_groups', `
       select id, row_number() over (order by id) rn from client_groups where ${tmc} and name like 'Scale group %'`)
 
     await cloneRows(c, 'clients', tmc, n.clients, {
@@ -109,13 +140,13 @@ export async function seedScale(connectionString: string, tmcId: string, n: Scal
       markup_active: 'true', discount_active: 'true', processing_fee_active: 'true',
       agency_fop_allowed: 'true', corporate_fop_allowed: 'true',
     })
-    await c.query(`create temp table s_clients as
+    await lookup(c, 's_clients', `
       select id, row_number() over (order by id) rn from clients where ${tmc} and name like 'Scale client %'`)
 
     await c.query(`
       insert into buckets (tmc_id, name)
       select current_setting('scale.tmc')::uuid, 'Scale bucket ' || g from generate_series(1, $1::int) g`, [n.buckets])
-    await c.query(`create temp table s_buckets as
+    await lookup(c, 's_buckets', `
       select id, row_number() over (order by id) rn from buckets where ${tmc} and name like 'Scale bucket %'`)
     // Every scale client in two buckets.
     await c.query(`
@@ -127,7 +158,7 @@ export async function seedScale(connectionString: string, tmcId: string, n: Scal
     await cloneRows(c, 'deal_codes', tmc, n.dealCodes, {
       code: `'SC' || g`, created_at: 'now()', updated_at: 'now()', created_by: 'null',
     })
-    await c.query(`create temp table s_deals as
+    await lookup(c, 's_deals', `
       select id, row_number() over (order by id) rn from deal_codes where ${tmc} and code like 'SC%'`)
     await assign(c, 'deal_code_assignments', 'deal_code_id', 's_deals', n.dealAssignments)
 
@@ -135,7 +166,7 @@ export async function seedScale(connectionString: string, tmcId: string, n: Scal
       label: `'Scale card ' || g`, fop_code: `'SC' || g`, is_default: 'false',
       created_at: 'now()', updated_at: 'now()', created_by: 'null',
     })
-    await c.query(`create temp table s_fops as
+    await lookup(c, 's_fops', `
       select id, row_number() over (order by id) rn from forms_of_payment where ${tmc} and fop_code like 'SC%'`)
     await assign(c, 'fop_assignments', 'fop_id', 's_fops', n.fopAssignments)
 
@@ -147,16 +178,85 @@ export async function seedScale(connectionString: string, tmcId: string, n: Scal
         created_at: 'now()', updated_at: 'now()', created_by: 'null', notes: `'Scale rule ' || g`,
       })
     }
-    await c.query(`create temp table s_rules as
+    await lookup(c, 's_rules', `
       select id, row_number() over (order by id) rn from commercial_rules where ${tmc} and notes like 'Scale rule %'`)
     await assign(c, 'commercial_rule_assignments', 'rule_id', 's_rules', n.ruleAssignments)
+
+
+    // ── What grows every working day ────────────────────────────────────────
+    // People, their trips, bookings and approvals: spread over the scale
+    // clients for volume, plus one HEAVY person in a real client (the
+    // measuring actor) -- a frequent traveller and a busy approver -- whose
+    // own lists are the ones that would slow down first.
+    // As session settings, like scale.tmc: values never go into the SQL text.
+    await c.query(`select set_config('scale.heavy', $1, false), set_config('scale.heavy_client', $2, false)`, [h.employeeId, h.clientId])
+    // The first heavyClientPeople join the heavy person's own company -- a
+    // large client, past the 1,000 the reporting tree loads -- the rest are
+    // spread over the scale clients.
+    await cloneRows(c, 'employees', `role = 'employee' and client_id is not null`, n.employees, {
+      client_id: `case when g <= ${n.heavyClientPeople} then current_setting('scale.heavy_client')::uuid
+                  else (select id from s_clients where rn = 1 + g % ${n.clients}) end`,
+      email: `'scale.person.' || g || '@example.test'`, full_name: `'Scale person ' || g`,
+      role: `'employee'`, status: `'active'`, auth_user_id: 'null', manager_id: 'null', band_id: 'null',
+      branch_id: 'null', client_group_id: 'null', invited_by: 'null', tmc_id: 'null',
+      top_of_hierarchy: 'false', created_at: 'now()',
+    })
+    await lookup(c, 's_people', `
+      select e.id, e.client_id, row_number() over (order by e.id) rn
+      from employees e join s_clients s on s.id = e.client_id`)
+
+    await c.query(`
+      insert into trips (client_id, created_by, name, status, created_at, updated_at)
+      select p.client_id, p.id, 'Scale trip ' || g, 'open', now() - (g % 365) * interval '1 day', now() - (g % 365) * interval '1 day'
+      from generate_series(1, $1::int) g
+      join s_people p on p.rn = 1 + abs(hashint8(g::bigint)) % (select count(*) from s_people)`, [n.trips])
+
+    // Bookings copy a real one (realistic itinerary and fare JSON).
+    await cloneRows(c, 'bookings', 'true', n.bookings, {
+      employee_id: `(select id from s_people where rn = 1 + abs(hashint8(g::bigint)) % (select count(*) from s_people))`,
+      client_id: `(select client_id from s_people where rn = 1 + abs(hashint8(g::bigint)) % (select count(*) from s_people))`,
+      trip_id: 'null', share_token: 'null', requested_for: 'null',
+      created_at: `now() - (g % 365) * interval '1 day'`,
+    })
+    await c.query(`
+      insert into approvals (client_id, booking_id, approver_id, tier, status, actioned_at, created_at)
+      select b.client_id, b.id, b.employee_id, 1,
+        case when g % 10 = 0 then 'pending' when g % 7 = 0 then 'rejected' else 'approved' end,
+        case when g % 10 = 0 then null else b.created_at + interval '2 hours' end, b.created_at
+      from (select id, client_id, employee_id, created_at, row_number() over (order by id) g
+              from bookings where employee_id in (select id from s_people)) b`)
+
+    // The heavy person: their trips, bookings (three in four inside a trip)
+    // and an approval queue and history to work through.
+    const heavy = { id: h.employeeId, client: h.clientId }
+    await c.query(`
+      insert into trips (client_id, created_by, name, status, created_at, updated_at)
+      select $1, $2, 'Heavy trip ' || g, 'open', now() - g * interval '12 hours', now() - g * interval '12 hours'
+      from generate_series(1, $3::int) g`, [heavy.client, heavy.id, n.heavyTrips])
+    await lookup(c, 's_heavy_trips', `
+      select id, row_number() over (order by id) rn from trips where created_by = $1 and name like 'Heavy trip %'`, [heavy.id])
+    await cloneRows(c, 'bookings', 'true', n.heavyBookings, {
+      employee_id: `current_setting('scale.heavy')::uuid`, client_id: `current_setting('scale.heavy_client')::uuid`,
+      trip_id: `case when g % 4 = 0 then null else (select id from s_heavy_trips where rn = 1 + g % ${n.heavyTrips}) end`,
+      share_token: 'null', requested_for: 'null', created_at: `now() - g * interval '3 hours'`,
+    })
+    await lookup(c, 's_heavy_bookings', `
+      select id, row_number() over (order by id) rn from bookings where employee_id = $1`, [heavy.id])
+    await c.query(`
+      insert into approvals (client_id, booking_id, approver_id, tier, status, actioned_at, created_at)
+      select $1, (select id from s_heavy_bookings where rn = 1 + g % (select count(*) from s_heavy_bookings)), $2, 10 + g % 5,
+        case when g <= $3 then 'pending' when g % 3 = 0 then 'rejected' else 'approved' end,
+        case when g <= $3 then null else now() - (g % 180) * interval '1 day' end,
+        now() - (g % 200) * interval '1 day'
+      from generate_series(1, $3::int + $4::int) g`, [heavy.client, heavy.id, n.heavyPending, n.heavyDecided])
 
     await c.query('analyze')
 
     const counts: Record<string, number> = {}
     for (const t of ['clients', 'client_groups', 'buckets', 'bucket_clients', 'deal_codes', 'deal_code_assignments',
-      'forms_of_payment', 'fop_assignments', 'commercial_rules', 'commercial_rule_assignments']) {
-      const where = t === 'bucket_clients' ? '' : ` where ${tmc}`
+      'forms_of_payment', 'fop_assignments', 'commercial_rules', 'commercial_rule_assignments',
+      'employees', 'trips', 'bookings', 'approvals']) {
+      const where = ['bucket_clients', 'employees', 'trips', 'bookings', 'approvals'].includes(t) ? '' : ` where ${tmc}`
       counts[t] = (await c.query(`select count(*)::int n from ${t}${where}`)).rows[0].n
     }
     return counts
