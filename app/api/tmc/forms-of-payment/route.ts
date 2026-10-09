@@ -302,6 +302,15 @@ export const POST = route(async (req: NextRequest) => {
 
   const raw = (await req.json()) as CreateBody
 
+  // validateFop checks only the fields present (PATCH sends a subset); a new
+  // one needs a label and a payer. Missing, they crashed or hit NOT NULL as a 500.
+  if (typeof raw.label !== 'string' || !raw.label.trim()) {
+    return Response.json({ error: 'Give this a label — it is what a counsellor picks it by.' }, { status: 400 })
+  }
+  if (!raw.payer) {
+    return Response.json({ error: 'Choose who pays.' }, { status: 400 })
+  }
+
   // fop_type is DERIVED from the payment type rather than picked separately.
   // Two fields answering "does this need card details" is exactly how they end
   // up disagreeing — a CC payment type on a cash FOP. The payment type's

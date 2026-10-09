@@ -59,15 +59,16 @@ export const POST = route(async (req: NextRequest) => {
   }
 
   const body: CreateTripBody = await req.json()
-  const name = body.name?.trim()
+  const name = typeof body.name === 'string' ? body.name.trim() : ''
 
   if (!name) {
     return Response.json({ error: 'Trip name is required' }, { status: 400 })
   }
 
   // A trip belongs to a client; TMC staff have none and cannot hold one.
+  // Refused, not a server error: nothing went wrong but the request.
   if (!employee.client_id) {
-    return Response.json({ error: 'Could not create trip' }, { status: 500 })
+    return Response.json({ error: "Trips belong to a company's travellers; TMC staff cannot hold one" }, { status: 403 })
   }
 
   const trip = await trips.create(db, { client_id: employee.client_id, created_by: employee.id, name })

@@ -57,6 +57,12 @@ export function validateDealCode(
   allowedTypes: string[],
   categoryCode: string
 ): string | null {
+  // A field that is present must be text: a number here crashed .trim() as a
+  // 500 instead of saying what was wrong.
+  for (const [field, label] of [['airline_code', 'Airline'], ['code', 'Code'], ['code_type', 'Code type']] as const) {
+    if (body[field] !== undefined && typeof body[field] !== 'string') return `${label} must be text`
+  }
+
   if (body.airline_code !== undefined) {
     // A deal code MUST name an airline — unlike a form of payment, where blank
     // means "all airlines".
@@ -188,6 +194,14 @@ export const POST = route(async (req: NextRequest) => {
   const category = await loadCategory(auth.tmcId, body.category_id)
   if (!category) {
     return Response.json({ error: 'Airline category not found for this TMC' }, { status: 404 })
+  }
+
+  // validateDealCode checks only the fields present (PATCH sends a subset);
+  // a new deal needs all three.
+  for (const [field, label] of [['airline_code', 'Airline'], ['code', 'Code'], ['code_type', 'Code type']] as const) {
+    if (body[field] === undefined || body[field] === null) {
+      return Response.json({ error: `${label} is required` }, { status: 400 })
+    }
   }
 
   const validationError = validateDealCode(body, category.allowedTypes, category.code)
