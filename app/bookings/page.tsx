@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useCanSelfBook } from '@/app/hooks/useCanSelfBook'
+import Pagination from '@/app/components/Pagination'
 import { formatTime, formatDayLabel } from '@/app/lib/book/types'
 
 // ── /bookings — "My trips" ────────────────────────────────────────────────────
@@ -177,18 +178,24 @@ export default function BookingsPage() {
   const canSelfBook = useCanSelfBook()
   const [trips, setTrips] = useState<TripGroup[] | null>(null)
   const [ungrouped, setUngrouped] = useState<BookingSummary[]>([])
+  // Paged by trip, ten at a time; the server keeps a trip's flights together.
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
+  const [pageSize, setPageSize] = useState(10)
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [completingId, setCompletingId] = useState<string | null>(null)
   const [completeError, setCompleteError] = useState('')
 
   useEffect(() => {
-    loadBookings()
-  }, [])
+    loadBookings(page)
+  }, [page])
 
-  async function loadBookings() {
+  async function loadBookings(p: number) {
     setError('')
+    setLoading(true)
     try {
-      const res = await fetch('/api/bookings')
+      const res = await fetch(`/api/bookings?page=${p}`)
       const data = await res.json()
       if (!res.ok) {
         setError(data.error || 'Could not load your trips.')
@@ -196,8 +203,12 @@ export default function BookingsPage() {
       }
       setTrips(data.trips)
       setUngrouped(data.ungroupedBookings ?? [])
+      setTotal(data.total ?? 0)
+      setPageSize(data.pageSize ?? 10)
     } catch {
       setError('Something went wrong loading your trips.')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -279,6 +290,11 @@ export default function BookingsPage() {
             ))}
           </div>
         )}
+
+        <Pagination
+          page={page} pageSize={pageSize} total={total}
+          onPageChange={setPage} busy={loading} noun="trips"
+        />
 
         {ungrouped.length > 0 && (
           <div style={s.tripSection}>

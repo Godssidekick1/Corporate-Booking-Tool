@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Pagination from '@/app/components/Pagination'
 import { formatTime, formatDayLabel } from '@/app/lib/book/types'
 
 // ── /approvals ────────────────────────────────────────────────────────────
@@ -77,6 +78,14 @@ export default function ApprovalsPage() {
   const [pending, setPending] = useState<ApprovalItem[]>([])
   const [history, setHistory] = useState<ApprovalItem[]>([])
   const [tab, setTab] = useState<'pending' | 'history'>('pending')
+  // Each tab pages on its own; totals and the urgent count come from the
+  // server, since a page holds only ten.
+  const [pendingPage, setPendingPage] = useState(1)
+  const [historyPage, setHistoryPage] = useState(1)
+  const [pendingTotal, setPendingTotal] = useState(0)
+  const [historyTotal, setHistoryTotal] = useState(0)
+  const [urgentTotal, setUrgentTotal] = useState(0)
+  const [pageSize, setPageSize] = useState(10)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [actingOn, setActingOn] = useState<string | null>(null)
@@ -93,7 +102,8 @@ export default function ApprovalsPage() {
 
   useEffect(() => {
     load()
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load reads the page numbers it depends on
+  }, [pendingPage, historyPage])
 
   useEffect(() => {
     function handlePopState() {
@@ -109,7 +119,7 @@ export default function ApprovalsPage() {
     setLoading(true)
     setError('')
     try {
-      const res = await fetch('/api/approvals')
+      const res = await fetch(`/api/approvals?pendingPage=${pendingPage}&historyPage=${historyPage}`)
       const data = await res.json()
       if (!data.ok) {
         setError(data.error || 'Could not load approvals.')
@@ -117,6 +127,10 @@ export default function ApprovalsPage() {
       }
       setPending(data.pending)
       setHistory(data.history)
+      setPendingTotal(data.pendingTotal ?? data.pending.length)
+      setHistoryTotal(data.historyTotal ?? data.history.length)
+      setUrgentTotal(data.urgentCount ?? 0)
+      setPageSize(data.pageSize ?? 10)
     } catch {
       setError('Something went wrong loading approvals.')
     } finally {
@@ -174,7 +188,7 @@ export default function ApprovalsPage() {
   }
 
   const list = tab === 'pending' ? pending : history
-  const urgentCount = pending.filter(item => hoursPending(item.createdAt) >= URGENT_HOURS).length
+  const urgentCount = urgentTotal
 
   return (
     <div style={s.page}>
@@ -204,7 +218,7 @@ export default function ApprovalsPage() {
 
       <div style={s.tabs}>
         <button type="button" onClick={() => setTab('pending')} style={{ ...s.tab, ...(tab === 'pending' ? s.tabActive : {}) }}>
-          Pending {pending.length > 0 && <span style={s.tabBadge}>{pending.length}</span>}
+          Pending {pendingTotal > 0 && <span style={s.tabBadge}>{pendingTotal}</span>}
         </button>
         <button type="button" onClick={() => setTab('history')} style={{ ...s.tab, ...(tab === 'history' ? s.tabActive : {}) }}>
           History
@@ -322,6 +336,10 @@ export default function ApprovalsPage() {
           })}
         </div>
       )}
+
+      {tab === 'pending'
+        ? <Pagination page={pendingPage} pageSize={pageSize} total={pendingTotal} onPageChange={setPendingPage} busy={loading} noun="approvals" />
+        : <Pagination page={historyPage} pageSize={pageSize} total={historyTotal} onPageChange={setHistoryPage} busy={loading} noun="decisions" />}
     </div>
   )
 }

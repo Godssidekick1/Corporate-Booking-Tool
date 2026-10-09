@@ -5,6 +5,7 @@ import { db } from '@/app/lib/db'
 import * as employees from '@/app/lib/repositories/employees'
 import * as trips from '@/app/lib/repositories/trips'
 import { route } from '@/app/lib/http/handler'
+import { parsePageParams, pagedResponse } from '@/app/lib/pagination'
 
 // ── /api/trips ──────────────────────────────────────────────────────────────
 // A trip is a named container an employee creates to group everything for
@@ -23,7 +24,7 @@ interface CreateTripBody {
   name: string
 }
 
-export const GET = route(async () => {
+export const GET = route(async (req: NextRequest) => {
   const user = await requireUser()
 
   const employee = await employees.traveller(db, user.id)
@@ -32,7 +33,14 @@ export const GET = route(async () => {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
   }
 
-  return Response.json({ ok: true, trips: await trips.mine(db, employee.client_id, employee.id) })
+  // One page, most recently touched first.
+  const params = parsePageParams(req.nextUrl.searchParams)
+  const { rows, total } = await trips.mine(db, employee.client_id, employee.id, params)
+  const paging = pagedResponse(rows, total, params)
+  return Response.json({
+    ok: true, trips: rows,
+    page: paging.page, pageSize: paging.pageSize, total: paging.total, totalPages: paging.totalPages,
+  })
 })
 
 export const POST = route(async (req: NextRequest) => {

@@ -59,12 +59,32 @@ const SELL_TOTAL = sql`coalesce(sell_total, total_cost)`
 export type TravellerBookingSummary = Pick<Row<'bookings'>,
   'id' | 'status' | 'pnr' | 'total_cost' | 'itinerary' | 'traveler_snapshot' | 'fare_breakdown' | 'trip_id' | 'created_at'>
 
-export async function forTraveller(db: Queryable, employeeId: string, limit: number): Promise<TravellerBookingSummary[]> {
+const TRAVELLER_SUMMARY = sql`
+  id, status, pnr, ${SELL_TOTAL} as total_cost, itinerary, traveler_snapshot, fare_breakdown,
+  trip_id, created_at`
+
+// The traveller's bookings in these trips (one page of their trips).
+export async function forTravellerInTrips(
+  db: Queryable, employeeId: string, tripIds: readonly string[]
+): Promise<TravellerBookingSummary[]> {
+  if (tripIds.length === 0) return []
   return many<TravellerBookingSummary>(db, sql`
-    select id, status, pnr, ${SELL_TOTAL} as total_cost, itinerary, traveler_snapshot, fare_breakdown,
-           trip_id, created_at
-    from bookings where employee_id = ${employeeId}
-    order by created_at desc, id
+    select ${TRAVELLER_SUMMARY} from bookings
+    where employee_id = ${employeeId} and trip_id = any(${[...tripIds]})
+    order by created_at desc, id`)
+}
+
+// Their bookings that sit under no trip of their own -- none at all, or a
+// trip someone else created or deleted -- newest first.
+export async function forTravellerOutsideTrips(
+  db: Queryable, employeeId: string, limit: number
+): Promise<TravellerBookingSummary[]> {
+  return many<TravellerBookingSummary>(db, sql`
+    select ${TRAVELLER_SUMMARY} from bookings b
+    where b.employee_id = ${employeeId}
+      and not exists (select 1 from trips t
+                       where t.id = b.trip_id and t.created_by = ${employeeId} and t.status <> 'deleted')
+    order by b.created_at desc, b.id
     limit ${limit}`)
 }
 

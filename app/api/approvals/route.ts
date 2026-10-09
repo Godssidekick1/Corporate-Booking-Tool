@@ -6,6 +6,7 @@ import * as approvals from '@/app/lib/repositories/approvals'
 import * as bookings from '@/app/lib/repositories/bookings'
 import * as employees from '@/app/lib/repositories/employees'
 import { route } from '@/app/lib/http/handler'
+import { parsePageParams } from '@/app/lib/pagination'
 
 // ── GET /api/approvals ───────────────────────────────────────────────────
 // Returns everything the logged-in employee needs to act on their approval
@@ -36,18 +37,33 @@ export const GET = route(async (req: NextRequest) => {
 
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
 
-  const [pending, history] = await Promise.all([
+  // Both lists are paged, each with its own page number, so the tabs page
+  // independently. The dashboard summary needs counts and the oldest three,
+  // not the queue: those are counted in SQL.
+  const sp = req.nextUrl.searchParams
+  const pendingParams = parsePageParams(new URLSearchParams({ page: sp.get('pendingPage') ?? '1' }))
+  const historyParams = parsePageParams(new URLSearchParams({ page: sp.get('historyPage') ?? '1' }))
+  const NONE = { rows: [] as approvals.QueueRow[], total: 0 }
+  // Waiting ten hours or more: flagged on the dashboard and the queue alike.
+  const URGENT_MS = 10 * 60 * 60 * 1000
+  const urgentBefore = new Date(Date.now() - URGENT_MS).toISOString()
+
+  const [pendingPage, historyPage] = await Promise.all([
     // Oldest-waiting first — the ones that have sat longest surface at the top.
-    approvals.pendingFor(db, caller.id),
+    approvals.pendingFor(db, caller.id, summaryOnly ? { from: 0, to: 2 } : pendingParams),
     // History is only needed for the full page, not the dashboard summary —
     // skip the query entirely rather than fetch and discard it.
-    summaryOnly ? Promise.resolve([]) : approvals.decidedSince(db, caller.id, thirtyDaysAgo),
+    summaryOnly ? Promise.resolve(NONE) : approvals.decidedSince(db, caller.id, thirtyDaysAgo, historyParams),
   ])
+  const pending = pendingPage.rows
+  const history = historyPage.rows
 
   const allApprovals = [...pending, ...history]
 
   if (allApprovals.length === 0) {
-    return Response.json(summaryOnly ? { ok: true, pendingCount: 0, oldestNames: [] } : { ok: true, pending: [], history: [] })
+    return Response.json(summaryOnly
+      ? { ok: true, pendingCount: 0, oldestNames: [] }
+      : { ok: true, pending: [], history: [], pendingTotal: 0, historyTotal: 0, urgentCount: 0, pageSize: pendingParams.pageSize })
   }
 
   const summaries = await bookings.approvalSummaries(db, Array.from(new Set(allApprovals.map(a => a.booking_id))))
@@ -70,15 +86,12 @@ export const GET = route(async (req: NextRequest) => {
     // Same 10-hour urgency threshold as the full approvals page — surfaced
     // here too so the dashboard summary can flag it before the approver
     // even opens the queue.
-    const URGENT_MS = 10 * 60 * 60 * 1000
-    const urgentCount = pending
-      .filter(a => Date.now() - new Date(a.created_at).getTime() >= URGENT_MS)
-      .length
+    const counts = await approvals.pendingCounts(db, caller.id, urgentBefore)
 
     return Response.json({
       ok: true,
-      pendingCount: pending.length,
-      urgentCount,
+      pendingCount: counts.pending,
+      urgentCount: counts.urgent,
       oldestNames,
     })
   }
@@ -117,5 +130,9 @@ export const GET = route(async (req: NextRequest) => {
     ok: true,
     pending: pending.map(enrich),
     history: history.map(enrich),
+    pendingTotal: pendingPage.total,
+    urgentCount: (await approvals.pendingCounts(db, caller.id, urgentBefore)).urgent,
+    historyTotal: historyPage.total,
+    pageSize: pendingParams.pageSize,
   })
 })

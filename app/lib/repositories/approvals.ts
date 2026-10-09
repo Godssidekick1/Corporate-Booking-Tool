@@ -1,5 +1,6 @@
 import { sql, empty, json, join, many, maybeOne, one, exec, type Queryable, type Sql } from '@/app/lib/db/sql'
-import { assignments } from '@/app/lib/db/fragments'
+import { assignments, page } from '@/app/lib/db/fragments'
+import type { PageParams } from '@/app/lib/pagination'
 import type { Row } from '@/app/lib/db/types.generated'
 import type { TemplateTier } from '@/app/lib/approval-engine/linkedApprovalTemplates'
 
@@ -370,16 +371,38 @@ export type QueueRow = Pick<Row<'approvals'>,
 
 const QUEUE = sql`id, booking_id, tier, status, reason, decision_note, verdict, actioned_at, created_at`
 
+// Both lists are paged: an approver for a large company (finance, an admin)
+// can have thousands of decisions in a month.
+
 // Oldest first: the ones that have waited longest surface at the top.
-export async function pendingFor(db: Queryable, approverId: string): Promise<QueueRow[]> {
-  return many<QueueRow>(db, sql`
-    select ${QUEUE} from approvals where approver_id = ${approverId} and status = 'pending'
-    order by created_at, id`)
+export async function pendingFor(
+  db: Queryable, approverId: string, params: Pick<PageParams, 'from' | 'to'>
+): Promise<{ rows: QueueRow[]; total: number }> {
+  const where = sql`approver_id = ${approverId} and status = 'pending'`
+  const [rows, count] = await Promise.all([
+    many<QueueRow>(db, sql`select ${QUEUE} from approvals where ${where} order by created_at, id ${page(params)}`),
+    one<{ n: number }>(db, sql`select count(*)::int as n from approvals where ${where}`),
+  ])
+  return { rows, total: count.n }
 }
 
-export async function decidedSince(db: Queryable, approverId: string, since: string): Promise<QueueRow[]> {
-  return many<QueueRow>(db, sql`
-    select ${QUEUE} from approvals
-    where approver_id = ${approverId} and status in ('approved', 'rejected') and actioned_at >= ${since}
-    order by actioned_at desc, id`)
+// How many are waiting, and how many have waited since before `urgentBefore`:
+// the dashboard's summary, counted rather than fetched.
+export async function pendingCounts(
+  db: Queryable, approverId: string, urgentBefore: string
+): Promise<{ pending: number; urgent: number }> {
+  return one(db, sql`
+    select count(*)::int as pending, count(*) filter (where created_at <= ${urgentBefore})::int as urgent
+    from approvals where approver_id = ${approverId} and status = 'pending'`)
+}
+
+export async function decidedSince(
+  db: Queryable, approverId: string, since: string, params: Pick<PageParams, 'from' | 'to'>
+): Promise<{ rows: QueueRow[]; total: number }> {
+  const where = sql`approver_id = ${approverId} and status in ('approved', 'rejected') and actioned_at >= ${since}`
+  const [rows, count] = await Promise.all([
+    many<QueueRow>(db, sql`select ${QUEUE} from approvals where ${where} order by actioned_at desc, id ${page(params)}`),
+    one<{ n: number }>(db, sql`select count(*)::int as n from approvals where ${where}`),
+  ])
+  return { rows, total: count.n }
 }

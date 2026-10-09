@@ -1,4 +1,6 @@
 import { sql, many, maybeOne, one, type Queryable } from '@/app/lib/db/sql'
+import { page } from '@/app/lib/db/fragments'
+import type { PageParams } from '@/app/lib/pagination'
 import type { Row } from '@/app/lib/db/types.generated'
 
 // ── Trips ────────────────────────────────────────────────────────────────────
@@ -11,22 +13,37 @@ import type { Row } from '@/app/lib/db/types.generated'
 export type TripListRow = Pick<Row<'trips'>, 'id' | 'name' | 'status' | 'travel_date' | 'created_at' | 'updated_at'>
 
 // Deleted trips are hidden; deletion is a status, never a row removal.
-export async function mine(db: Queryable, clientId: string | null, createdBy: string): Promise<TripListRow[]> {
-  return many<TripListRow>(db, sql`
-    select id, name, status, travel_date, created_at, updated_at from trips
-    where client_id = ${clientId} and created_by = ${createdBy} and status <> 'deleted'
-    order by updated_at desc, id`)
+// One page, most recently touched first. Paged: a frequent traveller's trips
+// accumulate for years.
+export async function mine(
+  db: Queryable, clientId: string | null, createdBy: string, params: PageParams
+): Promise<{ rows: TripListRow[]; total: number }> {
+  const where = sql`client_id = ${clientId} and created_by = ${createdBy} and status <> 'deleted'`
+  const [rows, count] = await Promise.all([
+    many<TripListRow>(db, sql`
+      select id, name, status, travel_date, created_at, updated_at from trips
+      where ${where} order by updated_at desc, id ${page(params)}`),
+    one<{ n: number }>(db, sql`select count(*)::int as n from trips where ${where}`),
+  ])
+  return { rows, total: count.n }
 }
 
 export type OwnedTrip = Pick<Row<'trips'>, 'id' | 'name' | 'status' | 'travel_date' | 'created_at'>
 
 // Every live trip a person created, across clients -- what /api/bookings
 // groups their bookings under.
-export async function ownedBy(db: Queryable, createdBy: string): Promise<OwnedTrip[]> {
-  return many<OwnedTrip>(db, sql`
-    select id, name, status, travel_date, created_at from trips
-    where created_by = ${createdBy} and status <> 'deleted'
-    order by created_at desc, id`)
+// One page of them, newest first.
+export async function ownedBy(
+  db: Queryable, createdBy: string, params: PageParams
+): Promise<{ rows: OwnedTrip[]; total: number }> {
+  const where = sql`created_by = ${createdBy} and status <> 'deleted'`
+  const [rows, count] = await Promise.all([
+    many<OwnedTrip>(db, sql`
+      select id, name, status, travel_date, created_at from trips
+      where ${where} order by created_at desc, id ${page(params)}`),
+    one<{ n: number }>(db, sql`select count(*)::int as n from trips where ${where}`),
+  ])
+  return { rows, total: count.n }
 }
 
 export async function create(

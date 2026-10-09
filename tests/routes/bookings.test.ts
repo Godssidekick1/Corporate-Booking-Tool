@@ -106,11 +106,35 @@ d('traveller bookings and trips', () => {
     expect(res.json).toMatchSnapshot()
   })
 
-  it('bookings: the limit is honoured', async () => {
-    const res = await call(bookingsGet, { as: admin, url: '/api/bookings?limit=2' })
-    const body = res.json as { trips: { bookings: unknown[] }[]; ungroupedBookings: unknown[] }
-    const count = body.trips.reduce((n, t) => n + t.bookings.length, 0) + body.ungroupedBookings.length
-    expect(count).toBe(2)
+  // Paged by trip: a page is ten of the traveller's trips with every one of
+  // their bookings in them. `limit` caps only the bookings under no trip of
+  // theirs, which are listed on the first page.
+  it('bookings: paged by trip, never splitting one; the limit caps bookings outside trips', async () => {
+    type Body = { trips: { trip: { id: string }; bookings: { id: string }[] }[]; ungroupedBookings: unknown[]; total: number; totalPages: number }
+    // Twelve empty trips, so there is a second page.
+    for (let i = 0; i < 12; i++) {
+      await exec(db, sql`insert into trips (client_id, created_by, name, status) values (${a.corpAdmin.client_id}, ${admin.id}, ${'Paging trip ' + i}, 'open')`)
+    }
+    const p1 = (await call(bookingsGet, { as: admin, url: '/api/bookings' })).json as Body
+    const p2 = (await call(bookingsGet, { as: admin, url: '/api/bookings?page=2' })).json as Body
+    expect(p1.trips).toHaveLength(10)
+    expect(p2.total).toBe(p1.total)
+    expect(p1.trips.length + p2.trips.length).toBe(Math.min(p1.total, 20))
+    const onBoth = p1.trips.filter(t => p2.trips.some(u => u.trip.id === t.trip.id))
+    expect(onBoth).toEqual([])
+    expect(p2.ungroupedBookings).toEqual([])                          // first page only
+
+    // Every booking of a trip on a page is on that page.
+    const inTrips = await many<{ trip_id: string; n: number }>(db, sql`
+      select trip_id, count(*)::int as n from bookings
+      where employee_id = ${admin.id} and trip_id = any(${p1.trips.map(t => t.trip.id)}) group by trip_id`)
+    for (const { trip_id, n } of inTrips) {
+      expect(p1.trips.find(t => t.trip.id === trip_id)!.bookings).toHaveLength(n)
+    }
+
+    const limited = (await call(bookingsGet, { as: admin, url: '/api/bookings?limit=1' })).json as Body
+    expect(limited.ungroupedBookings.length).toBeLessThanOrEqual(1)
+    await exec(db, sql`delete from trips where created_by = ${admin.id} and name like 'Paging trip %'`)
   })
 
   it('recent: an admin sees the client, an employee only themselves', async () => {

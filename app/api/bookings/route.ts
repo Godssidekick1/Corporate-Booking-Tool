@@ -6,6 +6,7 @@ import * as employees from '@/app/lib/repositories/employees'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
 import * as trips from '@/app/lib/repositories/trips'
 import { route } from '@/app/lib/http/handler'
+import { parsePageParams, pagedResponse } from '@/app/lib/pagination'
 
 // ── GET /api/bookings ─────────────────────────────────────────────────────────
 // Lists bookings for the logged-in employee — this is the data behind
@@ -29,25 +30,28 @@ export const GET = route(async (req: NextRequest) => {
   }
 
   const { searchParams } = new URL(req.url)
+  const params = parsePageParams(searchParams)
+  // Bookings under no trip of their own, newest first, on the first page only.
   const limitParam = Number(searchParams.get('limit'))
   const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 100) : 50
 
   // ── The one number a traveller sees ────────────────────────────────────────
   // total_cost arrives already set to what the company is invoiced -- the
   // repository never selects the airline figure for a traveller (see
-  // bookings.forTraveller). The itinerary and fare breakdown are projected
-  // here: the breakdown's per-passenger split is the airline's, and would
-  // expose a markup. See app/lib/book/travellerView.
+  // bookings.forTravellerInTrips). The itinerary and fare breakdown are
+  // projected here: the breakdown's per-passenger split is the airline's, and
+  // would expose a markup. See app/lib/book/travellerView.
   //
-  // Every trip that owns at least one of these bookings, plus any trip the
-  // employee has with zero bookings yet (a trip they created but haven't
-  // started booking flights for — still worth showing so it doesn't look
-  // like it vanished). Scoped to this employee's own trips, same ownership
-  // model as /api/trips.
-  const [rows, ownedTrips] = await Promise.all([
-    bookingsRepo.forTraveller(db, employee.id, limit),
-    trips.ownedBy(db, employee.id),
+  // One page of the employee's own trips -- including any with zero bookings
+  // yet (a trip they created but haven't started booking flights for, still
+  // worth showing so it doesn't look like it vanished) -- and every booking
+  // of theirs in those trips.
+  const ownedTrips = await trips.ownedBy(db, employee.id, params)
+  const [inTrips, outside] = await Promise.all([
+    bookingsRepo.forTravellerInTrips(db, employee.id, ownedTrips.rows.map(t => t.id)),
+    params.page === 1 ? bookingsRepo.forTravellerOutsideTrips(db, employee.id, limit) : Promise.resolve([]),
   ])
+  const rows = [...inTrips, ...outside]
 
   const safe = rows.map(row => ({
     ...row,
@@ -56,7 +60,7 @@ export const GET = route(async (req: NextRequest) => {
   }))
   type SafeBooking = typeof safe[number]
 
-  const tripById = new Map(ownedTrips.map(t => [t.id, t]))
+  const tripById = new Map(ownedTrips.rows.map(t => [t.id, t]))
 
   // Bookings without a trip_id (booked before trip-linking existed, or any
   // future path that still allows it) are grouped under a null "trip" —
@@ -77,12 +81,23 @@ export const GET = route(async (req: NextRequest) => {
   // Trips with zero bookings still show up, sorted alongside the ones that
   // have bookings (most-recently-created trip first, matching /api/trips'
   // own ordering) — a newly created empty trip shouldn't look lost.
-  for (const trip of ownedTrips) {
+  for (const trip of ownedTrips.rows) {
     if (!grouped.has(trip.id)) grouped.set(trip.id, { trip, bookings: [] })
   }
 
   const tripsWithBookings = Array.from(grouped.values())
     .sort((a, b) => new Date(b.trip.created_at).getTime() - new Date(a.trip.created_at).getTime())
 
-  return Response.json({ ok: true, trips: tripsWithBookings, ungroupedBookings: ungrouped })
+  // Paged by TRIP: page n is the n-th ten of their trips with every booking
+  // in them, so a trip is never split across pages.
+  const paging = pagedResponse(tripsWithBookings, ownedTrips.total, params)
+  return Response.json({
+    ok: true,
+    trips: tripsWithBookings,
+    ungroupedBookings: ungrouped,
+    page: paging.page,
+    pageSize: paging.pageSize,
+    total: paging.total,
+    totalPages: paging.totalPages,
+  })
 })

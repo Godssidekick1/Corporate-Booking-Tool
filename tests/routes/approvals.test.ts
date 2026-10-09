@@ -209,10 +209,65 @@ d('approvals', () => {
     expect(JSON.stringify(body)).not.toMatch(/"sell_total"|"commercials"/)
     created.set(first.bookingId, '<booking 1>')
     created.set(body.pending[0].approvalId, '<approval 1.1>')
-    expect(scrub({ ...body, pending: body.pending.map(p => ({ ...p, createdAt: '<now>' })) })).toMatchSnapshot()
+
+    // The history is paged (ten a page). The snapshot is the COMPLETE history
+    // recorded before paging existed, so every page is fetched and joined:
+    // a row lost, repeated or reordered by paging fails it.
+    type Paged = { history: { approvalId: string }[]; historyTotal: number; pendingTotal: number; pageSize: number }
+    const first_ = body as unknown as Paged
+    const history = [...first_.history]
+    for (let p = 2; p <= Math.ceil(first_.historyTotal / first_.pageSize); p++) {
+      history.push(...((await call(approvalsGet, { as: approver, url: `/api/approvals?historyPage=${p}` })).json as Paged).history)
+    }
+    expect(history).toHaveLength(first_.historyTotal)
+    const { pendingTotal, historyTotal, urgentCount, pageSize, ...unpaged } =
+      { ...(body as unknown as Paged & { urgentCount: number }), history }
+    expect({ pendingTotal, historyTotal, urgentCount, pageSize }).toEqual({ pendingTotal: 1, historyTotal: 12, urgentCount: 0, pageSize: 10 })
+    expect(scrub({ ...unpaged, pending: body.pending.map(p => ({ ...p, createdAt: '<now>' })) })).toMatchSnapshot()
 
     const summary = await call(approvalsGet, { as: approver, url: '/api/approvals?summary=1' })
     expect(summary.json).toMatchObject({ ok: true, pendingCount: 1, urgentCount: 0 })
+  })
+
+  // Paging must return every eligible row exactly once, including rows that
+  // share a timestamp across a page boundary: the order is (actioned_at desc,
+  // id), and id is unique, so the order is total and no two requests can
+  // disagree about which page a row is on.
+  it('history paging: every eligible row exactly once, ties on actioned_at included', async () => {
+    const at = '2026-09-10T09:00:00.000Z'
+    // 23 decisions at one instant (straddling pages 1-3), plus one outside the
+    // window and one still pending: neither may appear.
+    await exec(db, sql`
+      insert into approvals (client_id, booking_id, approver_id, tier, status, actioned_at)
+      select ${bcg}, ${first.bookingId}, ${approver.id}, 90 + g, case when g % 2 = 0 then 'approved' else 'rejected' end, ${at}
+      from generate_series(1, 23) g`)
+    await exec(db, sql`
+      insert into approvals (client_id, booking_id, approver_id, tier, status, actioned_at) values
+        (${bcg}, ${first.bookingId}, ${approver.id}, 200, 'approved', '2026-07-01T00:00:00Z'),
+        (${bcg}, ${first.bookingId}, ${approver.id}, 201, 'pending', null)`)
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+    const eligible = await many<{ id: string }>(db, sql`
+      select id from approvals
+      where approver_id = ${approver.id} and status in ('approved', 'rejected') and actioned_at >= ${since}`)
+
+    type Paged = { history: { approvalId: string }[]; historyTotal: number; pageSize: number }
+    const pages: Paged[] = []
+    for (let p = 1; ; p++) {
+      const page = (await call(approvalsGet, { as: approver, url: `/api/approvals?historyPage=${p}` })).json as Paged
+      pages.push(page)
+      if (p * page.pageSize >= page.historyTotal) break
+    }
+    const seen = pages.flatMap(p => p.history.map(h => h.approvalId))
+    expect(pages.every(p => p.historyTotal === eligible.length)).toBe(true)
+    expect(seen).toHaveLength(eligible.length)
+    expect(new Set(seen).size).toBe(seen.length)                          // none repeated
+    expect([...seen].sort()).toEqual(eligible.map(e => e.id).sort())    // none skipped, none extra
+    // The tied rows come out in id order, the tie-breaker.
+    const tied = await many<{ id: string }>(db, sql`
+      select id from approvals where approver_id = ${approver.id} and actioned_at = ${at} order by id`)
+    expect(seen.filter(id => tied.some(t => t.id === id))).toEqual(tied.map(t => t.id))
+
+    await exec(db, sql`delete from approvals where approver_id = ${approver.id} and tier >= 90`)
   })
 
   const decideAs = (as: { id: string }, approvalId: string, body: unknown) =>

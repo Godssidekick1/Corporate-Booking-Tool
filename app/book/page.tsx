@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useCanSelfBook } from '@/app/hooks/useCanSelfBook'
+import Pagination from '@/app/components/Pagination'
 
 interface Trip {
   id: string
@@ -32,6 +33,10 @@ export default function TripsListPage() {
   const router = useRouter()
   const canSelfBook = useCanSelfBook()
   const [trips, setTrips] = useState<Trip[] | null>(null)
+  // Ten at a time, most recently touched first.
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
+  const [pageSize, setPageSize] = useState(10)
   const [error, setError] = useState('')
   const [creating, setCreating] = useState(false)
   const [showNewTrip, setShowNewTrip] = useState(false)
@@ -42,19 +47,21 @@ export default function TripsListPage() {
   const [deleteError, setDeleteError] = useState('')
 
   useEffect(() => {
-    loadTrips()
-  }, [])
+    loadTrips(page)
+  }, [page])
 
-  async function loadTrips() {
+  async function loadTrips(p: number) {
     setError('')
     try {
-      const res = await fetch('/api/trips')
+      const res = await fetch(`/api/trips?page=${p}`)
       const data = await res.json()
       if (!res.ok) {
         setError(data.error || 'Could not load your trips.')
         return
       }
       setTrips(data.trips)
+      setTotal(data.total ?? 0)
+      setPageSize(data.pageSize ?? 10)
     } catch {
       setError('Something went wrong loading your trips.')
     }
@@ -248,6 +255,8 @@ export default function TripsListPage() {
             ))}
           </div>
         )}
+
+        <Pagination page={page} pageSize={pageSize} total={total} onPageChange={setPage} noun="trips" />
       </div>
     </div>
   )
