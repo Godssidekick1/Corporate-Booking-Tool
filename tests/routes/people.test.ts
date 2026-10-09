@@ -313,9 +313,12 @@ d('people screens', () => {
     expect((await patchReporting('00000000-0000-0000-0000-000000000000', { band: 'L1' })).status).toBe(404)
   })
 
+  // Invisible to another TMC (row-level security): answered exactly as for an
+  // employee who does not exist, so they cannot learn that one does.
   it('tmc/employees/[id]: another TMC cannot edit this employee', async () => {
-    expect(await patchReporting(colleague, { band: 'L1' }, a.otherTmcAdmin))
-      .toEqual({ status: 404, json: { error: 'Employee not found for this TMC' } })
+    const theirs = await patchReporting(colleague, { band: 'L1' }, a.otherTmcAdmin)
+    expect(theirs.status).toBe(404)
+    expect(theirs).toEqual(await patchReporting('00000000-0000-0000-0000-000000000000', { band: 'L1' }, a.otherTmcAdmin))
   })
 
   it('tmc/employees/[id]: marking top of hierarchy clears the manager', async () => {

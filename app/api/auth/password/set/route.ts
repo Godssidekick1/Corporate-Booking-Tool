@@ -28,4 +28,4 @@ export const POST = route(async (req: NextRequest) => {
   const res = NextResponse.json({ ok: true, destination: result.destination })
   setSessionCookie(res, result.token, result.expires)
   return res
-})
+}, { scope: 'system' })

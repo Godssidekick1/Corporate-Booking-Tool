@@ -8,10 +8,49 @@ The application should not connect as the owner of the tables. Two roles:
 | `cbt_app` (no login) | the running app, through a login in this role | read and write rows; read the migration history. No DDL, owns nothing, cannot bypass row-level security |
 
 `cbt_app` is created by `20261009000300_app_role.sql`, with an `app_access`
-row-level-security policy on every table. Today that policy allows all rows;
-tenant rules replace it table by table later. The test suite runs as a login
-in this role (`cbt_app_test`, re-passworded at random each run), so every
-test proves the app works with these privileges.
+row-level-security policy on every table. The test suite runs as a login in
+this role (`cbt_app_test`, re-passworded at random each run), so every test
+proves the app works with these privileges.
+
+## Tenant isolation in the database
+
+Since `20261012000000_tenant_policies.sql`, the database itself refuses
+another tenant's rows to the app role, whatever the query asks for. Every
+query carries three settings (`app/lib/db/context.ts`):
+
+| Setting | Value |
+|---|---|
+| `app.scope` | `tenant` once someone is signed in; `system` for the few paths that run before (sign-in, password links, the public ticket link, the provisioning hook) and for platform admins; empty otherwise |
+| `app.tmc_id` | the caller's TMC |
+| `app.client_id` | a corporate user's client; empty for TMC staff |
+
+| Caller | Sees |
+|---|---|
+| no scope | no tenant rows at all (a forgotten scope fails closed) |
+| TMC staff | their TMC's rows and its clients' rows |
+| corporate user | their client's rows, and the TMC's shared rows that name no client (masters, templates) |
+| system | everything |
+
+A travel counsellor's narrower set of clients is still applied by the code
+(`getAccessibleClientIds`); the database draws the line at the TMC.
+
+Shared tables keep an allow-all policy: reference data (airlines, airports,
+places) and the sign-in tables (accounts, sessions, tokens, attempts,
+platform admins, rate limits), which hold no tenant's rows and are reached
+only by `app/lib/auth`. `tests/schema.test.ts` lists them; any other table
+whose policy admits everything fails it. `audit_log` also accepts an insert
+from any request (events like a sign-in belong to no tenant); reading it is
+tenant-scoped.
+
+**The owner bypasses all of this.** Locally the app still connects as the
+owner until the restricted login is set up (below), so the policies are
+proven by the test suite (`tests/security/rowLevelSecurity.test.ts`) rather
+than by the running app. Behind a transaction pooler set
+`DB_POOL_MODE=transaction` (automatic on Vercel): the settings are then sent
+with every query inside its own transaction.
+
+A new tenant table needs a scoped `app_access` policy in the same migration:
+copy the pattern from `20261012000000_tenant_policies.sql`.
 
 ## Switching an environment over
 

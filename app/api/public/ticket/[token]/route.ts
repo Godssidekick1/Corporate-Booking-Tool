@@ -149,4 +149,4 @@ export const GET = route(async (
       },
     },
   })
-})
+}, { scope: 'system' })

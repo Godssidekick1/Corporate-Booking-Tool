@@ -1,5 +1,6 @@
 import { getPool } from './pool'
 import type { Queryable } from './sql'
+import { currentContext, contextValues } from './context'
 
 // ── transaction ──────────────────────────────────────────────────────────────
 // Runs a callback on ONE connection inside BEGIN/COMMIT. Any throw -- from a
@@ -38,6 +39,11 @@ export async function transaction<T>(
 
   try {
     await client.query('BEGIN')
+    // The request's tenant, for row-level security (app/lib/db/context.ts),
+    // local to this transaction like the settings below.
+    await client.query(
+      "select set_config('app.scope', $1, true), set_config('app.tmc_id', $2, true), set_config('app.client_id', $3, true)",
+      contextValues(currentContext()))
 
     // set_config's third argument `true` makes the setting local to this
     // transaction: discarded on COMMIT or ROLLBACK, so it cannot leak onto the

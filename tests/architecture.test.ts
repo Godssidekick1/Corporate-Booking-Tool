@@ -85,6 +85,18 @@ describe('architecture', () => {
     expect(importers).toEqual([])
   })
 
+  // route() is where a request's database scope starts (no tenant until
+  // sign-in decides one; app/lib/db/context.ts). A handler outside it runs
+  // with whatever scope it inherits. These two read no tenant data.
+  it('every API handler runs inside route()', () => {
+    const OUTSIDE = ['app/api/health/route.ts', 'app/api/internal/test-amadeus/route.ts']
+    const bare = APP_SOURCE
+      .filter(p => /app\/api\/.*\/route\.ts$/.test(rel(p)) && !OUTSIDE.includes(rel(p)))
+      .filter(p => /export (async )?function (GET|POST|PUT|PATCH|DELETE)\b|export const (GET|POST|PUT|PATCH|DELETE) = (?!route\()/.test(read(p)))
+      .map(rel)
+    expect(bare).toEqual([])
+  })
+
   // Paging in the server means fetching every row first, so it is safe only
   // for a list whose size is bounded by design. These three are bounded by
   // what one TMC negotiates (hundreds; 5,000 deal codes measure 35 ms in npm

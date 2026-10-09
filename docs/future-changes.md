@@ -16,9 +16,11 @@ search, coverage, CSV and the public ticket link; verified database TLS when
 - **Switch each environment to the restricted login** and set
   `DATABASE_CA_CERT` (steps in docs/database-roles.md). Until then the code is
   ready but the app still connects as the owner.
-- **Real row-level security policies** (tenant predicates replacing the
-  allow-all `app_access` policies), with every request run in a tenant-scoped
-  transaction. Planned with the hosting move; the leak sweep guards the gap.
+- **Sign-in tables are allow-all to the app role** (accounts, sessions,
+  tokens). Reached only by `app/lib/auth`, but a policy limiting them to the
+  system scope would remove the last tables a tenant request could read
+  across tenants. Needs the account-creation paths (which run in a tenant's
+  request) to write through the system scope.
 - **Coverage rebuild grows with the TMC.** Reads are SQL (16-30 ms at 10k
   clients), but the first read after a change rebuilds the whole TMC's report
   (2.4 s at 10k; the scale budget is 5 s). Past ~20k clients, rebuild only the

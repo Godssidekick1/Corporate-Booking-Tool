@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers'
 import type { NextResponse } from 'next/server'
-import { db, type Queryable } from '@/app/lib/db'
+import { db, asSystem, enterContext, type Queryable, type DbContext } from '@/app/lib/db'
 import * as accounts from '@/app/lib/repositories/accounts'
 import { newToken, tokenId, isToken } from './tokens'
 
@@ -46,6 +46,8 @@ export interface PrincipalEmployee {
 }
 
 export interface Principal {
+  // Whose rows this person's requests may touch (row-level security).
+  context: DbContext
   // The account id. It is also the employees.id and platform_admins.user_id of
   // the same person.
   id: string
@@ -76,7 +78,21 @@ export function refusal(row: accounts.AccountStanding): string | null {
   return null
 }
 
-export async function principalForToken(token: string | undefined | null): Promise<Principal | null> {
+// Who someone is decides what the database lets their requests see.
+export function contextFor(row: Pick<accounts.AccountStanding, 'is_platform_admin' | 'employee_id' | 'client_id' | 'tmc_id' | 'client_tmc_id'>): DbContext {
+  if (row.employee_id && row.client_id) return { scope: 'tenant', tmcId: row.client_tmc_id, clientId: row.client_id }
+  if (row.employee_id) return { scope: 'tenant', tmcId: row.tmc_id, clientId: null }
+  if (row.is_platform_admin) return { scope: 'system', tmcId: null, clientId: null }
+  return { scope: 'none', tmcId: null, clientId: null }
+}
+
+// Looks the session up across every tenant -- the one lookup that has to,
+// since it is how the tenant is found out -- and refuses or touches it there.
+export function principalForToken(token: string | undefined | null): Promise<Principal | null> {
+  return asSystem(() => lookupPrincipal(token))
+}
+
+async function lookupPrincipal(token: string | undefined | null): Promise<Principal | null> {
   if (!isToken(token)) return null
   const sessionId = tokenId(token)
   const row = await accounts.principalBySession(db, sessionId)
@@ -108,6 +124,7 @@ export async function principalForToken(token: string | undefined | null): Promi
         }
       : null,
     isPlatformAdmin: row.is_platform_admin,
+    context: contextFor(row),
   }
 }
 
@@ -115,7 +132,10 @@ export async function principalForToken(token: string | undefined | null): Promi
 // components and layouts. proxy.ts reads the cookie off the request itself.
 export async function currentUser(): Promise<Principal | null> {
   const jar = await cookies()
-  return principalForToken(jar.get(SESSION_COOKIE)?.value)
+  const me = await principalForToken(jar.get(SESSION_COOKIE)?.value)
+  // From here on, this request's queries see only this person's tenant.
+  if (me) enterContext(me.context)
+  return me
 }
 
 // For route handlers: the caller, or a 401 from route().

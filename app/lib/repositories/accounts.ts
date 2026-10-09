@@ -125,6 +125,9 @@ export interface AccountStanding {
   employee_status: string | null
   client_id: string | null
   tmc_id: string | null
+  // The TMC of the employee's client: a corporate employee carries no tmc_id
+  // of their own, and row-level security needs their tenant.
+  client_tmc_id: string | null
   first_login_completed: boolean | null
   client_status: string | null
   tmc_status: string | null
@@ -141,7 +144,7 @@ export interface SessionPrincipalRow extends AccountStanding {
 const STANDING = sql`
   a.id as account_id, a.email, a.must_change_password, a.last_sign_in_at,
   e.id as employee_id, e.full_name, e.role, e.status as employee_status,
-  e.client_id, e.tmc_id, e.first_login_completed,
+  e.client_id, e.tmc_id, c.tmc_id as client_tmc_id, e.first_login_completed,
   c.status as client_status, t.status as tmc_status,
   exists (select 1 from platform_admins p where p.user_id = a.id) as is_platform_admin`
 

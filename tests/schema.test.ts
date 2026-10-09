@@ -61,6 +61,22 @@ d('schema', () => {
     expect(missing.map(r => r.t)).toEqual([])
   })
 
+  // Tenant isolation is enforced by the database (20261012000000_tenant_policies).
+  // Only these tables -- reference data and the sign-in tables, which hold no
+  // tenant's rows -- may admit every row; every other table's policy must be
+  // tenant-scoped. A new table arrives with RLS on and no policy (the test
+  // above fails until it has one); this one fails if that policy is `true`.
+  it('only the shared tables admit every row; every tenant table is scoped', async () => {
+    const open = await rows<{ table: string }>(`
+      select tablename as table from pg_policies
+       where schemaname = 'public' and policyname = 'app_access' and qual = 'true'
+       order by 1`)
+    expect(open.map(r => r.table)).toEqual([
+      'accounts', 'airlines', 'airports', 'amadeus_session', 'auth_attempts', 'auth_tokens', 'cities',
+      'countries', 'platform_admins', 'rate_limits', 'regions', 'schema_migrations', 'sessions',
+    ])
+  })
+
   // The stored coverage reports go stale unless every table they are computed
   // from bumps their counter (app/lib/coverage reads exactly these). A builder
   // that starts reading another table needs a trigger there and a line here.

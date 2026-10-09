@@ -95,7 +95,7 @@ export default defineConfig({
     // carry a session cookie for that user (tests/setup/auth.ts), so a test
     // calls a handler directly, as any user, through the real session lookup.
     // Outgoing email is replaced the same way, so no test can send any.
-    setupFiles: ['./tests/setup/auth.ts', './tests/setup/mail.ts'],
+    setupFiles: ['./tests/setup/auth.ts', './tests/setup/mail.ts', './tests/setup/dbContext.ts'],
     env: testUrl && adminUrl
       ? { DATABASE_URL: testUrl, TEST_DATABASE_URL: testUrl, TEST_ADMIN_DATABASE_URL: adminUrl }
       : {},

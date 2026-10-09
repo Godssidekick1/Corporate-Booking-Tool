@@ -421,9 +421,15 @@ d('approvals', () => {
       .toEqual({ status: 400, json: { error: 'Parallel mode needs at least two steps — use multi-tier for a single approver' } })
     const edited = await patch({ name: 'Two-step' })
     expect(edited).toMatchObject({ status: 200, json: { ok: true, template: { name: 'Two-step', version: template.version + 1 } } })
-    expect((await call(templatePatch, {
-      as: a.otherTmcAdmin!, method: 'PATCH', url: `/api/tmc/approval-templates/${template.id}`, params: { id: template.id }, body: { name: 'x' },
-    })).status).toBe(403)
+    // Another TMC's template is invisible to them (row-level security): the
+    // answer is exactly the one for a template that does not exist, so they
+    // cannot even learn that it does.
+    const asOther = (id: string) => call(templatePatch, {
+      as: a.otherTmcAdmin!, method: 'PATCH', url: `/api/tmc/approval-templates/${id}`, params: { id }, body: { name: 'x' },
+    })
+    const theirs = await asOther(template.id)
+    expect(theirs.status).toBe(404)
+    expect(theirs).toEqual(await asOther('00000000-0000-0000-0000-000000000000'))
 
     expect(await call(templateDelete, {
       as: a.tmcAdmin, method: 'DELETE', url: `/api/tmc/approval-templates/${template.id}`, params: { id: template.id },

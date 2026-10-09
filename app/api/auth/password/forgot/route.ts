@@ -19,4 +19,4 @@ export const POST = route(async (req: NextRequest) => {
     ok: true,
     message: 'If that address has an account, a reset link is on its way. It expires in 30 minutes.',
   })
-})
+}, { scope: 'system' })

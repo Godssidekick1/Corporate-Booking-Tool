@@ -21,4 +21,4 @@ export const POST = route(async (req: NextRequest) => {
     return Response.json({ ok: false, error: result.error }, { status: result.status })
   }
   return Response.json({ ok: true, email: result.email, purpose: result.purpose })
-})
+}, { scope: 'system' })

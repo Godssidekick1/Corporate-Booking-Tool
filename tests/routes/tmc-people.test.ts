@@ -645,7 +645,9 @@ d('tmc/employees/[id]/invite', () => {
   it('not found, TMC staff, another TMC, and corporate users are refused', async () => {
     expect(await invite(NO_SUCH_ID)).toEqual({ status: 404, json: { error: 'Employee not found' } })
     expect(await invite(a.tc!.id)).toEqual({ status: 404, json: { error: 'Employee not found' } })
-    expect(await invite(person.id, a.otherTmcAdmin!)).toEqual({ status: 404, json: { error: 'Employee not found for this TMC' } })
+    // Invisible to another TMC (row-level security): the same answer as for
+    // someone who does not exist.
+    expect(await invite(person.id, a.otherTmcAdmin!)).toEqual(await invite(NO_SUCH_ID, a.otherTmcAdmin!))
     expect((await invite(person.id, a.corpAdmin)).status).toBe(403)
     expect(outbox).toEqual([])
   })

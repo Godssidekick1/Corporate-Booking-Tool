@@ -70,8 +70,11 @@ d('policy', () => {
 
   it('group PATCH: not found, another TMC, empty name', async () => {
     expect((await patch('00000000-0000-0000-0000-000000000000', {})).status).toBe(404)
-    expect((await patch(fresh, { name: 'x' }, a.otherTmcAdmin!)).json)
-      .toEqual({ error: 'This policy group belongs to a different TMC' })
+    // Another TMC's group is invisible to them (row-level security): the same
+    // answer as for a group that does not exist.
+    const theirs = await patch(fresh, { name: 'x' }, a.otherTmcAdmin!)
+    expect(theirs.status).toBe(404)
+    expect(theirs).toEqual(await patch('00000000-0000-0000-0000-000000000000', { name: 'x' }, a.otherTmcAdmin!))
     expect(await patch(fresh, { name: ' ' })).toEqual({ status: 400, json: { error: 'name cannot be empty' } })
   })
 

@@ -42,7 +42,7 @@ export const POST = route(async (req: NextRequest) => {
     tmcId: result.tmcId,
     message: `TMC "${tmcName}" created. Invite sent to ${adminEmail}.`,
   }, { status: 201 })
-})
+}, { scope: 'system' })
 
 // Constant-time, so the comparison does not reveal how much of a guess was
 // right. Hashed first because timingSafeEqual needs equal lengths, and

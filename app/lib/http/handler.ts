@@ -1,5 +1,6 @@
 import type { NextRequest } from 'next/server'
 import { Unauthenticated } from '@/app/lib/auth/session'
+import { runAsRequest, asSystem } from '@/app/lib/db'
 
 // ── route() ──────────────────────────────────────────────────────────────────
 // NOTE THE FILENAME. This lives in app/, where Next treats any file called
@@ -30,6 +31,12 @@ import { Unauthenticated } from '@/app/lib/auth/session'
 //    constraint internals. The errors a route SHOULD handle, constraint
 //    violations that are the user's mistake, it catches itself with
 //    isConstraint() before this.
+//
+// 4. EACH REQUEST STARTS SEEING NO TENANT'S ROWS (row-level security,
+//    app/lib/db/context.ts). Signing in narrows it to the caller's tenant.
+//    A route that serves people before anyone is known -- sign-in, password
+//    links, the public ticket link, the provisioning hook -- is declared
+//    route(handler, { scope: 'system' }), and is reviewed as such.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
@@ -48,15 +55,23 @@ export function isCrossSite(req: NextRequest): boolean {
   }
 }
 
+export interface RouteOptions {
+  // 'system': the handler sees every tenant. Only for routes that must work
+  // before anyone is signed in.
+  scope?: 'request' | 'system'
+}
+
 export function route<Ctx = unknown>(
-  handler: (req: NextRequest, ctx: Ctx) => Promise<Response>
+  handler: (req: NextRequest, ctx: Ctx) => Promise<Response>,
+  options: RouteOptions = {}
 ): (req: NextRequest, ctx: Ctx) => Promise<Response> {
+  const scoped = options.scope === 'system' ? asSystem : runAsRequest
   return async function wrapped(req: NextRequest, ctx: Ctx): Promise<Response> {
     if (isCrossSite(req)) {
       return Response.json({ error: 'Cross-site request refused' }, { status: 403 })
     }
     try {
-      return await handler(req, ctx)
+      return await scoped(() => handler(req, ctx))
     } catch (err) {
       if (err instanceof Unauthenticated) {
         return Response.json({ error: 'Not authenticated' }, { status: 401 })

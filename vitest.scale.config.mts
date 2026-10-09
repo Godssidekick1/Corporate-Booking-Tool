@@ -35,7 +35,7 @@ export default defineConfig({
     environment: 'node',
     include: ['tests/scale/**/*.scale.ts'],
     globalSetup: ['./tests/scale/setup.ts'],
-    setupFiles: ['./tests/setup/auth.ts', './tests/setup/mail.ts'],
+    setupFiles: ['./tests/setup/auth.ts', './tests/setup/mail.ts', './tests/setup/dbContext.ts'],
     env: {
       DATABASE_URL: withDatabase(devUrl, 'cbt_scale'),
       TEST_ADMIN_DATABASE_URL: withDatabase(devUrl, 'postgres'),
