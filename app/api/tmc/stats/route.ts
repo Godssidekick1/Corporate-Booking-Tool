@@ -1,17 +1,23 @@
+import { NextRequest } from 'next/server'
 import { requireUser } from '@/app/lib/auth/session'
 import { requireTmcPermission, getAccessibleClientIds } from '@/app/lib/permissions/requireTmcPermission'
 import { db } from '@/app/lib/db'
 import * as clientsRepo from '@/app/lib/repositories/clients'
-import * as employees from '@/app/lib/repositories/employees'
-import * as bookingsRepo from '@/app/lib/repositories/bookings'
 import { route } from '@/app/lib/http/handler'
+import { parsePageParams, pagedResponse } from '@/app/lib/pagination'
 
 // ── GET /api/tmc/stats ───────────────────────────────────────────────────────
 // Booking activity across the TMC's clients, for the dashboard.
 //
-// Aggregated here rather than in the browser because the client list is scoped
-// per caller (a 'tc' only sees clients they have access to) and shipping every
-// booking row to the browser to count them would leak the ones they cannot see.
+// Aggregated on the server rather than in the browser because the client list
+// is scoped per caller (a 'tc' only sees clients they have access to) and
+// shipping every booking row to the browser to count them would leak the ones
+// they cannot see. Counted IN THE DATABASE (clients.portfolio*): fetching
+// every booking and employee to count them here took 639 ms and sent 1.8 MB
+// at 10,000 clients (npm run scale).
+//
+// The per-client table is paged, ten at a time, busiest first; the totals,
+// busiest / quietest client and the trend cover every client in scope.
 //
 // Everything is derived from bookings.created_at, so "last 30 days" is booking
 // date, not travel date.
@@ -20,124 +26,52 @@ import { route } from '@/app/lib/http/handler'
 const RECENT_DAYS = 30
 const TREND_WEEKS = 8
 
-interface ClientStat {
-  clientId: string
-  name: string
-  employees: number
-  bookings: number
-  recentBookings: number
-  spend: number
-  lastBookingAt: string | null
-}
-
-export const GET = route(async () => {
+export const GET = route(async (req: NextRequest) => {
   const user = await requireUser()
 
-  // No specific clientId — this is a whole-portfolio view, and which slice of
-  // it the caller may see is decided by getAccessibleClientIds below.
   const auth = await requireTmcPermission(db, user.id, 'view_reports')
   if (!auth.authorized || !auth.tmcId) {
     return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
   }
 
-  // The role requireTmcPermission just read, rather than a second read of the
-  // same row.
+  const params = parsePageParams(req.nextUrl.searchParams)
   const accessibleIds = await getAccessibleClientIds(db, user.id, auth.role ?? 'tc')
 
-  // null means "every client at this TMC" (tmc_admin); an array is the explicit
-  // allow-list for a travel counsellor.
   if (accessibleIds !== null && accessibleIds.length === 0) {
     return Response.json({ ok: true, totals: emptyTotals(), clients: [], trend: [] })
   }
 
-  const clientRows = await clientsRepo.portfolio(db, auth.tmcId, accessibleIds)
+  const recentSince = new Date(Date.now() - RECENT_DAYS * 24 * 60 * 60 * 1000).toISOString()
 
-  const clientIds = clientRows.map(c => c.id)
+  // Week starts at midnight UTC, the oldest first, the last one this week.
+  const weekStarts: string[] = []
+  for (let i = TREND_WEEKS - 1; i >= 0; i--) {
+    const start = new Date()
+    start.setUTCHours(0, 0, 0, 0)
+    start.setUTCDate(start.getUTCDate() - i * 7)
+    weekStarts.push(start.toISOString())
+  }
 
-  if (clientIds.length === 0) {
+  const [totals, clients, trend] = await Promise.all([
+    clientsRepo.portfolioTotals(db, auth.tmcId, accessibleIds, recentSince),
+    clientsRepo.portfolioPage(db, auth.tmcId, accessibleIds, recentSince, params),
+    clientsRepo.portfolioTrend(db, auth.tmcId, accessibleIds, weekStarts),
+  ])
+
+  if (totals.clients === 0) {
     return Response.json({ ok: true, totals: emptyTotals(), clients: [], trend: [] })
   }
 
-  const [staff, bookings] = await Promise.all([
-    employees.statusesInClients(db, clientIds),
-    bookingsRepo.statRows(db, clientIds),
-  ])
-
-  const employeesByClient = new Map<string, number>()
-  for (const e of staff) {
-    if (e.status === 'deactivated') continue
-    if (!e.client_id) continue
-    employeesByClient.set(e.client_id, (employeesByClient.get(e.client_id) ?? 0) + 1)
-  }
-
-  const recentCutoff = Date.now() - RECENT_DAYS * 24 * 60 * 60 * 1000
-
-  const bookingsByClient = new Map<string, { total: number; recent: number; spend: number; last: string | null }>()
-  for (const b of bookings ?? []) {
-    const entry = bookingsByClient.get(b.client_id) ?? { total: 0, recent: 0, spend: 0, last: null }
-    entry.total += 1
-    entry.spend += Number(b.total_cost ?? 0)
-    if (new Date(b.created_at).getTime() >= recentCutoff) entry.recent += 1
-    if (!entry.last || b.created_at > entry.last) entry.last = b.created_at
-    bookingsByClient.set(b.client_id, entry)
-  }
-
-  const clients: ClientStat[] = clientRows.map(c => {
-    const b = bookingsByClient.get(c.id)
-    return {
-      clientId: c.id,
-      name: c.name,
-      employees: employeesByClient.get(c.id) ?? 0,
-      bookings: b?.total ?? 0,
-      recentBookings: b?.recent ?? 0,
-      spend: b?.spend ?? 0,
-      lastBookingAt: b?.last ?? null,
-    }
-  }).sort((a, b) => b.bookings - a.bookings)
-
-  // Weekly buckets, oldest first, so the dashboard can draw a trend without
-  // re-deriving date maths in the browser.
-  const trend: { weekStart: string; bookings: number }[] = []
-  const now = new Date()
-  for (let i = TREND_WEEKS - 1; i >= 0; i--) {
-    const start = new Date(now)
-    start.setUTCHours(0, 0, 0, 0)
-    start.setUTCDate(start.getUTCDate() - i * 7)
-    const end = new Date(start)
-    end.setUTCDate(end.getUTCDate() + 7)
-
-    const count = bookings.filter(b => {
-      const t = new Date(b.created_at).getTime()
-      return t >= start.getTime() && t < end.getTime()
-    }).length
-
-    trend.push({ weekStart: start.toISOString().slice(0, 10), bookings: count })
-  }
-
-  const bookingCounts = clients.map(c => c.bookings)
-  const active = clients.filter(c => c.bookings > 0)
-
+  const paging = pagedResponse(clients, totals.clients, params)
   return Response.json({
     ok: true,
-    totals: {
-      clients: clients.length,
-      // Clients with no bookings at all are the ones worth chasing, so they get
-      // counted separately rather than being averaged away.
-      activeClients: active.length,
-      employees: [...employeesByClient.values()].reduce((a, b) => a + b, 0),
-      bookings: bookingCounts.reduce((a, b) => a + b, 0),
-      recentBookings: clients.reduce((a, c) => a + c.recentBookings, 0),
-      spend: clients.reduce((a, c) => a + c.spend, 0),
-      maxBookings: bookingCounts.length ? Math.max(...bookingCounts) : 0,
-      minBookings: bookingCounts.length ? Math.min(...bookingCounts) : 0,
-      // Averaged across clients that have actually booked — including dormant
-      // ones drags the number toward zero and hides how the live ones behave.
-      avgBookings: active.length
-        ? Math.round((active.reduce((a, c) => a + c.bookings, 0) / active.length) * 10) / 10
-        : 0,
-    },
+    totals,
     clients,
     trend,
+    page: paging.page,
+    pageSize: paging.pageSize,
+    total: paging.total,
+    totalPages: paging.totalPages,
   })
 })
 

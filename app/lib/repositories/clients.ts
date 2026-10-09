@@ -71,22 +71,126 @@ export async function onboardingCounts(db: Queryable, clientId: string): Promise
 
 // ═══ Portfolio ══════════════════════════════════════════════════════════════
 
-export type ClientPortfolioRow = Pick<Row<'clients'>, 'id' | 'name' | 'status' | 'created_at'>
-
+// The TMC dashboard's numbers, counted in the database. It used to fetch every
+// booking and every employee of the TMC and count them in the server, and send
+// every client: 639 ms and 1.8 MB at 10,000 clients and 60,000 bookings (npm
+// run scale).
+//
 // A TMC's clients, optionally narrowed to the ones a travel counsellor was
-// granted. `accessibleIds === null` means every client of the TMC (tmc_admin);
-// an empty array means none.
-export async function portfolio(
-  db: Queryable,
-  tmcId: string,
-  accessibleIds: readonly string[] | null
-): Promise<ClientPortfolioRow[]> {
-  if (accessibleIds !== null && accessibleIds.length === 0) return []
-  return many<ClientPortfolioRow>(db, sql`
-    select id, name, status, created_at from clients
-    where tmc_id = ${tmcId}
-    ${accessibleIds !== null ? sql`and id = any(${[...accessibleIds]})` : empty}
-    order by created_at, id`)
+// granted (`accessibleIds === null` means every client of the TMC). Ranked by
+// bookings, most first; ties in the order the clients were created.
+
+export interface PortfolioClient {
+  clientId: string
+  name: string
+  employees: number
+  bookings: number
+  recentBookings: number
+  spend: number
+  lastBookingAt: string | null
+}
+
+export interface PortfolioTotals {
+  clients: number
+  activeClients: number
+  employees: number
+  bookings: number
+  recentBookings: number
+  spend: number
+  maxBookings: number
+  minBookings: number
+  avgBookings: number
+}
+
+function perClient(tmcId: string, accessibleIds: readonly string[] | null, recentSince: string): Sql {
+  return sql`
+    with c as (
+      select id, name, created_at from clients
+      where tmc_id = ${tmcId}
+      ${accessibleIds !== null ? sql`and id = any(${[...accessibleIds]})` : empty}
+    ),
+    b as (
+      select client_id, count(*) as n, count(*) filter (where created_at >= ${recentSince}) as recent,
+             coalesce(sum(total_cost), 0) as spend, max(created_at) as last
+      from bookings where client_id in (select id from c) group by client_id
+    ),
+    e as (
+      select client_id, count(*) as n from employees
+      where client_id in (select id from c) and status <> 'deactivated' group by client_id
+    )
+    select c.id as "clientId", c.name, c.created_at,
+           coalesce(e.n, 0)::int as employees, coalesce(b.n, 0)::int as bookings,
+           coalesce(b.recent, 0)::int as "recentBookings", coalesce(b.spend, 0)::float8 as spend,
+           b.last as "lastBookingAt"
+    from c left join b on b.client_id = c.id left join e on e.client_id = c.id`
+}
+
+export async function portfolioPage(
+  db: Queryable, tmcId: string, accessibleIds: readonly string[] | null, recentSince: string, params: PageParams
+): Promise<PortfolioClient[]> {
+  return many<PortfolioClient>(db, sql`
+    select "clientId", name, employees, bookings, "recentBookings", spend, "lastBookingAt"
+    from (${perClient(tmcId, accessibleIds, recentSince)}) p
+    order by bookings desc, created_at, "clientId" ${page(params)}`)
+}
+
+export async function portfolioTotals(
+  db: Queryable, tmcId: string, accessibleIds: readonly string[] | null, recentSince: string
+): Promise<PortfolioTotals & {
+  dormant: number
+  busiest: { name: string; bookings: number } | null
+  quietest: { name: string; bookings: number } | null
+}> {
+  const row = await one<PortfolioTotals & {
+    dormant: number; busiest_name: string | null; busiest_n: number | null; quietest_name: string | null; quietest_n: number | null
+  }>(db, sql`
+    with p as (${perClient(tmcId, accessibleIds, recentSince)})
+    select count(*)::int as clients,
+           count(*) filter (where bookings > 0)::int as "activeClients",
+           coalesce(sum(employees), 0)::int as employees,
+           coalesce(sum(bookings), 0)::int as bookings,
+           coalesce(sum("recentBookings"), 0)::int as "recentBookings",
+           coalesce(sum(spend), 0)::float8 as spend,
+           coalesce(max(bookings), 0)::int as "maxBookings",
+           coalesce(min(bookings), 0)::int as "minBookings",
+           coalesce(round(avg(bookings) filter (where bookings > 0), 1), 0)::float8 as "avgBookings",
+           count(*) filter (where bookings = 0)::int as dormant,
+           (select name from p order by bookings desc, created_at, "clientId" limit 1) as busiest_name,
+           (select bookings from p order by bookings desc, created_at, "clientId" limit 1) as busiest_n,
+           (select name from p where bookings > 0 order by bookings, created_at desc, "clientId" desc limit 1) as quietest_name,
+           (select bookings from p where bookings > 0 order by bookings, created_at desc, "clientId" desc limit 1) as quietest_n
+    from p`)
+  const { dormant, busiest_name, busiest_n, quietest_name, quietest_n, ...totals } = row
+  return {
+    ...totals,
+    dormant,
+    busiest: busiest_name !== null ? { name: busiest_name, bookings: busiest_n ?? 0 } : null,
+    quietest: quietest_name !== null ? { name: quietest_name, bookings: quietest_n ?? 0 } : null,
+  }
+}
+
+// Bookings per week, for the weeks starting at each of `weekStarts`.
+export async function portfolioTrend(
+  db: Queryable, tmcId: string, accessibleIds: readonly string[] | null, weekStarts: readonly string[]
+): Promise<{ weekStart: string; bookings: number }[]> {
+  return many(db, sql`
+    with c as (
+      select id from clients where tmc_id = ${tmcId}
+      ${accessibleIds !== null ? sql`and id = any(${[...accessibleIds]})` : empty}
+    )
+    ,
+    -- The window's bookings, read once (from bookings_client_created_idx),
+    -- then counted into weeks.
+    b as (
+      select created_at from bookings
+      where client_id in (select id from c)
+        and created_at >= (select min(s) from unnest(${[...weekStarts]}::timestamptz[]) s)
+        and created_at < (select max(s) from unnest(${[...weekStarts]}::timestamptz[]) s) + interval '7 days'
+    )
+    select to_char(w.start at time zone 'UTC', 'YYYY-MM-DD') as "weekStart", count(b.created_at)::int as bookings
+    from unnest(${[...weekStarts]}::timestamptz[]) as w(start)
+    left join b on b.created_at >= w.start and b.created_at < w.start + interval '7 days'
+    group by w.start order by w.start`)
 }
 
 // ═══ Lookups used across screens ════════════════════════════════════════════

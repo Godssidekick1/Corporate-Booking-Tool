@@ -156,17 +156,6 @@ export async function permissionKeys(db: Queryable, employeeId: string): Promise
   return rows.map(r => r.permission_key)
 }
 
-export type EmployeeStatusRow = Pick<Row<'employees'>, 'id' | 'client_id' | 'status'>
-
-// Headcount inputs for the TMC dashboard, across a set of clients.
-export async function statusesInClients(db: Queryable, clientIds: readonly string[]): Promise<EmployeeStatusRow[]> {
-  if (clientIds.length === 0) return []
-  return many<EmployeeStatusRow>(db, sql`
-    select id, client_id, status from employees
-    where client_id = any(${[...clientIds]})
-    order by client_id, id`)
-}
-
 // Travellers across a set of clients -- anyone not deactivated, which includes
 // people who have been invited but not yet signed in.
 export async function countActiveInClients(db: Queryable, clientIds: readonly string[]): Promise<number> {

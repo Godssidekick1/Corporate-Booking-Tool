@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useMemo } from 'react'
 import BandLadderEditor, { type BandDraft } from './BandLadderEditor'
 import Papa from 'papaparse'
 import { canAccess } from '@/app/lib/permissions/canAccess'
+import Pagination from '@/app/components/Pagination'
 
 interface Employee {
   full_name: string
@@ -588,6 +589,10 @@ interface Totals {
   maxBookings: number
   minBookings: number
   avgBookings: number
+  // Across every client, not just the page shown.
+  dormant?: number
+  busiest?: { name: string; bookings: number } | null
+  quietest?: { name: string; bookings: number } | null
 }
 
 function DashboardStats() {
@@ -596,22 +601,26 @@ function DashboardStats() {
   const [trend, setTrend] = useState<{ weekStart: string; bookings: number }[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  // The client table is paged on the server, busiest first.
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
 
   useEffect(() => {
     let cancelled = false
 
-    fetch('/api/tmc/stats')
+    fetch(`/api/tmc/stats?page=${page}`)
       .then(r => r.json())
       .then(d => {
         if (cancelled) return
         if (!d.ok) { setError(d.error || 'Could not load statistics.'); return }
         setTotals(d.totals); setClients(d.clients); setTrend(d.trend)
+        setPageSize(d.pageSize ?? 10)
       })
       .catch(() => { if (!cancelled) setError('Could not load statistics.') })
       .finally(() => { if (!cancelled) setLoading(false) })
 
     return () => { cancelled = true }
-  }, [])
+  }, [page])
 
   if (loading) {
     return (
@@ -626,8 +635,10 @@ function DashboardStats() {
   if (!totals) return null
 
   const peak = Math.max(1, ...trend.map(t => t.bookings))
-  const busiest = clients[0]
-  const dormant = clients.filter(c => c.bookings === 0)
+  // From the server's totals: this page holds only ten clients.
+  const busiest = totals.busiest ?? null
+  const quietest = totals.quietest ?? null
+  const dormant = totals.dormant ?? 0
 
   return (
     <>
@@ -651,14 +662,14 @@ function DashboardStats() {
         />
         <Tile
           label="Quietest active client"
-          value={clients.filter(c => c.bookings > 0).slice(-1)[0]?.bookings ?? 0}
-          sub={clients.filter(c => c.bookings > 0).slice(-1)[0]?.name ?? '—'}
+          value={quietest?.bookings ?? 0}
+          sub={quietest?.name ?? '—'}
         />
         <Tile
           label="Yet to book"
-          value={dormant.length}
-          sub={dormant.length > 0 ? 'worth a nudge' : 'everyone is active'}
-          warn={dormant.length > 0}
+          value={dormant}
+          sub={dormant > 0 ? 'worth a nudge' : 'everyone is active'}
+          warn={dormant > 0}
         />
       </div>
 
@@ -728,6 +739,7 @@ function DashboardStats() {
             </table>
           </div>
         )}
+        <Pagination page={page} pageSize={pageSize} total={totals.clients} onPageChange={setPage} noun="clients" />
       </div>
     </>
   )

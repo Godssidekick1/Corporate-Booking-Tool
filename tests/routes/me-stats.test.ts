@@ -95,15 +95,41 @@ d('GET /api/tmc/stats', () => {
     expect((await call(stats, { as: a.corpAdmin, url: '/api/tmc/stats' })).status).toBe(403)
   })
 
+  // The snapshots were recorded when every number was counted in the server
+  // from every booking row, and every client was sent. Counting moved into the
+  // database and the client table is paged, so: every page is fetched and
+  // joined, the fields paging added are checked against what the old code
+  // derived from the full list, and what remains must match the old snapshot.
+  type Full = StatsBody & {
+    clients: { clientId: string; name: string; bookings: number }[]
+    totals: Record<string, unknown> & { clients: number; maxBookings: number }
+    page?: number; pageSize?: number; total?: number; totalPages?: number
+  }
+  async function wholePortfolio(as: { id: string }): Promise<StatsBody> {
+    const first = (await call(stats, { as, url: '/api/tmc/stats' })).json as Full
+    const clients = [...first.clients]
+    for (let p = 2; p <= (first.totalPages ?? 1); p++) {
+      clients.push(...((await call(stats, { as, url: `/api/tmc/stats?page=${p}` })).json as Full).clients)
+    }
+    expect(clients).toHaveLength(first.totals.clients)
+    expect(first.total).toBe(first.totals.clients)
+    const { busiest, quietest, dormant, ...totals } = first.totals
+    const active = clients.filter(c => c.bookings > 0)
+    expect(busiest).toEqual(clients[0] ? { name: clients[0].name, bookings: clients[0].bookings } : null)
+    expect(quietest).toEqual(active.length ? { name: active[active.length - 1].name, bookings: active[active.length - 1].bookings } : null)
+    expect(dormant).toBe(clients.length - active.length)
+    const rest: Record<string, unknown> = { ...first, clients, totals }
+    for (const added of ['page', 'pageSize', 'total', 'totalPages']) delete rest[added]
+    return normaliseTies(rest as unknown as StatsBody)
+  }
+
   it('a tmc_admin sees their whole portfolio', async () => {
-    const res = await call(stats, { as: a.tmcAdmin, url: '/api/tmc/stats' })
-    expect(res.status).toBe(200)
-    expect(normaliseTies(res.json as StatsBody)).toMatchSnapshot()
+    expect((await call(stats, { as: a.tmcAdmin, url: '/api/tmc/stats' })).status).toBe(200)
+    expect(await wholePortfolio(a.tmcAdmin)).toMatchSnapshot()
   })
 
   it('a tc sees only the clients they were granted', async () => {
-    const res = await call(stats, { as: a.tc, url: '/api/tmc/stats' })
-    expect(res.status).toBe(200)
-    expect(normaliseTies(res.json as StatsBody)).toMatchSnapshot()
+    expect((await call(stats, { as: a.tc!, url: '/api/tmc/stats' })).status).toBe(200)
+    expect(await wholePortfolio(a.tc!)).toMatchSnapshot()
   })
 })
