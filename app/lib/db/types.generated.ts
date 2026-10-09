@@ -3,7 +3,7 @@
 // Written by scripts/generate-db-types.mjs from the live database schema.
 // Re-run after any schema change:  node scripts/generate-db-types.mjs
 //
-// 50 tables, 1 view(s), 508 columns.
+// 54 tables, 1 view(s), 544 columns.
 
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json }
 
@@ -317,6 +317,23 @@ export interface Tables {
     fop_priority: string[]
     markup_active: boolean
   }
+  commercial_coverage: {
+    tmc_id: string
+    client_id: string
+    ord: number
+    client_name: string
+    markup: string | null
+    markup_via: string | null
+    discount: string | null
+    discount_via: string | null
+    fee: string | null
+    fee_via: string | null
+    net_percent: number | null
+    loss_making: boolean
+    ambiguous: boolean
+    varies_by_category: string[]
+    switched_off: string[]
+  }
   commercial_rule_assignments: {
     id: string
     tmc_id: string
@@ -364,6 +381,15 @@ export interface Tables {
     name: string
     phone_code: string | null
   }
+  coverage_state: {
+    tmc_id: string
+    deal_codes_changes: number
+    deal_codes_built_from: number | null
+    deal_codes_built_on: string | null
+    commercials_changes: number
+    commercials_built_from: number | null
+    commercials_built_on: string | null
+  }
   deal_code_assignments: {
     id: string
     tmc_id: string
@@ -387,6 +413,19 @@ export interface Tables {
     category_id: string
     code_type: string
     allowed: boolean
+  }
+  deal_code_coverage: {
+    tmc_id: string
+    client_id: string
+    ord: number
+    client_name: string
+    airline: string
+    code_type: string
+    code: string
+    via: string
+    ambiguous: boolean
+    beat: Json
+    beat_more: number
   }
   deal_codes: {
     id: string
@@ -555,6 +594,11 @@ export interface Tables {
     sell_total: number
     created_at: string
     expires_at: string
+  }
+  rate_limits: {
+    key: string
+    window_start: string
+    n: number
   }
   regions: {
     country_code: string

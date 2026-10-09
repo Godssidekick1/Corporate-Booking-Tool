@@ -18,8 +18,10 @@ import * as rateLimits from '@/app/lib/repositories/rateLimits'
 export const PER_MINUTE = {
   // A paid Amadeus call each. A person searching does a handful a minute.
   search: 30,
-  // The heaviest reads: every client of the TMC resolved.
-  coverage: 20,
+  // The coverage reports. A read is two indexed queries on the stored report;
+  // only the first read after a change rebuilds it. Sized for someone typing
+  // in the search box (one request per pause), not for the rebuild.
+  coverage: 120,
   // Whole-table imports and exports.
   csv: 10,
   // The public ticket / QR link, per IP: no sign-in in front of it.

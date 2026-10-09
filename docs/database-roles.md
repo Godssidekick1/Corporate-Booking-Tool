@@ -21,7 +21,15 @@ test proves the app works with these privileges.
 
    ```sql
    create role cbt_app_login login password '<strong password>' in role cbt_app;
+   -- A runaway query, or a transaction left open by a crashed request, is cut
+   -- off instead of holding one of the pool's few connections until the app
+   -- runs out of them. Set on the login, so it holds through any pooler.
+   alter role cbt_app_login set statement_timeout = '15s';
+   alter role cbt_app_login set idle_in_transaction_session_timeout = '30s';
    ```
+
+   The test suite's login carries the same two limits, so a change that needs
+   longer fails the tests first.
 
 3. Point the app at it, and keep the owner for migrations:
 

@@ -84,4 +84,23 @@ describe('architecture', () => {
       .map(rel)
     expect(importers).toEqual([])
   })
+
+  // Paging in the server means fetching every row first, so it is safe only
+  // for a list whose size is bounded by design. These three are bounded by
+  // what one TMC negotiates (hundreds; 5,000 deal codes measure 35 ms in npm
+  // run scale), and status, which they filter on, is derived from dates. A
+  // list that grows with clients, employees or bookings pages in SQL -- a new
+  // entry here needs that argument made, not just a line added.
+  it('only lists bounded by design are paged in server memory', () => {
+    const ALLOWED = [
+      'app/api/tmc/commercial-rules/route.ts',
+      'app/api/tmc/deal-codes/route.ts',
+      'app/api/tmc/forms-of-payment/route.ts',
+    ]
+    const callers = APP_SOURCE
+      .filter(p => rel(p) !== 'app/lib/pagination.ts' && /\bpaginateInMemory\(/.test(read(p)))
+      .map(rel)
+      .sort()
+    expect(callers).toEqual(ALLOWED)
+  })
 })

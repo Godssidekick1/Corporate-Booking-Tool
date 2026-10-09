@@ -19,8 +19,12 @@ search, coverage, CSV and the public ticket link; verified database TLS when
 - **Real row-level security policies** (tenant predicates replacing the
   allow-all `app_access` policies), with every request run in a tenant-scoped
   transaction. Planned with the hosting move; the leak sweep guards the gap.
-- **Coverage reports page in SQL.** They still resolve every client to count
-  rows (about 0.9 s at 10k clients); page clients in SQL when a TMC gets there.
+- **Coverage rebuild grows with the TMC.** Reads are SQL (16-30 ms at 10k
+  clients), but the first read after a change rebuilds the whole TMC's report
+  (2.4 s at 10k; the scale budget is 5 s). Past ~20k clients, rebuild only the
+  clients a change reaches.
+- **Set the login's timeouts** (`statement_timeout`, idle-in-transaction) when
+  creating `cbt_app_login` (docs/database-roles.md).
 - **Leak sweep covers GET and DELETE only.** POST / PATCH cross-tenant writes
   are covered by the per-route tests, not swept.
 

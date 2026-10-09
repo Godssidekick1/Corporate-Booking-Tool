@@ -61,9 +61,37 @@ d('schema', () => {
     expect(missing.map(r => r.t)).toEqual([])
   })
 
+  // The stored coverage reports go stale unless every table they are computed
+  // from bumps their counter (app/lib/coverage reads exactly these). A builder
+  // that starts reading another table needs a trigger there and a line here.
+  it('every table the coverage reports read invalidates them on write', async () => {
+    const found = await rows<{ table: string; feeds: string }>(`
+      select c.relname as table, encode(t.tgargs, 'escape') as feeds
+        from pg_trigger t join pg_class c on c.oid = t.tgrelid
+       where t.tgname = 'coverage_touch' and not t.tgisinternal
+       order by 1`)
+    expect(found.map(r => `${r.table}: ${r.feeds.replace(/\\000$/, '')}`)).toEqual([
+      'bucket_clients: both',
+      'buckets: both',
+      'client_groups: both',
+      'clients: both',
+      'commercial_rule_assignments: commercials',
+      'commercial_rules: commercials',
+      'deal_code_assignments: deal_codes',
+      'deal_codes: deal_codes',
+    ])
+  })
+
   it('the suite really runs as the restricted role, which cannot create a table', async () => {
     expect(await rows<{ u: string }>('select current_user as u')).toEqual([{ u: 'cbt_app_test' }])
     await expect(rows('create table should_not_exist (x int)')).rejects.toThrow(/permission denied/)
+  })
+
+  it('a runaway query or an abandoned transaction is cut off, not left holding a connection', async () => {
+    expect(await rows('show statement_timeout')).toEqual([{ statement_timeout: '15s' }])
+    expect(await rows('show idle_in_transaction_session_timeout')).toEqual([{ idle_in_transaction_session_timeout: '30s' }])
+    await expect(rows(`set local statement_timeout = '100ms'; select pg_sleep(1)`))
+      .rejects.toThrow(/statement timeout/)
   })
 
   it('the app role cannot change the schema or the migration history', async () => {

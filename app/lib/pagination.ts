@@ -70,11 +70,19 @@ export function pagedResponse<T>(items: T[], total: number | null, params: PageP
 }
 
 // ── paginateInMemory ─────────────────────────────────────────────────────────
-// For the few endpoints whose rows cannot be produced by a single query —
-// deal-code coverage resolves per client in memory, and booking status is
-// derived rather than stored. Kept here so those screens still return the same
-// envelope and the client cannot tell the difference.
+// For the few lists filtered on a status derived from dates, whose size is
+// bounded by design (what one TMC negotiates). tests/architecture.test.ts
+// names the only callers allowed; everything else pages in SQL.
+//
+// The assumption is checked as it runs, too: a list past LARGE is logged, so
+// one that has outgrown "bounded" shows up in the server log long before it
+// shows up as a slow screen.
 // ─────────────────────────────────────────────────────────────────────────────
+const LARGE = 10_000
+
 export function paginateInMemory<T>(rows: T[], params: PageParams): PagedResponse<T> {
+  if (rows.length > LARGE) {
+    console.warn(`[pagination] paging ${rows.length} rows in memory; this list should page in SQL`)
+  }
   return pagedResponse(rows.slice(params.from, params.from + params.pageSize), rows.length, params)
 }

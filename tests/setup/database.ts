@@ -28,6 +28,10 @@ export default async function setup(): Promise<void> {
       ? `alter role cbt_app_test login inherit password ${literal}`
       : `create role cbt_app_test login inherit password ${literal} in role cbt_app`)
     await admin.query('grant cbt_app to cbt_app_test')
+    // The limits the deployed login carries (docs/database-roles.md), so the
+    // suite proves nothing the app does needs longer than they allow.
+    await admin.query(`alter role cbt_app_test set statement_timeout = '15s'`)
+    await admin.query(`alter role cbt_app_test set idle_in_transaction_session_timeout = '30s'`)
   } finally {
     await admin.end()
   }

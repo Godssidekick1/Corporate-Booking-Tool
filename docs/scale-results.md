@@ -37,6 +37,30 @@ What changed:
   the rule and deal maps the resolvers build are reused across clients instead
   of rebuilt for each. Output is identical (all route snapshots unchanged).
 
-Still to do: the coverage reports compute every client to know the total, so
-they still grow with the TMC (about 0.9 s at 10k clients). Paging them in SQL
-changes what a page means and is a later step.
+## 2026-10-09: coverage reports stored, searched and paged in SQL
+
+| What | Before (ms) | After (ms) | Budget (ms) |
+|---|---:|---:|---:|
+| Deal code coverage (page 1) | 883 | 16 | 300 |
+| Deal code coverage, search | 883 (every keystroke) | 23 | 300 |
+| Commercial coverage, markup (page 1) | 592 | 6 | 300 |
+| Commercial coverage, search | 592 (every keystroke) | 30 | 300 |
+| 20 coverage searches at once | ~20 x 883, in one process | 121 for all 20 | 1,500 |
+| First read after a change (rebuild), deal codes | — | 2,371 | 5,000 |
+| First read after a change (rebuild), commercials | — | 1,844 | 5,000 |
+| Peak memory of the run | 593 MB | 378 MB | — |
+
+What changed:
+
+- **Stored reports** (`20261010000000_coverage_tables`, `app/lib/coverage`):
+  the resolved coverage is kept per TMC and the screens search and page it
+  with SQL. It is rebuilt by the same resolvers the booking path uses, only
+  when it is out of date: triggers on every source table bump a per-TMC
+  counter, and the date it was built for is checked (deals open and close by
+  date with nothing written). One builder at a time per TMC (advisory lock).
+- **Losers capped** (`20261010000100_coverage_beat_more`): a coverage row
+  keeps the five deals its winner most nearly beat and counts the rest. Every
+  loser made the report 39 MB at this size and its storing took 4.9 s of a
+  6.1 s rebuild; now 4.4 MB and 1.3 s.
+- **Budgets**: every measurement has one and `npm run scale` fails when one is
+  exceeded.

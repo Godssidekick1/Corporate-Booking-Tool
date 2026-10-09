@@ -67,6 +67,7 @@ interface Coverage {
   via: string
   ambiguous: boolean
   beat: { code: string; via: string }[]
+  beatMore: number
 }
 interface Verdict { row: number; code: string; valid: boolean; error?: string }
 
@@ -488,7 +489,8 @@ export default function DealCodesPage() {
                         <td style={{ ...s.td, fontSize: 12, color: '#9CA3AF' }}>
                           {e.beat.length === 0
                             ? '—'
-                            : e.beat.map(b => `${b.code} (${b.via})`).join(', ')}
+                            : e.beat.map(b => `${b.code} (${b.via})`).join(', ') +
+                              (e.beatMore > 0 ? ` and ${e.beatMore} more` : '')}
                         </td>
                       </tr>
                     ))}
