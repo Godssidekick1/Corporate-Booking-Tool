@@ -215,7 +215,9 @@ export async function seedScale(
     await cloneRows(c, 'bookings', 'true', n.bookings, {
       employee_id: `(select id from s_people where rn = 1 + abs(hashint8(g::bigint)) % (select count(*) from s_people))`,
       client_id: `(select client_id from s_people where rn = 1 + abs(hashint8(g::bigint)) % (select count(*) from s_people))`,
-      trip_id: 'null', share_token: 'null', requested_for: 'null',
+      // Booked for themselves: booked_by is the traveller, not the copied row's.
+      booked_by: `(select id from s_people where rn = 1 + abs(hashint8(g::bigint)) % (select count(*) from s_people))`,
+      trip_id: 'null', share_token: 'null', confirmed_by: 'null',
       created_at: `now() - (g % 365) * interval '1 day'`,
     })
     await c.query(`
@@ -238,7 +240,8 @@ export async function seedScale(
     await cloneRows(c, 'bookings', 'true', n.heavyBookings, {
       employee_id: `current_setting('scale.heavy')::uuid`, client_id: `current_setting('scale.heavy_client')::uuid`,
       trip_id: `case when g % 4 = 0 then null else (select id from s_heavy_trips where rn = 1 + g % ${n.heavyTrips}) end`,
-      share_token: 'null', requested_for: 'null', created_at: `now() - g * interval '3 hours'`,
+      booked_by: `current_setting('scale.heavy')::uuid`, confirmed_by: 'null',
+      share_token: 'null', created_at: `now() - g * interval '3 hours'`,
     })
     await lookup(c, 's_heavy_bookings', `
       select id, row_number() over (order by id) rn from bookings where employee_id = $1`, [heavy.id])

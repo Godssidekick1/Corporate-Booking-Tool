@@ -134,4 +134,18 @@ d('schema', () => {
        order by 1`)
     expect(granted.map(r => r.g)).toEqual([])
   })
+
+  // 20261013000000_book_on_behalf: employee_id is the traveller, booked_by the
+  // booker. A booking with no booker, or the old requested_for column beside
+  // employee_id, would bring back two ideas of who travels.
+  it('every booking names its booker, and there is one traveller column', async () => {
+    const cols = await rows<{ c: string; nullable: string }>(`
+      select column_name as c, is_nullable as nullable from information_schema.columns
+       where table_schema = 'public' and table_name = 'bookings' and column_name in ('booked_by', 'requested_for')`)
+    expect(cols).toEqual([{ c: 'booked_by', nullable: 'NO' }])
+    const quote = await rows<{ nullable: string }>(`
+      select is_nullable as nullable from information_schema.columns
+       where table_schema = 'public' and table_name = 'price_quotes' and column_name = 'priced_by'`)
+    expect(quote).toEqual([{ nullable: 'NO' }])
+  })
 })

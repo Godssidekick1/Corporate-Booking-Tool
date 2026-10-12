@@ -849,6 +849,25 @@ export async function traveller(db: Queryable, employeeId: string): Promise<Pick
   return maybeOne(db, sql`select id, client_id from employees where id = ${employeeId}`)
 }
 
+// Someone a booker might book for: what decides whether they may
+// (app/lib/book/bookingActor.ts). Only people at a client can travel; TMC
+// staff have no client and are never returned.
+export interface BookableTraveller {
+  id: string
+  client_id: string
+  status: string
+  tmc_id: string
+  client_status: string
+  booking_mode: string
+}
+
+export async function bookableTraveller(db: Queryable, employeeId: string): Promise<BookableTraveller | null> {
+  return maybeOne<BookableTraveller>(db, sql`
+    select e.id, e.client_id, e.status, c.tmc_id, c.status as client_status, c.booking_mode
+    from employees e join clients c on c.id = e.client_id
+    where e.id = ${employeeId}`)
+}
+
 // ═══ Approver candidates ════════════════════════════════════════════════════
 // The raw facts pickApprover (app/lib/approval-engine) chooses from. Which
 // rows count as candidates lives HERE, in SQL: active, at this client, in the

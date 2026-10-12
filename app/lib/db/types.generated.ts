@@ -3,7 +3,7 @@
 // Written by scripts/generate-db-types.mjs from the live database schema.
 // Re-run after any schema change:  node scripts/generate-db-types.mjs
 //
-// 54 tables, 1 view(s), 560 columns.
+// 54 tables, 0 view(s), 558 columns.
 
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json }
 
@@ -140,7 +140,6 @@ export interface Tables {
     traveler_snapshot: Json
     created_at: string
     updated_at: string
-    requested_for: string | null
     trip_id: string | null
     provider: string | null
     session_id: string | null
@@ -159,6 +158,10 @@ export interface Tables {
     commercials: Json | null
     share_token: string | null
     tmc_id: string | null
+    booked_by: string
+    confirmed_by: string | null
+    policy_reason_code: string | null
+    policy_reason_note: string | null
   }
   branches: {
     id: string
@@ -608,6 +611,7 @@ export interface Tables {
     created_at: string
     expires_at: string
     tmc_id: string | null
+    priced_by: string
   }
   rate_limits: {
     key: string
@@ -673,14 +677,7 @@ export interface Tables {
 }
 
 export interface Views {
-  booking_traveller: {
-    booking_id: string | null
-    traveller_id: string | null
-    band_id: string | null
-    band_code: string | null
-    band_rank: number | null
-    company_id: string | null
-  }
+
 }
 
 export type TableName = keyof Tables

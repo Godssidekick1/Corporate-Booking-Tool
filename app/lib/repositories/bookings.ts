@@ -206,7 +206,7 @@ export async function heldQuote(db: Queryable, amadeusKey: string, referenceNo: 
 
 // jsonb columns take domain objects as they are; JSON-encoded on the way in.
 export type NewBooking = Pick<Row<'bookings'>,
-  | 'client_id' | 'employee_id' | 'requested_for' | 'booking_type' | 'status' | 'total_cost' | 'sell_total'
+  | 'client_id' | 'employee_id' | 'booked_by' | 'booking_type' | 'status' | 'total_cost' | 'sell_total'
   | 'provider' | 'provider_order_id' | 'amadeus_key' | 'pricing_key' | 'result_index' | 'search_key'
   | 'trip_id' | 'is_ndc' | 'policy_status' | 'policy_verdict'
 > & {
@@ -223,12 +223,12 @@ export type NewBooking = Pick<Row<'bookings'>,
 export async function insert(db: Queryable, b: NewBooking): Promise<{ id: string }> {
   return one<{ id: string }>(db, sql`
     insert into bookings (
-      client_id, employee_id, requested_for, booking_type, status, total_cost, sell_total, provider,
+      client_id, employee_id, booked_by, booking_type, status, total_cost, sell_total, provider,
       provider_order_id, amadeus_key, pricing_key, result_index, search_key, trip_id, is_ndc,
       policy_status, policy_verdict, resolved_deal_codes, resolved_fop, commercials, itinerary,
       traveler_snapshot, fare_breakdown, policy_verdict_detail)
     values (
-      ${b.client_id}, ${b.employee_id}, ${b.requested_for}, ${b.booking_type}, ${b.status}, ${b.total_cost},
+      ${b.client_id}, ${b.employee_id}, ${b.booked_by}, ${b.booking_type}, ${b.status}, ${b.total_cost},
       ${b.sell_total}, ${b.provider}, ${b.provider_order_id}, ${b.amadeus_key}, ${b.pricing_key},
       ${b.result_index}, ${b.search_key}, ${b.trip_id}, ${b.is_ndc}, ${b.policy_status}, ${b.policy_verdict},
       ${json(b.resolved_deal_codes)}, ${json(b.resolved_fop)}, ${json(b.commercials)}, ${json(b.itinerary)},

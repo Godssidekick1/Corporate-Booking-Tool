@@ -270,7 +270,7 @@ export const POST = route(async (req: NextRequest) => {
         resolved_fop: resolvedFop,
         client_id: clientId,
         employee_id: employee.id,
-        requested_for: employee.id,
+        booked_by: employee.id,
         booking_type: 'flight',
         status: 'pending_approval',
         // total_cost keeps its existing meaning — what the AIRLINE charges — so
