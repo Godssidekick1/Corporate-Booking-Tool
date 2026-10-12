@@ -5,6 +5,8 @@ import Link from 'next/link'
 import ChipList, { type ChipItem } from '@/app/components/ChipList'
 import Toggle from './Toggle'
 import { useLookup } from '@/app/hooks/useLookup'
+import { usePagedList } from '@/app/hooks/usePagedList'
+import Pagination from '@/app/components/Pagination'
 import {
   DEFAULT_PAYMENT_PRIORITY, PAYMENT_TYPES, PAYMENT_TYPE_EFFECTS, PAYMENT_TYPE_LABELS,
   normalisePriority, type PaymentType,
@@ -74,7 +76,11 @@ export default function AllocationsTab({ clientId, form, set }: {
   const [deals, setDeals] = useState<Allocation[]>([])
   const [fops, setFops] = useState<Allocation[]>([])
   const [bucketSizes, setBucketSizes] = useState<Record<string, number>>({})
-  const [cards, setCards] = useState<CardRow[]>([])
+  // Paged like the endpoint: one plain fetch showed only the first ten cards.
+  const cardList = usePagedList<CardRow>('/api/tmc/forms-of-payment', {
+    params: { payer: 'corporate', ownerClientId: clientId },
+  })
+  const cards = cardList.items
   const [commercials, setCommercials] = useState<EffectiveCommercial[]>([])
   const [commercialsEnabled, setCommercialsEnabled] = useState<Record<string, boolean>>({})
   const [busy, setBusy] = useState(false)
@@ -121,13 +127,6 @@ export default function AllocationsTab({ clientId, form, set }: {
       .catch(() => {})
   }, [clientId])
 
-  const loadCards = useCallback(() => {
-    fetch(`/api/tmc/forms-of-payment?payer=corporate&ownerClientId=${clientId}`)
-      .then(r => r.json())
-      .then(d => { if (d.ok) setCards(d.items ?? []) })
-      .catch(() => {})
-  }, [clientId])
-
   const loadCommercials = useCallback(() => {
     fetch(`/api/tmc/clients/${clientId}/commercials`)
       .then(r => r.json())
@@ -140,8 +139,8 @@ export default function AllocationsTab({ clientId, form, set }: {
   }, [clientId])
 
   useEffect(() => {
-    loadBuckets(); loadAllocations(); loadCards(); loadCommercials()
-  }, [loadBuckets, loadAllocations, loadCards, loadCommercials])
+    loadBuckets(); loadAllocations(); loadCommercials()
+  }, [loadBuckets, loadAllocations, loadCommercials])
 
   // ── Buckets ────────────────────────────────────────────────────────────────
   // The whole list goes up, not a delta. Two screens doing read-modify-write on
@@ -264,7 +263,7 @@ export default function AllocationsTab({ clientId, form, set }: {
       const d = await res.json()
       if (!res.ok) { setError(d.error || 'Could not add that card.'); return }
       setCard(EMPTY_CARD); setCardOpen(false)
-      loadCards()
+      cardList.refetch()
     } finally { setBusy(false) }
   }
 
@@ -402,6 +401,10 @@ export default function AllocationsTab({ clientId, form, set }: {
           ))}
         </ul>
       )}
+      <Pagination
+        page={cardList.page} pageSize={10} total={cardList.total}
+        onPageChange={cardList.setPage} busy={cardList.refreshing} noun="cards"
+      />
 
       {!cardOpen ? (
         <div style={s.actions}>

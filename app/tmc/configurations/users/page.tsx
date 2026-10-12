@@ -1,17 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Pagination from '@/app/components/Pagination'
 import { SkeletonTable } from '@/app/components/Skeleton'
 import { usePagedList } from '@/app/hooks/usePagedList'
-import { useLookup } from '@/app/hooks/useLookup'
+import { useLookup, clientOption } from '@/app/hooks/useLookup'
 import SearchableSelect from '@/app/components/SearchableSelect'
 import { PERMISSIONS } from '@/app/lib/permissions/permissionKeys'
-
-interface Client {
-  id: string
-  name: string
-}
 
 interface Tc {
   id: string
@@ -39,22 +34,14 @@ const STATUS_COLORS: Record<string, { bg: string; fg: string }> = {
 type Mode = 'list' | 'create'
 
 export default function TmcUsersPage() {
-  const [clients, setClients] = useState<Client[]>([])
   const [mode, setMode] = useState<Mode>('list')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
-  // Counsellors are server-paged and server-searched. Clients stay a single
-  // fetch: they populate the access checkbox list in the editor, which needs
-  // every option present at once to show what is and is not ticked.
+  // Counsellors are server-paged and server-searched.
   const list = usePagedList<Tc>('/api/tmc/tcs')
   const tcs = list.items
-
-  useEffect(() => {
-    fetch('/api/tmc/clients').then(r => r.json())
-      .then(d => { if (d.ok) setClients(d.items) })
-  }, [])
 
   function loadAll() {
     list.refetch()
@@ -93,7 +80,6 @@ export default function TmcUsersPage() {
 
       {mode === 'create' && (
         <TcForm
-          clients={clients}
           onClose={() => setMode('list')}
           onDone={() => { setMode('list'); loadAll(); setSuccess('TC added.') }}
           onError={setError}
@@ -103,7 +89,6 @@ export default function TmcUsersPage() {
       {editingTc && (
         <TcPermissionsEditor
           tc={editingTc}
-          clients={clients}
           onClose={() => setEditingId(null)}
           onDone={() => { setEditingId(null); loadAll(); setSuccess('Permissions updated.') }}
           onError={setError}
@@ -189,8 +174,7 @@ export default function TmcUsersPage() {
 
 // ── Create form ───────────────────────────────────────────────────────────────
 
-function TcForm({ clients, onClose, onDone, onError }: {
-  clients: Client[]
+function TcForm({ onClose, onDone, onError }: {
   onClose: () => void
   onDone: () => void
   onError: (msg: string) => void
@@ -204,10 +188,6 @@ function TcForm({ clients, onClose, onDone, onError }: {
 
   function togglePermission(key: string) {
     setPermissions(prev => prev.includes(key) ? prev.filter(p => p !== key) : [...prev, key])
-  }
-
-  function toggleClient(id: string) {
-    setClientIds(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id])
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -263,19 +243,8 @@ function TcForm({ clients, onClose, onDone, onError }: {
         ))}
       </div>
 
-      <p style={s.sectionLabel}>Clients this TC can access</p>
-      {clients.length === 0 ? (
-        <p style={s.emptyDesc}>No clients yet.</p>
-      ) : (
-        <div style={s.clientGrid}>
-          {clients.map(c => (
-            <label key={c.id} style={s.clientRow}>
-              <input type="checkbox" checked={clientIds.includes(c.id)} onChange={() => toggleClient(c.id)} />
-              {c.name}
-            </label>
-          ))}
-        </div>
-      )}
+      <p style={s.sectionLabel}>Clients this TC can access · {clientIds.length}</p>
+      <ClientAccess value={clientIds} onChange={setClientIds} />
 
       <div style={s.formActions}>
         <button type="button" onClick={onClose} style={s.ghostBtn}>Cancel</button>
@@ -289,9 +258,8 @@ function TcForm({ clients, onClose, onDone, onError }: {
 
 // ── Edit permissions (existing TC) ──────────────────────────────────────────
 
-function TcPermissionsEditor({ tc, clients, onClose, onDone, onError }: {
+function TcPermissionsEditor({ tc, onClose, onDone, onError }: {
   tc: Tc
-  clients: Client[]
   onClose: () => void
   onDone: () => void
   onError: (msg: string) => void
@@ -307,10 +275,6 @@ function TcPermissionsEditor({ tc, clients, onClose, onDone, onError }: {
 
   function togglePermission(key: string) {
     setPermissions(prev => prev.includes(key) ? prev.filter(p => p !== key) : [...prev, key])
-  }
-
-  function toggleClient(id: string) {
-    setClientIds(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id])
   }
 
   async function handleSave() {
@@ -366,15 +330,8 @@ function TcPermissionsEditor({ tc, clients, onClose, onDone, onError }: {
         </p>
       </div>
 
-      <p style={s.sectionLabel}>Clients</p>
-      <div style={s.clientGrid}>
-        {clients.map(c => (
-          <label key={c.id} style={s.clientRow}>
-            <input type="checkbox" checked={clientIds.includes(c.id)} onChange={() => toggleClient(c.id)} />
-            {c.name}
-          </label>
-        ))}
-      </div>
+      <p style={s.sectionLabel}>Clients · {clientIds.length}</p>
+      <ClientAccess value={clientIds} onChange={setClientIds} />
 
       <div style={s.formActions}>
         <button type="button" onClick={onClose} style={s.ghostBtn}>Cancel</button>
@@ -383,6 +340,82 @@ function TcPermissionsEditor({ tc, clients, onClose, onDone, onError }: {
         </button>
       </div>
     </div>
+  )
+}
+
+// ── Client access ─────────────────────────────────────────────────────────────
+// Search to add, × to remove. This was a checkbox per client over ONE fetch of
+// /api/tmc/clients, which is paged: only the first ten clients ever had a box,
+// so nobody could grant a counsellor the rest, and clients they already held
+// beyond those ten were invisible.
+
+function ClientAccess({ value, onChange }: { value: string[]; onChange: (ids: string[]) => void }) {
+  const [addId, setAddId] = useState('')
+  const lookup = useLookup('/api/tmc/clients', addId, { toOption: clientOption })
+  const [names, setNames] = useState<Map<string, string>>(new Map())
+  // Ids already asked for, so one that never resolves is not asked for forever.
+  const asked = useRef(new Set<string>())
+
+  // Name the clients already held. By id, since most are on no page of search
+  // results; in chunks, since a counsellor can hold hundreds and each id is 37
+  // characters of URL.
+  useEffect(() => {
+    const missing = value.filter(id => !asked.current.has(id))
+    if (missing.length === 0) return
+    for (const id of missing) asked.current.add(id)
+    const chunks: string[][] = []
+    for (let i = 0; i < missing.length; i += 100) chunks.push(missing.slice(i, i + 100))
+    Promise.all(chunks.map(ids => fetch(`/api/tmc/clients?ids=${ids.join(',')}`).then(r => r.json())))
+      .then(results => setNames(prev => {
+        const next = new Map(prev)
+        for (const d of results) for (const row of d.ok ? d.items : []) next.set(String(row.id), String(row.name))
+        return next
+      }))
+      .catch(() => {})
+  }, [value])
+
+  function add(id: string) {
+    setAddId('')
+    const picked = lookup.options.find(o => o.id === id)
+    if (!picked || value.includes(id)) return
+    asked.current.add(id)
+    setNames(prev => new Map(prev).set(id, picked.label))
+    onChange([...value, id])
+  }
+
+  const held = [...value].sort((a, b) => (names.get(a) ?? '').localeCompare(names.get(b) ?? ''))
+
+  return (
+    <>
+      <div style={{ maxWidth: 360, marginBottom: 10 }}>
+        <SearchableSelect
+          value={addId}
+          onChange={add}
+          options={lookup.options.filter(o => !value.includes(o.id))}
+          onSearch={lookup.onSearch}
+          loading={lookup.loading}
+          selectedLabel={lookup.selectedLabel}
+          placeholder="Search clients to add…"
+          emptyMessage="No more clients match"
+        />
+      </div>
+      {held.length === 0 ? (
+        <p style={s.emptyDesc}>No clients yet. Search above to add them.</p>
+      ) : (
+        <div style={s.clientGrid}>
+          {held.map(id => {
+            const name = names.get(id) ?? '…'
+            return (
+              <span key={id} style={s.clientRow}>
+                {name}
+                <button type="button" onClick={() => onChange(value.filter(x => x !== id))}
+                  aria-label={`Remove ${name}`} title={`Remove ${name}`} style={s.removeBtn}>×</button>
+              </span>
+            )
+          })}
+        </div>
+      )}
+    </>
   )
 }
 
@@ -411,8 +444,9 @@ const s: Record<string, React.CSSProperties> = {
   permRow: { display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '12px', color: '#374151', padding: '6px 0' },
   permLabel: { display: 'block', fontWeight: 500, color: '#111827' },
   permDesc: { display: 'block', fontSize: '11px', color: '#9CA3AF' },
-  clientGrid: { display: 'flex', flexWrap: 'wrap' as const, gap: '10px' },
+  clientGrid: { display: 'flex', flexWrap: 'wrap' as const, gap: '8px', maxHeight: 260, overflowY: 'auto' as const },
   clientRow: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#374151', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '6px', padding: '6px 10px' },
+  removeBtn: { background: 'transparent', border: 'none', color: '#9CA3AF', fontSize: '14px', lineHeight: 1, padding: 0, cursor: 'pointer' },
   formActions: { display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '18px' },
   filters: { display: 'flex', gap: '10px', marginBottom: '12px' },
   searchInput: { height: '36px', padding: '0 10px', fontSize: '13px', color: '#111827', background: '#fff', border: '1px solid #E5E7EB', borderRadius: '6px', outline: 'none', flex: 1, maxWidth: 340 },

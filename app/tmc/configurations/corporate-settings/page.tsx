@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import SearchableSelect from '@/app/components/SearchableSelect'
-import { useLookup } from '@/app/hooks/useLookup'
+import { useLookup, clientOption } from '@/app/hooks/useLookup'
 import { usePagedList } from '@/app/hooks/usePagedList'
 
 // ── Configurations → Commercials → Corporate settings ────────────────────────
@@ -32,13 +32,7 @@ export default function CorporateSettingsPickerPage() {
   const router = useRouter()
   const [clientId, setClientId] = useState('')
 
-  const lookup = useLookup('/api/tmc/clients', clientId, {
-    toOption: row => ({
-      id: String(row.id),
-      label: String(row.name),
-      sublabel: [row.client_code, row.city].filter(Boolean).join(' · ') || undefined,
-    }),
-  })
+  const lookup = useLookup('/api/tmc/clients', clientId, { toOption: clientOption })
 
   // The most recently added clients, so the page is useful before anyone types.
   // A picker on an empty screen makes you guess what exists.

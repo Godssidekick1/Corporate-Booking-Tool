@@ -1,13 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import SearchableSelect from '@/app/components/SearchableSelect'
-import { useLookup } from '@/app/hooks/useLookup'
-
-interface Client {
-  id: string
-  name: string
-}
+import { useLookup, clientOption } from '@/app/hooks/useLookup'
 
 interface VerdictBreach {
   limit_key: string
@@ -42,7 +37,6 @@ const VERDICT_STYLE: Record<string, { bg: string; fg: string; label: string }> =
 }
 
 export default function RuleEngineTestPage() {
-  const [clients, setClients] = useState<Client[]>([])
   const [selectedClientId, setSelectedClientId] = useState('')
   const [selectedEmployeeId, setSelectedEmployeeId] = useState('')
 
@@ -54,21 +48,14 @@ export default function RuleEngineTestPage() {
   const [breakfastIncluded, setBreakfastIncluded] = useState(false)
   const [sponsoredTransport, setSponsoredTransport] = useState(false)
 
-  const [loadingClients, setLoadingClients] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [result, setResult] = useState<TestResult | null>(null)
   const [error, setError] = useState('')
 
-  useEffect(() => {
-    fetch('/api/tmc/clients')
-      .then(r => r.json())
-      .then(data => { if (data.ok) setClients(data.items) })
-      .finally(() => setLoadingClients(false))
-  }, [])
-
-  // Server-searched rather than a full roster download. The endpoint pages at
-  // ten now, so a plain <select> over `data.employees` would silently show only
-  // the first ten of a client's staff with nothing on screen saying so.
+  // Both pickers are server-searched rather than a full download. The
+  // endpoints page at ten, so a plain list over one fetch would silently offer
+  // only the first ten clients (or the first ten of a client's staff).
+  const clientLookup = useLookup('/api/tmc/clients', selectedClientId, { toOption: clientOption })
   const employeeLookup = useLookup('/api/tmc/employees', selectedEmployeeId, {
     params: { clientId: selectedClientId },
     enabled: !!selectedClientId,
@@ -133,10 +120,12 @@ export default function RuleEngineTestPage() {
                 // The effect that used to clear this went with the roster fetch.
                 setSelectedEmployeeId('')
               }}
-              options={clients.map(c => ({ id: c.id, label: c.name }))}
-              placeholder={loadingClients ? 'Loading…' : 'Select a client…'}
+              options={clientLookup.options}
+              onSearch={clientLookup.onSearch}
+              loading={clientLookup.loading}
+              selectedLabel={clientLookup.selectedLabel}
+              placeholder="Search clients by name, code or city…"
               emptyMessage="No clients match"
-              disabled={loadingClients}
             />
           </div>
 

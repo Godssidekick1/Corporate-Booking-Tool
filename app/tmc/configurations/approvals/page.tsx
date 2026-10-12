@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import SearchableSelect from '@/app/components/SearchableSelect'
+import { useLookup, clientOption } from '@/app/hooks/useLookup'
 import Tabs, { useUrlTab } from '@/app/components/Tabs'
 import StepApprovers, { type TemplateStep } from './StepApprovers'
 import DirectChain from './DirectChain'
@@ -12,7 +13,6 @@ import DirectChain from './DirectChain'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface Client { id: string; name: string }
 
 type ChainMode = 'sequential' | 'parallel'
 type ChainQuorum = 'any' | 'all'
@@ -77,7 +77,6 @@ export default function TmcApprovalsPage() {
   const [mode, setMode] = useUrlTab<Mode>('mode', 'direct', MODES)
 
   const [chains, setChains] = useState<Chain[]>([])
-  const [clients, setClients] = useState<Client[]>([])
   const [loading, setLoading] = useState(true)
 
   const [error, setError] = useState('')
@@ -95,13 +94,9 @@ export default function TmcApprovalsPage() {
   async function loadAll() {
     setLoading(true); setError('')
     try {
-      const [chainData, clientData] = await Promise.all([
-        fetch('/api/tmc/approval-templates').then(r => r.json()),
-        fetch('/api/tmc/clients').then(r => r.json()),
-      ])
+      const chainData = await fetch('/api/tmc/approval-templates').then(r => r.json())
       if (!chainData.ok) { setError(chainData.error || 'Could not load approval chains.'); return }
       setChains(chainData.templates)
-      if (clientData.ok) setClients(clientData.items)
     } finally { setLoading(false) }
   }
 
@@ -152,7 +147,7 @@ export default function TmcApprovalsPage() {
       {loading ? (
         <p style={s.muted}>Loading…</p>
       ) : mode === 'direct' ? (
-        <DirectChain clients={clients} />
+        <DirectChain />
       ) : mode === 'template' ? (
         <TemplateBuilder
           chains={sharedChains}
@@ -162,7 +157,6 @@ export default function TmcApprovalsPage() {
         />
       ) : (
         <AssignTemplate
-          clients={clients}
           chains={sharedChains}
           onChanged={loadAll}
           onError={setError}
@@ -429,8 +423,7 @@ function StepEditor({ chain, onChanged, onError, onSuccess }: {
 
 // ── Assign a template ─────────────────────────────────────────────────────────
 
-function AssignTemplate({ clients, chains, onChanged, onError, onSuccess }: {
-  clients: Client[]
+function AssignTemplate({ chains, onChanged, onError, onSuccess }: {
   chains: Chain[]
   onChanged: () => void
   onError: (m: string) => void
@@ -438,6 +431,9 @@ function AssignTemplate({ clients, chains, onChanged, onError, onSuccess }: {
 }) {
   const [templateId, setTemplateId] = useState('')
   const [clientId, setClientId] = useState('')
+  // Server-searched (the clients endpoint is paged); also names a client
+  // arriving by ?clientId= that is not on the first page.
+  const clientLookup = useLookup('/api/tmc/clients', clientId, { toOption: clientOption })
 
   // Arriving from a client's Corporate Settings: start on that client. Read
   // straight off the URL for the reasons given in Tabs.tsx — useSearchParams
@@ -477,8 +473,11 @@ function AssignTemplate({ clients, chains, onChanged, onError, onSuccess }: {
             <SearchableSelect
               value={clientId}
               onChange={setClientId}
-              options={clients.map(c => ({ id: c.id, label: c.name }))}
-              placeholder="Select a client…"
+              options={clientLookup.options}
+              onSearch={clientLookup.onSearch}
+              loading={clientLookup.loading}
+              selectedLabel={clientLookup.selectedLabel}
+              placeholder="Search clients by name, code or city…"
               emptyMessage="No clients match"
             />
           </div>
@@ -495,7 +494,7 @@ function AssignTemplate({ clients, chains, onChanged, onError, onSuccess }: {
         <p style={s.muted}>Pick a template and a client to continue.</p>
       ) : (
         <>
-          <h3 style={s.sectionTitle}>Who does each step at {clients.find(c => c.id === clientId)?.name}</h3>
+          <h3 style={s.sectionTitle}>Who does each step at {clientLookup.selectedLabel}</h3>
           <StepApprovers
             clientId={clientId}
             templateId={template.id}

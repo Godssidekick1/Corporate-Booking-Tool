@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import SearchableSelect from '@/app/components/SearchableSelect'
+import { useLookup, clientOption } from '@/app/hooks/useLookup'
 
 // ── /tmc/configurations/cost-centres ───────────────────────────────────────────────
 // A client's cost centres, with headcount.
@@ -12,13 +13,13 @@ import SearchableSelect from '@/app/components/SearchableSelect'
 // can offer a dropdown, and a rename carries its people along.
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface Client { id: string; name: string }
 interface CostCentre { id: string; code: string; name: string; employees: number }
 interface Unlisted { code: string; employees: number }
 
 export default function CostCentresPage() {
-  const [clients, setClients] = useState<Client[]>([])
   const [clientId, setClientId] = useState('')
+  // Server-searched: the clients endpoint is paged (10 a page).
+  const clientLookup = useLookup('/api/tmc/clients', clientId, { toOption: clientOption })
 
   const [centres, setCentres] = useState<CostCentre[]>([])
   const [departments, setDepartments] = useState<string[]>([])
@@ -31,11 +32,6 @@ export default function CostCentresPage() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
-
-  useEffect(() => {
-    fetch('/api/tmc/clients').then(r => r.json())
-      .then(d => { if (d.ok) setClients(d.items) })
-  }, [])
 
   useEffect(() => {
     if (!clientId) return
@@ -136,8 +132,11 @@ export default function CostCentresPage() {
           <SearchableSelect
             value={clientId}
             onChange={setClientId}
-            options={clients.map(c => ({ id: c.id, label: c.name }))}
-            placeholder="Select a client…"
+            options={clientLookup.options}
+            onSearch={clientLookup.onSearch}
+            loading={clientLookup.loading}
+            selectedLabel={clientLookup.selectedLabel}
+            placeholder="Search clients by name, code or city…"
             emptyMessage="No clients match"
           />
         </div>

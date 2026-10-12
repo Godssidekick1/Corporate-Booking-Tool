@@ -39,6 +39,14 @@ const defaultToOption = (row: Record<string, unknown>): LookupOption => ({
   sublabel: row.email ? String(row.email) : undefined,
 })
 
+// /api/tmc/clients rows: the name, with the code and city that tell two
+// similarly named clients apart (both are searched server-side too).
+export const clientOption = (row: Record<string, unknown>): LookupOption => ({
+  id: String(row.id),
+  label: String(row.name),
+  sublabel: [row.client_code, row.city].filter(Boolean).join(' · ') || undefined,
+})
+
 export function useLookup(endpoint: string, selectedId: string, options: Options = {}) {
   const { params, enabled = true, toOption = defaultToOption } = options
 

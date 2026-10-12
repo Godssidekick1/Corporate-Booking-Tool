@@ -115,4 +115,32 @@ describe('architecture', () => {
       .sort()
     expect(callers).toEqual(ALLOWED)
   })
+
+  // A paged endpoint fetched once, with no page and no ids, answers with its
+  // first ten rows -- and a screen that builds a picker or a checklist from
+  // that shows ten and silently hides the rest (Traveller profiles, Cost
+  // centres, Policy, Approvals, Rule engine test and TC access all offered
+  // only ten of 2,000 clients). Pickers use useLookup (server search plus
+  // ?ids=), lists use usePagedList.
+  it('no screen reads a paged list as if it were the whole list', () => {
+    // Reads only `total` (how many people lack a manager), never the rows.
+    const COUNT_ONLY = ['app/tmc/configurations/approvals/StepApprovers.tsx']
+    const paged = APP_SOURCE
+      .filter(p => /app\/api\/.*\/route\.ts$/.test(rel(p)) && /\bparsePageParams\(/.test(read(p)))
+      .map(p => rel(p).replace(/^app/, '').replace(/\/route\.ts$/, ''))
+    expect(paged).toContain('/api/tmc/clients')
+    const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const offenders = APP_SOURCE
+      .filter(p => p.endsWith('.tsx') && !COUNT_ONLY.includes(rel(p)))
+      .flatMap(p => paged.flatMap(endpoint => {
+        // A write (method: POST, PATCH...) is not a read of the list.
+        const call = new RegExp(`fetch\\(\\s*[\`'"]${escape(endpoint)}(\\?[^\`'"]*)?[\`'"]([^)]{0,120})`, 'g')
+        return [...read(p).matchAll(call)]
+          // page / ids: paged or targeted. summary / all: the endpoint's own
+          // documented opt-outs (counts only; the capped reporting tree).
+          .filter(m => !/page=|ids=|summary=|all=/i.test(m[1] ?? '') && !/method:\s*['"](POST|PUT|PATCH|DELETE)/.test(m[2]))
+          .map(() => `${rel(p)} -> ${endpoint}`)
+      }))
+    expect(offenders).toEqual([])
+  })
 })

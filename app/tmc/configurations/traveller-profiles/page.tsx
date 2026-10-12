@@ -6,6 +6,7 @@ import SearchableSelect from '@/app/components/SearchableSelect'
 import Pagination from '@/app/components/Pagination'
 import { SkeletonTable } from '@/app/components/Skeleton'
 import { usePagedList } from '@/app/hooks/usePagedList'
+import { useLookup, clientOption } from '@/app/hooks/useLookup'
 import { CountrySelect, RegionSelect, CitySelect, DateField } from '@/app/components/places/PlacePickers'
 import { genderForTitle, todayInput } from '@/app/lib/places/profileFormat'
 
@@ -19,7 +20,6 @@ import { genderForTitle, todayInput } from '@/app/lib/places/profileFormat'
 // places and neither showed the whole record.
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface Client { id: string; name: string }
 interface Band { id: string; code: string; label: string; rank: number }
 interface CostCentre { id: string; code: string; name: string }
 
@@ -111,8 +111,10 @@ const PROFILE_SECTIONS: { heading: string; fields: { key: keyof TravelerProfile;
 ]
 
 export default function TravellerProfilesPage() {
-  const [clients, setClients] = useState<Client[]>([])
   const [clientId, setClientId] = useState('')
+  // Server-searched: /api/tmc/clients is paged, so a single unfiltered fetch
+  // offered only the first ten clients and the rest could not be found.
+  const clientLookup = useLookup('/api/tmc/clients', clientId, { toOption: clientOption })
 
   // employees / bands / costCentres come from the paged hook further down.
 
@@ -140,11 +142,6 @@ export default function TravellerProfilesPage() {
     if (successTimer.current) clearTimeout(successTimer.current)
     successTimer.current = setTimeout(() => setSuccess(''), 4000)
   }
-
-  useEffect(() => {
-    fetch('/api/tmc/clients').then(r => r.json())
-      .then(d => { if (d.ok) setClients(d.items) })
-  }, [])
 
   // Server-paged and server-searched. Searching the whole roster from the client
   // meant downloading it first, which is exactly what breaks once a client has a
@@ -354,13 +351,14 @@ export default function TravellerProfilesPage() {
       <div style={s.toolbar}>
         <div style={{ ...s.field, width: 280 }}>
           <label style={s.label}>Client</label>
-          {/* Type-to-filter rather than a native select: a TMC with dozens of
-              clients cannot scan an unfiltered dropdown. */}
           <SearchableSelect
             value={clientId}
             onChange={chooseClient}
-            options={clients.map(c => ({ id: c.id, label: c.name }))}
-            placeholder="Select a client…"
+            options={clientLookup.options}
+            onSearch={clientLookup.onSearch}
+            loading={clientLookup.loading}
+            selectedLabel={clientLookup.selectedLabel}
+            placeholder="Search clients by name, code or city…"
             emptyMessage="No clients match"
           />
         </div>

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import SearchableSelect from '@/app/components/SearchableSelect'
-import { useLookup } from '@/app/hooks/useLookup'
+import { useLookup, clientOption } from '@/app/hooks/useLookup'
 
 // ── DirectChain ──────────────────────────────────────────────────────────────
 // The whole direct-mapping flow: client, who it covers, the approvers in
@@ -19,7 +19,6 @@ import { useLookup } from '@/app/hooks/useLookup'
 // long, and the whole roster had to arrive before the field worked at all.
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface Client { id: string; name: string }
 
 type ApproverType =
   'manager' | 'any_manager_at' | 'finance_role' | 'admin' | 'self' | 'specific_user'
@@ -64,15 +63,14 @@ const employeeOption = (row: Record<string, unknown>) => ({
   sublabel: [row.band_code, row.email].filter(Boolean).join(' · ') || undefined,
 })
 
-export default function DirectChain({ clients }: { clients: Client[] }) {
+export default function DirectChain() {
   const [clientId, setClientId] = useState('')
   const [category, setCategory] = useState('air')
   const [employeeId, setEmployeeId] = useState('') // '' means everyone
 
-  // `clients` still arrives as a prop and seeds the label cache on first paint,
-  // but the picker searches the server — a TMC's client list is a master that
-  // grows, and this is the same picker pattern as everywhere else.
-  const clientLookup = useLookup('/api/tmc/clients', clientId)
+  // Searches the server: a TMC's client list is a master that grows, and the
+  // endpoint pages at ten.
+  const clientLookup = useLookup('/api/tmc/clients', clientId, { toOption: clientOption })
 
   // Scoped to the chosen client. `enabled` keeps it from firing before there is
   // one: the endpoint requires clientId and would 400 on every keystroke.
@@ -198,11 +196,11 @@ export default function DirectChain({ clients }: { clients: Client[] }) {
               // one's roster.
               setEmployeeId('')
             }}
-            options={clientLookup.options.length ? clientLookup.options : clients.map(c => ({ id: c.id, label: c.name }))}
+            options={clientLookup.options}
             onSearch={clientLookup.onSearch}
             loading={clientLookup.loading}
             selectedLabel={clientLookup.selectedLabel}
-            placeholder="Select a client…"
+            placeholder="Search clients by name, code or city…"
             emptyMessage="No clients match"
           />
         </div>

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import SearchableSelect from '@/app/components/SearchableSelect'
+import { useLookup, clientOption } from '@/app/hooks/useLookup'
 import Tabs, { useUrlTab } from '@/app/components/Tabs'
 import {
   CATEGORIES,
@@ -15,7 +16,6 @@ import {
 const POLICY_TABS = ['groups', 'clients'] as const
 type PolicyTab = typeof POLICY_TABS[number]
 
-interface Client { id: string; name: string }
 
 interface PolicyGroup {
   id: string
@@ -186,14 +186,17 @@ export default function TmcPolicyPage() {
   const [version, setVersion] = useState(0)
   const [openCategories, setOpenCategories] = useState<Record<string, boolean>>({ flight: true })
 
-  const [clients, setClients] = useState<Client[]>([])
   const [selectedClientId, setSelectedClientId] = useState('')
+  // Server-searched (the clients endpoint is paged), and only once the tab is open.
+  const clientLookup = useLookup('/api/tmc/clients', selectedClientId, {
+    toOption: clientOption,
+    enabled: tab === 'clients',
+  })
   const [links, setLinks] = useState<ClientLink[]>([])
   const [linkGroupId, setLinkGroupId] = useState('')
 
   const [loadingGroups, setLoadingGroups] = useState(true)
   const [loadingRules, setLoadingRules] = useState(false)
-  const [loadingClients, setLoadingClients] = useState(false)
   const [loadingLinks, setLoadingLinks] = useState(false)
   const [saving, setSaving] = useState(false)
   const [linking, setLinking] = useState(false)
@@ -257,17 +260,6 @@ export default function TmcPolicyPage() {
     loadRules(selectedGroupId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedGroupId])
-
-  useEffect(() => {
-    if (tab !== 'clients' || clients.length > 0) return
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setLoadingClients(true)
-    fetch('/api/tmc/clients')
-      .then(r => r.json())
-      .then(d => { if (d.ok) setClients(d.items) })
-      .finally(() => setLoadingClients(false))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab])
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -817,9 +809,11 @@ export default function TmcPolicyPage() {
             <SearchableSelect
               value={selectedClientId}
               onChange={setSelectedClientId}
-              options={clients.map(c => ({ id: c.id, label: c.name }))}
-              placeholder={loadingClients ? 'Loading…' : 'Select a client…'}
-              disabled={loadingClients}
+              options={clientLookup.options}
+              onSearch={clientLookup.onSearch}
+              loading={clientLookup.loading}
+              selectedLabel={clientLookup.selectedLabel}
+              placeholder="Search clients by name, code or city…"
               emptyMessage="No clients match"
             />
           </div>

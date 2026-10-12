@@ -5,18 +5,14 @@ import BandLadderEditor, { type BandDraft } from './BandLadderEditor'
 import Papa from 'papaparse'
 import { canAccess } from '@/app/lib/permissions/canAccess'
 import Pagination from '@/app/components/Pagination'
+import SearchableSelect from '@/app/components/SearchableSelect'
+import { useLookup } from '@/app/hooks/useLookup'
 
 interface Employee {
   full_name: string
   email: string
   role: string
   tmc_id: string
-}
-
-interface client_group {
-  id: string
-  name: string
-  city: string | null
 }
 
 interface PolicyGroupOption {
@@ -71,9 +67,16 @@ const initialBands: BandDraft[] = [
 export default function TmcDashboardPage() {
   const [employee, setEmployee] = useState<Employee | null>(null)
   const [permissions, setPermissions] = useState<string[]>([])
-  const [client_groups, setclient_groups] = useState<client_group[]>([])
   const [showInviteForm, setShowInviteForm] = useState(false)
   const [form, setForm] = useState(initialForm)
+  const groupLookup = useLookup('/api/tmc/client-groups', form.client_groupId, {
+    enabled: showInviteForm,
+    toOption: row => ({
+      id: String(row.id),
+      label: String(row.name),
+      sublabel: [row.group_code, row.city].filter(Boolean).join(' · ') || undefined,
+    }),
+  })
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState('')
   const [formSuccess, setFormSuccess] = useState('')
@@ -92,16 +95,14 @@ export default function TmcDashboardPage() {
   useEffect(() => {
     Promise.all([
       fetch('/api/me').then(r => r.json()),
-      fetch('/api/tmc/client-groups').then(r => r.json()),
       // Existing policy groups, so a new client can reuse one at creation
       // instead of being left unprotected until someone links one later.
       fetch('/api/tmc/policy-groups').then(r => r.json()),
-    ]).then(([meData, client_groupsData, policyGroupsData]) => {
+    ]).then(([meData, policyGroupsData]) => {
       if (meData.ok) {
         setEmployee(meData.employee)
         setPermissions(meData.permissions ?? [])
       }
-      if (client_groupsData.ok) setclient_groups(client_groupsData.items)
       if (policyGroupsData.ok) setPolicyGroups(policyGroupsData.groups)
     })
   }, [])
@@ -360,18 +361,22 @@ export default function TmcDashboardPage() {
             <div style={s.fields}>
               <div style={s.field}>
                 <label style={s.label}>Assign to client group</label>
-                {client_groups.length === 0 ? (
-                  <p style={s.noclient_groupHint}>
-                    No client groups yet — <a href="/tmc/configurations/client-groups" style={s.inlineLink}>create one</a> to group your clients, or leave unassigned.
-                  </p>
-                ) : (
-                  <select name="client_groupId" value={form.client_groupId} onChange={handleFormChange} style={s.input}>
-                    <option value="">Unassigned</option>
-                    {client_groups.map(b => (
-                      <option key={b.id} value={b.id}>{b.name}{b.city ? ` — ${b.city}` : ''}</option>
-                    ))}
-                  </select>
-                )}
+                {/* Server-searched: client groups are paged, so a <select> over
+                    one fetch offered only the first ten. */}
+                <SearchableSelect
+                  value={form.client_groupId}
+                  onChange={id => setForm(prev => ({ ...prev, client_groupId: id }))}
+                  options={groupLookup.options}
+                  onSearch={groupLookup.onSearch}
+                  loading={groupLookup.loading}
+                  selectedLabel={groupLookup.selectedLabel}
+                  placeholder="Unassigned"
+                  emptyMessage="No client groups match"
+                  allowClear clearLabel="Unassigned"
+                />
+                <p style={s.noclient_groupHint}>
+                  Groups are managed in <a href="/tmc/configurations/client-groups" style={s.inlineLink}>Client groups</a>; leave unassigned if none fits.
+                </p>
               </div>
             </div>
 
