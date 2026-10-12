@@ -12,7 +12,9 @@ export const TEST_DB = 'cbt_test'
 function adminUrl(): string {
   const url = process.env.TEST_ADMIN_DATABASE_URL
   if (url) return url
-  const base = process.env.DATABASE_URL
+  // Global setup runs before the config's env applies, with .env.local's own
+  // values: the owner is MIGRATE_DATABASE_URL once the app has its own login.
+  const base = process.env.MIGRATE_DATABASE_URL ?? process.env.DATABASE_URL
   if (!base) throw new Error('[tests] DATABASE_URL is not set')
   const u = new URL(base)
   u.pathname = '/postgres'

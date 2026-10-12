@@ -37,7 +37,9 @@ function withDatabase(url: string, database: string): string {
   return u.toString()
 }
 
-const devUrl = process.env.DATABASE_URL
+// The owner: it creates the test databases and the test login. Once the app
+// itself runs as a restricted login, that is MIGRATE_DATABASE_URL.
+const devUrl = process.env.MIGRATE_DATABASE_URL ?? process.env.DATABASE_URL
 const adminUrl = devUrl ? withDatabase(devUrl, 'postgres') : undefined
 
 // THE TESTS RUN AS THE RESTRICTED APP ROLE, not as the owner: a login in role

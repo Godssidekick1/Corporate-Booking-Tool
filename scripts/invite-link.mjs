@@ -30,7 +30,7 @@ function envValue(name) {
 }
 
 const email = process.argv[2]?.trim().toLowerCase()
-const url = process.argv[3] ?? envValue('DATABASE_URL')
+const url = process.argv[3] ?? envValue('MIGRATE_DATABASE_URL') ?? envValue('DATABASE_URL')
 if (!email || !url) {
   console.error('usage: node scripts/invite-link.mjs <email> [database url]   (or set DATABASE_URL)')
   process.exit(1)

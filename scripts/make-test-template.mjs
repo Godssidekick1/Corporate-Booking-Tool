@@ -28,14 +28,17 @@ const SOURCE = 'cbt_local'
 const TEMPLATE = 'cbt_template'
 
 function baseUrl() {
-  let url = process.env.DATABASE_URL
+  // The owner's URL when the app itself runs as a restricted login
+  // (MIGRATE_DATABASE_URL, docs/database-roles.md); otherwise DATABASE_URL.
+  const fromFile = {}
   const envPath = join(process.cwd(), '.env.local')
-  if (!url && existsSync(envPath)) {
+  if (existsSync(envPath)) {
     for (const line of readFileSync(envPath, 'utf8').split(/\r?\n/)) {
-      const m = line.match(/^\s*DATABASE_URL\s*=\s*(.*)\s*$/)
-      if (m) url = m[1].replace(/^["']|["']$/g, '')
+      const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/i)
+      if (m) fromFile[m[1]] = m[2].replace(/^["']|["']$/g, '')
     }
   }
+  const url = ['MIGRATE_DATABASE_URL', 'DATABASE_URL'].map(n => process.env[n] ?? fromFile[n]).find(Boolean)
   if (!url) throw new Error('DATABASE_URL not set')
   return new URL(url)
 }

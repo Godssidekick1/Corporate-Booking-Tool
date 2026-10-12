@@ -10,7 +10,8 @@
     "migrate": "node scripts/migrate.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "scale": "vitest run -c vitest.scale.config.mts"
+    "scale": "vitest run -c vitest.scale.config.mts",
+    "db:app-login": "node scripts/create-app-login.mjs"
   },
   "dependencies": {
     "@node-rs/argon2": "^2.2.1",

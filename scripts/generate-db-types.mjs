@@ -29,13 +29,19 @@ const ROOT = process.cwd()
 
 function envUrl() {
   if (process.argv[2]) return process.argv[2]
-  if (process.env.DATABASE_URL) return process.env.DATABASE_URL
+  // The owner's URL when the app itself runs as a restricted login
+  // (MIGRATE_DATABASE_URL, docs/database-roles.md); otherwise DATABASE_URL.
+  const fromFile = {}
   const envPath = join(ROOT, '.env.local')
   if (existsSync(envPath)) {
     for (const line of readFileSync(envPath, 'utf8').split(/\r?\n/)) {
-      const m = line.match(/^\s*DATABASE_URL\s*=\s*(.*)\s*$/)
-      if (m) return m[1].replace(/^["']|["']$/g, '')
+      const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/i)
+      if (m) fromFile[m[1]] = m[2].replace(/^["']|["']$/g, '')
     }
+  }
+  for (const name of ['MIGRATE_DATABASE_URL', 'DATABASE_URL']) {
+    const v = process.env[name] ?? fromFile[name]
+    if (v) return v
   }
   throw new Error('DATABASE_URL not set. Pass a connection string or add it to .env.local.')
 }

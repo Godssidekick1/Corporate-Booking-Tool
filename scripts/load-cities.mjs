@@ -56,7 +56,7 @@ const file = fileAt >= 0 ? args[fileAt + 1] : null
 // The database address is the one argument that is neither a flag nor the
 // value after --file. (Testing `i !== fileAt + 1` alone skipped the FIRST
 // argument whenever --file was absent, since fileAt is then -1.)
-const url = args.find((a, i) => !a.startsWith('--') && (fileAt < 0 || i !== fileAt + 1)) ?? envValue('DATABASE_URL')
+const url = args.find((a, i) => !a.startsWith('--') && (fileAt < 0 || i !== fileAt + 1)) ?? envValue('MIGRATE_DATABASE_URL') ?? envValue('DATABASE_URL')
 if (!url) {
   console.error('usage: node scripts/load-cities.mjs [database url] [--file cities500.zip]   (or set DATABASE_URL)')
   process.exit(1)
