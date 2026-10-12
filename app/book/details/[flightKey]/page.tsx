@@ -8,7 +8,7 @@ import {
   FlatFlightResult, formatTime, formatDayLabel, SelectedSeat, TravelerProfile,
   LegSeatMap, SeatCell, journeysOf, journeyLabel,
 } from '@/app/lib/book/types'
-import { CountrySelect, findCountry, useCountries } from '@/app/components/places/PlacePickers'
+import { CountrySelect, RegionSelect, CitySelect, findCountry, useCountries } from '@/app/components/places/PlacePickers'
 import { genderForTitle } from '@/app/lib/places/profileFormat'
 import { mealCodesFor, mealLabel, fromProfilePreference, NO_MEAL_PREFERENCE } from '@/app/lib/book/mealCodes'
 import { ButtonBusy, BusyOverlay } from '@/app/components/FlowLoader'
@@ -379,6 +379,9 @@ export default function BookingDetailsPage() {
   const [city, setCity] = useState('')
   const [state, setState] = useState('')
   const [zipCode, setZipCode] = useState('')
+  // Address country, ISO code: what the state and city pickers list places
+  // of, and what the airline gets as the contact's country.
+  const [addressCountry, setAddressCountry] = useState('IN')
   const [tripType, setTripType] = useState<'domestic' | 'international'>('domestic')
 
   const [submitting, setSubmitting] = useState(false)
@@ -586,6 +589,7 @@ export default function BookingDetailsPage() {
       if (profile.city) setCity(profile.city)
       if (profile.state) setState(profile.state)
       if (profile.zipCode) setZipCode(profile.zipCode)
+      if (profile.country) setAddressCountry(profile.country)
 
       // Only lock the fields once there's actually complete data to lock
       // to — required identity + contact fields at minimum, plus passport
@@ -706,6 +710,10 @@ export default function BookingDetailsPage() {
     const mobileError = validateMobile(mobile)
     if (mobileError) errors['contact-mobile'] = mobileError
 
+    // The pickers carry no native `required` (the old text boxes did), so it
+    // is checked here, where the other contact fields are.
+    if (!state.trim() || !city.trim()) errors['contact-place'] = 'Choose the state and city.'
+
     setFieldErrors(errors)
     return errors
   }
@@ -727,7 +735,7 @@ export default function BookingDetailsPage() {
       if (firstBadPassenger >= 0) {
         setOpenStep('travellers')
         setOpenPassenger(firstBadPassenger)
-      } else if (errors['contact-email'] || errors['contact-mobile']) {
+      } else if (errors['contact-email'] || errors['contact-mobile'] || errors['contact-place']) {
         setOpenStep('contact')
       }
       return
@@ -780,10 +788,12 @@ export default function BookingDetailsPage() {
             Address: address,
             City: city,
             State: state,
-            CountryCode: passengers[0]?.nationality ?? 'IN',
+            // The address's own country (was the first passenger's nationality,
+            // which is not where anyone lives when they hold a foreign passport).
+            CountryCode: addressCountry || 'IN',
             // Amadeus rejects an empty CountryName (ModelState validation);
             // an unmatched code is sent as itself rather than as nothing.
-            CountryName: findCountry(countries, passengers[0]?.nationality || 'IN')?.name ?? (passengers[0]?.nationality || 'IN'),
+            CountryName: findCountry(countries, addressCountry || 'IN')?.name ?? (addressCountry || 'IN'),
             ZipCode: zipCode,
             PassengerDetails: passengers.map((p, i) => ({
               Title: p.title,
@@ -869,7 +879,7 @@ export default function BookingDetailsPage() {
       : chosenMeals.join(', ')
   const mealsStatus: 'done' | 'todo' = mealIncluded && chosenMeals.length > 0 ? 'done' : 'todo'
 
-  const contactHasErrors = Boolean(fieldErrors['contact-email'] || fieldErrors['contact-mobile'])
+  const contactHasErrors = Boolean(fieldErrors['contact-email'] || fieldErrors['contact-mobile'] || fieldErrors['contact-place'])
   const contactStatus = contactHasErrors ? 'error' : (email && mobile) ? 'done' : 'todo'
 
   const totalSelectedSeats = Object.values(seatsByPassenger).flat().length
@@ -1267,14 +1277,31 @@ export default function BookingDetailsPage() {
               <input type="text" required disabled={isSelfBooking} value={address} onChange={e => setAddress(e.target.value)} style={{ ...s.input, ...(isSelfBooking ? s.inputLocked : {}) }} />
             </div>
 
-            <div style={s.grid3}>
+            {/* Pickers over the same place list as the travel profile, so a booking
+                cannot carry a state or city the profile screens would refuse. */}
+            <div style={s.grid2}>
               <div style={s.field}>
-                <label style={s.label}>City</label>
-                <input type="text" required disabled={isSelfBooking} value={city} onChange={e => setCity(e.target.value)} style={{ ...s.input, ...(isSelfBooking ? s.inputLocked : {}) }} />
+                <label style={s.label}>Country</label>
+                <CountrySelect
+                  value={addressCountry}
+                  disabled={isSelfBooking}
+                  onChange={v => { if (v !== addressCountry) { setAddressCountry(v); setState(''); setCity('') } }}
+                />
               </div>
               <div style={s.field}>
                 <label style={s.label}>State</label>
-                <input type="text" required disabled={isSelfBooking} value={state} onChange={e => setState(e.target.value)} style={{ ...s.input, ...(isSelfBooking ? s.inputLocked : {}) }} />
+                <RegionSelect
+                  country={addressCountry} value={state} disabled={isSelfBooking}
+                  onChange={v => { if (v !== state) setCity(''); setState(v) }}
+                />
+              </div>
+            </div>
+
+            <div style={s.grid2}>
+              <div style={s.field}>
+                <label style={s.label}>City</label>
+                <CitySelect strict country={addressCountry} state={state} value={city} disabled={isSelfBooking} onChange={setCity} />
+                {fieldErrors['contact-place'] && <p style={s.fieldError}>{fieldErrors['contact-place']}</p>}
               </div>
               <div style={s.field}>
                 <label style={s.label}>ZIP code</label>
