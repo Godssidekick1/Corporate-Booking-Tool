@@ -11,7 +11,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "scale": "vitest run -c vitest.scale.config.mts",
-    "db:app-login": "node scripts/create-app-login.mjs"
+    "db:app-login": "node scripts/create-app-login.mjs",
+    "demo:seed": "node scripts/demo-tmc.mjs seed",
+    "demo:remove": "node scripts/demo-tmc.mjs remove"
   },
   "dependencies": {
     "@node-rs/argon2": "^2.2.1",

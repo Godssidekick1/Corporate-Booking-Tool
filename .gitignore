@@ -60,3 +60,6 @@ schema/restore_*.log
 
 # npm run scale output
 tests/scale/last-run.md
+
+# demo TMC sign-ins (npm run demo:seed) -- holds a password
+demo-logins.txt

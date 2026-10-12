@@ -95,6 +95,21 @@ function scrubEmailsDeep(value) {
   return value
 }
 
+// ── 0. Not while the demo TMC is in cbt_local ────────────────────────────────
+// npm run demo:seed builds thousands of made-up rows in cbt_local. Copied
+// into the template they would bloat every test run and change what the
+// route snapshots see. Checked before anything is touched.
+{
+  const source = new pg.Client({ connectionString: urlFor(SOURCE) })
+  await source.connect()
+  const demo = await source.query(`select 1 from tmcs where name = 'Demo Scale TMC'`)
+  await source.end()
+  if (demo.rowCount) {
+    console.error(`${SOURCE} still holds the demo TMC. Run npm run demo:remove first, then re-run this.`)
+    process.exit(1)
+  }
+}
+
 // ── 1. Clone ─────────────────────────────────────────────────────────────────
 const admin = new pg.Client({ connectionString: urlFor('postgres') })
 await admin.connect()
