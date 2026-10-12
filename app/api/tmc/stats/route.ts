@@ -52,9 +52,8 @@ export const GET = route(async (req: NextRequest) => {
     weekStarts.push(start.toISOString())
   }
 
-  const [totals, clients, trend] = await Promise.all([
-    clientsRepo.portfolioTotals(db, auth.tmcId, accessibleIds, recentSince),
-    clientsRepo.portfolioPage(db, auth.tmcId, accessibleIds, recentSince, params),
+  const [{ totals, clients }, trend] = await Promise.all([
+    clientsRepo.portfolio(db, auth.tmcId, accessibleIds, recentSince, params),
     clientsRepo.portfolioTrend(db, auth.tmcId, accessibleIds, weekStarts),
   ])
 

@@ -122,6 +122,13 @@ d('row-level security', () => {
     // An update that tries to move a row out of the tenant is refused too.
     const own = (await db.query('select id from buckets where tmc_id = $1 limit 1', [tmcA])).rows[0].id
     await expect(as(ctx, () => db.query('update buckets set tmc_id = $1 where id = $2', [tmcB, own]))).rejects.toThrow(/row-level security/)
+    // A client-scoped row's tenant column is filled from its client, whatever
+    // the writer sends: naming another TMC does not move the row there.
+    const forged = await as(ctx, () => db.query(
+      `insert into trips (client_id, created_by, name, status, tmc_id) values ($1, $2, 'rls forged', 'open', $3) returning tmc_id`,
+      [clientsA[0], a.tmcAdmin.id, tmcB]))
+    expect(forged.rows[0].tmc_id).toBe(tmcA)
+    await db.query(`delete from trips where name = 'rls forged'`)
     // And another tenant's rows cannot even be touched: nothing matches.
     expect((await as(ctx, () => db.query('update buckets set name = name where tmc_id = $1', [tmcB]))).rowCount).toBe(0)
     expect((await as(ctx, () => db.query('delete from bookings where client_id = any($1)', [clientsB]))).rowCount).toBe(0)

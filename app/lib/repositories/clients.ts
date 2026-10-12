@@ -125,47 +125,61 @@ function perClient(tmcId: string, accessibleIds: readonly string[] | null, recen
     from c left join b on b.client_id = c.id left join e on e.client_id = c.id`
 }
 
-export async function portfolioPage(
-  db: Queryable, tmcId: string, accessibleIds: readonly string[] | null, recentSince: string, params: PageParams
-): Promise<PortfolioClient[]> {
-  return many<PortfolioClient>(db, sql`
-    select "clientId", name, employees, bookings, "recentBookings", spend, "lastBookingAt"
-    from (${perClient(tmcId, accessibleIds, recentSince)}) p
-    order by bookings desc, created_at, "clientId" ${page(params)}`)
-}
-
-export async function portfolioTotals(
-  db: Queryable, tmcId: string, accessibleIds: readonly string[] | null, recentSince: string
-): Promise<PortfolioTotals & {
+export interface PortfolioSummary extends PortfolioTotals {
   dormant: number
   busiest: { name: string; bookings: number } | null
   quietest: { name: string; bookings: number } | null
-}> {
-  const row = await one<PortfolioTotals & {
-    dormant: number; busiest_name: string | null; busiest_n: number | null; quietest_name: string | null; quietest_n: number | null
+}
+
+// One page of clients and the totals over all of them, from ONE pass over the
+// per-client counts: computing them once for the page and again for the totals
+// was half of the dashboard's time at 10,000 clients (npm run scale). Each row
+// is a client of the page with the totals alongside; a page past the end
+// still returns the totals, on a row with no client.
+export async function portfolio(
+  db: Queryable, tmcId: string, accessibleIds: readonly string[] | null, recentSince: string, params: PageParams
+): Promise<{ totals: PortfolioSummary; clients: PortfolioClient[] }> {
+  const rows = await many<PortfolioClient & {
+    t_clients: number; t_active: number; t_employees: number; t_bookings: number; t_recent: number; t_spend: number
+    t_max: number; t_min: number; t_avg: number; t_dormant: number
+    busiest_name: string | null; busiest_n: number | null; quietest_name: string | null; quietest_n: number | null
   }>(db, sql`
-    with p as (${perClient(tmcId, accessibleIds, recentSince)})
-    select count(*)::int as clients,
-           count(*) filter (where bookings > 0)::int as "activeClients",
-           coalesce(sum(employees), 0)::int as employees,
-           coalesce(sum(bookings), 0)::int as bookings,
-           coalesce(sum("recentBookings"), 0)::int as "recentBookings",
-           coalesce(sum(spend), 0)::float8 as spend,
-           coalesce(max(bookings), 0)::int as "maxBookings",
-           coalesce(min(bookings), 0)::int as "minBookings",
-           coalesce(round(avg(bookings) filter (where bookings > 0), 1), 0)::float8 as "avgBookings",
-           count(*) filter (where bookings = 0)::int as dormant,
-           (select name from p order by bookings desc, created_at, "clientId" limit 1) as busiest_name,
-           (select bookings from p order by bookings desc, created_at, "clientId" limit 1) as busiest_n,
-           (select name from p where bookings > 0 order by bookings, created_at desc, "clientId" desc limit 1) as quietest_name,
-           (select bookings from p where bookings > 0 order by bookings, created_at desc, "clientId" desc limit 1) as quietest_n
-    from p`)
-  const { dormant, busiest_name, busiest_n, quietest_name, quietest_n, ...totals } = row
+    with p as materialized (${perClient(tmcId, accessibleIds, recentSince)}),
+    t as (
+      select count(*)::int as t_clients,
+             count(*) filter (where bookings > 0)::int as t_active,
+             coalesce(sum(employees), 0)::int as t_employees,
+             coalesce(sum(bookings), 0)::int as t_bookings,
+             coalesce(sum("recentBookings"), 0)::int as t_recent,
+             coalesce(sum(spend), 0)::float8 as t_spend,
+             coalesce(max(bookings), 0)::int as t_max,
+             coalesce(min(bookings), 0)::int as t_min,
+             coalesce(round(avg(bookings) filter (where bookings > 0), 1), 0)::float8 as t_avg,
+             count(*) filter (where bookings = 0)::int as t_dormant,
+             (select name from p order by bookings desc, created_at, "clientId" limit 1) as busiest_name,
+             (select bookings from p order by bookings desc, created_at, "clientId" limit 1) as busiest_n,
+             (select name from p where bookings > 0 order by bookings, created_at desc, "clientId" desc limit 1) as quietest_name,
+             (select bookings from p where bookings > 0 order by bookings, created_at desc, "clientId" desc limit 1) as quietest_n
+      from p
+    )
+    select pg."clientId", pg.name, pg.employees, pg.bookings, pg."recentBookings", pg.spend, pg."lastBookingAt", t.*
+    from t left join lateral (
+      select * from p order by bookings desc, created_at, "clientId" ${page(params)}
+    ) pg on true
+    order by pg.bookings desc nulls last, pg.created_at, pg."clientId"`)
+  const t = rows[0]
   return {
-    ...totals,
-    dormant,
-    busiest: busiest_name !== null ? { name: busiest_name, bookings: busiest_n ?? 0 } : null,
-    quietest: quietest_name !== null ? { name: quietest_name, bookings: quietest_n ?? 0 } : null,
+    totals: {
+      clients: t.t_clients, activeClients: t.t_active, employees: t.t_employees, bookings: t.t_bookings,
+      recentBookings: t.t_recent, spend: t.t_spend, maxBookings: t.t_max, minBookings: t.t_min, avgBookings: t.t_avg,
+      dormant: t.t_dormant,
+      busiest: t.busiest_name !== null ? { name: t.busiest_name, bookings: t.busiest_n ?? 0 } : null,
+      quietest: t.quietest_name !== null ? { name: t.quietest_name, bookings: t.quietest_n ?? 0 } : null,
+    },
+    clients: rows.filter(r => r.clientId !== null).map(r => ({
+      clientId: r.clientId, name: r.name, employees: r.employees, bookings: r.bookings,
+      recentBookings: r.recentBookings, spend: r.spend, lastBookingAt: r.lastBookingAt,
+    })),
   }
 }
 

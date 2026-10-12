@@ -3,7 +3,7 @@
 // Written by scripts/generate-db-types.mjs from the live database schema.
 // Re-run after any schema change:  node scripts/generate-db-types.mjs
 //
-// 54 tables, 1 view(s), 544 columns.
+// 54 tables, 1 view(s), 560 columns.
 
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json }
 
@@ -65,6 +65,7 @@ export interface Tables {
     min_band_rank: number | null
     assigned_by: string | null
     assigned_at: string
+    tmc_id: string | null
   }
   approvals: {
     id: string
@@ -80,6 +81,7 @@ export interface Tables {
     verdict: string | null
     decision_note: string | null
     chain_template_id: string | null
+    tmc_id: string | null
   }
   audit_log: {
     id: string
@@ -113,6 +115,7 @@ export interface Tables {
     template_id: string
     assigned_at: string
     assigned_by: string | null
+    tmc_id: string | null
   }
   bands: {
     id: string
@@ -121,6 +124,7 @@ export interface Tables {
     label: string
     rank: number
     created_at: string
+    tmc_id: string | null
   }
   bookings: {
     id: string
@@ -154,6 +158,7 @@ export interface Tables {
     sell_total: number | null
     commercials: Json | null
     share_token: string | null
+    tmc_id: string | null
   }
   branches: {
     id: string
@@ -184,6 +189,7 @@ export interface Tables {
     bucket_id: string
     client_id: string
     created_at: string
+    tmc_id: string | null
   }
   buckets: {
     id: string
@@ -210,6 +216,7 @@ export interface Tables {
     template_id: string
     assigned_at: string
     assigned_by: string | null
+    tmc_id: string | null
   }
   client_groups: {
     id: string
@@ -247,6 +254,7 @@ export interface Tables {
     cost_centre_id: string | null
     is_primary: boolean
     created_at: string
+    tmc_id: string | null
   }
   client_mandatory_info: {
     id: string
@@ -258,12 +266,14 @@ export interface Tables {
     value_prefix: string | null
     is_mandatory: boolean
     created_at: string
+    tmc_id: string | null
   }
   client_policy_groups: {
     client_id: string
     policy_group_id: string
     assigned_at: string
     assigned_by: string | null
+    tmc_id: string | null
   }
   clients: {
     id: string
@@ -374,6 +384,7 @@ export interface Tables {
     code: string
     name: string
     created_at: string
+    tmc_id: string | null
   }
   countries: {
     code: string
@@ -457,6 +468,7 @@ export interface Tables {
     client_id: string
     granted_by: string | null
     granted_at: string
+    tmc_id: string | null
   }
   employee_permissions: {
     employee_id: string
@@ -489,6 +501,7 @@ export interface Tables {
     top_of_hierarchy: boolean
     designation: string | null
     branch_id: string | null
+    tenant_tmc_id: string | null
   }
   fop_assignments: {
     id: string
@@ -594,6 +607,7 @@ export interface Tables {
     sell_total: number
     created_at: string
     expires_at: string
+    tmc_id: string | null
   }
   rate_limits: {
     key: string
@@ -642,6 +656,7 @@ export interface Tables {
     expense_date: string | null
     created_at: string
     updated_at: string
+    tmc_id: string | null
   }
   trips: {
     id: string
@@ -653,6 +668,7 @@ export interface Tables {
     status: string
     created_at: string
     updated_at: string
+    tmc_id: string | null
   }
 }
 

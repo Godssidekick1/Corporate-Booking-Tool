@@ -49,8 +49,16 @@ than by the running app. Behind a transaction pooler set
 `DB_POOL_MODE=transaction` (automatic on Vercel): the settings are then sent
 with every query inside its own transaction.
 
-A new tenant table needs a scoped `app_access` policy in the same migration:
-copy the pattern from `20261012000000_tenant_policies.sql`.
+Every policy is plain equality on the row's own tenant columns
+(`20261012000100_tenant_columns.sql`), so the planner can estimate it and use
+indexes: client-scoped tables carry a `tmc_id` filled from their client by a
+trigger (a value a writer sends is overwritten), and `employees` carries
+`tenant_tmc_id` the same way. Each setting is read once per query,
+`(select app_tmc())`, not once per row.
+
+A new tenant table needs a scoped `app_access` policy in the same migration,
+in the same form: copy it from `20261012000100_tenant_columns.sql` (and give
+a client-scoped table the `fill_tmc` trigger).
 
 ## Switching an environment over
 
