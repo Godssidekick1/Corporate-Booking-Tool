@@ -25,6 +25,17 @@ search, coverage, CSV and the public ticket link; verified database TLS when
   clients), but the first read after a change rebuilds the whole TMC's report
   (2.4 s at 10k; the scale budget is 5 s). Past ~20k clients, rebuild only the
   clients a change reaches.
+- **38 foreign-key columns have no index** (created_by / updated_by /
+  assigned_by / granted_by, approvals.approver_id, bookings.requested_for,
+  trips.created_by, price_quotes.employee_id, the assignments' client_id...).
+  Deleting a client or an employee checks each of them by scanning the whole
+  table; removing the 2,000-client demo that way took 100 s. Index the ones a
+  real delete path uses.
+- **TMC dashboard stats ~0.5 s at 10k clients as the app login** (budget
+  300 ms; 130 ms on the same data measured alone). The query filters
+  `tmc_id = $1` and the policy adds `tmc_id = app_tmc()`; the planner treats
+  them as independent and expects 101 clients for 10,009. A maintained
+  per-client counts table (like coverage) would make it constant.
 - **Set the login's timeouts** (`statement_timeout`, idle-in-transaction) when
   creating `cbt_app_login` (docs/database-roles.md).
 - **Leak sweep covers GET and DELETE only.** POST / PATCH cross-tenant writes
