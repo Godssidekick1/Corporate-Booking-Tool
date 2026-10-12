@@ -1,4 +1,5 @@
 import { requireUser } from '@/app/lib/auth/session'
+import { actingTraveller } from '@/app/lib/book/bookingActor'
 import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic, CustomerInfo } from '@/app/lib/amadeus/client'
 import { db } from '@/app/lib/db'
 import * as employees from '@/app/lib/repositories/employees'
@@ -44,9 +45,9 @@ export const GET = route(async (
 
   const { bookingId } = await params
 
-  const employee = await employees.traveller(db, user.id)
+  const me = await employees.traveller(db, user.id)
 
-  if (!employee) {
+  if (!me) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
   }
 
@@ -70,6 +71,8 @@ export const GET = route(async (
     return Response.json({ error: 'Booking not found' }, { status: 404 })
   }
 
+  // The traveller, or someone who may book for them (app/lib/book/bookingActor.ts).
+  const { traveller: employee } = await actingTraveller(db, user, me, booking)
   if (booking.employee_id !== employee.id) {
     return Response.json({ error: 'Not authorized to view this booking' }, { status: 403 })
   }
@@ -221,9 +224,9 @@ export const PATCH = route(async (
 
   const { bookingId } = await params
 
-  const employee = await employees.traveller(db, user.id)
+  const me = await employees.traveller(db, user.id)
 
-  if (!employee) {
+  if (!me) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
   }
 
@@ -233,6 +236,7 @@ export const PATCH = route(async (
     return Response.json({ error: 'Booking not found' }, { status: 404 })
   }
 
+  const { traveller: employee } = await actingTraveller(db, user, me, booking)
   if (booking.employee_id !== employee.id) {
     return Response.json({ error: 'Not authorized to edit this booking' }, { status: 403 })
   }

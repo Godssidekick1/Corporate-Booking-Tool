@@ -1,6 +1,7 @@
 import { requireUser } from '@/app/lib/auth/session'
 import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic, CustomerInfo } from '@/app/lib/amadeus/client'
 import * as employees from '@/app/lib/repositories/employees'
+import { actingTraveller } from '@/app/lib/book/bookingActor'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
 import { route } from '@/app/lib/http/handler'
 import { loadClientGates, SELF_BOOKING_OFF } from '@/app/lib/clients/clientGates'
@@ -49,6 +50,7 @@ interface BookBody {
 // below) — same persistence logic either way.
 async function finalizeHeld(
   bookingId: string,
+  confirmedBy: string,
   result: Awaited<ReturnType<typeof amadeus.booking>>
 ) {
   // BookingResponse itself has no top-level PNR — it only appears nested
@@ -59,7 +61,7 @@ async function finalizeHeld(
 
   let updateError: unknown = null
   try {
-    await bookingsRepo.markHeld(db, bookingId, pnr)
+    await bookingsRepo.markHeld(db, bookingId, pnr, confirmedBy)
   } catch (err) {
     updateError = err
   }
@@ -99,12 +101,12 @@ export const POST = route(async (req: NextRequest) => {
     return Response.json({ error: 'bookingId is required' }, { status: 400 })
   }
 
-  const [employee, booking] = await Promise.all([
+  const [me, booking] = await Promise.all([
     employees.traveller(db, user.id),
     bookingsRepo.holdTarget(db, bookingId),
   ])
 
-  if (!employee) {
+  if (!me) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
   }
 
@@ -117,9 +119,17 @@ export const POST = route(async (req: NextRequest) => {
   // This route creates the PNR, which in this app IS the hold: booking and
   // ticketing are separate routes, so a confirmed-but-unticketed booking is
   // exactly what "hold" means. Both switches therefore land here.
+  //
+  // Whose booking it is: the traveller's, acted on by them or by someone who
+  // may book for them (the booker or traveller may confirm). Anyone else is
+  // treated as themself, and refused below exactly as before.
+  const { traveller: employee, onBehalf } = await actingTraveller(db, user, me, booking)
   const gates = await loadClientGates(db, employee.client_id)
 
-  if (!gates.selfBooking) {
+  // Self-booking off (a CBT-only client) refuses a traveller's OWN bookings.
+  // One their travel desk made for them may still be confirmed, by either.
+  const deskMade = booking !== null && booking.booked_by !== booking.employee_id
+  if (!gates.selfBooking && !onBehalf && !deskMade) {
     return Response.json({ error: SELF_BOOKING_OFF }, { status: 403 })
   }
   if (!gates.bookingActivation) {
@@ -139,8 +149,7 @@ export const POST = route(async (req: NextRequest) => {
     return Response.json({ error: 'Booking not found' }, { status: 404 })
   }
 
-  // Same-person-only for now, matching add-passenger — the caller must be
-  // the employee this booking belongs to.
+  // The traveller, or someone who may book for them (actingTraveller above).
   if (booking.employee_id !== employee.id) {
     return Response.json({ error: 'Not authorized to act on this booking' }, { status: 403 })
   }
@@ -186,7 +195,7 @@ export const POST = route(async (req: NextRequest) => {
 
     try {
       const result = await amadeus.booking(bookingKey, bookingReferenceNo, provider)
-      return await finalizeHeld(bookingId, result)
+      return await finalizeHeld(bookingId, user.id, result)
     } catch (err) {
       // A booking that sat in pending_approval for a while can outlive the
       // GDS-side session tied to its stored amadeus_key/provider_order_id —
@@ -285,7 +294,7 @@ export const POST = route(async (req: NextRequest) => {
       }
 
       const retryResult = await amadeus.booking(bookingKey, bookingReferenceNo, provider)
-      return await finalizeHeld(bookingId, retryResult)
+      return await finalizeHeld(bookingId, user.id, retryResult)
     }
   } catch (err) {
     if (err instanceof AmadeusError) {

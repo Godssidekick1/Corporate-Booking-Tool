@@ -1,4 +1,4 @@
-import { canSelfBook, SELF_BOOKING_OFF } from '@/app/lib/clients/clientGates'
+import { resolveActor, refuse } from '@/app/lib/book/bookingActor'
 import { db } from '@/app/lib/db'
 import { requireUser } from '@/app/lib/auth/session'
 import { route } from '@/app/lib/http/handler'
@@ -32,6 +32,7 @@ import util from 'util'
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface SeatMapBody {
+  travellerId?: string // booking for someone else (app/lib/book/bookingActor.ts)
   key: string          // Key from the Pricing response (/api/book/price)
   referenceNo: string  // ReferenceNo from /api/book/price
   provider: string
@@ -43,13 +44,12 @@ interface SeatMapBody {
 export const POST = route(async (req: NextRequest) => {
   const user = await requireUser()
 
-  // A CBT-only client's people sign in to see their trips, but the travel desk
-  // books for them (clientGates.selfBooking).
-  if (!(await canSelfBook(db, user.employee?.clientId))) {
-    return Response.json({ error: SELF_BOOKING_OFF }, { status: 403 })
-  }
+  const { key, referenceNo, provider, origin, destination, legIndex, travellerId }: SeatMapBody = await req.json()
 
-  const { key, referenceNo, provider, origin, destination, legIndex }: SeatMapBody = await req.json()
+  // Only someone who may book this trip may open its seat map. Booking for
+  // oneself keeps its refusals: a CBT-only client's people are refused here.
+  const actor = await resolveActor(db, user, travellerId)
+  if (!actor.ok) return refuse(actor)
 
   if (!key || !referenceNo || !provider || !origin || !destination || legIndex === undefined) {
     return Response.json(

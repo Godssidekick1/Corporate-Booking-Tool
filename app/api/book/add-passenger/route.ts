@@ -1,7 +1,6 @@
-import { canSelfBook, SELF_BOOKING_OFF } from '@/app/lib/clients/clientGates'
+import { resolveActor, refuse } from '@/app/lib/book/bookingActor'
 import { requireUser } from '@/app/lib/auth/session'
 import { db } from '@/app/lib/db'
-import * as employees from '@/app/lib/repositories/employees'
 import * as trips from '@/app/lib/repositories/trips'
 import * as bookings from '@/app/lib/repositories/bookings'
 import { route } from '@/app/lib/http/handler'
@@ -20,9 +19,9 @@ import type { FlatFlightResult } from '@/app/lib/book/types'
 // before this point (search results, pricing) lives only in the frontend's
 // state, since nothing has committed yet.
 //
-// employeeId here books for themself (employee_id == requested_for) — no
-// book-on-behalf support yet, matching how /book/search and /book/price
-// already work.
+// Booking for someone else: employee_id is the TRAVELLER (their policy, their
+// approval chain, their client's commercials) and booked_by is whoever made it
+// (app/lib/book/bookingActor.ts).
 //
 // Policy + Approval Engine: right after the bookings row is inserted, we run
 // checkBookingAgainstPolicy to get a verdict (green/amber/red), then hand
@@ -71,24 +70,21 @@ interface AddPassengerBody {
 
   // Passenger details for this booking
   customerInfo: CustomerInfo
+
+  // Booking for someone else; absent = oneself.
+  travellerId?: string
 }
 
 export const POST = route(async (req: NextRequest) => {
   const user = await requireUser()
 
-  // A CBT-only client's people sign in to see their trips, but the travel desk
-  // books for them (clientGates.selfBooking).
-  if (!(await canSelfBook(db, user.employee?.clientId))) {
-    return Response.json({ error: SELF_BOOKING_OFF }, { status: 403 })
-  }
-
-  const employee = await employees.traveller(db, user.id)
-
-  if (!employee) {
-    return Response.json({ error: 'Employee record not found' }, { status: 404 })
-  }
-
   const body: AddPassengerBody = await req.json()
+
+  // Who travels. Booking for oneself keeps its refusals: a CBT-only client's
+  // people are refused here, since their travel desk books for them.
+  const actor = await resolveActor(db, user, body.travellerId)
+  if (!actor.ok) return refuse(actor)
+  const employee = actor.actor.traveller
   const {
     key, pricingKey, provider, resultIndex, referenceNo, totalFare, seatFees, currency, isRefundable, fareType,
     passengerBreakup, isNdc, searchKey, tripId, itinerary, customerInfo,
@@ -106,7 +102,7 @@ export const POST = route(async (req: NextRequest) => {
   }
 
   // If this booking is being made under a trip, confirm the trip actually
-  // belongs to this employee before tagging the booking with it — otherwise
+  // belongs to the TRAVELLER before tagging the booking with it — otherwise
   // a crafted tripId could attach a booking (and its cost) to someone else's
   // trip.
   if (tripId) {
@@ -130,9 +126,11 @@ export const POST = route(async (req: NextRequest) => {
   const quote = await bookings.heldQuote(db, key, referenceNo)
 
   // No client, no quote: /api/book/price only holds one for a company's
-  // traveller. Checked here, BEFORE the airline sees the passenger.
+  // traveller. Checked here, BEFORE the airline sees the passenger. It must be
+  // held for this traveller AND priced by this caller: someone else's quote is
+  // not one to book from.
   const clientId = employee.client_id
-  if (!quote || quote.employee_id !== employee.id || !clientId) {
+  if (!quote || quote.employee_id !== employee.id || quote.priced_by !== user.id || !clientId) {
     // Refused rather than falling back to the browser's number. The fallback is
     // the bug: it would send a marked-up fare to the airline. Re-pricing is one
     // click and always correct.
@@ -270,7 +268,7 @@ export const POST = route(async (req: NextRequest) => {
         resolved_fop: resolvedFop,
         client_id: clientId,
         employee_id: employee.id,
-        booked_by: employee.id,
+        booked_by: user.id,
         booking_type: 'flight',
         status: 'pending_approval',
         // total_cost keeps its existing meaning — what the AIRLINE charges — so

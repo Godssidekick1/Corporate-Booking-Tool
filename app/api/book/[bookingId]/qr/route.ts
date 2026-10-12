@@ -4,6 +4,7 @@ import { NextRequest } from 'next/server'
 import { db } from '@/app/lib/db'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
 import { route } from '@/app/lib/http/handler'
+import { onBehalf } from '@/app/lib/book/bookingActor'
 
 // ── GET /api/book/[bookingId]/qr ─────────────────────────────────────────────
 // The QR for a ticket, as a PNG data URI.
@@ -36,7 +37,8 @@ export const GET = route(async (
     return Response.json({ error: 'Booking not found' }, { status: 404 })
   }
 
-  if (booking.employee_id !== user.id) {
+  // The traveller, or someone who may book for them (app/lib/book/bookingActor.ts).
+  if (booking.employee_id !== user.id && !(await onBehalf(db, user, booking.employee_id)).ok) {
     return Response.json({ error: 'Not authorized to view this booking' }, { status: 403 })
   }
 

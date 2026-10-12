@@ -1,4 +1,5 @@
 import { requireUser } from '@/app/lib/auth/session'
+import { actingTraveller } from '@/app/lib/book/bookingActor'
 import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic } from '@/app/lib/amadeus/client'
 import * as employees from '@/app/lib/repositories/employees'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
@@ -51,18 +52,22 @@ export const POST = route(async (req: NextRequest) => {
     return Response.json({ error: 'bookingId is required' }, { status: 400 })
   }
 
-  const [employee, booking] = await Promise.all([
+  const [me, booking] = await Promise.all([
     employees.traveller(db, user.id),
     bookingsRepo.ticketTarget(db, bookingId),
   ])
 
-  if (!employee) {
+  if (!me) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
   }
 
   if (!booking) {
     return Response.json({ error: 'Booking not found' }, { status: 404 })
   }
+
+  // The traveller, or someone who may book for them; anyone else is treated as
+  // themself and refused here as before (app/lib/book/bookingActor.ts).
+  const { traveller: employee, onBehalf } = await actingTraveller(db, user, me, booking)
 
   if (booking.employee_id !== employee.id) {
     return Response.json({ error: 'Not authorized to act on this booking' }, { status: 403 })
@@ -78,7 +83,9 @@ export const POST = route(async (req: NextRequest) => {
   // classifies it, via the shared classifyFlight.
   const gates = await loadClientGates(db, employee.client_id)
 
-  if (!gates.selfBooking) {
+  // Self-booking off (a CBT-only client) refuses a traveller's OWN bookings;
+  // one their travel desk made may still be ticketed.
+  if (!gates.selfBooking && !onBehalf && booking.booked_by === booking.employee_id) {
     return Response.json({ error: SELF_BOOKING_OFF }, { status: 403 })
   }
   const itinerary = booking.itinerary as Parameters<typeof classifyFlight>[0] | null

@@ -1,7 +1,6 @@
-import { canSelfBook, SELF_BOOKING_OFF } from '@/app/lib/clients/clientGates'
+import { resolveActor, refuse } from '@/app/lib/book/bookingActor'
 import { requireUser } from '@/app/lib/auth/session'
 import { db } from '@/app/lib/db'
-import * as employees from '@/app/lib/repositories/employees'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
 import { route } from '@/app/lib/http/handler'
 import { amadeus, AmadeusError, type PricingResponse } from '@/app/lib/amadeus/client'
@@ -140,19 +139,19 @@ function logCommercialDecision(
 export const POST = route(async (req: NextRequest) => {
   const user = await requireUser()
 
-  // A CBT-only client's people sign in to see their trips, but the travel desk
-  // books for them (clientGates.selfBooking).
-  if (!(await canSelfBook(db, user.employee?.clientId))) {
-    return Response.json({ error: SELF_BOOKING_OFF }, { status: 403 })
-  }
-
   // `itinerary` is the FlatFlightResult the traveller selected. New here, and
   // needed because a commercial rule matches on category (domestic/international
   // × BSP/LCC), airline, cabin and booking class — none of which can be read
   // from a pricing key. It is the same object search already returned to them,
   // so nothing new is being trusted: every figure on it is re-derived here from
   // Amadeus's own response, and only the ROUTE shape is taken from the client.
-  const { key, pricingKey, provider, resultIndex, itinerary } = await req.json()
+  const { key, pricingKey, provider, resultIndex, itinerary, travellerId } = await req.json()
+
+  // Whom this is priced for: their client's commercials apply, and the quote is
+  // held for them. Refused before the airline is asked anything; booking for
+  // oneself keeps its refusals (a CBT-only client's people are refused here).
+  const actor = await resolveActor(db, user, travellerId)
+  if (!actor.ok) return refuse(actor)
 
 if (!key || !pricingKey || !provider || !resultIndex) {
   return Response.json(
@@ -162,16 +161,6 @@ if (!key || !pricingKey || !provider || !resultIndex) {
 }
 
   try {
-    // The employee lookup is started BEFORE the provider call and awaited after
-    // it. It does not depend on the pricing response — it only needs the user
-    // id we already have — so running it afterwards put a database round trip
-    // on the end of a call that already takes seconds.
-    //
-    // Deliberately not Promise.all: pricing is the one that can fail in an
-    // interesting way, and awaiting it first keeps the existing catch handling
-    // (fare_not_found, AmadeusError) exactly as it was.
-    const employeePromise = employees.traveller(db, user.id)
-
     const pricing = await amadeus.pricing(key, pricingKey, provider, resultIndex)
     const details = extractPricingDetails(pricing)
 
@@ -189,7 +178,7 @@ if (!key || !pricingKey || !provider || !resultIndex) {
     //
     // This route used to do auth.getUser() and nothing else. It needs the
     // employee's client now, because a price is a price FOR SOMEBODY.
-    const employee = await employeePromise
+    const employee = actor.actor.traveller
 
     const components: FareComponents = {
       base: details.baseFare ?? 0,
@@ -244,6 +233,7 @@ if (!key || !pricingKey || !provider || !resultIndex) {
         await bookingsRepo.saveQuote(db, {
           client_id: employee.client_id,
           employee_id: employee.id,
+          priced_by: user.id,
           amadeus_key: details.key,
           reference_no: details.referenceNo,
           pricing_key: pricingKey,

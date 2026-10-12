@@ -1,7 +1,6 @@
-import { canSelfBook, SELF_BOOKING_OFF } from '@/app/lib/clients/clientGates'
+import { resolveActor, refuse } from '@/app/lib/book/bookingActor'
 import { requireUser } from '@/app/lib/auth/session'
 import { db } from '@/app/lib/db'
-import * as employees from '@/app/lib/repositories/employees'
 import { route } from '@/app/lib/http/handler'
 import { NextRequest } from 'next/server'
 import { checkBookingAgainstPolicy } from '@/app/lib/rule-engine/checkBookingAgainstPolicy'
@@ -23,6 +22,7 @@ import type { FlatFlightResult } from '@/app/lib/book/types'
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface PreviewBody {
+  travellerId?: string // booking for someone else: THEIR policy is previewed
   flight: FlatFlightResult
   totalFare: number
   isRefundable: boolean
@@ -32,19 +32,13 @@ interface PreviewBody {
 export const POST = route(async (req: NextRequest) => {
   const user = await requireUser()
 
-  // A CBT-only client's people sign in to see their trips, but the travel desk
-  // books for them (clientGates.selfBooking).
-  if (!(await canSelfBook(db, user.employee?.clientId))) {
-    return Response.json({ error: SELF_BOOKING_OFF }, { status: 403 })
-  }
-
-  const employee = await employees.traveller(db, user.id)
-
-  if (!employee) {
-    return Response.json({ error: 'Employee record not found' }, { status: 404 })
-  }
-
   const body: PreviewBody = await req.json()
+
+  // The traveller's policy, not the booker's. Booking for oneself keeps its
+  // refusals: a CBT-only client's people are refused here.
+  const actor = await resolveActor(db, user, body.travellerId)
+  if (!actor.ok) return refuse(actor)
+  const employee = actor.actor.traveller
   const { flight, totalFare, isRefundable, selectedSeatFees } = body
 
   if (!flight || totalFare === undefined) {

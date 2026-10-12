@@ -1,7 +1,6 @@
-import { canSelfBook, SELF_BOOKING_OFF } from '@/app/lib/clients/clientGates'
 import { requireUser } from '@/app/lib/auth/session'
 import { db } from '@/app/lib/db'
-import * as employees from '@/app/lib/repositories/employees'
+import { resolveActor, refuse } from '@/app/lib/book/bookingActor'
 import { route } from '@/app/lib/http/handler'
 import { rateLimited } from '@/app/lib/http/rateLimit'
 import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic } from '@/app/lib/amadeus/client'
@@ -24,6 +23,8 @@ import { NextRequest, after } from 'next/server'
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface SearchBody {
+  // Booking for someone else (app/lib/book/bookingActor.ts); absent = oneself.
+  travellerId?: string
   origin: string
   destination: string
   departDate: string // DD/MM/YYYY, matching Amadeus's expected format
@@ -189,19 +190,14 @@ export const POST = route(async (req: NextRequest) => {
   const limited = await rateLimited('search', user.id)
   if (limited) return limited
 
-  // A CBT-only client's people sign in to see their trips, but the travel desk
-  // books for them (clientGates.selfBooking).
-  if (!(await canSelfBook(db, user.employee?.clientId))) {
-    return Response.json({ error: SELF_BOOKING_OFF }, { status: 403 })
-  }
-
-  const employee = await employees.traveller(db, user.id)
-
-  if (!employee) {
-    return Response.json({ error: 'Employee record not found' }, { status: 404 })
-  }
-
   const body: SearchBody = await req.json()
+
+  // Whose search this is: the traveller's client prices it (commercials below).
+  // Booking for oneself keeps its refusals: a CBT-only client's people are
+  // refused here, since their travel desk books for them.
+  const actor = await resolveActor(db, user, body.travellerId)
+  if (!actor.ok) return refuse(actor)
+  const employee = actor.actor.traveller
   const { origin, destination, departDate, returnDate, tripType, cabin, adult = 1, child = 0, infant = 0 } = body
   // A return date is what makes this a round trip, not the tripType label — the
   // label is what the form last had selected and can disagree with the fields.
