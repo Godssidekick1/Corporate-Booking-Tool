@@ -14,7 +14,7 @@ export default async function setup(): Promise<void> {
   await migrate(templateUrl(), { log: line => console.info(`[scale] cbt_template: ${line}`) })
   // Global setup runs outside the test workers, before the config's `env`
   // applies: DATABASE_URL here is still the developer's, from .env.local.
-  const url = new URL(process.env.DATABASE_URL!)
+  const url = new URL(process.env.MIGRATE_DATABASE_URL ?? process.env.DATABASE_URL!)
   url.pathname = '/postgres'
   const admin = new pg.Client({ connectionString: url.toString() })
   await admin.connect()
@@ -23,6 +23,15 @@ export default async function setup(): Promise<void> {
       'select pg_terminate_backend(pid) from pg_stat_activity where datname = $1 and pid <> pg_backend_pid()', [SCALE_DB])
     await admin.query(`drop database if exists ${SCALE_DB}`)
     await admin.query(`create database ${SCALE_DB} template cbt_template`)
+    // The restricted login the measurements run as (see vitest.scale.config).
+    const password = process.env.TEST_APP_PASSWORD
+    if (!password) throw new Error('[scale] TEST_APP_PASSWORD is not set (vitest.scale.config.mts sets it)')
+    const literal = (await admin.query('select quote_literal($1) as q', [password])).rows[0].q
+    const exists = (await admin.query("select 1 from pg_roles where rolname = 'cbt_app_test'")).rowCount
+    await admin.query(exists
+      ? `alter role cbt_app_test login inherit password ${literal}`
+      : `create role cbt_app_test login inherit password ${literal} in role cbt_app`)
+    await admin.query('grant cbt_app to cbt_app_test')
   } finally {
     await admin.end()
   }

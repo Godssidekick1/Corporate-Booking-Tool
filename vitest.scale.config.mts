@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitest/config'
 import { fileURLToPath } from 'node:url'
 import { readFileSync, existsSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
 
 // ── npm run scale ────────────────────────────────────────────────────────────
 // Seeds a large TMC into a throwaway cbt_scale database and times the heavy
@@ -26,8 +27,23 @@ function withDatabase(url: string, database: string): string {
   return u.toString()
 }
 
-const devUrl = process.env.DATABASE_URL
+// The owner (it creates cbt_scale and seeds it): MIGRATE_DATABASE_URL once the
+// app itself runs as a restricted login.
+const devUrl = process.env.MIGRATE_DATABASE_URL ?? process.env.DATABASE_URL
 if (!devUrl) throw new Error('npm run scale needs DATABASE_URL (in .env.local)')
+
+// Measured AS THE APP RUNS: through the restricted login, so every timing
+// includes the row-level-security policies (tests/setup/database.ts does the
+// same for the suite). The owner only seeds -- it runs ANALYZE, which the app
+// role may not.
+const appPassword = randomBytes(18).toString('base64url')
+process.env.TEST_APP_PASSWORD = appPassword
+function asAppRole(url: string): string {
+  const u = new URL(url)
+  u.username = 'cbt_app_test'
+  u.password = appPassword
+  return u.toString()
+}
 
 export default defineConfig({
   resolve: { alias: { '@': fileURLToPath(new URL('./', import.meta.url)) } },
@@ -37,7 +53,8 @@ export default defineConfig({
     globalSetup: ['./tests/scale/setup.ts'],
     setupFiles: ['./tests/setup/auth.ts', './tests/setup/mail.ts', './tests/setup/dbContext.ts'],
     env: {
-      DATABASE_URL: withDatabase(devUrl, 'cbt_scale'),
+      DATABASE_URL: asAppRole(withDatabase(devUrl, 'cbt_scale')),
+      SCALE_OWNER_URL: withDatabase(devUrl, 'cbt_scale'),
       TEST_ADMIN_DATABASE_URL: withDatabase(devUrl, 'postgres'),
     },
     fileParallelism: false,

@@ -250,7 +250,11 @@ export async function seedScale(
         now() - (g % 200) * interval '1 day'
       from generate_series(1, $3::int + $4::int) g`, [heavy.client, heavy.id, n.heavyPending, n.heavyDecided])
 
-    await c.query('analyze')
+    // VACUUM as well as ANALYZE: freshly bulk-loaded rows are not yet marked
+    // all-visible, so an index-only read still visits every row until the
+    // next autovacuum -- 4x slower dashboard counts than a database in normal
+    // running would ever show. This is the state autovacuum leaves it in.
+    await c.query('vacuum analyze')
 
     const counts: Record<string, number> = {}
     for (const t of ['clients', 'client_groups', 'buckets', 'bucket_clients', 'deal_codes', 'deal_code_assignments',

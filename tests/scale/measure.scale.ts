@@ -81,7 +81,7 @@ describe('scale', () => {
     const t0 = performance.now()
     // The corporate admin becomes the heavy person: a frequent traveller and
     // a busy approver, measured as themselves.
-    volumes = await seedScale(process.env.DATABASE_URL!, a.tmcAdmin.tmc_id!, sizesFromEnv(),
+    volumes = await seedScale(process.env.SCALE_OWNER_URL!, a.tmcAdmin.tmc_id!, sizesFromEnv(),
       { employeeId: a.corpAdmin.id, clientId: a.corpAdmin.client_id! })
     console.info(`[scale] seeded in ${Math.round((performance.now() - t0) / 1000)} s`)
     // The scale client most deal codes reach directly: a realistic heavy case.
@@ -114,6 +114,36 @@ describe('scale', () => {
     await measure('Commercial coverage, markup (page 1)', 300, admin('/api/tmc/commercial-rules/effective?page=1&kind=markup', ruleCoverageGet))
     await measure('Commercial coverage, search', 300, admin('/api/tmc/commercial-rules/effective?search=scale%20client%2099', ruleCoverageGet))
 
+    // ── What grows every working day ──────────────────────────────────────
+    const heavy = a.corpAdmin
+    await measure('TMC: one large client employees (page 1)', 300, admin(`/api/tmc/employees?page=1&clientId=${a.corpAdmin.client_id}`, tmcEmployeesGet))
+    await measure('TMC dashboard stats', 300, admin('/api/tmc/stats', tmcStatsGet))
+    await measure('Corporate users list (page 1)', 300, admin('/api/settings/users?page=1', settingsUsersGet, heavy))
+    await measure('Corporate users, hierarchy (capped 1,000)', 300, admin('/api/settings/users?all=true', settingsUsersGet, heavy))
+    await measure('Heavy traveller: my trips (page 1)', 300, admin('/api/bookings?page=1', myBookingsGet, heavy))
+    await measure('Heavy traveller: my trips (page 40)', 300, admin('/api/bookings?page=40', myBookingsGet, heavy))
+    await measure('Heavy traveller: trips picker (page 1)', 300, admin('/api/trips?page=1', myTripsGet, heavy))
+    await measure('Heavy traveller: recent bookings', 300, admin('/api/bookings/recent?limit=50', recentBookingsGet, heavy))
+    await measure('Heavy approver: queue + history (page 1)', 300, admin('/api/approvals', approvalsGet, heavy))
+    await measure('Heavy approver: history page 300', 300, admin('/api/approvals?historyPage=300', approvalsGet, heavy))
+    await measure('Heavy approver: dashboard summary', 300, admin('/api/approvals?summary=1', approvalsGet, heavy))
+
+    await measure('Forms of payment list (page 1)', 300, admin('/api/tmc/forms-of-payment?page=1', fopsGet))
+    await measure('FOP mapping list (page 1)', 300, admin('/api/tmc/fop-assignments?page=1', fopMappingGet))
+
+    // What every pricing / add-passenger request does for the traveller's client.
+    await measure('Booking: deal codes for one client', 50, async () => `${(await stampDealCodes(db, clientId, null))?.length ?? 0} codes`)
+    await measure('Booking: payment method for one client', 50, async () => `${(await stampFop(db, clientId, null))?.label ?? 'none'}`)
+    await measure('Booking: commercials for one client', 50, async () => {
+      const ctx = await loadCommercialContext(db, clientId)
+      return `${ctx.rules.length} rules, ${ctx.assignments.length} assignments`
+    })
+
+    // ── Last: the scenarios that WRITE ────────────────────────────────────
+    // Twelve rebuilds of a 10,000-row report leave PostgreSQL busy with
+    // autovacuum and checkpoints for a while, which made the reads measured
+    // after them look 4x slower than they are (stats: 534 ms here, 140 ms on
+    // the same data alone). Reads are timed first, on a quiet database.
     // The first read after a change rebuilds the report.
     const someDeal = (await one<{ id: string }>(db, sql`
       select id from deal_codes where tmc_id = ${a.tmcAdmin.tmc_id} order by id limit 1`)).id
@@ -153,31 +183,6 @@ describe('scale', () => {
       const failed = all.filter(r => r.status !== 200)
       if (failed.length) throw new Error(`${failed.length} of 20 failed: ${failed[0].status}`)
       return '20 x 200'
-    })
-
-    // ── What grows every working day ──────────────────────────────────────
-    const heavy = a.corpAdmin
-    await measure('TMC: one large client employees (page 1)', 300, admin(`/api/tmc/employees?page=1&clientId=${a.corpAdmin.client_id}`, tmcEmployeesGet))
-    await measure('TMC dashboard stats', 300, admin('/api/tmc/stats', tmcStatsGet))
-    await measure('Corporate users list (page 1)', 300, admin('/api/settings/users?page=1', settingsUsersGet, heavy))
-    await measure('Corporate users, hierarchy (capped 1,000)', 300, admin('/api/settings/users?all=true', settingsUsersGet, heavy))
-    await measure('Heavy traveller: my trips (page 1)', 300, admin('/api/bookings?page=1', myBookingsGet, heavy))
-    await measure('Heavy traveller: my trips (page 40)', 300, admin('/api/bookings?page=40', myBookingsGet, heavy))
-    await measure('Heavy traveller: trips picker (page 1)', 300, admin('/api/trips?page=1', myTripsGet, heavy))
-    await measure('Heavy traveller: recent bookings', 300, admin('/api/bookings/recent?limit=50', recentBookingsGet, heavy))
-    await measure('Heavy approver: queue + history (page 1)', 300, admin('/api/approvals', approvalsGet, heavy))
-    await measure('Heavy approver: history page 300', 300, admin('/api/approvals?historyPage=300', approvalsGet, heavy))
-    await measure('Heavy approver: dashboard summary', 300, admin('/api/approvals?summary=1', approvalsGet, heavy))
-
-    await measure('Forms of payment list (page 1)', 300, admin('/api/tmc/forms-of-payment?page=1', fopsGet))
-    await measure('FOP mapping list (page 1)', 300, admin('/api/tmc/fop-assignments?page=1', fopMappingGet))
-
-    // What every pricing / add-passenger request does for the traveller's client.
-    await measure('Booking: deal codes for one client', 50, async () => `${(await stampDealCodes(db, clientId, null))?.length ?? 0} codes`)
-    await measure('Booking: payment method for one client', 50, async () => `${(await stampFop(db, clientId, null))?.label ?? 'none'}`)
-    await measure('Booking: commercials for one client', 50, async () => {
-      const ctx = await loadCommercialContext(db, clientId)
-      return `${ctx.rules.length} rules, ${ctx.assignments.length} assignments`
     })
 
     const lines = [
