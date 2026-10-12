@@ -1,4 +1,6 @@
 import { resolveActor, refuse } from '@/app/lib/book/bookingActor'
+import { POLICY_REASONS, reasonProblem } from '@/app/lib/book/policyReasons'
+import * as audit from '@/app/lib/repositories/audit'
 import { requireUser } from '@/app/lib/auth/session'
 import { db } from '@/app/lib/db'
 import * as trips from '@/app/lib/repositories/trips'
@@ -73,6 +75,9 @@ interface AddPassengerBody {
 
   // Booking for someone else; absent = oneself.
   travellerId?: string
+  // The travel desk at a CBT-only client, booking an amber or red fare: why.
+  policyReasonCode?: string
+  policyReasonNote?: string
 }
 
 export const POST = route(async (req: NextRequest) => {
@@ -158,19 +163,10 @@ export const POST = route(async (req: NextRequest) => {
   }
 
   try {
-    const result = await amadeus.addPassenger(
-      key,
-      referenceNo,
-      customerInfo,
-      // THE AIRLINE FIGURE, never the sell price. This is the line the whole
-      // price_quotes table exists to make correct.
-      String(airlineGrandTotal),
-      String(airlineGrandTotal),
-      String(seatFeeTotal)
-    )
-
-    // Run the Rule Engine BEFORE inserting, so the verdict can be written in
-    // the same insert rather than a follow-up update. checkBookingAgainstPolicy
+    // Run the Rule Engine BEFORE the airline call and the insert: the verdict
+    // is written in the same insert rather than a follow-up update, and the
+    // travel desk at a CBT-only client must give a reason for an amber or red
+    // fare before any passenger reaches the airline (below). checkBookingAgainstPolicy
     // never throws for a normal policy pass/fail — only a missing/unconfigured
     // policy comes back as ok:false, which we treat as "not evaluated" rather
     // than blocking the booking outright (a TMC config gap shouldn't strand
@@ -207,11 +203,10 @@ export const POST = route(async (req: NextRequest) => {
       })
       travelTypeForApproval = inputs.travelType
 
-      // The passenger has ALREADY reached the airline at this point. A failure
-      // to check policy must not escape to the catch below, which would answer
-      // with a generic error and never write the booking row -- stranding the
-      // passenger at the airline with no record on our side. Treated as "not
-      // evaluated", exactly as an unconfigured policy is.
+      // A failure to check policy must not stop the booking: it is treated as
+      // "not evaluated", exactly as an unconfigured policy is. (This ran after
+      // the airline call once, where escaping to the catch below would have
+      // stranded the passenger at the airline with no record on our side.)
       let ruleResult: RuleEngineResult | null = null
       try {
         ruleResult = await checkBookingAgainstPolicy(db, {
@@ -244,6 +239,38 @@ export const POST = route(async (req: NextRequest) => {
         reason = ruleResult.message
       }
     }
+
+    // ── The travel desk at a CBT-only client ─────────────────────────────────
+    // Its people cannot book for themselves, so the desk books for them, and
+    // policy there is guidance: the verdict is recorded and shown, no approval
+    // chain runs, and an amber or red fare needs a reason. Asked for here,
+    // before the airline has seen anyone, so a refusal strands nothing.
+    // Everywhere else -- SBT and hybrid clients, whoever books -- the
+    // traveller's own approval chain decides, below.
+    const deskGuidance = actor.actor.via === 'tmc' && actor.actor.bookingMode === 'cbt'
+    const outsidePolicy = policyVerdict === 'amber' || policyVerdict === 'red'
+    const deskReason = deskGuidance && outsidePolicy
+      ? { code: body.policyReasonCode, note: body.policyReasonNote?.trim() || null }
+      : null
+    if (deskReason) {
+      const problem = reasonProblem(deskReason.code, deskReason.note)
+      if (problem) {
+        return Response.json({
+          error: problem, code: 'POLICY_REASON_REQUIRED', verdict: policyVerdict, reasons: POLICY_REASONS,
+        }, { status: 400 })
+      }
+    }
+
+    const result = await amadeus.addPassenger(
+      key,
+      referenceNo,
+      customerInfo,
+      // THE AIRLINE FIGURE, never the sell price. This is the line the whole
+      // price_quotes table exists to make correct.
+      String(airlineGrandTotal),
+      String(airlineGrandTotal),
+      String(seatFeeTotal)
+    )
 
     // Which negotiated codes applied, frozen at booking time. Never throws and
     // never blocks: deal codes are advisory today, since the aggregator API has
@@ -291,6 +318,8 @@ export const POST = route(async (req: NextRequest) => {
         policy_status: policyStatus,
         policy_verdict: policyVerdict,
         policy_verdict_detail: policyVerdictDetail,
+        policy_reason_code: deskReason?.code ?? null,
+        policy_reason_note: deskReason?.note ?? null,
       })
     } catch (insertError) {
       // The airline has the passenger data and we do not have a booking row.
@@ -319,31 +348,50 @@ export const POST = route(async (req: NextRequest) => {
     // 'self' (exempt from approval — startApprovalForBooking already
     // logged that as its own approvals row with status 'approved').
     let finalStatus = 'pending_approval'
-    try {
-      const outcome = await startApprovalForBooking(db, {
-        bookingId: booking.id,
-        clientId,
-        employeeId: employee.id,
-        travelType: travelTypeForApproval,
-        verdict: (policyVerdict as 'green' | 'amber' | 'red') ?? 'green',
-        reason,
-      })
-
-      if (!outcome.requiresApproval) {
-        finalStatus = 'approved'
-        await bookings.setStatus(db, booking.id, 'approved')
-      } else if (!outcome.approverId) {
-        // Chain exists but couldn't resolve a real approver (no manager_id
-        // set, or no finance-role employee in the client). Surface this as
-        // its own status rather than silently stalling in 'pending_approval'
-        // with no approvals row ever created for anyone to act on.
-        finalStatus = 'approval_misconfigured'
-        await bookings.setStatus(db, booking.id, 'approval_misconfigured')
+    if (deskGuidance) {
+      // No chain at a CBT-only client (above). Going ahead outside policy is
+      // the decision an approval would have recorded, so it is recorded here.
+      finalStatus = 'approved'
+      await bookings.setStatus(db, booking.id, 'approved')
+      if (deskReason) {
+        try {
+          await audit.append(db, {
+            action: 'booking.desk_override', entityType: 'booking', entityId: booking.id, userId: user.id,
+            clientId, tmcId: user.employee?.tmcId ?? null,
+            metadata: { verdict: policyVerdict, reason_code: deskReason.code, reason_note: deskReason.note },
+          })
+        } catch (auditErr) {
+          // The booking stands either way; the reason is on the row itself.
+          console.error('[add-passenger] could not audit a desk override', auditErr)
+        }
       }
-    } catch (approvalErr) {
-      console.error('Approval chain resolution failed after booking insert', approvalErr)
-      // Booking row already exists at 'pending_approval' — fail safe by
-      // leaving it there rather than auto-approving on an internal error.
+    } else {
+      try {
+        const outcome = await startApprovalForBooking(db, {
+          bookingId: booking.id,
+          clientId,
+          employeeId: employee.id,
+          travelType: travelTypeForApproval,
+          verdict: (policyVerdict as 'green' | 'amber' | 'red') ?? 'green',
+          reason,
+        })
+
+        if (!outcome.requiresApproval) {
+          finalStatus = 'approved'
+          await bookings.setStatus(db, booking.id, 'approved')
+        } else if (!outcome.approverId) {
+          // Chain exists but couldn't resolve a real approver (no manager_id
+          // set, or no finance-role employee in the client). Surface this as
+          // its own status rather than silently stalling in 'pending_approval'
+          // with no approvals row ever created for anyone to act on.
+          finalStatus = 'approval_misconfigured'
+          await bookings.setStatus(db, booking.id, 'approval_misconfigured')
+        }
+      } catch (approvalErr) {
+        console.error('Approval chain resolution failed after booking insert', approvalErr)
+        // Booking row already exists at 'pending_approval' — fail safe by
+        // leaving it there rather than auto-approving on an internal error.
+      }
     }
 
     return Response.json({

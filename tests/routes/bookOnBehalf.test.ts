@@ -35,6 +35,18 @@ vi.mock('@/app/lib/amadeus/client', async orig => {
   }
 })
 
+// The verdict, when a test needs a particular one; otherwise the real check.
+let verdictOverride: 'green' | 'amber' | 'red' | null = null
+vi.mock('@/app/lib/rule-engine/checkBookingAgainstPolicy', async orig => {
+  const actual = await orig<typeof import('@/app/lib/rule-engine/checkBookingAgainstPolicy')>()
+  return {
+    ...actual,
+    checkBookingAgainstPolicy: (...args: Parameters<typeof actual.checkBookingAgainstPolicy>) => verdictOverride
+      ? Promise.resolve({ ok: true, policyGroupName: 'P', bandCode: 'L1', verdict: verdictOverride, breaches: [], costTier: 'auto_approve' })
+      : actual.checkBookingAgainstPolicy(...args),
+  }
+})
+
 const HAS_DB = Boolean(process.env.DATABASE_URL)
 const d = HAS_DB ? describe : describe.skip
 
@@ -108,7 +120,7 @@ d('book on behalf', () => {
       body: { key: 'SK', pricingKey: 'PK', provider: 'test', resultIndex: '1', itinerary: ITINERARY, travellerId },
     })
   }
-  const addPassenger = (as: { id: string }, key: string, travellerId?: string) => {
+  const addPassenger = (as: { id: string }, key: string, travellerId?: string, extra: Record<string, unknown> = {}) => {
     fake.addPassenger.mockResolvedValueOnce({ ReferenceNo: `REF-${key}` })
     return call(addPassengerPost, {
       as, method: 'POST', url: '/api/book/add-passenger',
@@ -117,6 +129,7 @@ d('book on behalf', () => {
         currency: 'INR', isRefundable: true, fareType: 'Retail', passengerBreakup: [], searchKey: 'SK',
         itinerary: ITINERARY, travellerId,
         customerInfo: { Email: 'c@example.test', Mobile: '9999999999', PassengerDetails: [{ FirstName: 'C', LastName: 'Olleague' }] },
+        ...extra,
       },
     })
   }
@@ -186,6 +199,62 @@ d('book on behalf', () => {
     expect((await book(admin, second.bookingId)).status).toBe(200)
     expect(await one(db, sql`select confirmed_by from bookings where id = ${second.bookingId}`))
       .toEqual({ confirmed_by: admin.id })
+  })
+
+  // ── The travel desk at a CBT-only client ──────────────────────────────────
+  // Policy is guidance: no chain runs, and amber or red needs a reason -- asked
+  // for before the airline sees the passenger.
+  describe('the desk at a CBT-only client', () => {
+    beforeAll(async () => {
+      await exec(db, sql`update clients set booking_mode = 'cbt' where id = ${clientId}`)
+    })
+    afterAll(async () => {
+      verdictOverride = null
+      await exec(db, sql`update clients set booking_mode = 'sbt' where id = ${clientId}`)
+    })
+
+    it('green: approved straight away, no approval raised, though the colleague has a chain', async () => {
+      verdictOverride = 'green'
+      expect((await price(a.tmcAdmin, 'D1', colleague.id)).status).toBe(200)
+      const res = await addPassenger(a.tmcAdmin, 'D1', colleague.id)
+      expect(res).toMatchObject({ status: 200, json: { status: 'approved', policyVerdict: 'green' } })
+      const id = (res.json as { bookingId: string }).bookingId
+      expect(await one(db, sql`select employee_id, booked_by, policy_reason_code from bookings where id = ${id}`))
+        .toEqual({ employee_id: colleague.id, booked_by: a.tmcAdmin.id, policy_reason_code: null })
+      expect(await many(db, sql`select 1 from approvals where booking_id = ${id}`)).toEqual([])
+    })
+
+    it('red without a reason: refused before the airline, nothing written', async () => {
+      verdictOverride = 'red'
+      expect((await price(a.tmcAdmin, 'D2', colleague.id)).status).toBe(200)
+      const res = await addPassenger(a.tmcAdmin, 'D2', colleague.id)
+      expect(res).toMatchObject({ status: 400, json: { code: 'POLICY_REASON_REQUIRED', verdict: 'red' } })
+      expect(await addPassenger(a.tmcAdmin, 'D2', colleague.id, { policyReasonCode: 'other', policyReasonNote: ' ' }))
+        .toMatchObject({ status: 400, json: { error: 'Explain the reason for "Other".' } })
+      expect(fake.addPassenger).not.toHaveBeenCalled()
+      expect(await many(db, sql`select 1 from bookings where amadeus_key = 'D2'`)).toEqual([])
+    })
+
+    it('red with a reason: approved, the reason on the booking and in the audit trail', async () => {
+      verdictOverride = 'red'
+      expect((await price(a.tmcAdmin, 'D3', colleague.id)).status).toBe(200)
+      const res = await addPassenger(a.tmcAdmin, 'D3', colleague.id, { policyReasonCode: 'client_instruction' })
+      expect(res).toMatchObject({ status: 200, json: { status: 'approved', policyVerdict: 'red' } })
+      const id = (res.json as { bookingId: string }).bookingId
+      expect(await one(db, sql`select policy_reason_code, policy_reason_note from bookings where id = ${id}`))
+        .toEqual({ policy_reason_code: 'client_instruction', policy_reason_note: null })
+      expect(await one(db, sql`
+        select user_id, client_id, metadata from audit_log where action = 'booking.desk_override' and entity_id = ${id}`))
+        .toEqual({ user_id: a.tmcAdmin.id, client_id: clientId,
+          metadata: { verdict: 'red', reason_code: 'client_instruction', reason_note: null } })
+      expect(await many(db, sql`select 1 from approvals where booking_id = ${id}`)).toEqual([])
+    })
+
+    it('the corporate admin cannot book for a colleague here; the colleague cannot book at all', async () => {
+      verdictOverride = null
+      expect((await price(admin, 'D4', colleague.id)).status).toBe(403)
+      expect((await price(colleague, 'D4')).status).toBe(403)
+    })
   })
 
   it('booking for yourself is recorded as such', async () => {

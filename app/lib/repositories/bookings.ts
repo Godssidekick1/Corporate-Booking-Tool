@@ -210,7 +210,7 @@ export async function heldQuote(db: Queryable, amadeusKey: string, referenceNo: 
 export type NewBooking = Pick<Row<'bookings'>,
   | 'client_id' | 'employee_id' | 'booked_by' | 'booking_type' | 'status' | 'total_cost' | 'sell_total'
   | 'provider' | 'provider_order_id' | 'amadeus_key' | 'pricing_key' | 'result_index' | 'search_key'
-  | 'trip_id' | 'is_ndc' | 'policy_status' | 'policy_verdict'
+  | 'trip_id' | 'is_ndc' | 'policy_status' | 'policy_verdict' | 'policy_reason_code' | 'policy_reason_note'
 > & {
   resolved_deal_codes: unknown
   resolved_fop: unknown
@@ -227,12 +227,13 @@ export async function insert(db: Queryable, b: NewBooking): Promise<{ id: string
     insert into bookings (
       client_id, employee_id, booked_by, booking_type, status, total_cost, sell_total, provider,
       provider_order_id, amadeus_key, pricing_key, result_index, search_key, trip_id, is_ndc,
-      policy_status, policy_verdict, resolved_deal_codes, resolved_fop, commercials, itinerary,
+      policy_status, policy_verdict, policy_reason_code, policy_reason_note, resolved_deal_codes, resolved_fop, commercials, itinerary,
       traveler_snapshot, fare_breakdown, policy_verdict_detail)
     values (
       ${b.client_id}, ${b.employee_id}, ${b.booked_by}, ${b.booking_type}, ${b.status}, ${b.total_cost},
       ${b.sell_total}, ${b.provider}, ${b.provider_order_id}, ${b.amadeus_key}, ${b.pricing_key},
       ${b.result_index}, ${b.search_key}, ${b.trip_id}, ${b.is_ndc}, ${b.policy_status}, ${b.policy_verdict},
+      ${b.policy_reason_code}, ${b.policy_reason_note},
       ${json(b.resolved_deal_codes)}, ${json(b.resolved_fop)}, ${json(b.commercials)}, ${json(b.itinerary)},
       ${json(b.traveler_snapshot)}, ${json(b.fare_breakdown)}, ${json(b.policy_verdict_detail)})
     returning id`)
