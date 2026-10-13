@@ -193,7 +193,7 @@ export default function ApprovalsPage() {
   const urgentCount = urgentTotal
 
   return (
-    <div style={s.page}>
+    <div className="page-frame narrow" style={s.page}>
       <div style={s.header}>
         <div style={s.headerRow}>
           <div>
@@ -348,7 +348,8 @@ export default function ApprovalsPage() {
 }
 
 const s: Record<string, React.CSSProperties> = {
-  page: { fontFamily: "'Inter', -apple-system, sans-serif", padding: '32px', maxWidth: '760px', margin: '0 auto' },
+  // Padding and width: the shared .page-frame (globals.css).
+  page: { fontFamily: "'Inter', -apple-system, sans-serif" },
 
   header: { marginBottom: '20px' },
   headerRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap' as const },

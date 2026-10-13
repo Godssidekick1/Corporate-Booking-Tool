@@ -57,7 +57,7 @@ export default function ProfilePage() {
   return (
     <Suspense fallback={
       <div style={s.page}>
-        <div style={s.root}>
+        <div className="page-frame narrow" style={s.root}>
           <div style={s.loadingCard}><div style={s.spinner} /></div>
         </div>
       </div>
@@ -220,7 +220,7 @@ function ProfilePageInner() {
   if (loading) {
     return (
       <div style={s.page}>
-        <div style={s.root}>
+        <div className="page-frame narrow" style={s.root}>
           <div style={s.loadingCard}><div style={s.spinner} /></div>
         </div>
       </div>
@@ -229,7 +229,7 @@ function ProfilePageInner() {
 
   return (
     <div style={s.page}>
-      <div style={s.root}>
+      <div className="page-frame narrow" style={s.root}>
         {!isFirstLogin && (
           <Link href="/dashboard" style={s.backLink}>← Back to dashboard</Link>
         )}
@@ -393,7 +393,8 @@ function ProfilePageInner() {
 
 const s: Record<string, React.CSSProperties> = {
   page: { background: '#F9FAFB', minHeight: '100vh' },
-  root: { fontFamily: "'Inter', -apple-system, sans-serif", maxWidth: '520px', margin: '0 auto', padding: '32px 24px 64px' },
+  // Padding: the shared .page-frame (globals.css); the form keeps its own width.
+  root: { fontFamily: "'Inter', -apple-system, sans-serif", maxWidth: '520px' },
 
   backLink: { fontSize: '13px', color: '#6B7280', textDecoration: 'none', display: 'inline-block', marginBottom: '16px' },
 

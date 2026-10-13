@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { flowStorage } from '@/app/lib/book/flowStorage'
 
 interface Employee {
   id: string
@@ -147,24 +146,6 @@ function getChecklist(
   return canSelfBook ? items : items.filter(i => i.id !== 'booking')
 }
 
-function getNavItems(role: string, canSelfBook: boolean, isApprover: boolean) {
-  const base = [
-    { label: 'Dashboard',   href: '/dashboard' },
-    ...(canSelfBook ? [{ label: 'Book travel', href: '/book' }] : []),
-    { label: 'My trips',    href: '/bookings' },
-    { label: 'Travel profile', href: '/profile' },
-  ]
-  if (isApprover) {
-    base.push({ label: 'Approvals', href: '/approvals' })
-  }
-  if (role === 'admin' || role === 'finance') {
-    base.push({ label: 'Reports', href: '/reports' })
-  }
-  if (role === 'admin') {
-    base.push({ label: 'Settings', href: '/settings' })
-  }
-  return base
-}
 
 export default function DashboardPage() {
   const router = useRouter()
@@ -242,19 +223,11 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  async function handleSignOut() {
-    // Ends the session on the server; the route clears the cookie.
-    await fetch('/api/auth/signout', { method: 'POST', redirect: 'manual' })
-    flowStorage.clearAll()
-    router.replace('/login')
-  }
-
   if (loading || !me || !me.employee) return <LoadingScreen />
 
   const { employee, client } = me
   const { role, full_name, band_code } = employee
   const canSelfBook = me.canSelfBook !== false
-  const navItems = getNavItems(role, canSelfBook, me.isApprover === true)
   const firstName = full_name?.split(' ')[0] ?? 'there'
   const checklist = getChecklist(client, me.employeeCount ?? 0, me.hasBookings ?? false, me.hasPolicy ?? false, canSelfBook)
   const completedCount = checklist.filter(i => i.done).length
@@ -275,59 +248,7 @@ export default function DashboardPage() {
       ]
 
   return (
-    <div style={s.root}>
-      <nav style={s.nav}>
-        <div>
-          <div style={s.navWordmark}>
-            <span style={s.navWmMain}>TravelDesk</span>
-            <span style={s.navWmBy}>by Amadeus</span>
-          </div>
-
-          {client && (
-            <div style={s.clientBadge}>
-              <span style={s.clientDot} />
-              <span style={s.clientName}>{client.name}</span>
-            </div>
-          )}
-
-          <div style={s.navItems}>
-            {navItems.map(item => {
-              const active = item.href === '/dashboard'
-              return (
-                <a key={item.label} href={item.href} style={{
-                  ...s.navItem,
-                  background: active ? 'rgba(255,255,255,0.1)' : 'transparent',
-                  color: active ? '#fff' : 'rgba(255,255,255,0.5)',
-                  fontWeight: active ? 500 : 400,
-                }}>
-                  {item.label}
-                  {item.href === '/approvals' && (approvalSummary?.pendingCount ?? 0) > 0 && (
-                    <span style={s.navBadge}>{approvalSummary!.pendingCount}</span>
-                  )}
-                </a>
-              )
-            })}
-          </div>
-        </div>
-
-        <div style={s.navFooter}>
-          <div style={s.userInfo}>
-            <div style={s.userAvatar}>{firstName[0]}</div>
-            <div>
-              <p style={s.userName}>{full_name}</p>
-              <p style={s.userMeta}>
-                {role.charAt(0).toUpperCase() + role.slice(1)}
-                {band_code ? ` · ${band_code}` : ''}
-              </p>
-            </div>
-          </div>
-          <button onClick={handleSignOut} style={s.signOutBtn}>
-            Sign out
-          </button>
-        </div>
-      </nav>
-
-      <main style={s.main}>
+    <main className="page-frame" style={s.main}>
         <div style={s.topBar}>
           <div>
             <h1 style={s.pageTitle}>{getGreeting()}, {firstName}</h1>
@@ -511,8 +432,7 @@ export default function DashboardPage() {
             )}
           </Section>
         )}
-      </main>
-    </div>
+    </main>
   )
 }
 
@@ -570,44 +490,8 @@ function getGreeting() {
 }
 
 const s: Record<string, React.CSSProperties> = {
-  root: {
-    display: 'flex', minHeight: '100vh',
-    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
-    background: '#F7F8FC',
-  },
-  nav: {
-    width: '220px', flexShrink: 0, background: '#000835',
-    display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
-    padding: '28px 16px',
-  },
-  navWordmark: { display: 'flex', flexDirection: 'column', gap: '2px', marginBottom: '20px', padding: '0 6px' },
-  navWmMain: { fontSize: '17px', fontWeight: 600, color: '#fff', letterSpacing: '-0.3px' },
-  navWmBy: { fontSize: '9px', color: 'rgba(255,255,255,0.32)', letterSpacing: '0.5px', textTransform: 'uppercase' as const },
-  clientBadge: {
-    display: 'flex', alignItems: 'center', gap: '7px',
-    padding: '7px 10px', marginBottom: '20px',
-    background: 'rgba(255,255,255,0.06)', borderRadius: '6px',
-  },
-  clientDot: { width: '6px', height: '6px', borderRadius: '50%', background: '#22C55E', flexShrink: 0 },
-  clientName: { fontSize: '12px', color: 'rgba(255,255,255,0.7)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
-  navItems: { display: 'flex', flexDirection: 'column', gap: '1px' },
-  navItem: { display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 10px', borderRadius: '6px', fontSize: '13px', textDecoration: 'none', transition: 'all 0.15s' },
-  navBadge: {
-    fontSize: '10px', fontWeight: 700, color: '#000835', background: '#fff',
-    borderRadius: '999px', padding: '1px 6px', minWidth: '15px', textAlign: 'center' as const,
-  },
-  navFooter: { borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: '14px' },
-  userInfo: { display: 'flex', alignItems: 'center', gap: '9px', marginBottom: '10px' },
-  userAvatar: {
-    width: '30px', height: '30px', borderRadius: '50%',
-    background: 'rgba(255,255,255,0.12)',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    fontSize: '12px', fontWeight: 600, color: '#fff', flexShrink: 0,
-  },
-  userName: { fontSize: '12px', fontWeight: 500, color: '#fff', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
-  userMeta: { fontSize: '10px', color: 'rgba(255,255,255,0.38)', margin: 0 },
-  signOutBtn: { width: '100%', height: '30px', background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.4)', fontSize: '11px', border: 'none', borderRadius: '5px', cursor: 'pointer' },
-  main: { flex: 1, overflowY: 'auto' as const, padding: '32px 36px' },
+  // Padding and width: the shared .page-frame (globals.css).
+  main: {},
   topBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' },
   pageTitle: { fontSize: '20px', fontWeight: 600, color: '#0A0A14', margin: '0 0 3px', letterSpacing: '-0.3px' },
   pageDate: { fontSize: '12px', color: '#9CA3AF', margin: 0 },

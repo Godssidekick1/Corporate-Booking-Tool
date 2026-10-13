@@ -250,7 +250,7 @@ export default function BookingsPage() {
 
   return (
     <div style={s.page}>
-      <div style={s.root}>
+      <div className="page-frame narrow" style={s.root}>
         <div style={s.header}>
           <h1 style={s.heading}>My trips</h1>
           {canSelfBook && <Link href="/book" style={s.newTripBtn}>+ New booking</Link>}
@@ -344,7 +344,8 @@ export default function BookingsPage() {
 
 const s: Record<string, React.CSSProperties> = {
   page: { background: '#F9FAFB', minHeight: '100vh' },
-  root: { fontFamily: "'Inter', -apple-system, sans-serif", maxWidth: '720px', margin: '0 auto', padding: '32px 24px 64px' },
+  // Padding and width: the shared .page-frame (globals.css).
+  root: { fontFamily: "'Inter', -apple-system, sans-serif" },
 
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' },
   heading: { fontSize: '22px', fontWeight: 700, color: '#0A0A14', margin: 0, letterSpacing: '-0.4px' },

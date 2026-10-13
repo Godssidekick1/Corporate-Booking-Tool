@@ -104,7 +104,7 @@ export default function TripWorkspacePage() {
   if (loading) {
     return (
       <div style={s.page}>
-        <div style={s.root}>
+        <div className="page-frame narrow" style={s.root}>
           <div style={s.loadingCard}><div style={s.spinner} /></div>
         </div>
       </div>
@@ -114,7 +114,7 @@ export default function TripWorkspacePage() {
   if (error || !trip) {
     return (
       <div style={s.page}>
-        <div style={s.root}>
+        <div className="page-frame narrow" style={s.root}>
           <div style={s.errorCard}>
             <p style={s.errorTitle}>⚠ {error || 'Trip not found.'}</p>
             <Link href="/book" style={s.errorLink}>← Back to your trips</Link>
@@ -126,7 +126,7 @@ export default function TripWorkspacePage() {
 
   return (
     <div style={s.page}>
-      <div style={s.root}>
+      <div className="page-frame narrow" style={s.root}>
         <Link href="/book" style={s.backLink}>← Your trips</Link>
 
         <div style={s.header}>
@@ -232,7 +232,8 @@ export default function TripWorkspacePage() {
 
 const s: Record<string, React.CSSProperties> = {
   page: { background: '#F9FAFB', minHeight: '100vh' },
-  root: { fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif", maxWidth: '720px', margin: '0 auto', padding: '32px 24px 64px' },
+  // Padding and width: the shared .page-frame (globals.css).
+  root: { fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif" },
 
   backLink: { fontSize: '13px', color: '#6B7280', textDecoration: 'none', display: 'inline-block', marginBottom: '16px' },
 

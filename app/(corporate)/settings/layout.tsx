@@ -1,9 +1,19 @@
 'use client'
 
+import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { isActive } from '@/app/lib/navigation/tmcNav'
+
+// ── /settings layout ─────────────────────────────────────────────────────────
+// The company's settings, as a second column beside the rail -- the same
+// pattern as the TMC side's Configurations (app/tmc/configurations/layout.tsx).
+// It used to be a sidebar of its own with a "← Dashboard" link, because no
+// corporate page had a rail to return by; the shared one (CorporateShell) is
+// that way back now.
+// ─────────────────────────────────────────────────────────────────────────────
 
 const SECTIONS = [
-  { label: 'Company',     href: '/settings/company' },
+  { label: 'Company',      href: '/settings/company' },
   { label: 'Users',        href: '/settings/users' },
   { label: 'Policy',       href: '/settings/policy' },
   { label: 'Hierarchy',    href: '/settings/hierarchy' },
@@ -12,55 +22,36 @@ const SECTIONS = [
 ]
 
 export default function SettingsLayout({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname()
+  const pathname = usePathname() ?? ''
 
   return (
-    <div style={s.root}>
-      <aside style={s.sidebar}>
-        <div style={s.sidebarHeader}>
-          <a href="/dashboard" style={s.backLink}>← Dashboard</a>
-          <h2 style={s.sidebarTitle}>Settings</h2>
+    <div className="flex min-h-screen">
+      <nav className="w-subnav shrink-0 border-r border-line bg-surface">
+        <div className="px-5 py-6">
+          <h2 className="text-[15px] font-semibold text-ink">Settings</h2>
         </div>
-        <nav style={s.nav}>
+        <div className="pb-8">
           {SECTIONS.map(section => {
-            const active = pathname === section.href || pathname?.startsWith(section.href + '/')
+            const active = isActive(pathname, section.href)
             return (
-              <a
+              <Link
                 key={section.href}
                 href={section.href}
-                style={{
-                  ...s.navItem,
-                  background: active ? '#EEF2FF' : 'transparent',
-                  color: active ? '#000835' : '#6B7280',
-                  fontWeight: active ? 600 : 400,
-                }}
+                aria-current={active ? 'page' : undefined}
+                className={[
+                  'flex items-center border-l-2 py-2 pl-[18px] pr-4 text-[13px] transition-colors',
+                  active ? 'border-rail bg-info-bg/60 font-semibold text-rail' : 'border-transparent text-body hover:bg-canvas',
+                ].join(' ')}
               >
                 {section.label}
-              </a>
+              </Link>
             )
           })}
-        </nav>
-      </aside>
+        </div>
+      </nav>
 
-      <main style={s.main}>{children}</main>
+      {/* Padding and width: the shared .page-frame (globals.css), as on every page. */}
+      <div className="page-frame min-w-0 flex-1">{children}</div>
     </div>
   )
-}
-
-const s: Record<string, React.CSSProperties> = {
-  root: {
-    display: 'flex', minHeight: '100vh',
-    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
-    background: '#F7F8FC',
-  },
-  sidebar: {
-    width: '220px', flexShrink: 0, background: '#fff',
-    borderRight: '1px solid #E5E7EB', padding: '28px 16px',
-  },
-  sidebarHeader: { marginBottom: '20px', padding: '0 6px' },
-  backLink: { fontSize: '12px', color: '#9CA3AF', textDecoration: 'none', display: 'block', marginBottom: '10px' },
-  sidebarTitle: { fontSize: '16px', fontWeight: 600, color: '#0A0A14', margin: 0 },
-  nav: { display: 'flex', flexDirection: 'column', gap: '2px' },
-  navItem: { display: 'block', padding: '8px 10px', borderRadius: '6px', fontSize: '13px', textDecoration: 'none' },
-  main: { flex: 1, padding: '32px 40px', overflowY: 'auto' as const },
 }
