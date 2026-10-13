@@ -3,7 +3,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import AirportDropdown from '@/app/components/AirportDropdown'
-import { flowStorage } from '@/app/lib/book/flowStorage'
+import { flowStorage, type OnBehalf } from '@/app/lib/book/flowStorage'
+import SearchableSelect from '@/app/components/SearchableSelect'
+import { useLookup } from '@/app/hooks/useLookup'
 import { searchPreferences } from '@/app/lib/book/searchPreferences'
 import { FlatFlightResult, formatTime, formatDayLabel, journeysOf } from '@/app/lib/book/types'
 import { cabinLabel } from '@/app/lib/book/cabin'
@@ -123,6 +125,52 @@ export default function BookFlightsSearchPage() {
   // stays blank for manual entry instead of silently filling in the current
   // employee's own passport/DOB on a colleague's booking.
   const [bookingForSelf, setBookingForSelf] = useState(true)
+
+  // ── Who's travelling (booking on someone's behalf) ─────────────────────────
+  // A corporate admin may book for a colleague, whose policy and approval
+  // chain then apply (app/lib/book/bookingActor.ts); the travel desk chose its
+  // traveller on /tmc/book already. Read after mount: sessionStorage and the
+  // caller's role are not available to the server render.
+  const [who, setWho] = useState<OnBehalf | null>(null)
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [mode, setMode] = useState<'me' | 'colleague' | 'guest'>('me')
+  const [colleagueId, setColleagueId] = useState('')
+  const colleagueLookup = useLookup('/api/book/travellers', colleagueId, {
+    enabled: isAdmin && mode === 'colleague',
+    toOption: row => ({
+      id: String(row.id),
+      label: String(row.full_name),
+      sublabel: [row.band_code, row.department, row.email].filter(Boolean).join(' · ') || undefined,
+    }),
+  })
+  useEffect(() => {
+    const saved = flowStorage.onBehalf()
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setWho(saved)
+    if (saved) { setMode('colleague'); setColleagueId(saved.travellerId) }
+    fetch('/api/me').then(r => r.json()).then(d => setIsAdmin(d.employee?.role === 'admin')).catch(() => {})
+  }, [])
+
+  function chooseMode(next: 'me' | 'colleague' | 'guest') {
+    setMode(next)
+    setBookingForSelf(next === 'me')
+    if (next !== 'colleague') { flowStorage.setOnBehalf(null); setWho(null); setColleagueId('') }
+  }
+
+  async function chooseColleague(id: string) {
+    setColleagueId(id)
+    if (!id) { flowStorage.setOnBehalf(null); setWho(null); return }
+    const d = await fetch(`/api/book/travellers/${id}`).then(r => r.json()).catch(() => null)
+    if (!d?.ok) { setError(d?.error || 'Could not load that colleague.'); return }
+    const next: OnBehalf = {
+      travellerId: d.traveller.id, name: d.traveller.full_name, clientName: d.traveller.client_name,
+      bandCode: d.traveller.band_code, policy: d.policy, home: '/bookings',
+    }
+    // A different traveller: anything priced so far was for someone else.
+    flowStorage.clearFlow()
+    flowStorage.setOnBehalf(next)
+    setWho(next)
+  }
 
   // Shown only until the person has searched at least once, ever — after
   // that, the remembered origin/destination (below) is more useful than a
@@ -255,6 +303,8 @@ export default function BookFlightsSearchPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          // Booking for someone else: whose (bookingActor); absent = oneself.
+          travellerId: flowStorage.travellerId(),
           origin, destination,
           departDate: toApiDate(departDate),
           tripType,
@@ -281,7 +331,9 @@ export default function BookFlightsSearchPage() {
       setResults(foundResults)
       setHasSearched(true)
       searchPreferences.saveLastSearch({ origin, destination, adult, child, infant, cabinPref })
-      flowStorage.setGuestBooking(!bookingForSelf)
+      // A guest is typed in by hand; a colleague's details come from their
+      // profile (the passenger page reads flowStorage.onBehalf).
+      flowStorage.setGuestBooking(who ? false : !bookingForSelf)
 
       // Save results + search context to sessionStorage so /book/price/[flightKey]
       // can look up the exact result the user picked without re-searching, and
@@ -373,19 +425,53 @@ export default function BookFlightsSearchPage() {
             <span style={s.tripTypeMuted}>Multi-city coming soon</span>
           </div>
 
-          <label style={s.selfToggleRow}>
-            <input
-              type="checkbox"
-              checked={bookingForSelf}
-              onChange={e => setBookingForSelf(e.target.checked)}
-              style={s.selfToggleCheckbox}
-            />
-            <span style={s.selfToggleText}>
-              {bookingForSelf
-                ? 'Booking for myself — your saved travel profile will fill in your details.'
-                : 'Booking for someone else — enter their details manually.'}
-            </span>
-          </label>
+          {who?.home === '/tmc/book' ? null : isAdmin ? (
+            // A corporate admin: themself, a colleague (whose policy and chain
+            // apply), or a guest who is not an employee (typed in by hand,
+            // under the admin's own policy).
+            <div style={s.whoRow}>
+              <span style={s.selfToggleText}>Who&apos;s travelling?</span>
+              <div style={s.whoToggle}>
+                {(['me', 'colleague', 'guest'] as const).map(m => (
+                  <button key={m} type="button" onClick={() => chooseMode(m)}
+                    style={{ ...s.whoBtn, ...(mode === m ? s.whoBtnOn : {}) }}>
+                    {m === 'me' ? 'Me' : m === 'colleague' ? 'A colleague' : 'A guest'}
+                  </button>
+                ))}
+              </div>
+              {mode === 'colleague' && (
+                <div style={{ minWidth: 260, flex: 1, maxWidth: 380 }}>
+                  <SearchableSelect
+                    value={colleagueId}
+                    onChange={chooseColleague}
+                    options={colleagueLookup.options}
+                    onSearch={colleagueLookup.onSearch}
+                    loading={colleagueLookup.loading}
+                    selectedLabel={colleagueLookup.selectedLabel || who?.name || ''}
+                    placeholder="Search colleagues by name, email or department…"
+                    emptyMessage="No colleague matches"
+                  />
+                </div>
+              )}
+              {mode === 'guest' && (
+                <span style={s.selfToggleText}>Not an employee — enter their details on the passenger page.</span>
+              )}
+            </div>
+          ) : (
+            <label style={s.selfToggleRow}>
+              <input
+                type="checkbox"
+                checked={bookingForSelf}
+                onChange={e => setBookingForSelf(e.target.checked)}
+                style={s.selfToggleCheckbox}
+              />
+              <span style={s.selfToggleText}>
+                {bookingForSelf
+                  ? 'Booking for myself — your saved travel profile will fill in your details.'
+                  : 'Booking for someone else — enter their details manually.'}
+              </span>
+            </label>
+          )}
 
           <div style={s.routeFieldsWrap}>
             <div style={s.routeFields}>
@@ -819,6 +905,10 @@ const s: Record<string, React.CSSProperties> = {
   },
   selfToggleCheckbox: { width: '15px', height: '15px', flexShrink: 0, cursor: 'pointer', accentColor: '#000835' },
   selfToggleText: { fontSize: '12.5px', color: '#374151', lineHeight: 1.4 },
+  whoRow: { display: 'flex', alignItems: 'center', gap: '10px 14px', flexWrap: 'wrap', marginBottom: '14px' },
+  whoToggle: { display: 'flex', background: '#F3F4F6', borderRadius: '8px', padding: '3px' },
+  whoBtn: { border: 'none', background: 'transparent', fontSize: '12.5px', color: '#6B7280', padding: '5px 12px', borderRadius: '6px', cursor: 'pointer' },
+  whoBtnOn: { background: '#fff', color: '#111827', fontWeight: 600, boxShadow: '0 1px 2px rgba(0,0,0,0.06)' },
 
   routeFieldsWrap: { display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '16px' },
   routeFields: { display: 'flex', alignItems: 'center', gap: '0', position: 'relative', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '12px', padding: '4px' },
