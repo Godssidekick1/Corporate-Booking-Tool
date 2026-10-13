@@ -11,6 +11,7 @@ import { GET as fopMappingGet } from '@/app/api/tmc/fop-assignments/route'
 import { GET as tmcEmployeesGet } from '@/app/api/tmc/employees/route'
 import { GET as tmcStatsGet } from '@/app/api/tmc/stats/route'
 import { GET as settingsUsersGet } from '@/app/api/settings/users/route'
+import { GET as hierarchyGet } from '@/app/api/settings/hierarchy/route'
 import { GET as myBookingsGet } from '@/app/api/bookings/route'
 import { GET as recentBookingsGet } from '@/app/api/bookings/recent/route'
 import { GET as myTripsGet } from '@/app/api/trips/route'
@@ -119,7 +120,8 @@ describe('scale', () => {
     await measure('TMC: one large client employees (page 1)', 300, admin(`/api/tmc/employees?page=1&clientId=${a.corpAdmin.client_id}`, tmcEmployeesGet))
     await measure('TMC dashboard stats', 300, admin('/api/tmc/stats', tmcStatsGet))
     await measure('Corporate users list (page 1)', 300, admin('/api/settings/users?page=1', settingsUsersGet, heavy))
-    await measure('Corporate users, hierarchy (capped 1,000)', 300, admin('/api/settings/users?all=true', settingsUsersGet, heavy))
+    await measure('Corporate hierarchy (page 1)', 300, admin('/api/settings/hierarchy?page=1', hierarchyGet, heavy))
+    await measure('Corporate hierarchy, search', 300, admin('/api/settings/hierarchy?search=traveller%2010', hierarchyGet, heavy))
     await measure('Heavy traveller: my trips (page 1)', 300, admin('/api/bookings?page=1', myBookingsGet, heavy))
     await measure('Heavy traveller: my trips (page 40)', 300, admin('/api/bookings?page=40', myBookingsGet, heavy))
     await measure('Heavy traveller: trips picker (page 1)', 300, admin('/api/trips?page=1', myTripsGet, heavy))

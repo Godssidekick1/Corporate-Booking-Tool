@@ -3,6 +3,7 @@ import { GET as tmcProfileGet, PATCH as tmcProfilePatch } from '@/app/api/tmc/pr
 import { GET as meGet, PATCH as mePatch } from '@/app/api/employees/me/route'
 import { POST as createEmployee } from '@/app/api/employees/route'
 import { GET as usersGet } from '@/app/api/settings/users/route'
+import { GET as hierarchyGet } from '@/app/api/settings/hierarchy/route'
 import { PATCH as userPatch } from '@/app/api/settings/users/[id]/route'
 import { GET as tmcEmployeesGet } from '@/app/api/tmc/employees/route'
 import { PATCH as tmcEmployeePatch } from '@/app/api/tmc/employees/[id]/route'
@@ -222,10 +223,75 @@ d('people screens', () => {
     expect(res.json).toMatchSnapshot()
   })
 
-  it('settings/users: ?all=true for the hierarchy tree', async () => {
+  it('settings/users: ?all=true no longer lists everyone (the hierarchy is paged)', async () => {
     const res = await call(usersGet, { as: a.corpAdmin, url: '/api/settings/users?all=true' })
-    expect((res.json as { total: number }).total).toBeGreaterThan(0)
-    expect(res.json).toMatchSnapshot()
+    const body = res.json as { items: unknown[]; pageSize: number }
+    expect(body.items.length).toBeLessThanOrEqual(body.pageSize)
+  })
+
+  // ── GET /api/settings/hierarchy ────────────────────────────────────────────
+
+  type HierarchyBody = {
+    items: { id: string; full_name: string; manager_id: string | null; manager_name: string | null }[]
+    total: number; page: number; pageSize: number; totalPages: number; missingManager: number
+  }
+
+  it('settings/hierarchy: 401 signed out; only an admin may look', async () => {
+    expect((await call(hierarchyGet, { url: '/api/settings/hierarchy' })).status).toBe(401)
+    const plain = a.employee ?? a.manager
+    if (plain) {
+      expect(await call(hierarchyGet, { as: plain, url: '/api/settings/hierarchy' }))
+        .toEqual({ status: 403, json: { error: 'Only admins can view the reporting hierarchy' } })
+    }
+  })
+
+  it('settings/hierarchy: one page of the client, each row naming its manager', async () => {
+    const res = await call(hierarchyGet, { as: a.corpAdmin, url: '/api/settings/hierarchy?page=1' })
+    expect(res.status).toBe(200)
+    const body = res.json as HierarchyBody
+    const all = await many<{ id: string; manager_name: string | null }>(db, sql`
+      select e.id, m.full_name as manager_name
+      from employees e left join employees m on m.id = e.manager_id
+      where e.client_id = ${a.corpAdmin.client_id} order by e.full_name, e.id`)
+    expect(body.total).toBe(all.length)
+    expect(body.items.map(i => i.id)).toEqual(all.slice(0, body.pageSize).map(e => e.id))
+    for (const item of body.items) {
+      expect(item.manager_name).toBe(all.find(e => e.id === item.id)!.manager_name)
+    }
+    expect(body.items.some(i => i.manager_name)).toBe(true)
+    expect(body).toMatchSnapshot()
+  })
+
+  it('settings/hierarchy: the page past the end is empty, not the whole company', async () => {
+    const first = (await call(hierarchyGet, { as: a.corpAdmin, url: '/api/settings/hierarchy' })).json as HierarchyBody
+    const past = (await call(hierarchyGet, {
+      as: a.corpAdmin, url: `/api/settings/hierarchy?page=${first.totalPages + 1}`,
+    })).json as HierarchyBody
+    expect(past.items).toEqual([])
+    expect(past.total).toBe(first.total)
+  })
+
+  it('settings/hierarchy: search on the server', async () => {
+    const [someone] = await many<{ full_name: string }>(db, sql`
+      select full_name from employees where client_id = ${a.corpAdmin.client_id}
+      order by full_name desc limit 1`)
+    const res = await call(hierarchyGet, {
+      as: a.corpAdmin, url: `/api/settings/hierarchy?search=${encodeURIComponent(someone.full_name)}`,
+    })
+    const body = res.json as HierarchyBody
+    expect(body.items.length).toBeGreaterThan(0)
+    expect(body.items.every(i => i.full_name.toLowerCase().includes(someone.full_name.toLowerCase()))).toBe(true)
+  })
+
+  it('settings/hierarchy: missingManager counts the whole client, not the page', async () => {
+    const res = await call(hierarchyGet, { as: a.corpAdmin, url: '/api/settings/hierarchy?search=zzz-nobody' })
+    const body = res.json as HierarchyBody
+    const [{ n }] = await many<{ n: number }>(db, sql`
+      select count(*)::int as n from employees
+      where client_id = ${a.corpAdmin.client_id} and status = 'active'
+        and manager_id is null and top_of_hierarchy is not true`)
+    expect(body.items).toEqual([])
+    expect(body.missingManager).toBe(n)
   })
 
   it('settings/users: ?ids= resolves specific people', async () => {

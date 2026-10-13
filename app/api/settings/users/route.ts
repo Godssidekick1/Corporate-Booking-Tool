@@ -24,15 +24,6 @@ export const GET = route(async (req: NextRequest) => {
   const params = parsePageParams(req.nextUrl.searchParams)
   const ids = req.nextUrl.searchParams.get('ids')?.split(',').filter(Boolean) ?? []
 
-  // The hierarchy screen renders a reporting TREE, which needs every node to
-  // resolve manager_id to a name — a tree built from ten rows is not a tree,
-  // it is ten disconnected fragments. So it opts out of paging.
-  //
-  // Capped rather than unbounded: this is an escape hatch for one view with a
-  // genuine structural need, not a way for any caller to ask for everything.
-  const wantsAll = req.nextUrl.searchParams.get('all') === 'true'
-  const ALL_CAP = 1000
-
   // An admin always belongs to a client; one who somehow does not has nobody
   // to list, which is what the old `client_id = null` filter returned too.
   if (!caller.client_id) {
@@ -42,9 +33,7 @@ export const GET = route(async (req: NextRequest) => {
   const { rows, total } = await employees.directory(
     db,
     caller.client_id,
-    ids.length > 0 ? { ids }
-      : wantsAll ? { cap: ALL_CAP }
-      : { search: params.search, page: params }
+    ids.length > 0 ? { ids } : { search: params.search, page: params }
   )
 
   return Response.json(pagedResponse(rows, total, params))

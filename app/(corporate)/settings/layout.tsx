@@ -17,7 +17,6 @@ const SECTIONS = [
   { label: 'Users',        href: '/settings/users' },
   { label: 'Policy',       href: '/settings/policy' },
   { label: 'Hierarchy',    href: '/settings/hierarchy' },
-  { label: 'Approvals',    href: '/settings/approvals' },
   { label: 'Integrations', href: '/settings/integrations' },
 ]
 

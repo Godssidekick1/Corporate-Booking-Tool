@@ -272,12 +272,10 @@ export async function insert(db: Queryable, e: NewEmployee): Promise<void> {
     )`)
 }
 
-// How a people list is narrowed. Exactly one of the three: specific people
-// (a picker resolving the ids it already shows), everything up to a cap (the
-// hierarchy tree), or a searched page.
+// How a people list is narrowed. Exactly one of the two: specific people
+// (a picker resolving the ids it already shows), or a searched page.
 export type ListScope =
   | { ids: readonly string[] }
-  | { cap: number }
   | { search: string; page: Pick<PageParams, 'from' | 'to'> }
 
 export interface Listed<T> {
@@ -300,8 +298,6 @@ async function listEmployees<T>(
   if ('ids' in scope) {
     if (scope.ids.length === 0) return { rows: [], total: 0 }
     filter = sql`${where} and id = any(${[...scope.ids]})`
-  } else if ('cap' in scope) {
-    limit = sql`limit ${scope.cap}`
   } else {
     filter = sql`${where} ${searchAcross(searchColumns, scope.search)}`
     limit = page(scope.page)
@@ -329,6 +325,45 @@ export async function directory(db: Queryable, clientId: string, scope: ListScop
     scope,
     [sql`full_name`, sql`email`, sql`department`, sql`cost_centre`]
   )
+}
+
+export type HierarchyRow = Pick<Row<'employees'>,
+  'id' | 'full_name' | 'email' | 'role' | 'status' | 'band_code' | 'department' | 'manager_id' | 'top_of_hierarchy'
+> & { manager_name: string | null }
+
+// The corporate reporting-lines view: a searched page of a client's people,
+// each with their manager's name joined in -- so a page needs no other page to
+// say who someone reports to (it used to load up to 1,000 people to resolve
+// names in the browser).
+export async function hierarchy(
+  db: Queryable,
+  clientId: string,
+  scope: { search: string; page: Pick<PageParams, 'from' | 'to'> }
+): Promise<Listed<HierarchyRow>> {
+  const filter = sql`e.client_id = ${clientId}
+    ${searchAcross([sql`e.full_name`, sql`e.email`, sql`e.department`], scope.search)}`
+  const [rows, count] = await Promise.all([
+    many<HierarchyRow>(db, sql`
+      select e.id, e.full_name, e.email, e.role, e.status, e.band_code, e.department,
+             e.manager_id, e.top_of_hierarchy, m.full_name as manager_name
+      from employees e
+      left join employees m on m.id = e.manager_id
+      where ${filter}
+      order by e.full_name, e.id
+      ${page(scope.page)}`),
+    one<{ n: number }>(db, sql`select count(*)::int as n from employees e where ${filter}`),
+  ])
+  return { rows, total: count.n }
+}
+
+// Active people with no reporting line who are not the top by design: a
+// 'manager' approval step resolves to nobody for them.
+export async function countMissingManager(db: Queryable, clientId: string): Promise<number> {
+  const r = await one<{ n: number }>(db, sql`
+    select count(*)::int as n from employees
+    where client_id = ${clientId} and status = 'active'
+      and manager_id is null and top_of_hierarchy is not true`)
+  return r.n
 }
 
 export type RosterRow = Pick<Row<'employees'>,

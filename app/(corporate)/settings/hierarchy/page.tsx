@@ -1,6 +1,8 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import Pagination from '@/app/components/Pagination'
+import { SkeletonTable } from '@/app/components/Skeleton'
+import { usePagedList } from '@/app/hooks/usePagedList'
 
 // ── /settings/hierarchy ─────────────────────────────────────────────────
 // Read-only view of who reports to whom (employees.manager_id).
@@ -14,6 +16,10 @@ import { useEffect, useMemo, useState } from 'react'
 // An employee with no manager, on a chain with a manager step, resolves to no
 // approver at all rather than silently auto-approving, so the gaps are still
 // worth surfacing here even though this page can't close them.
+//
+// Paged and searched on the server (GET /api/settings/hierarchy): each row
+// carries its manager's name, so no page needs the whole company loaded to
+// say who someone reports to. The table was always flat, never a tree.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface Employee {
@@ -25,6 +31,7 @@ interface Employee {
   band_code: string | null
   department: string | null
   manager_id: string | null
+  manager_name: string | null
   top_of_hierarchy: boolean
 }
 
@@ -33,51 +40,12 @@ const ROLE_LABEL: Record<string, string> = {
 }
 
 export default function SettingsHierarchyPage() {
-  const [employees, setEmployees] = useState<Employee[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [query, setQuery] = useState('')
-
-  useEffect(() => { loadEmployees() }, [])
-
-  async function loadEmployees() {
-    setLoading(true)
-    setError('')
-    try {
-      // all=true: this screen renders a reporting tree, and a tree needs every
-      // node to resolve manager_id to a name.
-      const res = await fetch('/api/settings/users?all=true')
-      const data = await res.json()
-      if (!data.ok) {
-        setError(data.error || 'Could not load employees.')
-        return
-      }
-      setEmployees(data.items)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const nameById = useMemo(
-    () => new Map(employees.map(e => [e.id, e.full_name])),
-    [employees]
-  )
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return employees
-    return employees.filter(e =>
-      e.full_name.toLowerCase().includes(q) ||
-      e.email.toLowerCase().includes(q) ||
-      (e.department ?? '').toLowerCase().includes(q)
-    )
-  }, [employees, query])
+  const list = usePagedList<Employee>('/api/settings/hierarchy')
 
   // Someone at the top of the org has no manager by design. Counting them made
-  // the client owner a permanent, unclearable warning.
-  const unassignedCount = employees.filter(
-    e => e.status === 'active' && !e.manager_id && !e.top_of_hierarchy
-  ).length
+  // the client owner a permanent, unclearable warning. Counted over the whole
+  // company by the server, not over this page.
+  const unassignedCount = Number(list.raw?.missingManager ?? 0)
 
   return (
     <div style={s.root}>
@@ -91,9 +59,9 @@ export default function SettingsHierarchyPage() {
         </div>
       </div>
 
-      {error && <div style={s.errorBanner}>✕ {error}</div>}
+      {list.error && <div style={s.errorBanner}>✕ {list.error}</div>}
 
-      {!loading && unassignedCount > 0 && (
+      {!list.loading && unassignedCount > 0 && (
         <div style={s.warnBanner}>
           <strong>{unassignedCount} active employee{unassignedCount === 1 ? '' : 's'}</strong> have no
           manager set. Any approval step routing to their manager cannot resolve, so those bookings
@@ -104,15 +72,15 @@ export default function SettingsHierarchyPage() {
       <input
         type="search"
         placeholder="Search name, email or department…"
-        value={query}
-        onChange={e => setQuery(e.target.value)}
+        value={list.search}
+        onChange={e => list.setSearch(e.target.value)}
         style={s.search}
       />
 
-      {loading ? (
-        <div style={s.loadingWrap}><div style={s.spinner} /></div>
+      {list.loading ? (
+        <SkeletonTable rows={8} cols={5} />
       ) : (
-        <div style={s.tableWrap}>
+        <div style={{ ...s.tableWrap, opacity: list.refreshing ? 0.6 : 1 }}>
           <table style={s.table}>
             <thead>
               <tr>
@@ -122,7 +90,12 @@ export default function SettingsHierarchyPage() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map(emp => {
+              {list.items.length === 0 && (
+                <tr><td colSpan={5} style={{ ...s.td, ...s.muted, textAlign: 'center', padding: '28px' }}>
+                  {list.search.trim() ? 'Nobody matches that search.' : 'No employees yet.'}
+                </td></tr>
+              )}
+              {list.items.map(emp => {
                 const missingManager = emp.status === 'active' && !emp.manager_id && !emp.top_of_hierarchy
                 return (
                   <tr key={emp.id} style={s.tr}>
@@ -137,7 +110,7 @@ export default function SettingsHierarchyPage() {
                     <td style={s.td}>{emp.department || <span style={s.muted}>—</span>}</td>
                     <td style={s.td}>
                       {emp.manager_id
-                        ? (nameById.get(emp.manager_id) ?? <span style={s.muted}>Unknown</span>)
+                        ? (emp.manager_name ?? <span style={s.muted}>Unknown</span>)
                         : emp.top_of_hierarchy
                           ? <span style={s.topBadge}>Top of hierarchy</span>
                           : missingManager
@@ -151,6 +124,11 @@ export default function SettingsHierarchyPage() {
           </table>
         </div>
       )}
+
+      <Pagination
+        page={list.page} pageSize={10} total={list.total}
+        onPageChange={list.setPage} busy={list.refreshing} noun="people"
+      />
     </div>
   )
 }
@@ -166,10 +144,7 @@ const s: Record<string, React.CSSProperties> = {
 
   search: { height: '38px', width: '100%', maxWidth: '360px', padding: '0 12px', fontSize: '13px', color: '#111827', background: '#fff', border: '1px solid #D1D5DB', borderRadius: '8px', outline: 'none', marginBottom: '16px' },
 
-  loadingWrap: { display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '60px' },
-  spinner: { width: '24px', height: '24px', border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%', animation: 'spin 0.7s linear infinite' },
-
-  tableWrap: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '10px', overflowX: 'auto' },
+  tableWrap: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '10px', overflowX: 'auto', transition: 'opacity 0.15s' },
   table: { borderCollapse: 'collapse', width: '100%' },
   th: { padding: '10px 14px', textAlign: 'left', background: '#F9FAFB', borderBottom: '1px solid #E5E7EB', fontSize: '11px', fontWeight: 600, color: '#374151', whiteSpace: 'nowrap' },
   tr: { borderBottom: '1px solid #F3F4F6' },
