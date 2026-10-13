@@ -6,6 +6,7 @@ import * as employees from '@/app/lib/repositories/employees'
 import * as trips from '@/app/lib/repositories/trips'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
 import { route } from '@/app/lib/http/handler'
+import { onBehalf } from '@/app/lib/book/bookingActor'
 
 // GET /api/trips/[tripId] — one trip's workspace: the trip itself, every
 // booking attached to it (flights, and hotels/cabs once those exist), and
@@ -14,6 +15,11 @@ import { route } from '@/app/lib/http/handler'
 type Ctx = { params: Promise<{ tripId: string }> }
 
 // The caller and the trip, with the ownership check every verb shares.
+//
+// The trip's owner, the traveller -- or whoever may book for them (the rules
+// of app/lib/book/bookingActor.ts: an admin colleague, for one), since they
+// add that traveller's flights to it. `mine` tells the page which of the two
+// it is showing, so a trip kept for someone else is labelled as theirs.
 async function ownTrip(tripId: string, verb: string) {
   const user = await requireUser()
 
@@ -29,12 +35,14 @@ async function ownTrip(tripId: string, verb: string) {
     return { error: Response.json({ error: 'Trip not found' }, { status: 404 }) }
   }
 
-  // Same-owner-only for now, matching the list route's scoping.
   if (trip.created_by !== employee.id) {
-    return { error: Response.json({ error: `Not authorized to ${verb} this trip` }, { status: 403 }) }
+    const allowed = trip.created_by ? await onBehalf(db, user, trip.created_by) : null
+    if (!allowed?.ok) {
+      return { error: Response.json({ error: `Not authorized to ${verb} this trip` }, { status: 403 }) }
+    }
   }
 
-  return { trip }
+  return { trip, mine: trip.created_by === employee.id, callerId: employee.id }
 }
 
 export const GET = route(async (req: NextRequest, { params }: Ctx) => {
@@ -42,14 +50,19 @@ export const GET = route(async (req: NextRequest, { params }: Ctx) => {
   const own = await ownTrip(tripId, 'view')
   if (own.error) return own.error
 
-  const [bookings, expenses] = await Promise.all([
+  const [bookings, expenses, people] = await Promise.all([
     bookingsRepo.forTrip(db, tripId),
     trips.expenses(db, tripId),
+    trips.people(db, tripId),
   ])
 
   return Response.json({
     ok: true,
     trip: own.trip,
+    // Whose trip this is, and who set it up when it was not them.
+    mine: own.mine,
+    traveller: { id: own.trip.created_by, name: people.traveller_name },
+    arrangedByName: people.arranged_by_name,
     // total_cost is already the sell figure, never the airline one (see
     // bookings.forTrip). The itinerary is projected: it carries provider keys.
     bookings: bookings.map(b => ({ ...b, itinerary: travellerItinerary(b.itinerary) })),
@@ -109,6 +122,11 @@ export const DELETE = route(async (req: NextRequest, { params }: Ctx) => {
   const { tripId } = await params
   const own = await ownTrip(tripId, 'delete')
   if (own.error) return own.error
+  // Someone else's trip goes only at the hand of whoever set it up: an admin
+  // may book into a colleague's own trip, but it stays the colleague's to drop.
+  if (!own.mine && own.trip.arranged_by !== own.callerId) {
+    return Response.json({ error: 'Only the traveller, or whoever set this trip up, can delete it' }, { status: 403 })
+  }
 
   if (own.trip.status === 'deleted') {
     return Response.json({ ok: true, trip: { id: own.trip.id, status: 'deleted' } })

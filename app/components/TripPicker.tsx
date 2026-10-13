@@ -20,8 +20,11 @@ interface TripRow { id: string; name: string | null; status: string; travel_date
 
 const NEW = '__new__'
 
-export default function TripPicker({ travellerId, value, onChange }: {
+export default function TripPicker({ travellerId, travellerName, value, onChange }: {
   travellerId: string
+  // Whose trips these are -- always said, so a booker never mistakes a
+  // colleague's trip for one of their own.
+  travellerName: string
   value: TripChoice
   onChange: (choice: TripChoice) => void
 }) {
@@ -44,9 +47,11 @@ export default function TripPicker({ travellerId, value, onChange }: {
   }, [travellerId])
 
   const selected = value.kind === 'existing' ? value.id : value.kind === 'new' ? NEW : ''
+  const first = travellerName.split(' ')[0] || travellerName
 
   return (
     <div style={s.wrap}>
+      <span style={s.label}>Trip <span style={s.whose}>· {travellerName}&apos;s trips</span></span>
       <select
         value={selected}
         onChange={e => {
@@ -57,24 +62,32 @@ export default function TripPicker({ travellerId, value, onChange }: {
         aria-label="Trip"
         disabled={trips === null}
       >
-        <option value="">{trips === null ? 'Loading their trips…' : 'No trip — a booking on its own'}</option>
-        {(trips ?? []).map(t => (
+        <option value="">{trips === null ? `Loading ${first}'s trips…` : 'No trip — a booking on its own'}</option>
+        {trips !== null && trips.length > 0 && <optgroup label={`${travellerName}'s open trips`}>
+        {trips.map(t => (
           <option key={t.id} value={t.id}>
             {t.name || 'Untitled trip'}{t.travel_date ? ` · ${new Date(t.travel_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}` : ''}
           </option>
         ))}
-        <option value={NEW}>+ New trip…</option>
+        </optgroup>}
+        <option value={NEW}>+ New trip for {first}…</option>
       </select>
-      {more && <span style={s.note}>Their most recent trips. Older ones are on their trips page.</span>}
+      {more && <span style={s.note}>{first}&apos;s most recent trips. Older ones are on their trips page.</span>}
       {value.kind === 'new' && (
         <input
           autoFocus
           value={value.name}
           onChange={e => onChange({ kind: 'new', name: e.target.value })}
-          placeholder="Trip name, e.g. Mumbai client visit"
+          placeholder={`Trip name, e.g. ${first}'s Mumbai client visit`}
           style={s.input}
           aria-label="New trip name"
         />
+      )}
+      {(value.kind === 'new' || value.kind === 'existing') && (
+        <span style={s.note}>
+          {value.kind === 'new' ? 'Will be' : 'This is'} <strong>{travellerName}</strong>&apos;s trip: it is in their My trips, and in yours under
+          Arranged for others — never mixed with your own.
+        </span>
       )}
     </div>
   )
@@ -98,6 +111,8 @@ export async function resolveTrip(travellerId: string, choice: TripChoice): Prom
 
 const s: Record<string, React.CSSProperties> = {
   wrap: { display: 'flex', flexDirection: 'column', gap: 8 },
-  note: { fontSize: 11, color: '#9CA3AF' },
+  note: { fontSize: 11, color: '#6B7280', lineHeight: 1.5 },
+  label: { fontSize: 11, fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.04em' },
+  whose: { fontWeight: 500, textTransform: 'none', letterSpacing: 0, color: '#4338CA' },
   input: { height: 36, padding: '0 10px', fontSize: 13, color: '#111827', background: '#fff', border: '1px solid #D1D5DB', borderRadius: 7, width: '100%' },
 }

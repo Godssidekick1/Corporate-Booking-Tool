@@ -11,6 +11,8 @@ import { GET as historyGet } from '@/app/api/book/history/route'
 import { GET as recentGet } from '@/app/api/bookings/recent/route'
 import { GET as approvalsGet } from '@/app/api/approvals/route'
 import { GET as tripsGet, POST as tripsPost } from '@/app/api/trips/route'
+import { GET as tripGet, DELETE as tripDelete } from '@/app/api/trips/[tripId]/route'
+import { GET as bookingsGet } from '@/app/api/bookings/route'
 import { call } from '../harness/call'
 import { actors, type Actors } from '../harness/actors'
 import { resetDatabase } from '../harness/db'
@@ -302,6 +304,73 @@ d('book on behalf', () => {
     const own = ((await tripsCall(admin, { name: 'My own' })).json as { trip: { id: string } }).trip.id
     expect((await price(admin, 'T2', colleague.id)).status).toBe(200)
     expect((await addPassenger(admin, 'T2', colleague.id, { tripId: own })).status).toBe(403)
+  })
+
+  // An admin's own trips and the ones they arrange for colleagues are two lists
+  // that never mix, and every trip says whose it is.
+  it('trips arranged for others: kept apart from the admin\'s own, each naming whose it is', async () => {
+    const tripsCall = (as: { id: string }, body: unknown) =>
+      call(tripsPost, { as, method: 'POST', url: '/api/trips', body })
+    const idOf = (r: { json: unknown }) => (r.json as { trip: { id: string } }).trip.id
+    const setUp = idOf(await tripsCall(admin, { name: 'Board meeting, Delhi', travellerId: colleague.id }))
+    const theirOwn = ((await one<{ id: string }>(db, sql`
+      insert into trips (client_id, created_by, name, status) values (${clientId}, ${colleague.id}, 'Their own', 'open')
+      returning id`))).id
+    const adminOwn = idOf(await tripsCall(admin, { name: 'Admin holiday' }))
+    // A flight the admin booked for the colleague under the colleague's own trip.
+    expect((await price(admin, 'AR1', colleague.id)).status).toBe(200)
+    expect((await addPassenger(admin, 'AR1', colleague.id, { tripId: theirOwn })).status).toBe(200)
+
+    type Group = { trip: { id: string; traveller_name?: string; arranged_by_me?: boolean; arranged_by_name?: string | null };
+      bookings: { traveller_name?: string; booked_by_me?: boolean }[] }
+    const list = (as: { id: string }, qs = '') =>
+      call(bookingsGet, { as, url: `/api/bookings?page=1${qs}` }).then(r => (r.json as { trips: Group[] }).trips)
+
+    const colleagueName = (await one<{ full_name: string }>(db, sql`select full_name from employees where id = ${colleague.id}`)).full_name
+    const adminName = (await one<{ full_name: string }>(db, sql`select full_name from employees where id = ${admin.id}`)).full_name
+
+    const others = await list(admin, '&for=others')
+    const byId = new Map(others.map(g => [g.trip.id, g]))
+    expect(byId.get(setUp)?.trip).toMatchObject({ traveller_name: colleagueName, arranged_by_me: true })
+    expect(byId.get(theirOwn)?.trip).toMatchObject({ traveller_name: colleagueName, arranged_by_me: false })
+    expect(byId.get(theirOwn)?.bookings).toEqual([expect.objectContaining({ traveller_name: colleagueName, booked_by_me: true })])
+    expect(byId.has(adminOwn)).toBe(false)
+
+    // The admin's own list holds only their own trips.
+    const mine = (await list(admin)).map(g => g.trip.id)
+    expect(mine).toContain(adminOwn)
+    expect(mine).not.toContain(setUp)
+    expect(mine).not.toContain(theirOwn)
+
+    // The colleague sees both as theirs, the one set up for them labelled by whom.
+    const theirs = new Map((await list(colleague)).map(g => [g.trip.id, g.trip]))
+    expect(theirs.get(setUp)?.arranged_by_name).toBe(adminName)
+    expect(theirs.get(theirOwn)?.arranged_by_name).toBeNull()
+    // Someone who arranged nothing has nothing arranged.
+    expect(await list(bystander, '&for=others')).toEqual([])
+  })
+
+  it('a colleague\'s trip page: open to whoever may book for them, labelled as theirs; deleted only by its setter', async () => {
+    const setUp = ((await call(tripsPost, {
+      as: admin, method: 'POST', url: '/api/trips', body: { name: 'Plant visit', travellerId: colleague.id },
+    })).json as { trip: { id: string } }).trip.id
+    const theirOwn = ((await one<{ id: string }>(db, sql`
+      insert into trips (client_id, created_by, name, status) values (${clientId}, ${colleague.id}, 'Leave it', 'open')
+      returning id`))).id
+    const get = (as: { id: string }, id: string) => call(tripGet, { as, url: `/api/trips/${id}`, params: { tripId: id } })
+    const del = (as: { id: string }, id: string) =>
+      call(tripDelete, { as, method: 'DELETE', url: `/api/trips/${id}`, params: { tripId: id } })
+
+    const adminName = (await one<{ full_name: string }>(db, sql`select full_name from employees where id = ${admin.id}`)).full_name
+    expect(await get(admin, setUp)).toMatchObject({
+      status: 200, json: { mine: false, traveller: { id: colleague.id }, arrangedByName: adminName },
+    })
+    expect(await get(colleague, setUp)).toMatchObject({ status: 200, json: { mine: true, arrangedByName: adminName } })
+    expect((await get(bystander, setUp)).status).toBe(403)
+
+    // The colleague's own trip stays theirs to drop; the one the admin set up is the admin's to drop too.
+    expect((await del(admin, theirOwn)).status).toBe(403)
+    expect((await del(admin, setUp)).status).toBe(200)
   })
 
   it('the traveller and the approver see who booked it', async () => {

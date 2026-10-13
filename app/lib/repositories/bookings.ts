@@ -84,6 +84,44 @@ export async function forTravellerOutsideTrips(
     limit ${limit}`)
 }
 
+// ── What someone booked or set up for OTHER people ──────────────────────────
+// The "Arranged for others" side of My trips. Same sell-side summary, plus
+// whose booking it is.
+
+export type ArrangedBookingSummary = TravellerBookingSummary & { traveller_name: string | null; booked_by_me: boolean }
+
+const arrangedSummary = (bookerId: string) => sql`${TRAVELLER_SUMMARY},
+  (select t.full_name from employees t where t.id = employee_id) as traveller_name,
+  (booked_by = ${bookerId}) as booked_by_me`
+
+// The bookings in these trips (one page of trips.arrangedFor): every booking
+// in a trip the caller set up -- they look after it -- but only their own
+// bookings in a colleague's own trip, which is otherwise the colleague's.
+export async function inArrangedTrips(
+  db: Queryable, bookerId: string, trips: readonly { id: string; arranged_by_me: boolean }[]
+): Promise<ArrangedBookingSummary[]> {
+  if (trips.length === 0) return []
+  const setUp = trips.filter(t => t.arranged_by_me).map(t => t.id)
+  const bookedInto = trips.filter(t => !t.arranged_by_me).map(t => t.id)
+  return many<ArrangedBookingSummary>(db, sql`
+    select ${arrangedSummary(bookerId)} from bookings
+    where trip_id = any(${setUp})
+       or (trip_id = any(${bookedInto}) and booked_by = ${bookerId})
+    order by created_at desc, id`)
+}
+
+// What they booked for someone else under no trip, newest first.
+export async function bookedForOthersOutsideTrips(
+  db: Queryable, bookerId: string, limit: number
+): Promise<ArrangedBookingSummary[]> {
+  return many<ArrangedBookingSummary>(db, sql`
+    select ${arrangedSummary(bookerId)} from bookings b
+    where b.booked_by = ${bookerId} and b.employee_id <> ${bookerId}
+      and not exists (select 1 from trips t where t.id = b.trip_id and t.status <> 'deleted')
+    order by b.created_at desc, b.id
+    limit ${limit}`)
+}
+
 export type RecentBooking = Pick<Row<'bookings'>,
   'id' | 'employee_id' | 'status' | 'pnr' | 'total_cost' | 'itinerary' | 'fare_breakdown' | 'created_at'> & BookedByName
 

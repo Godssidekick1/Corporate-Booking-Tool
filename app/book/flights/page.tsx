@@ -164,7 +164,12 @@ export default function BookFlightsSearchPage() {
       flowStorage.claim(me)
       const saved = flowStorage.onBehalf()
       setWho(saved)
-      if (saved) { setMode('colleague'); setColleagueId(saved.travellerId) }
+      if (saved) {
+        setMode('colleague'); setColleagueId(saved.travellerId)
+        // Their trip, when one is already chosen (the trip page's + Add flight).
+        const tripId = flowStorage.getTripId()
+        if (tripId) setTrip({ kind: 'existing', id: tripId })
+      }
     }).catch(() => {})
   }, [])
 
@@ -488,8 +493,8 @@ export default function BookFlightsSearchPage() {
                 </div>
               )}
               {mode === 'colleague' && who && (
-                <div style={{ minWidth: 220, maxWidth: 300 }}>
-                  <TripPicker travellerId={who.travellerId} value={trip} onChange={chooseTrip} />
+                <div style={{ minWidth: 240, maxWidth: 340 }}>
+                  <TripPicker travellerId={who.travellerId} travellerName={who.name} value={trip} onChange={chooseTrip} />
                 </div>
               )}
               {mode === 'guest' && (

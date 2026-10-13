@@ -314,6 +314,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
         },
       ],
       "trip": {
+        "arranged_by_name": null,
         "created_at": "2026-09-20T17:13:34.425Z",
         "id": "974688bc-24cb-446d-b1da-52bc1d358c2b",
         "name": "king kashyap's kooky and kinky kegger",
@@ -1049,6 +1050,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
         },
       ],
       "trip": {
+        "arranged_by_name": null,
         "created_at": "2026-09-01T10:48:56.616Z",
         "id": "bdeba462-ee35-40b1-84f2-b9ac08845d54",
         "name": "Sunburn",
@@ -1520,6 +1522,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
         },
       ],
       "trip": {
+        "arranged_by_name": null,
         "created_at": "2026-08-27T10:32:53.569Z",
         "id": "6ea67398-2147-4786-b6e7-e8ce79519e2e",
         "name": "km",
@@ -3905,6 +3908,7 @@ exports[`traveller bookings and trips > recent: an admin sees the client, an emp
 
 exports[`traveller bookings and trips > trip: owner only; the workspace with its bookings, sell-side 1`] = `
 {
+  "arrangedByName": null,
   "bookings": [
     {
       "booking_type": "flight",
@@ -4239,8 +4243,14 @@ exports[`traveller bookings and trips > trip: owner only; the workspace with its
     },
   ],
   "expenses": [],
+  "mine": true,
   "ok": true,
+  "traveller": {
+    "id": "c0fc26d8-292b-4e90-9716-3b4d4f890838",
+    "name": "Employee 4ae427",
+  },
   "trip": {
+    "arranged_by": null,
     "client_id": "b5005d4e-b813-4f10-ae59-1b0f5257357e",
     "created_at": "2026-08-27T10:32:53.569Z",
     "created_by": "c0fc26d8-292b-4e90-9716-3b4d4f890838",
@@ -4261,6 +4271,7 @@ exports[`traveller bookings and trips > trips: mine, deleted hidden 1`] = `
   "totalPages": 1,
   "trips": [
     {
+      "arranged_by_name": null,
       "created_at": "2026-09-20T17:13:34.425Z",
       "id": "974688bc-24cb-446d-b1da-52bc1d358c2b",
       "name": "king kashyap's kooky and kinky kegger",
@@ -4269,6 +4280,7 @@ exports[`traveller bookings and trips > trips: mine, deleted hidden 1`] = `
       "updated_at": "2026-09-20T17:13:34.425Z",
     },
     {
+      "arranged_by_name": null,
       "created_at": "2026-09-01T10:48:56.616Z",
       "id": "bdeba462-ee35-40b1-84f2-b9ac08845d54",
       "name": "Sunburn",
@@ -4277,6 +4289,7 @@ exports[`traveller bookings and trips > trips: mine, deleted hidden 1`] = `
       "updated_at": "2026-09-01T10:48:56.616Z",
     },
     {
+      "arranged_by_name": null,
       "created_at": "2026-08-27T10:32:53.569Z",
       "id": "6ea67398-2147-4786-b6e7-e8ce79519e2e",
       "name": "km",

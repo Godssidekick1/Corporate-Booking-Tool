@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useCanSelfBook } from '@/app/hooks/useCanSelfBook'
 import Pagination from '@/app/components/Pagination'
-import BookingHistory from '@/app/components/BookingHistory'
 import { formatTime, formatDayLabel } from '@/app/lib/book/types'
 
 // ── /bookings — "My trips" ────────────────────────────────────────────────────
@@ -33,6 +32,9 @@ interface BookingSummary {
   fare_breakdown: { currency: string } | null
   // Booked for them by the travel desk or a colleague; null when self-made.
   booked_by_name?: string | null
+  // Arranged for others only: whose booking, and whether the caller made it.
+  traveller_name?: string | null
+  booked_by_me?: boolean
 }
 
 interface TripGroup {
@@ -42,6 +44,11 @@ interface TripGroup {
     status: string
     travel_date: string | null
     created_at: string
+    // One's own trip: who set it up for them, when it was not them.
+    arranged_by_name?: string | null
+    // Arranged for others: whose trip, and whether the caller set it up.
+    traveller_name?: string | null
+    arranged_by_me?: boolean
   }
   bookings: BookingSummary[]
 }
@@ -93,11 +100,16 @@ function resumeHref(booking: BookingSummary): string {
   return `/book/confirm/${booking.id}`
 }
 
-function FlightCard({ booking }: { booking: BookingSummary }) {
+function FlightCard({ booking, others }: { booking: BookingSummary; others?: boolean }) {
   const meta = statusMeta(booking.status)
   const it = booking.itinerary
   const travelers = booking.traveler_snapshot?.PassengerDetails ?? []
   const currency = booking.fare_breakdown?.currency ?? ''
+  // Arranged for others: who booked it, said plainly -- you, a colleague, or
+  // the traveller themself.
+  const bookedBy = others
+    ? (booking.booked_by_me ? 'Booked by you' : booking.booked_by_name ? `Booked by ${booking.booked_by_name}` : 'Booked by them')
+    : booking.booked_by_name ? `Booked by ${booking.booked_by_name}` : null
 
   return (
     <Link href={resumeHref(booking)} style={s.card}>
@@ -121,6 +133,7 @@ function FlightCard({ booking }: { booking: BookingSummary }) {
 
       <div style={s.cardBody}>
         <div style={s.cardDetail}>
+          {others && booking.traveller_name && <span style={s.forChip}>For {booking.traveller_name}</span>}
           {it?.origin?.dateTime && (
             <span>{formatDayLabel(it.origin.dateTime)} · {formatTime(it.origin.dateTime)}</span>
           )}
@@ -130,7 +143,7 @@ function FlightCard({ booking }: { booking: BookingSummary }) {
             </span>
           )}
           {booking.pnr && <span style={s.dot}>PNR {booking.pnr}</span>}
-          {booking.booked_by_name && <span style={s.dot}>Booked by {booking.booked_by_name}</span>}
+          {bookedBy && <span style={s.dot}>{bookedBy}</span>}
         </div>
         {booking.total_cost != null && (
           <span style={s.cardFare}>{currency} {booking.total_cost.toLocaleString('en-IN')}</span>
@@ -140,29 +153,37 @@ function FlightCard({ booking }: { booking: BookingSummary }) {
   )
 }
 
-function TripSection({ group, onMarkComplete, completingId }: {
+function TripSection({ group, others, onMarkComplete, completingId }: {
   group: TripGroup
+  others: boolean
   onMarkComplete: (tripId: string) => void
   completingId: string | null
 }) {
   const meta = tripStatusMeta(group.trip.status)
   const canComplete = group.trip.status === 'open' || group.trip.status === 'active'
+  const t = group.trip
 
   return (
-    <div style={s.tripSection}>
+    <div style={{ ...s.tripSection, ...(others ? s.tripSectionOthers : {}) }}>
       <div style={s.tripHeader}>
         <div style={s.tripHeaderLeft}>
-          <Link href={`/trips/${group.trip.id}`} style={s.tripNameLink}>{group.trip.name}</Link>
+          <Link href={`/trips/${t.id}`} style={s.tripNameLink}>{t.name}</Link>
           <span style={{ ...s.statusBadge, color: meta.color, background: meta.bg }}>{meta.label}</span>
+          {/* Whose trip, on every trip that is not simply one's own. */}
+          {others && t.traveller_name && <span style={s.forChip}>For {t.traveller_name}</span>}
+          {others && (
+            <span style={s.byNote}>{t.arranged_by_me ? 'Set up by you' : 'Their own trip — you booked into it'}</span>
+          )}
+          {!others && t.arranged_by_name && <span style={s.byNote}>Set up for you by {t.arranged_by_name}</span>}
         </div>
-        {canComplete && (
+        {canComplete && (!others || t.arranged_by_me) && (
           <button
             type="button"
-            disabled={completingId === group.trip.id}
-            onClick={() => onMarkComplete(group.trip.id)}
-            style={{ ...s.completeBtn, opacity: completingId === group.trip.id ? 0.6 : 1 }}
+            disabled={completingId === t.id}
+            onClick={() => onMarkComplete(t.id)}
+            style={{ ...s.completeBtn, opacity: completingId === t.id ? 0.6 : 1 }}
           >
-            {completingId === group.trip.id ? 'Marking complete…' : '✓ Mark trip complete'}
+            {completingId === t.id ? 'Marking complete…' : '✓ Mark trip complete'}
           </button>
         )}
       </div>
@@ -171,7 +192,7 @@ function TripSection({ group, onMarkComplete, completingId }: {
         <p style={s.emptyTripText}>No flights added to this trip yet.</p>
       ) : (
         <div style={s.list}>
-          {group.bookings.map(booking => <FlightCard key={booking.id} booking={booking} />)}
+          {group.bookings.map(booking => <FlightCard key={booking.id} booking={booking} others={others} />)}
         </div>
       )}
     </div>
@@ -180,13 +201,49 @@ function TripSection({ group, onMarkComplete, completingId }: {
 
 export default function BookingsPage() {
   const canSelfBook = useCanSelfBook()
-  // A corporate admin also books for colleagues: those bookings are theirs
-  // (the colleague's trips), so they are listed here separately, by booker.
+  // A corporate admin also books for colleagues. Those trips are the
+  // colleagues', and are kept on a tab of their own, never mixed in with the
+  // admin's own trips.
   const [isAdmin, setIsAdmin] = useState(false)
-  const [tab, setTab] = useState<'mine' | 'booked'>('mine')
+  const [tab, setTab] = useState<'mine' | 'others'>('mine')
   useEffect(() => {
     fetch('/api/me').then(r => r.json()).then(d => setIsAdmin(d.employee?.role === 'admin')).catch(() => {})
   }, [])
+
+  return (
+    <div style={s.page}>
+      <div className="page-frame narrow" style={s.root}>
+        <div style={s.header}>
+          <h1 style={s.heading}>My trips</h1>
+          {canSelfBook && <Link href="/book" style={s.newTripBtn}>+ New booking</Link>}
+        </div>
+
+        {isAdmin && (
+          <div style={s.tabs} role="tablist">
+            {(['mine', 'others'] as const).map(t => (
+              <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)}
+                style={{ ...s.tab, ...(tab === t ? s.tabOn : {}) }}>
+                {t === 'mine' ? 'My own trips' : 'Arranged for others'}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {tab === 'others' && (
+          <p style={s.tabHint}>
+            Trips you set up for colleagues, their own trips you booked into, and flights you booked for them.
+            Each is theirs: it is in their My trips too.
+          </p>
+        )}
+
+        {/* key: switching tab starts that list afresh, from page 1. */}
+        <TripsView key={tab} others={tab === 'others'} canSelfBook={canSelfBook} />
+      </div>
+    </div>
+  )
+}
+
+function TripsView({ others, canSelfBook }: { others: boolean; canSelfBook: boolean | null }) {
   const [trips, setTrips] = useState<TripGroup[] | null>(null)
   const [ungrouped, setUngrouped] = useState<BookingSummary[]>([])
   // Paged by trip, ten at a time; the server keeps a trip's flights together.
@@ -200,13 +257,14 @@ export default function BookingsPage() {
 
   useEffect(() => {
     loadBookings(page)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page])
 
   async function loadBookings(p: number) {
     setError('')
     setLoading(true)
     try {
-      const res = await fetch(`/api/bookings?page=${p}`)
+      const res = await fetch(`/api/bookings?page=${p}${others ? '&for=others' : ''}`)
       const data = await res.json()
       if (!res.ok) {
         setError(data.error || 'Could not load your trips.')
@@ -249,96 +307,83 @@ export default function BookingsPage() {
   const isEmpty = trips !== null && trips.length === 0 && ungrouped.length === 0
 
   return (
-    <div style={s.page}>
-      <div className="page-frame narrow" style={s.root}>
-        <div style={s.header}>
-          <h1 style={s.heading}>My trips</h1>
-          {canSelfBook && <Link href="/book" style={s.newTripBtn}>+ New booking</Link>}
+    <>
+      {error && (
+        <div style={s.errorCard}>
+          <p style={s.errorText}>⚠ {error}</p>
         </div>
+      )}
 
-        {isAdmin && (
-          <div style={s.tabs} role="tablist">
-            {(['mine', 'booked'] as const).map(t => (
-              <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)}
-                style={{ ...s.tab, ...(tab === t ? s.tabOn : {}) }}>
-                {t === 'mine' ? 'My trips' : 'Booked by me for others'}
-              </button>
-            ))}
-          </div>
-        )}
+      {completeError && (
+        <div style={s.errorCard}>
+          <p style={s.errorText}>⚠ {completeError}</p>
+        </div>
+      )}
 
-        {tab === 'booked' ? (
-          <BookingHistory params={{ bookedBy: 'me' }} columns={['traveller']}
-            empty="You have not booked for a colleague yet. Choose “A colleague” on the search page." />
-        ) : (<>
+      {!trips && !error && (
+        <div style={s.loadingCard}>
+          <div style={s.spinner} />
+        </div>
+      )}
 
-        {error && (
-          <div style={s.errorCard}>
-            <p style={s.errorText}>⚠ {error}</p>
-          </div>
-        )}
+      {isEmpty && others && (
+        <div style={s.emptyState}>
+          <div style={s.emptyIcon}>✈</div>
+          <p style={s.emptyTitle}>Nothing arranged for others yet</p>
+          <p style={s.emptyDesc}>
+            Choose “A colleague” on the search page, or “For a colleague” when you create a trip.
+          </p>
+        </div>
+      )}
 
-        {completeError && (
-          <div style={s.errorCard}>
-            <p style={s.errorText}>⚠ {completeError}</p>
-          </div>
-        )}
+      {isEmpty && !others && (
+        <div style={s.emptyState}>
+          <div style={s.emptyIcon}>✈</div>
+          <p style={s.emptyTitle}>No trips yet</p>
+          {canSelfBook === false ? (
+            <p style={s.emptyDesc}>Your travel desk books travel for your company. Contact them to arrange a trip; it will appear here once booked.</p>
+          ) : (
+            <>
+              <p style={s.emptyDesc}>Create a trip to start booking flights, hotels, and tracking expenses in one place.</p>
+              <Link href="/book" style={s.emptyCta}>Start your first trip →</Link>
+            </>
+          )}
+        </div>
+      )}
 
-        {!trips && !error && (
-          <div style={s.loadingCard}>
-            <div style={s.spinner} />
-          </div>
-        )}
+      {trips && trips.length > 0 && (
+        <div style={s.tripsList}>
+          {trips.map(group => (
+            <TripSection
+              key={group.trip.id}
+              group={group}
+              others={others}
+              onMarkComplete={handleMarkComplete}
+              completingId={completingId}
+            />
+          ))}
+        </div>
+      )}
 
-        {isEmpty && (
-          <div style={s.emptyState}>
-            <div style={s.emptyIcon}>✈</div>
-            <p style={s.emptyTitle}>No trips yet</p>
-            {canSelfBook === false ? (
-              <p style={s.emptyDesc}>Your travel desk books travel for your company. Contact them to arrange a trip; it will appear here once booked.</p>
-            ) : (
-              <>
-                <p style={s.emptyDesc}>Create a trip to start booking flights, hotels, and tracking expenses in one place.</p>
-                <Link href="/book" style={s.emptyCta}>Start your first trip →</Link>
-              </>
-            )}
-          </div>
-        )}
+      <Pagination
+        page={page} pageSize={pageSize} total={total}
+        onPageChange={setPage} busy={loading} noun="trips"
+      />
 
-        {trips && trips.length > 0 && (
-          <div style={s.tripsList}>
-            {trips.map(group => (
-              <TripSection
-                key={group.trip.id}
-                group={group}
-                onMarkComplete={handleMarkComplete}
-                completingId={completingId}
-              />
-            ))}
-          </div>
-        )}
-
-        <Pagination
-          page={page} pageSize={pageSize} total={total}
-          onPageChange={setPage} busy={loading} noun="trips"
-        />
-
-        {ungrouped.length > 0 && (
-          <div style={s.tripSection}>
-            <div style={s.tripHeader}>
-              <div style={s.tripHeaderLeft}>
-                <span style={s.otherLabel}>Other flights</span>
-              </div>
-            </div>
-            <p style={s.emptyTripText}>Not linked to a specific trip.</p>
-            <div style={s.list}>
-              {ungrouped.map(booking => <FlightCard key={booking.id} booking={booking} />)}
+      {ungrouped.length > 0 && (
+        <div style={s.tripSection}>
+          <div style={s.tripHeader}>
+            <div style={s.tripHeaderLeft}>
+              <span style={s.otherLabel}>{others ? 'Flights booked for others, not in a trip' : 'Other flights'}</span>
             </div>
           </div>
-        )}
-        </>)}
-      </div>
-    </div>
+          <p style={s.emptyTripText}>Not linked to a specific trip.</p>
+          <div style={s.list}>
+            {ungrouped.map(booking => <FlightCard key={booking.id} booking={booking} others={others} />)}
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 
@@ -354,6 +399,10 @@ const s: Record<string, React.CSSProperties> = {
   // beside a changing borderBottomColor made React warn when the tab changed.
   tab: { borderTop: 'none', borderLeft: 'none', borderRight: 'none', borderBottom: '2px solid transparent', background: 'transparent', padding: '8px 12px', fontSize: '13px', color: '#6B7280', cursor: 'pointer', marginBottom: '-1px' },
   tabOn: { color: '#000835', fontWeight: 600, borderBottom: '2px solid #000835' },
+  tabHint: { fontSize: '12.5px', color: '#6B7280', margin: '-8px 0 18px', lineHeight: 1.6 },
+  forChip: { fontSize: '11px', fontWeight: 600, color: '#3730A3', background: '#EEF2FF', border: '1px solid #C7D2FE', borderRadius: '999px', padding: '2px 9px', whiteSpace: 'nowrap' as const },
+  byNote: { fontSize: '11.5px', color: '#6B7280' },
+  tripSectionOthers: { borderLeft: '3px solid #C7D2FE', paddingLeft: '14px' },
   newTripBtn: {
     fontSize: '13px', fontWeight: 600, color: '#fff', background: '#000835',
     padding: '9px 16px', borderRadius: '9px', textDecoration: 'none',
@@ -374,7 +423,7 @@ const s: Record<string, React.CSSProperties> = {
   tripsList: { display: 'flex', flexDirection: 'column' as const, gap: '24px' },
   tripSection: { display: 'flex', flexDirection: 'column' as const, gap: '10px', marginTop: '24px' },
   tripHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' as const, gap: '10px' },
-  tripHeaderLeft: { display: 'flex', alignItems: 'center', gap: '10px' },
+  tripHeaderLeft: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' as const },
   tripNameLink: { fontSize: '16px', fontWeight: 700, color: '#0A0A14', textDecoration: 'none' },
   otherLabel: { fontSize: '16px', fontWeight: 700, color: '#6B7280' },
   completeBtn: {

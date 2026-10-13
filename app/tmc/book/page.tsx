@@ -219,8 +219,7 @@ export default function TmcBookPage() {
             </div>
 
             <div style={{ ...s.field, marginTop: 16, maxWidth: 420 }}>
-              <label style={s.label}>Trip</label>
-              <TripPicker travellerId={shown.traveller.id} value={trip} onChange={setTrip} />
+              <TripPicker travellerId={shown.traveller.id} travellerName={shown.traveller.full_name} value={trip} onChange={setTrip} />
               {startError && <p style={s.errorNote}>{startError}</p>}
             </div>
 

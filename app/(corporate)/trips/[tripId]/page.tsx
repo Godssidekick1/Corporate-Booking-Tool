@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useCanSelfBook } from '@/app/hooks/useCanSelfBook'
+import { flowStorage } from '@/app/lib/book/flowStorage'
 
 interface Trip {
   id: string
@@ -49,6 +50,14 @@ export default function TripWorkspacePage() {
   const [error, setError] = useState('')
   const [completing, setCompleting] = useState(false)
   const [completeError, setCompleteError] = useState('')
+  // Whose trip: one's own, or a colleague's that this person looks after (an
+  // admin who set it up, or books into it). Said at the top, so it is never
+  // mistaken for one's own.
+  const [mine, setMine] = useState(true)
+  const [traveller, setTraveller] = useState<{ id: string; name: string | null } | null>(null)
+  const [arrangedByName, setArrangedByName] = useState<string | null>(null)
+  const [addError, setAddError] = useState('')
+  const [adding, setAdding] = useState(false)
 
   useEffect(() => {
     loadTrip()
@@ -66,12 +75,40 @@ export default function TripWorkspacePage() {
         return
       }
       setTrip(data.trip)
+      setMine(data.mine !== false)
+      setTraveller(data.traveller ?? null)
+      setArrangedByName(data.arrangedByName ?? null)
       setBookings(data.bookings)
       setExpenses(data.expenses)
     } catch {
       setError('Something went wrong loading this trip.')
     } finally {
       setLoading(false)
+    }
+  }
+
+  // A flight for a colleague's trip is booked FOR them: the search page opens
+  // with them chosen and this trip selected (flowStorage), as if picked there.
+  async function addFlight() {
+    if (mine || !traveller) { router.push(`/book/flights?tripId=${tripId}`); return }
+    setAddError(''); setAdding(true)
+    try {
+      const [me, d] = await Promise.all([
+        fetch('/api/me').then(r => r.json()),
+        fetch(`/api/book/travellers/${traveller.id}`).then(r => r.json()),
+      ])
+      if (!d?.ok || !me?.employee?.id) { setAddError(d?.error || 'Could not start a booking for them.'); setAdding(false); return }
+      flowStorage.claim(me.employee.id)
+      flowStorage.clearFlow()
+      flowStorage.setOnBehalf({
+        bookerId: me.employee.id, travellerId: d.traveller.id, name: d.traveller.full_name,
+        clientName: d.traveller.client_name, bandCode: d.traveller.band_code, policy: d.policy, home: '/bookings',
+      })
+      flowStorage.setTripId(tripId, d.traveller.id)
+      router.push('/book/flights')
+    } catch {
+      setAddError('Could not start a booking for them.')
+      setAdding(false)
     }
   }
 
@@ -127,7 +164,20 @@ export default function TripWorkspacePage() {
   return (
     <div style={s.page}>
       <div className="page-frame narrow" style={s.root}>
-        <Link href="/book" style={s.backLink}>← Your trips</Link>
+        <Link href={mine ? '/book' : '/bookings'} style={s.backLink}>{mine ? '← Your trips' : '← Arranged for others'}</Link>
+
+        {!mine && traveller && (
+          <div style={s.forBanner} role="status">
+            <span><strong>{traveller.name ?? 'A colleague'}</strong>&apos;s trip</span>
+            <span style={s.forBannerNote}>
+              {arrangedByName ? `Set up by ${arrangedByName}.` : 'Their own trip.'} Flights added here are booked for them,
+              under their policy and approvals, and appear in their My trips.
+            </span>
+          </div>
+        )}
+        {mine && arrangedByName && (
+          <p style={s.setUpNote}>Set up for you by {arrangedByName}.</p>
+        )}
 
         <div style={s.header}>
           <div style={s.headerTop}>
@@ -156,14 +206,16 @@ export default function TripWorkspacePage() {
             {canSelfBook && (
               <button
                 type="button"
-                onClick={() => router.push(`/book/flights?tripId=${tripId}`)}
-                style={s.addBtn}
+                onClick={addFlight}
+                disabled={adding}
+                style={{ ...s.addBtn, opacity: adding ? 0.6 : 1 }}
               >
-                + Add flight
+                {adding ? 'Opening…' : mine ? '+ Add flight' : `+ Add flight for ${(traveller?.name ?? '').split(' ')[0] || 'them'}`}
               </button>
             )}
           </div>
 
+          {addError && <p style={s.addErrorText}>⚠ {addError}</p>}
           {flightBookings.length === 0 ? (
             <p style={s.emptyText}>No flights added yet.</p>
           ) : (
@@ -261,6 +313,10 @@ const s: Record<string, React.CSSProperties> = {
   section: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '20px', marginBottom: '16px' },
   sectionHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' },
   sectionTitle: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: 0 },
+  forBanner: { display: 'flex', flexDirection: 'column', gap: '3px', padding: '11px 14px', margin: '0 0 16px', background: '#EEF2FF', border: '1px solid #C7D2FE', borderRadius: '10px', fontSize: '14px', color: '#1E1B4B' },
+  forBannerNote: { fontSize: '12px', color: '#4338CA', lineHeight: 1.5 },
+  setUpNote: { fontSize: '12.5px', color: '#6B7280', margin: '0 0 12px' },
+  addErrorText: { fontSize: '12px', color: '#DC2626', margin: '0 0 8px' },
   addBtn: { height: '32px', padding: '0 14px', background: '#000835', color: '#fff', fontSize: '12px', fontWeight: 600, border: 'none', borderRadius: '7px', cursor: 'pointer' },
   comingSoonTag: { fontSize: '9px', fontWeight: 700, color: '#92400E', background: '#FEF3C7', padding: '3px 8px', borderRadius: '5px', letterSpacing: '0.3px', textTransform: 'uppercase' as const },
 

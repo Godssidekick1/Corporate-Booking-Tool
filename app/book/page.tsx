@@ -4,6 +4,9 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useCanSelfBook } from '@/app/hooks/useCanSelfBook'
 import Pagination from '@/app/components/Pagination'
+import SearchableSelect from '@/app/components/SearchableSelect'
+import Link from 'next/link'
+import { useLookup } from '@/app/hooks/useLookup'
 
 interface Trip {
   id: string
@@ -12,6 +15,8 @@ interface Trip {
   travel_date: string | null
   created_at: string
   updated_at: string
+  // Set up for them by someone else (the desk, or an admin colleague).
+  arranged_by_name?: string | null
 }
 
 function formatDate(iso: string) {
@@ -45,6 +50,23 @@ export default function TripsListPage() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState('')
+  // A corporate admin may make the trip a colleague's: it is then THEIRS (in
+  // their trips, and in the admin's under Arranged for others), never the
+  // admin's own. Asked every time, so whose name a trip is under is a choice.
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [forWhom, setForWhom] = useState<'me' | 'colleague'>('me')
+  const [colleagueId, setColleagueId] = useState('')
+  const colleagueLookup = useLookup('/api/book/travellers', colleagueId, {
+    enabled: isAdmin && forWhom === 'colleague',
+    toOption: row => ({
+      id: String(row.id),
+      label: String(row.full_name),
+      sublabel: [row.band_code, row.department, row.email].filter(Boolean).join(' · ') || undefined,
+    }),
+  })
+  useEffect(() => {
+    fetch('/api/me').then(r => r.json()).then(d => setIsAdmin(d.employee?.role === 'admin')).catch(() => {})
+  }, [])
 
   useEffect(() => {
     loadTrips(page)
@@ -74,13 +96,17 @@ export default function TripsListPage() {
       setCreateError('Give your trip a name to continue.')
       return
     }
+    if (forWhom === 'colleague' && !colleagueId) {
+      setCreateError('Choose whose trip this is.')
+      return
+    }
     setCreating(true)
     let navigating = false
     try {
       const res = await fetch('/api/trips', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: tripName.trim() }),
+        body: JSON.stringify({ name: tripName.trim(), travellerId: forWhom === 'colleague' ? colleagueId : undefined }),
       })
       const data = await res.json()
       if (!res.ok) {
@@ -126,7 +152,7 @@ export default function TripsListPage() {
       <div style={s.root}>
         <div style={s.header}>
           <div>
-            <h1 style={s.heading}>Your trips</h1>
+            <h1 style={s.heading}>Your own trips</h1>
             <p style={s.sub}>
               {canSelfBook === false ? 'Trips your travel desk has booked for you.' : 'Pick up where you left off, or start something new.'}
             </p>
@@ -144,9 +170,45 @@ export default function TripsListPage() {
           </div>
         )}
 
+        {isAdmin && (
+          <p style={s.arrangedLink}>
+            Trips you set up for colleagues are theirs, and kept apart: <Link href="/bookings" style={s.arrangedA}>My trips → Arranged for others</Link>
+          </p>
+        )}
+
         {showNewTrip && canSelfBook && (
           <div style={s.newTripCard}>
             <form onSubmit={handleCreateTrip} style={s.newTripForm}>
+              {isAdmin && (
+                <div style={s.field}>
+                  <label style={s.label}>Whose trip?</label>
+                  <div style={s.whoToggle}>
+                    {(['me', 'colleague'] as const).map(w => (
+                      <button key={w} type="button" onClick={() => { setForWhom(w); setCreateError('') }}
+                        style={{ ...s.whoBtn, ...(forWhom === w ? s.whoBtnOn : {}) }}>
+                        {w === 'me' ? 'Mine' : 'For a colleague'}
+                      </button>
+                    ))}
+                  </div>
+                  {forWhom === 'colleague' && (
+                    <SearchableSelect
+                      value={colleagueId}
+                      onChange={setColleagueId}
+                      options={colleagueLookup.options}
+                      onSearch={colleagueLookup.onSearch}
+                      loading={colleagueLookup.loading}
+                      selectedLabel={colleagueLookup.selectedLabel}
+                      placeholder="Search colleagues by name, email or department…"
+                      emptyMessage="No colleague matches"
+                    />
+                  )}
+                  {forWhom === 'colleague' && colleagueId && (
+                    <span style={s.whoNote}>
+                      It will be <strong>{colleagueLookup.selectedLabel || 'their'}</strong>&apos;s trip, in their My trips, and in yours under Arranged for others.
+                    </span>
+                  )}
+                </div>
+              )}
               <div style={s.field}>
                 <label style={s.label}>Trip name</label>
                 <input
@@ -162,7 +224,7 @@ export default function TripsListPage() {
                   Cancel
                 </button>
                 <button type="submit" disabled={creating} style={{ ...s.createBtn, opacity: creating ? 0.7 : 1 }}>
-                  {creating ? 'Opening your trip…' : 'Create trip →'}
+                  {creating ? 'Opening the trip…' : forWhom === 'colleague' && isAdmin ? 'Create their trip →' : 'Create trip →'}
                 </button>
               </div>
             </form>
@@ -238,6 +300,7 @@ export default function TripsListPage() {
                       </div>
                       <span style={s.tripMeta}>
                         {trip.travel_date ? formatDate(trip.travel_date) : `Created ${formatDate(trip.created_at)}`}
+                        {trip.arranged_by_name ? ` · Set up for you by ${trip.arranged_by_name}` : ''}
                       </span>
                     </button>
                     <button
@@ -277,6 +340,12 @@ const s: Record<string, React.CSSProperties> = {
   newTripCard: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '20px', marginBottom: '20px' },
   newTripForm: { display: 'flex', flexDirection: 'column', gap: '12px' },
   field: { display: 'flex', flexDirection: 'column', gap: '6px' },
+  whoToggle: { display: 'inline-flex', border: '1px solid #E5E7EB', borderRadius: '8px', overflow: 'hidden', alignSelf: 'flex-start' },
+  whoBtn: { padding: '7px 14px', fontSize: '13px', background: '#fff', color: '#374151', border: 'none', cursor: 'pointer' },
+  whoBtnOn: { background: '#000835', color: '#fff', fontWeight: 600 },
+  whoNote: { fontSize: '12px', color: '#4338CA', lineHeight: 1.5 },
+  arrangedLink: { fontSize: '12.5px', color: '#6B7280', margin: '-8px 0 16px' },
+  arrangedA: { color: '#3730A3', fontWeight: 600 },
   label: { fontSize: '12px', fontWeight: 500, color: '#374151' },
   input: { height: '40px', padding: '0 12px', fontSize: '14px', color: '#111827', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '8px', outline: 'none' },
   fieldError: { fontSize: '12px', color: '#DC2626', margin: 0 },

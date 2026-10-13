@@ -124,6 +124,7 @@ describe('scale', () => {
     await measure('Corporate hierarchy, search', 300, admin('/api/settings/hierarchy?search=traveller%2010', hierarchyGet, heavy))
     await measure('Heavy traveller: my trips (page 1)', 300, admin('/api/bookings?page=1', myBookingsGet, heavy))
     await measure('Heavy traveller: my trips (page 40)', 300, admin('/api/bookings?page=40', myBookingsGet, heavy))
+    await measure('Heavy admin: arranged for others (page 1)', 300, admin('/api/bookings?page=1&for=others', myBookingsGet, heavy))
     await measure('Heavy traveller: trips picker (page 1)', 300, admin('/api/trips?page=1', myTripsGet, heavy))
     await measure('Heavy traveller: recent bookings', 300, admin('/api/bookings/recent?limit=50', recentBookingsGet, heavy))
     await measure('Heavy approver: queue + history (page 1)', 300, admin('/api/approvals', approvalsGet, heavy))
