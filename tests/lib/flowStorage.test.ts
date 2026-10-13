@@ -76,6 +76,42 @@ describe('flowStorage: booking for someone belongs to whoever chose it', () => {
     expect(flowStorage.getTripId()).toBe('admins-own-trip')
   })
 
+  // add-passenger refuses a trip that is not the traveller's ("Trip not found
+  // or not owned by you"): an admin's own trip must never ride along into a
+  // booking for a colleague.
+  it("an admin's own trip is not sent while booking for a colleague, and comes back for themself", () => {
+    flowStorage.claim(ADMIN)
+    flowStorage.setTripId('admins-own-trip', null)      // + Add flight on their trip
+    flowStorage.setOnBehalf({ ...forTraveller(ADMIN), home: '/bookings' })
+    expect(flowStorage.getTripId()).toBeNull()
+    flowStorage.setOnBehalf(null)                         // back to "Me"
+    expect(flowStorage.getTripId()).toBe('admins-own-trip')
+  })
+
+  it("the colleague's trip is sent for the colleague only", () => {
+    flowStorage.claim(ADMIN)
+    flowStorage.setOnBehalf({ ...forTraveller(ADMIN), home: '/bookings' })
+    flowStorage.setTripId('colleagues-trip', forTraveller(ADMIN).travellerId)
+    expect(flowStorage.getTripId()).toBe('colleagues-trip')
+    flowStorage.setOnBehalf(null)
+    expect(flowStorage.getTripId()).toBeNull()
+  })
+
+  it('"No trip" clears the trip chosen before it', () => {
+    flowStorage.claim(ADMIN)
+    flowStorage.setTripId('some-trip', null)
+    flowStorage.setTripId(null)
+    expect(flowStorage.getTripId()).toBeNull()
+  })
+
+  it('a bare trip id stored before trips recorded whose they are counts as one\'s own', () => {
+    flowStorage.claim(ADMIN)
+    window.sessionStorage.setItem('cbt:book:tripId', JSON.stringify('old-own-trip'))
+    expect(flowStorage.getTripId()).toBe('old-own-trip')
+    flowStorage.setOnBehalf({ ...forTraveller(ADMIN), home: '/bookings' })
+    expect(flowStorage.getTripId()).toBeNull()
+  })
+
   it('sign-in and sign-out (clearAll) forget the owner too', () => {
     flowStorage.claim(DESK)
     flowStorage.setOnBehalf(forTraveller(DESK))

@@ -119,7 +119,7 @@ export default function TmcBookPage() {
         bookerId: meId, travellerId: t.id, name: t.full_name, clientName: t.client_name, bandCode: t.band_code,
         policy: shown.policy, home: '/tmc/book',
       })
-      flowStorage.setTripId(tripId)
+      flowStorage.setTripId(tripId, t.id)
       router.push('/book/flights')
     } catch (err) {
       setStartError((err as Error).message)

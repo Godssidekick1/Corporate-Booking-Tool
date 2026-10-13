@@ -53,12 +53,15 @@ export default function BookingFlowChrome({ children }: { children: React.ReactN
   // hydrate with different markup than it was sent.
   useEffect(() => {
     const tripId = flowStorage.getTripId()
+    const forSomeone = flowStorage.onBehalf()
     // Synchronising state to an external store the server cannot see, which is
     // the case this rule carves out — same disable and same reason as
     // usePagedList's page clamp.
+    // Only one's own trip travels in the address (the search page reads it as
+    // one's own); a colleague's is kept in storage across the new search.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (tripId) setSearchHref(`/book/flights?tripId=${encodeURIComponent(tripId)}`)
-    setOnBehalf(flowStorage.onBehalf())
+    setSearchHref(tripId && !forSomeone ? `/book/flights?tripId=${encodeURIComponent(tripId)}` : '/book/flights')
+    setOnBehalf(forSomeone)
   }, [pathname])
 
   // Whose flow this is, once per visit: a booking-for choice made by another
@@ -120,7 +123,11 @@ export default function BookingFlowChrome({ children }: { children: React.ReactN
               and carried in the href, so the traveller stays inside the trip
               they were booking for — it is the binding to a HALF-FINISHED
               booking that leaks, not the trip itself. */}
-          <Link href={searchHref} onClick={() => flowStorage.clearFlow()} style={s.exitLink}>
+          <Link href={searchHref} onClick={() => {
+            const colleagueTrip = onBehalf ? flowStorage.getTripId() : null
+            flowStorage.clearFlow()
+            if (onBehalf && colleagueTrip) flowStorage.setTripId(colleagueTrip, onBehalf.travellerId)
+          }} style={s.exitLink}>
             Start a new search
           </Link>
           <Link href={onBehalf?.home ?? '/dashboard'} style={s.exitLinkMuted}>

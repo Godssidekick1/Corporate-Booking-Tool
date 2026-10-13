@@ -213,12 +213,24 @@ export const flowStorage = {
     return safeGet(SEATS_KEY_PREFIX + flightKey) ?? {}
   },
 
-  setTripId(tripId: string | null) {
-    if (tripId) safeSet(TRIP_ID_KEY, tripId)
+  // A trip belongs to one traveller, and a booking may only go under the
+  // traveller's own trip (add-passenger refuses anything else). So the trip is
+  // stored with WHOSE it is -- `forTraveller`: the colleague's id, or null for
+  // the signed-in person's own -- and read back only while booking for that
+  // same person. Without it an admin's own trip (picked up from the URL of the
+  // trip they started in) rode along into a booking for a colleague.
+  // Null clears: "No trip" must not leave the previous choice behind.
+  setTripId(tripId: string | null, forTraveller: string | null = null) {
+    if (!tripId) { flowStorage.clearTripId(); return }
+    safeSet(TRIP_ID_KEY, { id: tripId, for: forTraveller })
   },
 
   getTripId(): string | null {
-    return safeGet<string>(TRIP_ID_KEY)
+    const stored = safeGet<{ id: string; for: string | null } | string>(TRIP_ID_KEY)
+    if (!stored) return null
+    // A bare id (stored before trips recorded whose they are) is one's own.
+    const trip = typeof stored === 'string' ? { id: stored, for: null } : stored
+    return trip.for === (flowStorage.onBehalf()?.travellerId ?? null) ? trip.id : null
   },
 
   clearTripId() {

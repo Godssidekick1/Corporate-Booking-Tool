@@ -143,7 +143,7 @@ export default function BookFlightsSearchPage() {
   function chooseTrip(choice: TripChoice) {
     setTrip(choice)
     // An existing trip or none applies now; a new one is created at search.
-    if (choice.kind !== 'new') flowStorage.setTripId(choice.kind === 'existing' ? choice.id : null)
+    if (choice.kind !== 'new') flowStorage.setTripId(choice.kind === 'existing' ? choice.id : null, who?.travellerId ?? null)
   }
   const colleagueLookup = useLookup('/api/book/travellers', colleagueId, {
     enabled: isAdmin && mode === 'colleague',
@@ -206,7 +206,9 @@ export default function BookFlightsSearchPage() {
     // browser URL directly sidesteps that — this only needs to run once,
     // on mount, so there's no ongoing-reactivity reason to prefer the hook.
     const tripId = new URLSearchParams(window.location.search).get('tripId')
-    if (tripId) flowStorage.setTripId(tripId)
+    // A trip in the address is one's own: + Add flight on the trips page. It
+    // is not sent while booking for a colleague (flowStorage.getTripId).
+    if (tripId) flowStorage.setTripId(tripId, null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -328,7 +330,7 @@ export default function BookFlightsSearchPage() {
           setError((err as Error).message)
           return
         }
-        flowStorage.setTripId(id)
+        flowStorage.setTripId(id, who.travellerId)
         setTrip(id ? { kind: 'existing', id } : { kind: 'none' })
       }
       const res = await fetch('/api/book/search', {
