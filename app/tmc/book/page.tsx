@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import SearchableSelect from '@/app/components/SearchableSelect'
 import BookingHistory from '@/app/components/BookingHistory'
+import TripPicker, { resolveTrip, type TripChoice } from '@/app/components/TripPicker'
 import { useLookup, clientOption } from '@/app/hooks/useLookup'
 import { flowStorage } from '@/app/lib/book/flowStorage'
 import { canAccess } from '@/app/lib/permissions/canAccess'
@@ -49,6 +50,15 @@ export default function TmcBookPage() {
   const [travellerId, setTravellerId] = useState('')
   const [detail, setDetail] = useState<TravellerDetail | null>(null)
   const [detailError, setDetailError] = useState('')
+  // Which of the traveller's trips this goes under (TripPicker); reset when
+  // the traveller changes, since trips are theirs.
+  const [trip, setTrip] = useState<TripChoice>({ kind: 'none' })
+  const [starting, setStarting] = useState(false)
+  const [startError, setStartError] = useState('')
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setTrip({ kind: 'none' }); setStartError('')
+  }, [travellerId])
   const [view, setView] = useState<'mine' | 'desk'>('mine')
   // The same check as the rail (tmcNav): null until /api/me answers.
   const [allowed, setAllowed] = useState<boolean | null>(null)
@@ -94,15 +104,25 @@ export default function TmcBookPage() {
 
   const shown = travellerId && detail?.traveller.id === travellerId ? detail : null
 
-  function start() {
+  async function start() {
     if (!shown || !meId) return
     const t = shown.traveller
-    flowStorage.clearFlow()
-    flowStorage.setOnBehalf({
-      bookerId: meId, travellerId: t.id, name: t.full_name, clientName: t.client_name, bandCode: t.band_code,
-      policy: shown.policy, home: '/tmc/book',
-    })
-    router.push('/book/flights')
+    setStarting(true); setStartError('')
+    try {
+      // A new trip is created now, for the traveller, so nothing is left
+      // behind if the desk changes its mind before this point.
+      const tripId = await resolveTrip(t.id, trip)
+      flowStorage.clearFlow()
+      flowStorage.setOnBehalf({
+        bookerId: meId, travellerId: t.id, name: t.full_name, clientName: t.client_name, bandCode: t.band_code,
+        policy: shown.policy, home: '/tmc/book',
+      })
+      flowStorage.setTripId(tripId)
+      router.push('/book/flights')
+    } catch (err) {
+      setStartError((err as Error).message)
+      setStarting(false)
+    }
   }
 
   if (allowed === false) {
@@ -170,8 +190,8 @@ export default function TmcBookPage() {
                   {[shown.traveller.designation, shown.traveller.department, shown.traveller.email].filter(Boolean).join(' · ')}
                 </p>
               </div>
-              <button onClick={start} style={s.primaryBtn}>
-                Search flights for {shown.traveller.full_name.split(' ')[0]} →
+              <button onClick={start} disabled={starting} style={{ ...s.primaryBtn, opacity: starting ? 0.7 : 1 }}>
+                {starting ? 'Starting…' : `Search flights for ${shown.traveller.full_name.split(' ')[0]} →`}
               </button>
             </div>
 
@@ -194,6 +214,12 @@ export default function TmcBookPage() {
                 ].filter(Boolean).join(' · ')}
                 warn={!shown.traveller.profile_ready}
               />
+            </div>
+
+            <div style={{ ...s.field, marginTop: 16, maxWidth: 420 }}>
+              <label style={s.label}>Trip</label>
+              <TripPicker travellerId={shown.traveller.id} value={trip} onChange={setTrip} />
+              {startError && <p style={s.errorNote}>{startError}</p>}
             </div>
 
             <p style={{ ...s.sectionLabel, marginTop: 16 }}>Their recent bookings</p>

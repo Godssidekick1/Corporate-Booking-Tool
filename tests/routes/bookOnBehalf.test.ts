@@ -10,6 +10,7 @@ import { GET as travellerGet } from '@/app/api/book/travellers/[id]/route'
 import { GET as historyGet } from '@/app/api/book/history/route'
 import { GET as recentGet } from '@/app/api/bookings/recent/route'
 import { GET as approvalsGet } from '@/app/api/approvals/route'
+import { GET as tripsGet, POST as tripsPost } from '@/app/api/trips/route'
 import { call } from '../harness/call'
 import { actors, type Actors } from '../harness/actors'
 import { resetDatabase } from '../harness/db'
@@ -259,7 +260,48 @@ d('book on behalf', () => {
       verdictOverride = null
       expect((await price(admin, 'D4', colleague.id)).status).toBe(403)
       expect((await price(colleague, 'D4')).status).toBe(403)
+      // The desk sets up the traveller's trips here: it is the one that books.
+      const deskTrip = await call(tripsPost, {
+        as: a.tmcAdmin, method: 'POST', url: '/api/trips', body: { name: 'Desk trip', travellerId: colleague.id },
+      })
+      expect(deskTrip).toMatchObject({ status: 200, json: { ok: true } })
+      expect(await one(db, sql`select created_by, arranged_by from trips where id = ${(deskTrip.json as { trip: { id: string } }).trip.id}`))
+        .toEqual({ created_by: colleague.id, arranged_by: a.tmcAdmin.id })
+      // ...and the traveller still cannot start one themself.
+      expect((await call(tripsPost, { as: colleague, method: 'POST', url: '/api/trips', body: { name: 'Mine' } })).status).toBe(403)
     })
+  })
+
+  it('trips: made for the traveller, theirs, and the booking goes under them', async () => {
+    const tripsCall = (as: { id: string }, body: unknown) =>
+      call(tripsPost, { as, method: 'POST', url: '/api/trips', body })
+
+    const made = await tripsCall(admin, { name: 'Offsite in Goa', travellerId: colleague.id })
+    expect(made).toMatchObject({ status: 200, json: { ok: true, trip: { name: 'Offsite in Goa', status: 'open' } } })
+    const tripId = (made.json as { trip: { id: string } }).trip.id
+    expect(await one(db, sql`select created_by, arranged_by, client_id from trips where id = ${tripId}`))
+      .toEqual({ created_by: colleague.id, arranged_by: admin.id, client_id: clientId })
+
+    // In their list, for them and for the admin booking for them.
+    const listed = (as: { id: string }, qs = '') =>
+      call(tripsGet, { as, url: `/api/trips${qs}` }).then(r => (r.json as { trips: { id: string }[] }).trips.map(t => t.id))
+    expect(await listed(colleague)).toContain(tripId)
+    expect(await listed(admin, `?travellerId=${colleague.id}`)).toContain(tripId)
+    expect(await listed(admin)).not.toContain(tripId)
+
+    // Nobody else may make or see the colleague's trips.
+    expect((await tripsCall(bystander, { name: 'X', travellerId: colleague.id })).status).toBe(403)
+    expect((await call(tripsGet, { as: bystander, url: `/api/trips?travellerId=${colleague.id}` })).status).toBe(403)
+
+    // The booking for the colleague goes under it; the admin's own trip does not fit.
+    expect((await price(admin, 'T1', colleague.id)).status).toBe(200)
+    const booked = await addPassenger(admin, 'T1', colleague.id, { tripId })
+    expect(booked.status).toBe(200)
+    expect(await one(db, sql`select trip_id from bookings where id = ${(booked.json as { bookingId: string }).bookingId}`))
+      .toEqual({ trip_id: tripId })
+    const own = ((await tripsCall(admin, { name: 'My own' })).json as { trip: { id: string } }).trip.id
+    expect((await price(admin, 'T2', colleague.id)).status).toBe(200)
+    expect((await addPassenger(admin, 'T2', colleague.id, { tripId: own })).status).toBe(403)
   })
 
   it('the traveller and the approver see who booked it', async () => {

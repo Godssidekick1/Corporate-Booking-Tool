@@ -46,13 +46,15 @@ export async function ownedBy(
   return { rows, total: count.n }
 }
 
+// created_by is the trip's owner, the traveller; arranged_by whoever set it
+// up for them (the travel desk, or an admin colleague), null when they did.
 export async function create(
   db: Queryable,
-  t: Pick<Row<'trips'>, 'client_id' | 'created_by' | 'name'>
+  t: Pick<Row<'trips'>, 'client_id' | 'created_by' | 'name'> & { arranged_by?: string | null }
 ): Promise<Pick<Row<'trips'>, 'id' | 'name' | 'status'>> {
   return one(db, sql`
-    insert into trips (client_id, created_by, name, status)
-    values (${t.client_id}, ${t.created_by}, ${t.name}, 'open')
+    insert into trips (client_id, created_by, arranged_by, name, status)
+    values (${t.client_id}, ${t.created_by}, ${t.arranged_by ?? null}, ${t.name}, 'open')
     returning id, name, status`)
 }
 

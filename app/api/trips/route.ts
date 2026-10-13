@@ -6,6 +6,7 @@ import * as employees from '@/app/lib/repositories/employees'
 import * as trips from '@/app/lib/repositories/trips'
 import { route } from '@/app/lib/http/handler'
 import { parsePageParams, pagedResponse } from '@/app/lib/pagination'
+import { onBehalf, refuse } from '@/app/lib/book/bookingActor'
 
 // ── /api/trips ──────────────────────────────────────────────────────────────
 // A trip is a named container an employee creates to group everything for
@@ -18,16 +19,30 @@ import { parsePageParams, pagedResponse } from '@/app/lib/pagination'
 // trip in the client. A manager wanting visibility into a report's trips
 // is a different, later feature (would need its own permission check, not
 // just relaxing this filter).
+//
+// travellerId: someone booking for that traveller (the travel desk, or an
+// admin colleague -- app/lib/book/bookingActor.ts) lists and creates THEIR
+// trips, by the same rules as booking for them. The trip is the traveller's
+// (created_by), so it is in their trips; arranged_by records who set it up.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface CreateTripBody {
   name: string
+  travellerId?: string
 }
 
 export const GET = route(async (req: NextRequest) => {
   const user = await requireUser()
 
-  const employee = await employees.traveller(db, user.id)
+  const travellerId = req.nextUrl.searchParams.get('travellerId')
+  let employee: { id: string; client_id: string | null } | null
+  if (travellerId && travellerId !== user.id) {
+    const r = await onBehalf(db, user, travellerId)
+    if (!r.ok) return refuse(r)
+    employee = r.actor.traveller
+  } else {
+    employee = await employees.traveller(db, user.id)
+  }
 
   if (!employee) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
@@ -45,6 +60,21 @@ export const GET = route(async (req: NextRequest) => {
 
 export const POST = route(async (req: NextRequest) => {
   const user = await requireUser()
+  const body: CreateTripBody = await req.json()
+  const name = typeof body.name === 'string' ? body.name.trim() : ''
+
+  // A trip for someone else: theirs, set up by the caller. The desk does this
+  // at a CBT-only client too -- that is where it books.
+  if (body.travellerId && body.travellerId !== user.id) {
+    const r = await onBehalf(db, user, body.travellerId)
+    if (!r.ok) return refuse(r)
+    if (!name) {
+      return Response.json({ error: 'Trip name is required' }, { status: 400 })
+    }
+    const t = r.actor.traveller
+    const trip = await trips.create(db, { client_id: t.client_id!, created_by: t.id, arranged_by: user.id, name })
+    return Response.json({ ok: true, trip })
+  }
 
   // A CBT-only client's people sign in to see their trips, but the travel desk
   // books for them (clientGates.selfBooking).
@@ -57,9 +87,6 @@ export const POST = route(async (req: NextRequest) => {
   if (!employee) {
     return Response.json({ error: 'Employee record not found' }, { status: 404 })
   }
-
-  const body: CreateTripBody = await req.json()
-  const name = typeof body.name === 'string' ? body.name.trim() : ''
 
   if (!name) {
     return Response.json({ error: 'Trip name is required' }, { status: 400 })

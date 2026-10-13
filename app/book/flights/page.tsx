@@ -6,6 +6,7 @@ import AirportDropdown from '@/app/components/AirportDropdown'
 import { flowStorage, type OnBehalf } from '@/app/lib/book/flowStorage'
 import SearchableSelect from '@/app/components/SearchableSelect'
 import { useLookup } from '@/app/hooks/useLookup'
+import TripPicker, { resolveTrip, type TripChoice } from '@/app/components/TripPicker'
 import { searchPreferences } from '@/app/lib/book/searchPreferences'
 import { FlatFlightResult, formatTime, formatDayLabel, journeysOf } from '@/app/lib/book/types'
 import { cabinLabel } from '@/app/lib/book/cabin'
@@ -136,6 +137,14 @@ export default function BookFlightsSearchPage() {
   const [meId, setMeId] = useState('')
   const [mode, setMode] = useState<'me' | 'colleague' | 'guest'>('me')
   const [colleagueId, setColleagueId] = useState('')
+  // The colleague's trip this goes under: theirs, not the admin's (TripPicker).
+  const [trip, setTrip] = useState<TripChoice>({ kind: 'none' })
+
+  function chooseTrip(choice: TripChoice) {
+    setTrip(choice)
+    // An existing trip or none applies now; a new one is created at search.
+    if (choice.kind !== 'new') flowStorage.setTripId(choice.kind === 'existing' ? choice.id : null)
+  }
   const colleagueLookup = useLookup('/api/book/travellers', colleagueId, {
     enabled: isAdmin && mode === 'colleague',
     toOption: row => ({
@@ -177,10 +186,12 @@ export default function BookFlightsSearchPage() {
       bookerId: meId, travellerId: d.traveller.id, name: d.traveller.full_name, clientName: d.traveller.client_name,
       bandCode: d.traveller.band_code, policy: d.policy, home: '/bookings',
     }
-    // A different traveller: anything priced so far was for someone else.
+    // A different traveller: anything priced so far was for someone else, and
+    // a trip the admin started from is the admin's -- clearFlow drops both.
     flowStorage.clearFlow()
     flowStorage.setOnBehalf(next)
     setWho(next)
+    setTrip({ kind: 'none' })
   }
 
   // Shown only until the person has searched at least once, ever — after
@@ -310,6 +321,19 @@ export default function BookFlightsSearchPage() {
     setError('')
     setHasSearched(false)
     try {
+      // A new trip for the colleague is created now, the first moment it is
+      // certainly wanted; once made it is an existing one.
+      if (who && trip.kind === 'new') {
+        let id: string | null
+        try {
+          id = await resolveTrip(who.travellerId, trip)
+        } catch (err) {
+          setError((err as Error).message)
+          return
+        }
+        flowStorage.setTripId(id)
+        setTrip(id ? { kind: 'existing', id } : { kind: 'none' })
+      }
       const res = await fetch('/api/book/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -462,6 +486,11 @@ export default function BookFlightsSearchPage() {
                     placeholder="Search colleagues by name, email or department…"
                     emptyMessage="No colleague matches"
                   />
+                </div>
+              )}
+              {mode === 'colleague' && who && (
+                <div style={{ minWidth: 220, maxWidth: 300 }}>
+                  <TripPicker travellerId={who.travellerId} value={trip} onChange={chooseTrip} />
                 </div>
               )}
               {mode === 'guest' && (
