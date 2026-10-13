@@ -1,11 +1,13 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { principalForToken, SESSION_COOKIE, TMC_ROLES } from '@/app/lib/auth/session'
+import { principalForToken, permissionsOf, SESSION_COOKIE, TMC_ROLES } from '@/app/lib/auth/session'
+import { tmcRedirect } from '@/app/lib/navigation/tmcAccess'
 
 // ── proxy.ts: the page gate ──────────────────────────────────────────────────
 // Runs before every PAGE request (API routes authenticate themselves; see the
 // matcher). Decides only where a browser should be: signed out -> /login,
 // admin-set password not yet replaced -> /auth/set-password, first-login
-// profile not done -> /profile, corporate user on /tmc -> /dashboard.
+// profile not done -> /profile, corporate user on /tmc -> /dashboard, a
+// counsellor on a TMC page their permissions do not open -> elsewhere.
 //
 // ONE LOOKUP, FROM THE DATABASE. principalForToken is the same session lookup
 // every API route uses: session -> account -> employee -> client/TMC standing.
@@ -94,6 +96,21 @@ export async function proxy(request: NextRequest) {
 
   if (matchesBase(pathname, '/tmc') && !tmcSide) return to('/dashboard')
   if (tmcSide && CORPORATE_ONLY.some(base => matchesBase(pathname, base))) return to('/tmc/dashboard')
+
+  // A TMC page whose entry needs a permission the counsellor lacks is not
+  // entered at all (app/lib/navigation/tmcAccess.ts) -- typing the address
+  // included. Configurations opens on the first section they may use. Only
+  // counsellors are looked up: a TMC admin holds every permission.
+  if (tmcSide && matchesBase(pathname, '/tmc')) {
+    let permissions: string[] = []
+    if (role === 'tc') {
+      // Unlike the session lookup, this fails CLOSED: a counsellor whose
+      // permissions cannot be read gets the dashboard, which needs none.
+      try { permissions = await permissionsOf(me) } catch (err) { console.error('[proxy] permission lookup failed:', err) }
+    }
+    const elsewhere = tmcRedirect(pathname, role ?? undefined, permissions)
+    if (elsewhere) return to(elsewhere)
+  }
 
   return NextResponse.next()
 }

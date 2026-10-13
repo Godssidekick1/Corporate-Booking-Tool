@@ -2,6 +2,7 @@ import { cookies } from 'next/headers'
 import type { NextResponse } from 'next/server'
 import { db, asSystem, enterContext, type Queryable, type DbContext } from '@/app/lib/db'
 import * as accounts from '@/app/lib/repositories/accounts'
+import * as employees from '@/app/lib/repositories/employees'
 import { newToken, tokenId, isToken } from './tokens'
 
 // ── Sessions ─────────────────────────────────────────────────────────────────
@@ -90,6 +91,12 @@ export function contextFor(row: Pick<accounts.AccountStanding, 'is_platform_admi
 // since it is how the tenant is found out -- and refuses or touches it there.
 export function principalForToken(token: string | undefined | null): Promise<Principal | null> {
   return asSystem(() => lookupPrincipal(token))
+}
+
+// A counsellor's granted permission keys, for the page gate (proxy.ts), which
+// runs outside any request context. Only ever their own rows.
+export function permissionsOf(principal: Principal): Promise<string[]> {
+  return asSystem(() => employees.permissionKeys(db, principal.id))
 }
 
 async function lookupPrincipal(token: string | undefined | null): Promise<Principal | null> {

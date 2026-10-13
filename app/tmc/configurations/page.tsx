@@ -1,9 +1,9 @@
 import { redirect } from 'next/navigation'
 
-// Configurations has no landing screen of its own — it is a container. Redirect
-// to Policy rather than Client groups (the previous target): Policy is the
-// first item in the first group, so the second column's highlight matches where
-// you land, and it is the section a TMC opens most.
+// Configurations has no landing screen of its own — it is a container. The
+// page gate (proxy.ts, app/lib/navigation/tmcAccess.ts) sends each person to
+// the first section they may open before this ever renders; this redirect to
+// Policy, the first section, is only the fallback.
 export default function ConfigurationsIndexPage() {
   redirect('/tmc/configurations/policy')
 }

@@ -12,7 +12,7 @@ import { SESSION_COOKIE, principalForToken } from '@/app/lib/auth/session'
 import { hashPassword } from '@/app/lib/auth/password'
 import { MESSAGES } from '@/app/lib/auth/flows'
 import { db } from '@/app/lib/db'
-import { sql, exec, one } from '@/app/lib/db/sql'
+import { sql, exec, one, many } from '@/app/lib/db/sql'
 import { call } from '../harness/call'
 import { actAs } from '../harness/session'
 import { actors, type Actors, type Actor } from '../harness/actors'
@@ -280,6 +280,52 @@ d('/api/auth and the page gate', () => {
     }
     expect(location(await page('/book/flights', token))).toBeNull()
     expect(location(await page('/tmc/book', token))).toBeNull()
+  })
+
+  // A page a counsellor's permissions do not open is not entered at all -- not
+  // rendered with a "Missing permission" banner, and not by typing its address.
+  it('proxy: a counsellor never enters a TMC page their permissions do not open', async () => {
+    const tc = a.tc
+    if (!tc) return
+    const saved = await many<{ permission_key: string }>(db, sql`
+      select permission_key from employee_permissions where employee_id = ${tc.id}`)
+    await exec(db, sql`delete from employee_permissions where employee_id = ${tc.id}`)
+    await exec(db, sql`
+      insert into employee_permissions (employee_id, permission_key)
+      values (${tc.id}, 'manage_deal_codes'), (${tc.id}, 'view_reports')`)
+    try {
+      await withPassword(tc)
+      const token = await signedIn(tc)
+      // The container opens on their first section, not on Policy for everyone.
+      expect(location(await page('/tmc/configurations', token))).toBe('/tmc/configurations/deal-codes')
+      // Typed addresses: sent to a section they may use.
+      for (const p of ['/tmc/configurations/policy', '/tmc/configurations/approvals', '/tmc/configurations/markup',
+        '/tmc/configurations/rule-engine-test', '/tmc/configurations/users']) {
+        expect(location(await page(p, token))).toBe('/tmc/configurations/deal-codes')
+      }
+      // Outside Configurations: to the dashboard.
+      expect(location(await page('/tmc/book', token))).toBe('/tmc/dashboard')
+      // What they hold, and what needs nothing, opens.
+      for (const p of ['/tmc/configurations/deal-codes', '/tmc/configurations/buckets', '/tmc/reports',
+        '/tmc/configurations/integrations', '/tmc/dashboard', '/tmc/clients']) {
+        expect(location(await page(p, token))).toBeNull()
+      }
+
+      // With nothing granted, the one section that needs no permission.
+      await exec(db, sql`delete from employee_permissions where employee_id = ${tc.id}`)
+      expect(location(await page('/tmc/configurations', token))).toBe('/tmc/configurations/integrations')
+      expect(location(await page('/tmc/configurations/deal-codes', token))).toBe('/tmc/configurations/integrations')
+
+      // A TMC admin holds every permission: nothing is looked up, everything opens.
+      const admin = await signedIn(a.tmcAdmin)
+      expect(location(await page('/tmc/configurations', admin))).toBe('/tmc/configurations/policy')
+      expect(location(await page('/tmc/configurations/policy', admin))).toBeNull()
+    } finally {
+      await exec(db, sql`delete from employee_permissions where employee_id = ${tc.id}`)
+      for (const p of saved) {
+        await exec(db, sql`insert into employee_permissions (employee_id, permission_key) values (${tc.id}, ${p.permission_key})`)
+      }
+    }
   })
 
   it('proxy: a deactivated person is treated as signed out', async () => {
