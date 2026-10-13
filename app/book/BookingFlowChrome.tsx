@@ -61,6 +61,19 @@ export default function BookingFlowChrome({ children }: { children: React.ReactN
     setOnBehalf(flowStorage.onBehalf())
   }, [pathname])
 
+  // Whose flow this is, once per visit: a booking-for choice made by another
+  // account in this tab is dropped (flowStorage.claim) before the banner can
+  // show it -- whichever page of the flow the tab is opened on.
+  useEffect(() => {
+    let live = true
+    fetch('/api/me').then(r => r.json()).then(d => {
+      if (!live || !d.employee?.id) return
+      flowStorage.claim(d.employee.id)
+      setOnBehalf(flowStorage.onBehalf())
+    }).catch(() => {})
+    return () => { live = false }
+  }, [])
+
   // The trips list at /book is not a step in this flow — it is where trips are
   // created. Wrapping it in a booking stepper would claim the traveller is
   // mid-booking when they have not started one.

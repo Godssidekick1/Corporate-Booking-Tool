@@ -68,6 +68,8 @@ export default function TmcBookPage() {
     fetch('/api/me').then(r => r.json())
       .then(d => {
         setMeId(d.employee?.id ?? '')
+        // This tab's flow is the signed-in person's (flowStorage.claim).
+        flowStorage.claim(d.employee?.id ?? '')
         setAllowed(Boolean(d.ok) && canAccess(d.employee?.role, d.permissions ?? [], 'book_on_behalf'))
       })
       .catch(() => setAllowed(false))

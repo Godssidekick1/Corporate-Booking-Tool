@@ -18,6 +18,8 @@ const SEATS_KEY_PREFIX = 'cbt:book:seats:'   // + flightKey
 const TRIP_ID_KEY = 'cbt:book:tripId'
 const GUEST_BOOKING_KEY = 'cbt:book:isGuestBooking'
 const ON_BEHALF_KEY = 'cbt:book:onBehalf'
+// Who this tab's flow belongs to: the signed-in employee, set by claim().
+const OWNER_KEY = 'cbt:book:owner'
 
 // Booking for someone else (app/lib/book/bookingActor.ts): who, shown on every
 // step of the flow and sent to every booking route as travellerId.
@@ -134,15 +136,36 @@ export const flowStorage = {
     try { window.sessionStorage.removeItem(ON_BEHALF_KEY) } catch { /* as safeSet */ }
   },
 
+  // Only honoured for the account that chose it. Until claim() has named the
+  // signed-in person (and sign-in and sign-out wipe the name), there is no
+  // booking-for at all: a tab that outlives an account fails closed, to
+  // booking for oneself, on every page -- not just the ones that check.
   onBehalf(): OnBehalf | null {
-    return safeGet<OnBehalf>(ON_BEHALF_KEY)
+    const who = safeGet<OnBehalf>(ON_BEHALF_KEY)
+    const owner = safeGet<string>(OWNER_KEY)
+    return who && owner && who.bookerId === owner ? who : null
+  },
+
+  // The signed-in employee takes this tab's flow. Someone else's flow -- a
+  // search, priced fares, a traveller they were booking for -- is dropped.
+  // Called wherever the flow learns who is signed in (/api/me).
+  claim(employeeId: string) {
+    if (!employeeId) return
+    const owner = safeGet<string>(OWNER_KEY)
+    const who = safeGet<OnBehalf>(ON_BEHALF_KEY)
+    if (owner && owner !== employeeId) flowStorage.clearAll()
+    // No owner yet: just signed in (which cleared everything), or a tab from
+    // before owners were recorded. Keep the trip just picked, drop a traveller
+    // chosen by anyone else.
+    else if (who && who.bookerId !== employeeId) flowStorage.setOnBehalf(null)
+    safeSet(OWNER_KEY, employeeId)
   },
 
   // Where the flow's exits go. The travel desk has no dashboard or trips of
   // its own on the corporate side: its home is the desk (/tmc/book). Read at
   // the moment of use (an event handler), or through useFlowExits for render.
   exits(): FlowExits {
-    const desk = safeGet<OnBehalf>(ON_BEHALF_KEY)?.home === '/tmc/book'
+    const desk = flowStorage.onBehalf()?.home === '/tmc/book'
     return desk
       ? { home: { href: '/tmc/book', label: 'Travel desk' }, trips: { href: '/tmc/book', label: 'Desk bookings' } }
       : { home: { href: '/dashboard', label: 'Dashboard' }, trips: { href: '/bookings', label: 'My trips' } }
@@ -150,7 +173,7 @@ export const flowStorage = {
 
   // The travellerId every booking route takes; undefined = booking for oneself.
   travellerId(): string | undefined {
-    return safeGet<OnBehalf>(ON_BEHALF_KEY)?.travellerId
+    return flowStorage.onBehalf()?.travellerId
   },
 
   saveSearchResults(results: FlatFlightResult[], meta: SearchMeta, availabilityKey: string | null) {

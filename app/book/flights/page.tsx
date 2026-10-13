@@ -160,12 +160,9 @@ export default function BookFlightsSearchPage() {
       setIsAdmin(d.employee?.role === 'admin')
       // Only the person who chose a traveller books for them: a choice left in
       // this tab by someone else (another account, signed in here before) is
-      // dropped, and this person starts by booking for themself.
+      // dropped by claim(), and this person starts by booking for themself.
+      flowStorage.claim(me)
       const saved = flowStorage.onBehalf()
-      if (saved && saved.bookerId !== me) {
-        flowStorage.clearAll()
-        return
-      }
       setWho(saved)
       if (saved) { setMode('colleague'); setColleagueId(saved.travellerId) }
     }).catch(() => {})
