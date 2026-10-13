@@ -350,8 +350,10 @@ const s: Record<string, React.CSSProperties> = {
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' },
   heading: { fontSize: '22px', fontWeight: 700, color: '#0A0A14', margin: 0, letterSpacing: '-0.4px' },
   tabs: { display: 'flex', gap: '4px', borderBottom: '1px solid #E5E7EB', margin: '-8px 0 20px' },
-  tab: { border: 'none', background: 'transparent', padding: '8px 12px', fontSize: '13px', color: '#6B7280', cursor: 'pointer', borderBottom: '2px solid transparent', marginBottom: '-1px' },
-  tabOn: { color: '#000835', fontWeight: 600, borderBottomColor: '#000835' },
+  // Three sides off and the bottom set, as in app/components/Tabs.tsx: border: 'none'
+  // beside a changing borderBottomColor made React warn when the tab changed.
+  tab: { borderTop: 'none', borderLeft: 'none', borderRight: 'none', borderBottom: '2px solid transparent', background: 'transparent', padding: '8px 12px', fontSize: '13px', color: '#6B7280', cursor: 'pointer', marginBottom: '-1px' },
+  tabOn: { color: '#000835', fontWeight: 600, borderBottom: '2px solid #000835' },
   newTripBtn: {
     fontSize: '13px', fontWeight: 600, color: '#fff', background: '#000835',
     padding: '9px 16px', borderRadius: '9px', textDecoration: 'none',
