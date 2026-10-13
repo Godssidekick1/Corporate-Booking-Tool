@@ -180,7 +180,8 @@ export default function ConfigurationsLayout({ children }: { children: React.Rea
         </div>
       </nav>
 
-      <div className="min-w-0 flex-1 px-8 py-7">{children}</div>
+      {/* Padding and width: the shared .page-frame (globals.css), as on every page. */}
+      <div className="page-frame min-w-0 flex-1">{children}</div>
     </div>
   )
 }

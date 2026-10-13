@@ -330,7 +330,7 @@ export default function TmcDashboardPage() {
   return (
     <>
       {/* Main */}
-      <div style={s.mainInner}>
+      <div className="page-frame" style={s.mainInner}>
         <div style={s.topBar}>
           <div>
             <h1 style={s.heading}>Welcome, {firstName}</h1>
@@ -829,7 +829,8 @@ function Field({ label, name, value, onChange, required, type = 'text', placehol
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const s: Record<string, React.CSSProperties> = {
-  mainInner: { padding: '40px 48px' },
+  // Padding and width: the shared .page-frame (globals.css).
+  mainInner: {},
   topBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' },
   heading: { fontSize: '22px', fontWeight: 700, color: '#0A0A14', margin: '0 0 4px', letterSpacing: '-0.3px' },
   sub: { fontSize: '14px', color: '#6B7280', margin: 0 },

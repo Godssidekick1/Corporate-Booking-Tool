@@ -185,7 +185,7 @@ export default function TmcClientsPage() {
   const COLUMNS = ['Code', 'Client', 'Group', 'City', 'Country', 'Email', 'Mobile', 'Branch', 'Mode', 'People', 'Status', 'Registered', '']
 
   return (
-    <div style={s.root}>
+    <div className="page-frame" style={s.root}>
       <div style={s.header}>
         <div>
           <h1 style={s.heading}>Clients</h1>
@@ -371,7 +371,8 @@ export default function TmcClientsPage() {
 }
 
 const s: Record<string, React.CSSProperties> = {
-  root: { fontFamily: "'Inter', -apple-system, sans-serif", maxWidth: '1280px', margin: '0 auto', padding: '32px 40px' },
+  // Padding and width: the shared .page-frame (globals.css).
+  root: { fontFamily: "'Inter', -apple-system, sans-serif" },
   header: { marginBottom: '16px' },
   heading: { fontSize: '20px', fontWeight: 600, color: '#0A0A14', margin: '0 0 4px', letterSpacing: '-0.3px' },
   sub: { fontSize: '13px', color: '#6B7280', margin: 0 },

@@ -85,7 +85,9 @@ export function Field({ label, hint, span = 1, children }: {
 }
 
 export const s: Record<string, React.CSSProperties> = {
-  root: { fontFamily: "'Inter', -apple-system, sans-serif", maxWidth: 1040, margin: '0 auto', padding: '32px 40px 96px' },
+  // Padding and width: the shared .page-frame (globals.css); the extra foot
+  // keeps the last section clear of the sticky save bar.
+  root: { fontFamily: "'Inter', -apple-system, sans-serif", paddingBottom: 96 },
   header: { marginBottom: 18 },
   backLink: { fontSize: 12, color: '#6B7280', textDecoration: 'none' },
   heading: { fontSize: 21, fontWeight: 600, color: '#0A0A14', margin: '8px 0 4px', letterSpacing: '-0.3px' },

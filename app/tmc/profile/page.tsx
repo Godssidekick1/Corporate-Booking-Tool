@@ -116,7 +116,7 @@ export default function TmcProfilePage() {
 
   if (loading) {
     return (
-      <div style={s.root}>
+      <div className="page-frame medium" style={s.root}>
         <div style={s.loadingWrap}><div style={s.spinner} /></div>
       </div>
     )
@@ -124,7 +124,7 @@ export default function TmcProfilePage() {
 
   if (!account) {
     return (
-      <div style={s.root}>
+      <div className="page-frame medium" style={s.root}>
         <div style={s.errorBanner}>⚠ {error || 'Could not load your profile.'}</div>
       </div>
     )
@@ -133,7 +133,7 @@ export default function TmcProfilePage() {
   const grantedPermissions = PERMISSIONS.filter(p => access?.permissions.includes(p.key))
 
   return (
-    <div style={s.root}>
+    <div className="page-frame medium" style={s.root}>
       <div style={s.header}>
         <h1 style={s.title}>My profile</h1>
         <p style={s.sub}>Your account, what you can reach, and your client portfolio.</p>
@@ -300,7 +300,8 @@ function Stat({ label, value, small }: { label: string; value: string | number; 
 }
 
 const s: Record<string, React.CSSProperties> = {
-  root: { padding: '28px 32px 60px', maxWidth: 860 },
+  // Padding and width: the shared .page-frame (globals.css).
+  root: {},
   header: { marginBottom: 22 },
   title: { fontSize: 22, fontWeight: 700, color: '#0A0A14', margin: '0 0 4px', letterSpacing: '-0.4px' },
   sub: { fontSize: 13, color: '#6B7280', margin: 0 },

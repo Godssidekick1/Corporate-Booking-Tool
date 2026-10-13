@@ -107,7 +107,7 @@ export default function TmcBookPage() {
 
   if (allowed === false) {
     return (
-      <div style={s.root}>
+      <div className="page-frame" style={s.root}>
         <h1 style={s.title}>Book travel</h1>
         <p style={{ ...s.sub, marginTop: 8 }}>
           Booking for travellers needs the <strong>Book for travellers</strong> permission. Your TMC admin can grant it
@@ -118,7 +118,7 @@ export default function TmcBookPage() {
   }
 
   return (
-    <div style={s.root}>
+    <div className="page-frame" style={s.root}>
       <div style={s.header}>
         <h1 style={s.title}>Book travel</h1>
         <p style={s.sub}>

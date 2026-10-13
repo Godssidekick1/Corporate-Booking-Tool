@@ -175,8 +175,8 @@ export default function CorporateSettingsPage() {
     setResetNote(d.message)
   }
 
-  if (loading) return <div style={s.root}><p style={s.muted}>Loading…</p></div>
-  if (!client) return <div style={s.root}><p style={s.error}>{error || 'Client not found.'}</p></div>
+  if (loading) return <div className="page-frame medium" style={s.root}><p style={s.muted}>Loading…</p></div>
+  if (!client) return <div className="page-frame medium" style={s.root}><p style={s.error}>{error || 'Client not found.'}</p></div>
 
   const offCount = [
     form.booking_activation, form.hold_activation, form.dom_ticketing,
@@ -184,7 +184,7 @@ export default function CorporateSettingsPage() {
   ].filter(v => v === false).length
 
   return (
-    <div style={s.root}>
+    <div className="page-frame medium" style={s.root}>
       <div style={s.header}>
         <Link href="/tmc/clients" style={s.backLink}>← All clients</Link>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>

@@ -66,6 +66,33 @@ body {
   font-family: var(--font-sans);
 }
 
+/* ── Page frame ──────────────────────────────────────────────────────────────
+   The space between the rail and a page, and the page's width, in one place:
+   a page's root takes className="page-frame" (plus "medium" or "narrow").
+   Taken from the Clients list, the reference for density and scale. Pages
+   used to bring their own (0 to 48px of padding, 520 to 1280px wide or no
+   limit), which is why some sat flush against the rail and others stretched
+   across a wide screen and read as zoomed in.
+     wide (default)  lists, dashboards, tables          1280px
+     medium          one record, a form with sections   1040px
+     narrow          a single column: trips, approvals   760px
+   Padding steps down on small screens so a phone keeps its width for content.
+   ────────────────────────────────────────────────────────────────────────── */
+.page-frame {
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 32px 40px 64px;
+}
+.page-frame.medium { max-width: 1040px; }
+.page-frame.narrow { max-width: 760px; }
+@media (max-width: 1023px) {
+  .page-frame { padding: 24px 24px 48px; }
+}
+@media (max-width: 640px) {
+  .page-frame { padding: 16px 16px 40px; }
+}
+
 /* ── Motion ──────────────────────────────────────────────────────────────────
    Every animation below is opt-out via prefers-reduced-motion at the bottom of
    this file.
