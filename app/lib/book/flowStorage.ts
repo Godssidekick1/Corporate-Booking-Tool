@@ -17,6 +17,21 @@ const PRICED_KEY_PREFIX = 'cbt:book:priced:' // + flightKey
 const SEATS_KEY_PREFIX = 'cbt:book:seats:'   // + flightKey
 const TRIP_ID_KEY = 'cbt:book:tripId'
 const GUEST_BOOKING_KEY = 'cbt:book:isGuestBooking'
+const ON_BEHALF_KEY = 'cbt:book:onBehalf'
+
+// Booking for someone else (app/lib/book/bookingActor.ts): who, shown on every
+// step of the flow and sent to every booking route as travellerId.
+export interface OnBehalf {
+  travellerId: string
+  name: string
+  clientName: string
+  bandCode: string | null
+  // 'guidance': the desk at a CBT-only client (a reason for amber or red, no
+  // approval chain); 'approvals': the traveller's own chain decides.
+  policy: 'guidance' | 'approvals'
+  // Where the booker returns to: the desk, or a corporate admin's trips.
+  home: '/tmc/book' | '/bookings'
+}
 
 export interface SearchMeta {
   origin: string
@@ -103,6 +118,23 @@ function safeSet(key: string, value: unknown): void {
 export const JUST_BOOKED_KEY = 'cbt:justBooked'
 
 export const flowStorage = {
+  // Not cleared by clearFlow(): searching again is still booking for the same
+  // person. Set or cleared where the traveller is chosen.
+  setOnBehalf(who: OnBehalf | null) {
+    if (who) { safeSet(ON_BEHALF_KEY, who); return }
+    if (typeof window === 'undefined') return
+    try { window.sessionStorage.removeItem(ON_BEHALF_KEY) } catch { /* as safeSet */ }
+  },
+
+  onBehalf(): OnBehalf | null {
+    return safeGet<OnBehalf>(ON_BEHALF_KEY)
+  },
+
+  // The travellerId every booking route takes; undefined = booking for oneself.
+  travellerId(): string | undefined {
+    return safeGet<OnBehalf>(ON_BEHALF_KEY)?.travellerId
+  },
+
   saveSearchResults(results: FlatFlightResult[], meta: SearchMeta, availabilityKey: string | null) {
     safeSet(RESULTS_KEY, { results, availabilityKey })
     safeSet(SEARCH_META_KEY, meta)

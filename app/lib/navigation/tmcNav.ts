@@ -30,6 +30,9 @@ export interface NavGroup {
 export const PRIMARY_NAV: NavItem[] = [
   { label: 'Dashboard',      href: '/tmc/dashboard',      icon: 'dashboard' },
   { label: 'Clients',        href: '/tmc/clients',      icon: 'groups' },
+  // Booking for travellers is what a desk does all day, so it sits on the rail
+  // rather than under Configurations. TMC admins always see it.
+  { label: 'Book travel',    href: '/tmc/book',         icon: 'flight', permission: 'book_on_behalf' },
   { label: 'Reports',        href: '/tmc/reports',        icon: 'assessment', permission: 'view_reports' },
   { label: 'Configurations', href: '/tmc/configurations', icon: 'settings' },
 ]

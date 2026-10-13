@@ -7,6 +7,7 @@ import Pagination from '@/app/components/Pagination'
 import { SkeletonTable } from '@/app/components/Skeleton'
 import { usePagedList } from '@/app/hooks/usePagedList'
 import { useLookup, clientOption } from '@/app/hooks/useLookup'
+import Link from 'next/link'
 import { CountrySelect, RegionSelect, CitySelect, DateField } from '@/app/components/places/PlacePickers'
 import { genderForTitle, todayInput } from '@/app/lib/places/profileFormat'
 
@@ -592,6 +593,10 @@ export default function TravellerProfilesPage() {
                     </div>
                     <div style={s.detailActions}>
                       {dirty && <span style={s.unsaved}>Unsaved</span>}
+                      {/* The desk books for them from here (/tmc/book), with this person chosen. */}
+                      <Link href={`/tmc/book?client=${clientId}&traveller=${draft.id}`} style={{ ...s.ghostBtn, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>
+                        Book for {draft.full_name.split(' ')[0]}
+                      </Link>
                       <button
                         onClick={save}
                         disabled={!dirty || saving}

@@ -187,7 +187,11 @@ export default function CorporateSettingsPage() {
     <div style={s.root}>
       <div style={s.header}>
         <Link href="/tmc/clients" style={s.backLink}>← All clients</Link>
-        <h1 style={s.heading}>{client.name}</h1>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <h1 style={s.heading}>{client.name}</h1>
+          {/* The desk books for this client's people (/tmc/book), narrowed to them. */}
+          <Link href={`/tmc/book?client=${client.id}`} style={s.backLink}>Book for someone here →</Link>
+        </div>
         <p style={s.sub}>
           Corporate settings — what this client can do, which masters apply to them, and who to
           contact.
