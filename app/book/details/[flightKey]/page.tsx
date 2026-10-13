@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { useFlowExits } from '@/app/hooks/useFlowExits'
 import { flowStorage, PricedFare, type OnBehalf } from '@/app/lib/book/flowStorage'
 import { POLICY_REASONS } from '@/app/lib/book/policyReasons'
 import {
@@ -355,6 +356,7 @@ function travelerLabel(passenger: PassengerForm, index: number): string {
 
 export default function BookingDetailsPage() {
   const router = useRouter()
+  const exits = useFlowExits()
   const countries = useCountries()
   const params = useParams<{ flightKey: string }>()
   const flightKey = decodeURIComponent(params.flightKey)
@@ -949,7 +951,7 @@ export default function BookingDetailsPage() {
               <Link href="/book/flights" style={s.errorLink}>← Search again</Link>
             )}
             {orphanedReference && (
-              <Link href="/dashboard" style={s.errorLink}>← Back to dashboard</Link>
+              <Link href={exits.home.href} style={s.errorLink}>← Back to {exits.home.label.toLowerCase()}</Link>
             )}
           </div>
         </div>

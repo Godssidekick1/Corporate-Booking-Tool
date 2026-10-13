@@ -30,7 +30,13 @@ function matchesBase(pathname: string, base: string): boolean {
 
 // Keep this an explicit allow-list. A new page is NOT protected until it is
 // added here (its data still is, by its API routes).
-const PROTECTED = ['/dashboard', '/settings', '/tmc', '/book', '/bookings', '/approvals', '/reports', '/profile', '/platform']
+const PROTECTED = ['/dashboard', '/settings', '/tmc', '/book', '/bookings', '/approvals', '/reports', '/profile', '/platform', '/trips']
+
+// The corporate side's own pages. TMC staff have their counterparts under /tmc
+// and belong to no client, so these render empty for them (an employee
+// dashboard reading "your travel desk books for you" to the travel desk). /book
+// is NOT here: the desk books through it, for travellers (bookingActor).
+const CORPORATE_ONLY = ['/dashboard', '/settings', '/bookings', '/approvals', '/reports', '/profile', '/trips']
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
@@ -87,6 +93,7 @@ export async function proxy(request: NextRequest) {
   }
 
   if (matchesBase(pathname, '/tmc') && !tmcSide) return to('/dashboard')
+  if (tmcSide && CORPORATE_ONLY.some(base => matchesBase(pathname, base))) return to('/tmc/dashboard')
 
   return NextResponse.next()
 }

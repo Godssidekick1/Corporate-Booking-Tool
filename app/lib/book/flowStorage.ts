@@ -120,6 +120,11 @@ function safeSet(key: string, value: unknown): void {
 // like the slowness it was meant to remove.
 export const JUST_BOOKED_KEY = 'cbt:justBooked'
 
+export interface FlowExits {
+  home: { href: string; label: string }
+  trips: { href: string; label: string }
+}
+
 export const flowStorage = {
   // Not cleared by clearFlow(): searching again is still booking for the same
   // person. Set or cleared where the traveller is chosen.
@@ -131,6 +136,16 @@ export const flowStorage = {
 
   onBehalf(): OnBehalf | null {
     return safeGet<OnBehalf>(ON_BEHALF_KEY)
+  },
+
+  // Where the flow's exits go. The travel desk has no dashboard or trips of
+  // its own on the corporate side: its home is the desk (/tmc/book). Read at
+  // the moment of use (an event handler), or through useFlowExits for render.
+  exits(): FlowExits {
+    const desk = safeGet<OnBehalf>(ON_BEHALF_KEY)?.home === '/tmc/book'
+    return desk
+      ? { home: { href: '/tmc/book', label: 'Travel desk' }, trips: { href: '/tmc/book', label: 'Desk bookings' } }
+      : { home: { href: '/dashboard', label: 'Dashboard' }, trips: { href: '/bookings', label: 'My trips' } }
   },
 
   // The travellerId every booking route takes; undefined = booking for oneself.

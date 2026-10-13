@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { useFlowExits } from '@/app/hooks/useFlowExits'
+import { flowStorage } from '@/app/lib/book/flowStorage'
 import { round2 } from '@/app/lib/commercials/fareComponents'
 import { mealLabel } from '@/app/lib/book/mealCodes'
 import { JUST_BOOKED_KEY } from '@/app/lib/book/flowStorage'
@@ -25,11 +27,12 @@ const TAX_LABELS: Record<string, string> = {
 // stuck on broken approval routing is over — there is nothing to retry on this
 // page — so the only useful thing left is somewhere to go.
 function TerminalExits() {
+  const exits = useFlowExits()
   return (
     <div style={s.terminalExits}>
       <Link href="/book/flights" style={s.terminalExitPrimary}>Start a new search →</Link>
-      <Link href="/bookings" style={s.terminalExit}>View my trips</Link>
-      <Link href="/dashboard" style={s.terminalExit}>Dashboard</Link>
+      <Link href={exits.trips.href} style={s.terminalExit}>{exits.trips.label}</Link>
+      <Link href={exits.home.href} style={s.terminalExit}>{exits.home.label}</Link>
     </div>
   )
 }
@@ -164,6 +167,7 @@ function formatTime(iso: string | undefined) {
 
 export default function ConfirmBookingPage() {
   const router = useRouter()
+  const exits = useFlowExits()
   const params = useParams<{ bookingId: string }>()
   const bookingId = params.bookingId
 
@@ -197,7 +201,7 @@ export default function ConfirmBookingPage() {
   // intact so forward still works.
   useEffect(() => {
     function handlePopState() {
-      router.push('/dashboard')
+      router.push(flowStorage.exits().home.href)
     }
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
@@ -634,10 +638,10 @@ export default function ConfirmBookingPage() {
             </div>
             <button
               type="button"
-              onClick={() => router.replace('/dashboard')}
+              onClick={() => router.replace(exits.home.href)}
               style={s.dashboardBtn}
             >
-              Go back to dashboard
+              Go back to {exits.home.label.toLowerCase()}
             </button>
           </>
         )}

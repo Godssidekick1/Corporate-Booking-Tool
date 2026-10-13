@@ -3,6 +3,8 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { useFlowExits } from '@/app/hooks/useFlowExits'
+import { flowStorage } from '@/app/lib/book/flowStorage'
 import { formatTime, formatDayLabel, journeyLabel, baggageLabel } from '@/app/lib/book/types'
 import { mealLabel } from '@/app/lib/book/mealCodes'
 import { JUST_BOOKED_KEY } from '@/app/lib/book/flowStorage'
@@ -164,6 +166,7 @@ function layoverBetween(arrival: string | undefined, departure: string | undefin
 export default function TicketPage() {
   const params = useParams<{ bookingId: string }>()
   const router = useRouter()
+  const exits = useFlowExits()
   const bookingId = params.bookingId
 
   const [booking, setBooking] = useState<Booking | null>(null)
@@ -207,7 +210,7 @@ export default function TicketPage() {
   // sessionStorage-driven pages.
   useEffect(() => {
     function handlePopState() {
-      router.replace('/dashboard')
+      router.replace(flowStorage.exits().home.href)
     }
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
@@ -284,7 +287,7 @@ export default function TicketPage() {
         // Nothing left to do on this booking — send to the dashboard rather
         // than showing a ticket page for something that never got ticketed
         // and never will.
-        router.replace('/dashboard')
+        router.replace(flowStorage.exits().home.href)
       }
     } catch {
       setError('Something went wrong loading this booking.')
@@ -682,8 +685,8 @@ export default function TicketPage() {
             </div>
 
             <div className="no-print" style={s.doneLinks}>
-              <Link href="/bookings" style={s.doneLink}>View my tickets →</Link>
-              <Link href="/dashboard" style={s.doneLinkSecondary}>← Back to dashboard</Link>
+              <Link href={exits.trips.href} style={s.doneLink}>{exits.trips.label === 'My trips' ? 'View my tickets' : exits.trips.label} →</Link>
+              <Link href={exits.home.href} style={s.doneLinkSecondary}>← Back to {exits.home.label.toLowerCase()}</Link>
             </div>
           </>
         )}
@@ -701,8 +704,8 @@ export default function TicketPage() {
                 so on a ticketing failure — the one moment a traveller most
                 needs somewhere to go — neither of them rendered. */}
             <div style={s.doneLinks}>
-              <Link href="/bookings" style={s.doneLinkSecondary}>View my trips →</Link>
-              <Link href="/dashboard" style={s.doneLinkSecondary}>← Back to dashboard</Link>
+              <Link href={exits.trips.href} style={s.doneLinkSecondary}>{exits.trips.label} →</Link>
+              <Link href={exits.home.href} style={s.doneLinkSecondary}>← Back to {exits.home.label.toLowerCase()}</Link>
             </div>
           </div>
         )}

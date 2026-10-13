@@ -271,6 +271,17 @@ d('/api/auth and the page gate', () => {
     }
   })
 
+  // TMC staff belong to no client, so the corporate pages render empty for
+  // them; the booking flow (which the desk books through) stays open.
+  it('proxy: travel-desk staff are sent to their own side, but may use the booking flow', async () => {
+    const token = await signedIn(a.tmcAdmin)
+    for (const p of ['/dashboard', '/bookings', '/approvals', '/settings/users', '/profile', '/trips/x']) {
+      expect(location(await page(p, token))).toBe('/tmc/dashboard')
+    }
+    expect(location(await page('/book/flights', token))).toBeNull()
+    expect(location(await page('/tmc/book', token))).toBeNull()
+  })
+
   it('proxy: a deactivated person is treated as signed out', async () => {
     const token = await signedIn(person)
     await exec(db, sql`update employees set status = 'deactivated' where id = ${person.id}`)
