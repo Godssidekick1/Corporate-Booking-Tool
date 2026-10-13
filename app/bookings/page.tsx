@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useCanSelfBook } from '@/app/hooks/useCanSelfBook'
 import Pagination from '@/app/components/Pagination'
+import BookingHistory from '@/app/components/BookingHistory'
 import { formatTime, formatDayLabel } from '@/app/lib/book/types'
 
 // ── /bookings — "My trips" ────────────────────────────────────────────────────
@@ -176,6 +177,13 @@ function TripSection({ group, onMarkComplete, completingId }: {
 
 export default function BookingsPage() {
   const canSelfBook = useCanSelfBook()
+  // A corporate admin also books for colleagues: those bookings are theirs
+  // (the colleague's trips), so they are listed here separately, by booker.
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [tab, setTab] = useState<'mine' | 'booked'>('mine')
+  useEffect(() => {
+    fetch('/api/me').then(r => r.json()).then(d => setIsAdmin(d.employee?.role === 'admin')).catch(() => {})
+  }, [])
   const [trips, setTrips] = useState<TripGroup[] | null>(null)
   const [ungrouped, setUngrouped] = useState<BookingSummary[]>([])
   // Paged by trip, ten at a time; the server keeps a trip's flights together.
@@ -245,6 +253,22 @@ export default function BookingsPage() {
           {canSelfBook && <Link href="/book" style={s.newTripBtn}>+ New booking</Link>}
         </div>
 
+        {isAdmin && (
+          <div style={s.tabs} role="tablist">
+            {(['mine', 'booked'] as const).map(t => (
+              <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)}
+                style={{ ...s.tab, ...(tab === t ? s.tabOn : {}) }}>
+                {t === 'mine' ? 'My trips' : 'Booked by me for others'}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {tab === 'booked' ? (
+          <BookingHistory params={{ bookedBy: 'me' }} columns={['traveller']}
+            empty="You have not booked for a colleague yet. Choose “A colleague” on the search page." />
+        ) : (<>
+
         {error && (
           <div style={s.errorCard}>
             <p style={s.errorText}>⚠ {error}</p>
@@ -309,6 +333,7 @@ export default function BookingsPage() {
             </div>
           </div>
         )}
+        </>)}
       </div>
     </div>
   )
@@ -320,6 +345,9 @@ const s: Record<string, React.CSSProperties> = {
 
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' },
   heading: { fontSize: '22px', fontWeight: 700, color: '#0A0A14', margin: 0, letterSpacing: '-0.4px' },
+  tabs: { display: 'flex', gap: '4px', borderBottom: '1px solid #E5E7EB', margin: '-8px 0 20px' },
+  tab: { border: 'none', background: 'transparent', padding: '8px 12px', fontSize: '13px', color: '#6B7280', cursor: 'pointer', borderBottom: '2px solid transparent', marginBottom: '-1px' },
+  tabOn: { color: '#000835', fontWeight: 600, borderBottomColor: '#000835' },
   newTripBtn: {
     fontSize: '13px', fontWeight: 600, color: '#fff', background: '#000835',
     padding: '9px 16px', borderRadius: '9px', textDecoration: 'none',

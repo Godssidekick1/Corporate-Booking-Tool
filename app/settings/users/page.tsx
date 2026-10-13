@@ -2,6 +2,8 @@
 
 import { useState } from 'react'
 import Pagination from '@/app/components/Pagination'
+import SlideOver from '@/app/components/SlideOver'
+import BookingHistory from '@/app/components/BookingHistory'
 import { SkeletonTable } from '@/app/components/Skeleton'
 import { usePagedList } from '@/app/hooks/usePagedList'
 
@@ -33,6 +35,9 @@ export default function SettingsUsersPage() {
   const list = usePagedList<Employee>('/api/settings/users')
   const employees = list.items
   const [mode, setMode] = useState<Mode>('list')
+  // Whose bookings are open in the drawer: an admin sees anyone's at their
+  // company, including those booked for them by others (GET /api/book/history).
+  const [historyOf, setHistoryOf] = useState<Employee | null>(null)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
@@ -161,7 +166,10 @@ export default function SettingsUsersPage() {
                         {emp.status}
                       </span>
                     </td>
-                    <td style={{ ...s.td, textAlign: 'right' as const }}>
+                    <td style={{ ...s.td, textAlign: 'right' as const, whiteSpace: 'nowrap' as const }}>
+                      <button onClick={() => setHistoryOf(emp)} style={{ ...s.reactivateBtn, color: '#374151', borderColor: '#E5E7EB', marginRight: 6 }}>
+                        Bookings
+                      </button>
                       {emp.status !== 'invited' && (
                         <button
                           onClick={() => handleStatusToggle(emp)}
@@ -183,6 +191,15 @@ export default function SettingsUsersPage() {
         page={list.page} pageSize={10} total={list.total}
         onPageChange={list.setPage} busy={list.refreshing} noun="people"
       />
+
+      <SlideOver open={historyOf !== null} onClose={() => setHistoryOf(null)}
+        title={historyOf ? `${historyOf.full_name}'s bookings` : ''}
+        subtitle="Including any booked for them by you, a colleague or the travel desk.">
+        {historyOf && (
+          <BookingHistory params={{ traveller: historyOf.id }} columns={['bookedBy']}
+            empty={`${historyOf.full_name} has no bookings yet.`} />
+        )}
+      </SlideOver>
     </div>
   )
 }

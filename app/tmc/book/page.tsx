@@ -4,9 +4,8 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import SearchableSelect from '@/app/components/SearchableSelect'
-import Pagination from '@/app/components/Pagination'
+import BookingHistory from '@/app/components/BookingHistory'
 import { useLookup, clientOption } from '@/app/hooks/useLookup'
-import { usePagedList } from '@/app/hooks/usePagedList'
 import { flowStorage } from '@/app/lib/book/flowStorage'
 import { canAccess } from '@/app/lib/permissions/canAccess'
 
@@ -34,12 +33,6 @@ interface TravellerDetail {
 }
 
 interface Itinerary { origin?: { code?: string; dateTime?: string }; destination?: { code?: string } }
-
-interface HistoryRow {
-  id: string; status: string; pnr: string | null; total_cost: number; created_at: string
-  itinerary: Itinerary | null; traveller_name: string | null; booker_name: string | null
-  client_name: string | null; policy_verdict: string | null; policy_reason_code: string | null
-}
 
 const MODE_LABEL: Record<string, string> = { cbt: 'CBT · desk books', sbt: 'SBT · self-booking', both: 'Hybrid' }
 
@@ -96,10 +89,6 @@ export default function TmcBookPage() {
   }, [travellerId])
 
   const shown = travellerId && detail?.traveller.id === travellerId ? detail : null
-
-  const history = usePagedList<HistoryRow>('/api/book/history', {
-    params: view === 'mine' ? { bookedBy: 'me' } : { scope: 'desk', clientId: clientId || null },
-  })
 
   function start() {
     if (!shown) return
@@ -233,40 +222,11 @@ export default function TmcBookPage() {
         </div>
       </div>
 
-      <div style={{ ...s.tableWrap, ...(history.refreshing ? { opacity: 0.55 } : {}) }}>
-        {history.error ? (
-          <p style={{ ...s.errorNote, margin: 14 }}>{history.error}</p>
-        ) : history.loading ? (
-          <p style={{ ...s.muted, padding: 16 }}>Loading…</p>
-        ) : history.items.length === 0 ? (
-          <p style={{ ...s.muted, padding: 16 }}>
-            {view === 'mine' ? 'You have not booked for anyone yet.' : 'Nothing booked on anyone’s behalf yet.'}
-          </p>
-        ) : (
-          <table style={s.table}>
-            <thead>
-              <tr>{['Booked', 'Traveller', 'Client', 'Trip', 'Status', 'Booked by', 'Amount'].map(h => <th key={h} style={s.th}>{h}</th>)}</tr>
-            </thead>
-            <tbody>
-              {history.items.map(b => (
-                <tr key={b.id}>
-                  <td style={s.td}>{day(b.created_at)}</td>
-                  <td style={{ ...s.td, fontWeight: 500, color: '#111827' }}>{b.traveller_name}</td>
-                  <td style={s.td}>{b.client_name}</td>
-                  <td style={s.td}>
-                    {route(b.itinerary)}
-                    {b.policy_reason_code && <span style={s.reasonTag} title="Booked outside policy, with a reason">reason given</span>}
-                  </td>
-                  <td style={s.td}><span style={s.status}>{statusLabel(b.status)}</span></td>
-                  <td style={s.td}>{b.booker_name}</td>
-                  <td style={{ ...s.td, ...s.amount }}>{money(b.total_cost)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-      <Pagination page={history.page} pageSize={10} total={history.total} onPageChange={history.setPage} busy={history.refreshing} noun="bookings" />
+      <BookingHistory
+        params={view === 'mine' ? { bookedBy: 'me' } : { scope: 'desk', clientId: clientId || null }}
+        columns={['traveller', 'client', 'bookedBy']}
+        empty={view === 'mine' ? 'You have not booked for anyone yet.' : 'Nothing booked on anyone’s behalf yet.'}
+      />
 
       <p style={{ ...s.muted, marginTop: 14 }}>
         Need to fix someone&apos;s details first? <Link href="/tmc/configurations/traveller-profiles" style={s.link}>Traveller profiles →</Link>
@@ -321,10 +281,5 @@ const s: Record<string, React.CSSProperties> = {
   toggle: { display: 'flex', background: '#F3F4F6', borderRadius: 8, padding: 3 },
   toggleBtn: { border: 'none', background: 'transparent', fontSize: 12, color: '#6B7280', padding: '5px 12px', borderRadius: 6, cursor: 'pointer' },
   toggleOn: { background: '#fff', color: '#111827', fontWeight: 600, boxShadow: '0 1px 2px rgba(0,0,0,0.06)' },
-  tableWrap: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: 10, overflowX: 'auto', transition: 'opacity 120ms ease' },
-  table: { width: '100%', borderCollapse: 'collapse', minWidth: 760 },
-  th: { textAlign: 'left', fontSize: 11, fontWeight: 600, color: '#6B7280', padding: '10px 14px', borderBottom: '1px solid #E5E7EB', background: '#FAFAFA' },
-  td: { fontSize: 12.5, color: '#374151', padding: '10px 14px', borderBottom: '1px solid #F3F4F6' },
-  reasonTag: { marginLeft: 8, fontSize: 10.5, color: '#92400E', background: '#FEF3C7', borderRadius: 4, padding: '1px 6px' },
   link: { color: '#3730A3', textDecoration: 'underline', textUnderlineOffset: 2 },
 }
