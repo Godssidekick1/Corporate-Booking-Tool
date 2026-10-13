@@ -162,15 +162,18 @@ async function seed(size) {
       from generate_series(1, ${TC_COUNT}) g`)
     await c.query(`create temp table d_tcs as
       select id, row_number() over (order by email) rn from employees where tmc_id = ${T} and role = 'tc'`)
-    // Mixed powers: everyone the everyday desk work; 1-4 seniors also the
-    // masters; 19-20 read-only reporting.
+    // Mixed powers: everyone the everyday desk work, and booking for
+    // travellers; 1-4 seniors also the masters; 15-16 desk work without
+    // booking; 19-20 read-only reporting.
     await c.query(`
       insert into employee_permissions (employee_id, permission_key)
       select t.id, p from d_tcs t, unnest(
         case when t.rn >= 19 then array['view_reports']
              when t.rn <= 4 then array['manage_clients', 'manage_users', 'manage_approvals', 'view_reports',
-                                       'manage_deal_codes', 'manage_commercials', 'manage_fops', 'manage_policy']
-             else array['manage_clients', 'manage_users', 'manage_approvals', 'view_reports'] end) p`)
+                                       'manage_deal_codes', 'manage_commercials', 'manage_fops', 'manage_policy',
+                                       'book_on_behalf']
+             when t.rn in (15, 16) then array['manage_clients', 'manage_users', 'manage_approvals', 'view_reports']
+             else array['manage_clients', 'manage_users', 'manage_approvals', 'view_reports', 'book_on_behalf'] end) p`)
   })
 
   await stage('client groups, clients, buckets', async () => {

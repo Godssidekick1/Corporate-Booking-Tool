@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { flowStorage, PricedFare } from '@/app/lib/book/flowStorage'
+import { flowStorage, PricedFare, type OnBehalf } from '@/app/lib/book/flowStorage'
+import { POLICY_REASONS } from '@/app/lib/book/policyReasons'
 import {
   FlatFlightResult, formatTime, formatDayLabel, SelectedSeat, TravelerProfile,
   LegSeatMap, SeatCell, journeysOf, journeyLabel,
@@ -422,6 +423,20 @@ export default function BookingDetailsPage() {
 
   // ── Live policy preview ──────────────────────────────────────────────────
   const [verdict, setVerdict] = useState<PolicyPreview | null>(null)
+
+  // Booking for someone else (flowStorage.onBehalf), read after mount: the
+  // server render has no sessionStorage. At a CBT-only client the desk's
+  // amber or red fare needs a reason (app/lib/book/policyReasons.ts) -- asked
+  // up front from the preview, or when add-passenger answers
+  // POLICY_REASON_REQUIRED (the preview and the final check can differ).
+  const [who, setWho] = useState<OnBehalf | null>(null)
+  const [reasonAsked, setReasonAsked] = useState(false)
+  const [reasonCode, setReasonCode] = useState('')
+  const [reasonNote, setReasonNote] = useState('')
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { setWho(flowStorage.onBehalf()) }, [])
+  const needsReason = reasonAsked ||
+    (who?.policy === 'guidance' && (verdict?.verdict === 'amber' || verdict?.verdict === 'red'))
   const [verdictLoading, setVerdictLoading] = useState(false)
 
   useEffect(() => {
@@ -533,6 +548,8 @@ export default function BookingDetailsPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          // Booking for someone else: whose (bookingActor); absent = oneself.
+          travellerId: flowStorage.travellerId(),
           flight,
           totalFare: priced.totalFare,
           isRefundable: priced.isRefundable,
@@ -552,11 +569,14 @@ export default function BookingDetailsPage() {
 
   async function loadTravelerProfile(isInternational: boolean) {
     try {
-      const res = await fetch('/api/employees/me')
+      // Booking for someone else: THEIR profile (GET /api/book/travellers/[id]),
+      // and the fields stay editable -- the booker may be correcting details.
+      const who = flowStorage.onBehalf()
+      const res = await fetch(who ? `/api/book/travellers/${who.travellerId}` : '/api/employees/me')
       if (!res.ok) return
       const data = await res.json()
-      const profile: TravelerProfile | null = data.travelerProfile
-      const fullName: string | undefined = data.fullName
+      const profile: TravelerProfile | null = who ? data.profile : data.travelerProfile
+      const fullName: string | undefined = who ? data.traveller?.full_name : data.fullName
 
       // Name comes from employees.full_name (the actual source of truth for
       // "who is this person"), not traveler_profile — split into
@@ -605,7 +625,7 @@ export default function BookingDetailsPage() {
       const hasPassportIfNeeded = !isInternational || Boolean(
         profile.passportNumber && profile.issuingCountry && profile.nationality && profile.passportExpiryDate
       )
-      if (hasCoreDetails && hasPassportIfNeeded) {
+      if (hasCoreDetails && hasPassportIfNeeded && !who) {
         setIsSelfBooking(true)
       }
     } catch {
@@ -624,6 +644,7 @@ export default function BookingDetailsPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          travellerId: flowStorage.travellerId(),
           key: priced.key,
           referenceNo: priced.referenceNo,
           provider: priced.provider,
@@ -767,6 +788,9 @@ export default function BookingDetailsPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          travellerId: flowStorage.travellerId(),
+          policyReasonCode: needsReason ? reasonCode || undefined : undefined,
+          policyReasonNote: needsReason ? reasonNote.trim() || undefined : undefined,
           key: priced.key,
           pricingKey: priced.pricingKey,
           provider: priced.provider,
@@ -827,6 +851,12 @@ export default function BookingDetailsPage() {
         // would send it twice. It gets a full-page state with the reference
         // number, because "please try again" under a red banner is exactly the
         // wrong instruction here.
+        if (data.code === 'POLICY_REASON_REQUIRED') {
+          // Nothing reached the airline: give the reason and continue.
+          setReasonAsked(true)
+          setError(data.error)
+          return
+        }
         if (data.code === 'ORPHANED_PNR') {
           setLoadError(data.error)
           setOrphanedReference(data.referenceNo ?? null)
@@ -993,9 +1023,15 @@ export default function BookingDetailsPage() {
               </ul>
             )}
             <p style={s.verdictFootnote}>
-              {verdict.verdict === 'green'
-                ? "You'll still need approval before this booking is confirmed — your manager will be notified."
-                : 'This will need approval before it can be confirmed with the airline.'}
+              {who?.policy === 'guidance'
+                ? (verdict.verdict === 'green'
+                  ? 'Within policy. No approval is needed at this client.'
+                  : 'Guidance only: no approval is needed at this client, but going ahead outside policy needs a reason.')
+                : who
+                  ? `${who.name.split(' ')[0]}'s own approval chain decides whether this needs approval before it is confirmed.`
+                  : verdict.verdict === 'green'
+                    ? "You'll still need approval before this booking is confirmed — your manager will be notified."
+                    : 'This will need approval before it can be confirmed with the airline.'}
             </p>
           </div>
         )}
@@ -1433,6 +1469,23 @@ export default function BookingDetailsPage() {
             </div>
           </Step>
 
+          {needsReason && (
+            <div style={s.reasonBox}>
+              <p style={s.reasonTitle}>Booking outside {who ? `${who.name.split(' ')[0]}'s` : 'the'} policy — why?</p>
+              <p style={s.verdictFootnote}>Recorded on the booking and in the audit trail.</p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.4fr)', gap: 10, marginTop: 10 }}>
+                <select value={reasonCode} onChange={e => setReasonCode(e.target.value)} style={s.input} aria-label="Reason">
+                  <option value="">Choose a reason…</option>
+                  {POLICY_REASONS.map(r => <option key={r.code} value={r.code}>{r.label}</option>)}
+                </select>
+                <input
+                  value={reasonNote} onChange={e => setReasonNote(e.target.value)} style={s.input}
+                  placeholder={reasonCode === 'other' ? 'Explain (required)' : 'Note (optional)'} aria-label="Reason note"
+                />
+              </div>
+            </div>
+          )}
+
           {error && (
             <div style={s.errorBanner}>
               <span style={s.bannerIcon}>⚠</span> {error}
@@ -1539,6 +1592,8 @@ const s: Record<string, React.CSSProperties> = {
   verdictList: { margin: '8px 0 0', paddingLeft: '18px', display: 'flex', flexDirection: 'column' as const, gap: '4px' },
   verdictListItem: { fontSize: '12px', lineHeight: 1.5 },
   verdictFootnote: { fontSize: '11px', color: '#6B7280', margin: '10px 0 0', lineHeight: 1.5 },
+  reasonBox: { background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '10px', padding: '12px 14px', marginBottom: '16px' },
+  reasonTitle: { fontSize: '13px', fontWeight: 600, color: '#92400E', margin: 0 },
 
   card: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '20px', marginBottom: '16px' },
   cardTitle: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: '8px' },

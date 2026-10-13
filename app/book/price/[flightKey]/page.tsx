@@ -178,6 +178,7 @@ export default function SelectFarePage() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+              travellerId: flowStorage.travellerId(),
               flight: flightResult,
               totalFare: fare.totalFare ?? flightResult.totalFare ?? 0,
               isRefundable: fare.refundable ?? flightResult.refundable ?? false,
@@ -214,6 +215,8 @@ export default function SelectFarePage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          // Booking for someone else: whose (bookingActor); absent = oneself.
+          travellerId: flowStorage.travellerId(),
           key: searchData.availabilityKey,
           pricingKey,
           provider: flightResult.provider,

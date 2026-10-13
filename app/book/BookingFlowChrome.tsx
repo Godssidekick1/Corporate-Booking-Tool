@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { flowStorage } from '@/app/lib/book/flowStorage'
+import { flowStorage, type OnBehalf } from '@/app/lib/book/flowStorage'
 
 // ── Booking flow chrome ──────────────────────────────────────────────────────
 // A step indicator and two permanent exits, wrapped around every page of the
@@ -38,6 +38,9 @@ const STEPS = [
 export default function BookingFlowChrome({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() ?? ''
   const [searchHref, setSearchHref] = useState('/book/flights')
+  // Booking for someone else: whom, on every step (flowStorage.onBehalf). The
+  // one thing that must never be in doubt while booking for another person.
+  const [onBehalf, setOnBehalf] = useState<OnBehalf | null>(null)
 
   const activeIndex = STEPS.findIndex(step => step.match(pathname))
 
@@ -55,6 +58,7 @@ export default function BookingFlowChrome({ children }: { children: React.ReactN
     // usePagedList's page clamp.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (tripId) setSearchHref(`/book/flights?tripId=${encodeURIComponent(tripId)}`)
+    setOnBehalf(flowStorage.onBehalf())
   }, [pathname])
 
   // The trips list at /book is not a step in this flow — it is where trips are
@@ -64,6 +68,8 @@ export default function BookingFlowChrome({ children }: { children: React.ReactN
 
   return (
     <div style={s.shell}>
+      {/* Header and the booking-for bar stick together, whatever height the header wraps to. */}
+      <div style={s.sticky}>
       <header style={s.bar}>
         <nav style={s.steps} aria-label="Booking progress">
           {STEPS.map((step, i) => (
@@ -104,9 +110,28 @@ export default function BookingFlowChrome({ children }: { children: React.ReactN
           <Link href={searchHref} onClick={() => flowStorage.clearFlow()} style={s.exitLink}>
             Start a new search
           </Link>
-          <Link href="/dashboard" style={s.exitLinkMuted}>Dashboard</Link>
+          <Link href={onBehalf?.home ?? '/dashboard'} style={s.exitLinkMuted}>
+            {onBehalf?.home === '/tmc/book' ? 'Travel desk' : onBehalf ? 'My trips' : 'Dashboard'}
+          </Link>
         </div>
       </header>
+
+      {onBehalf && (
+        <div style={s.forBar} role="status">
+          <span>
+            Booking for <strong>{onBehalf.name}</strong>
+            {' · '}{onBehalf.clientName}{onBehalf.bandCode ? ` · ${onBehalf.bandCode}` : ''}
+          </span>
+          <span style={s.forNote}>
+            {onBehalf.policy === 'guidance'
+              ? 'Their policy is guidance here: no approval, but an out-of-policy fare needs a reason.'
+              : 'Their policy and approval chain apply, as if they booked themselves.'}
+          </span>
+          {/* Changing the traveller means starting over: every price so far was for them. */}
+          <Link href={onBehalf.home} onClick={() => flowStorage.clearFlow()} style={s.forChange}>Change</Link>
+        </div>
+      )}
+      </div>
 
       {children}
     </div>
@@ -119,8 +144,8 @@ const s: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
     flexWrap: 'wrap', gap: '12px 20px',
     padding: '12px 24px', background: '#fff', borderBottom: '1px solid #E5E7EB',
-    position: 'sticky', top: 0, zIndex: 20,
   },
+  sticky: { position: 'sticky', top: 0, zIndex: 20 },
   steps: { display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' },
   step: { display: 'flex', alignItems: 'center', gap: '6px' },
   stepDot: {
@@ -135,4 +160,11 @@ const s: Record<string, React.CSSProperties> = {
   exits: { display: 'flex', alignItems: 'center', gap: '16px' },
   exitLink: { fontSize: '12.5px', fontWeight: 600, color: '#000835', textDecoration: 'none' },
   exitLinkMuted: { fontSize: '12.5px', color: '#6B7280', textDecoration: 'none' },
+  forBar: {
+    display: 'flex', alignItems: 'center', gap: '6px 14px', flexWrap: 'wrap',
+    padding: '9px 24px', background: '#EEF2FF', borderBottom: '1px solid #C7D2FE',
+    fontSize: '13px', color: '#1E1B4B',
+  },
+  forNote: { fontSize: '12px', color: '#4338CA' },
+  forChange: { marginLeft: 'auto', fontSize: '12.5px', fontWeight: 600, color: '#3730A3' },
 }
