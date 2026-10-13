@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { canAccess } from '@/app/lib/permissions/canAccess'
 import { PRIMARY_NAV, isActive } from '@/app/lib/navigation/tmcNav'
+import { flowStorage } from '@/app/lib/book/flowStorage'
 
 // ── TmcShell ─────────────────────────────────────────────────────────────────
 // The persistent frame for every /tmc route. Rendered once from
@@ -190,6 +191,7 @@ export default function TmcShell({ children }: { children: React.ReactNode }) {
             type="button"
             onClick={async () => {
               await fetch('/api/auth/signout', { method: 'POST' })
+              flowStorage.clearAll()
               window.location.href = '/login'
             }}
             title={collapsed ? 'Sign out' : undefined}

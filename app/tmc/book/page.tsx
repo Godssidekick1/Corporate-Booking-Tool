@@ -52,10 +52,14 @@ export default function TmcBookPage() {
   const [view, setView] = useState<'mine' | 'desk'>('mine')
   // The same check as the rail (tmcNav): null until /api/me answers.
   const [allowed, setAllowed] = useState<boolean | null>(null)
+  const [meId, setMeId] = useState('')
 
   useEffect(() => {
     fetch('/api/me').then(r => r.json())
-      .then(d => setAllowed(Boolean(d.ok) && canAccess(d.employee?.role, d.permissions ?? [], 'book_on_behalf')))
+      .then(d => {
+        setMeId(d.employee?.id ?? '')
+        setAllowed(Boolean(d.ok) && canAccess(d.employee?.role, d.permissions ?? [], 'book_on_behalf'))
+      })
       .catch(() => setAllowed(false))
   }, [])
 
@@ -91,11 +95,11 @@ export default function TmcBookPage() {
   const shown = travellerId && detail?.traveller.id === travellerId ? detail : null
 
   function start() {
-    if (!shown) return
+    if (!shown || !meId) return
     const t = shown.traveller
     flowStorage.clearFlow()
     flowStorage.setOnBehalf({
-      travellerId: t.id, name: t.full_name, clientName: t.client_name, bandCode: t.band_code,
+      bookerId: meId, travellerId: t.id, name: t.full_name, clientName: t.client_name, bandCode: t.band_code,
       policy: shown.policy, home: '/tmc/book',
     })
     router.push('/book/flights')

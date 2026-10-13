@@ -22,6 +22,9 @@ const ON_BEHALF_KEY = 'cbt:book:onBehalf'
 // Booking for someone else (app/lib/book/bookingActor.ts): who, shown on every
 // step of the flow and sent to every booking route as travellerId.
 export interface OnBehalf {
+  // Who chose this traveller. A different person signed in to the same tab
+  // must never inherit it (the search page checks; sign-in and sign-out clear).
+  bookerId: string
   travellerId: string
   name: string
   clientName: string
@@ -214,6 +217,20 @@ export const flowStorage = {
   },
 
   // ── clearFlow ─────────────────────────────────────────────────────────────
+  // Everything this flow keeps, for anyone: called on sign-in and sign-out,
+  // since a tab outlives an account. Without it the next person to sign in
+  // inherited the last one's search, priced fares and -- worst -- whom they
+  // were booking for.
+  clearAll() {
+    if (typeof window === 'undefined') return
+    try {
+      const store = window.sessionStorage
+      for (const key of Object.keys(store)) if (key.startsWith('cbt:book:')) store.removeItem(key)
+    } catch {
+      // no-op, matches safeSet's failure handling elsewhere in this file
+    }
+  },
+
   // Forget the whole in-progress booking. Called when a traveller leaves the
   // flow deliberately — starting a new search, or taking an exit out of an
   // error — rather than when they complete it.

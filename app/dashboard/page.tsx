@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { flowStorage } from '@/app/lib/book/flowStorage'
 
 interface Employee {
   id: string
@@ -244,6 +245,7 @@ export default function DashboardPage() {
   async function handleSignOut() {
     // Ends the session on the server; the route clears the cookie.
     await fetch('/api/auth/signout', { method: 'POST', redirect: 'manual' })
+    flowStorage.clearAll()
     router.replace('/login')
   }
 

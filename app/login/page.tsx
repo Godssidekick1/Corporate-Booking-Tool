@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import PasswordInput from '@/app/components/PasswordInput'
+import { flowStorage } from '@/app/lib/book/flowStorage'
 
 export default function SignInPage() {
   const router = useRouter()
@@ -96,6 +97,8 @@ export default function SignInPage() {
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error || 'Sign in failed'); return }
+      // A new account in an old tab starts with no booking in progress.
+      flowStorage.clearAll()
       // An admin-set starting password is replaced before anything else.
       if (data.mustChangePassword) {
         router.push('/auth/set-password')

@@ -133,6 +133,7 @@ export default function BookFlightsSearchPage() {
   // caller's role are not available to the server render.
   const [who, setWho] = useState<OnBehalf | null>(null)
   const [isAdmin, setIsAdmin] = useState(false)
+  const [meId, setMeId] = useState('')
   const [mode, setMode] = useState<'me' | 'colleague' | 'guest'>('me')
   const [colleagueId, setColleagueId] = useState('')
   const colleagueLookup = useLookup('/api/book/travellers', colleagueId, {
@@ -144,11 +145,21 @@ export default function BookFlightsSearchPage() {
     }),
   })
   useEffect(() => {
-    const saved = flowStorage.onBehalf()
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setWho(saved)
-    if (saved) { setMode('colleague'); setColleagueId(saved.travellerId) }
-    fetch('/api/me').then(r => r.json()).then(d => setIsAdmin(d.employee?.role === 'admin')).catch(() => {})
+    fetch('/api/me').then(r => r.json()).then(d => {
+      const me: string = d.employee?.id ?? ''
+      setMeId(me)
+      setIsAdmin(d.employee?.role === 'admin')
+      // Only the person who chose a traveller books for them: a choice left in
+      // this tab by someone else (another account, signed in here before) is
+      // dropped, and this person starts by booking for themself.
+      const saved = flowStorage.onBehalf()
+      if (saved && saved.bookerId !== me) {
+        flowStorage.clearAll()
+        return
+      }
+      setWho(saved)
+      if (saved) { setMode('colleague'); setColleagueId(saved.travellerId) }
+    }).catch(() => {})
   }, [])
 
   function chooseMode(next: 'me' | 'colleague' | 'guest') {
@@ -163,7 +174,7 @@ export default function BookFlightsSearchPage() {
     const d = await fetch(`/api/book/travellers/${id}`).then(r => r.json()).catch(() => null)
     if (!d?.ok) { setError(d?.error || 'Could not load that colleague.'); return }
     const next: OnBehalf = {
-      travellerId: d.traveller.id, name: d.traveller.full_name, clientName: d.traveller.client_name,
+      bookerId: meId, travellerId: d.traveller.id, name: d.traveller.full_name, clientName: d.traveller.client_name,
       bandCode: d.traveller.band_code, policy: d.policy, home: '/bookings',
     }
     // A different traveller: anything priced so far was for someone else.

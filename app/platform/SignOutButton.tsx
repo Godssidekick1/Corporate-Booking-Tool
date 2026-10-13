@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { flowStorage } from '@/app/lib/book/flowStorage'
 
 // ── SignOutButton ────────────────────────────────────────────────────────────
 // The platform header is a server component, and signing out needs a click, so
@@ -25,6 +26,7 @@ export default function SignOutButton() {
         setBusy(true)
         try {
           await fetch('/api/auth/signout', { method: 'POST', redirect: 'manual' })
+          flowStorage.clearAll()
         } finally {
           // A hard navigation, not router.push: every cached server component
           // above this was rendered for a session that no longer exists.
