@@ -66,6 +66,8 @@ export const GET = route(async (req: NextRequest) => {
     createdAt: b.created_at,
     travelerName: nameById.get(b.employee_id) ?? null,
     isOwn: b.employee_id === employee.id,
+    // Booked for them by the travel desk or a colleague; null when self-made.
+    bookedByName: b.booked_by_name,
   }))
 
   return Response.json({ ok: true, bookings: result })

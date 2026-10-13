@@ -34,6 +34,8 @@ interface ApprovalItem {
     } | null
     policyVerdict: string | null
     status: string
+    // Booked on the traveller's behalf (travel desk or a colleague).
+    bookedByName?: string | null
   } | null
   traveler: {
     fullName: string
@@ -248,6 +250,7 @@ export default function ApprovalsPage() {
                     <div style={s.travelerName}>{item.traveler?.fullName ?? 'Unknown traveler'}</div>
                     <div style={s.travelerSub}>
                       {item.traveler?.department ?? '—'} · Tier {item.tier}
+                      {item.booking?.bookedByName ? ` · Requested by ${item.booking.bookedByName}` : ''}
                       {' · '}{tab === 'pending' ? timeAgo(item.createdAt) : `decided ${item.actionedAt ? timeAgo(item.actionedAt) : ''}`}
                     </div>
                   </div>

@@ -80,6 +80,8 @@ interface RecentBooking {
   createdAt: string
   travelerName: string | null
   isOwn: boolean
+  // Booked for them by the travel desk or a colleague; null when self-made.
+  bookedByName?: string | null
 }
 
 const RECENT_STATUS_META: Record<string, { label: string; color: string; bg: string }> = {
@@ -451,6 +453,7 @@ export default function DashboardPage() {
                         {!b.isOwn && b.travelerName ? `${b.travelerName} · ` : ''}
                         {new Date(b.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
                         {b.pnr ? ` · PNR ${b.pnr}` : ''}
+                        {b.bookedByName ? ` · Booked by ${b.bookedByName}` : ''}
                       </div>
                     </div>
                     <div style={s.recentBookingRight}>

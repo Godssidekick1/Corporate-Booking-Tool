@@ -53,16 +53,24 @@ search, coverage, CSV and the public ticket link; verified database TLS when
 - Small copy issue for the same pass: the empty "Recent bookings" text says
   "your manager will be notified" even to someone with no manager.
 
-## Product mandates (design before building)
+## Booking on someone's behalf (built 2026-10-13; what is left)
 
-- **TMC-side booking.** Travel counsellors and TMC admins book for travellers,
-  chiefly at CBT-only clients (whose people cannot self-book). Proposed: show
-  the traveller's policy verdict as guidance with a reason code for amber/red,
-  approvals per client (off by default for CBT), and record both the
-  traveller and who booked.
-- **Corporate admins book for colleagues** (e.g. the MD), with their booking
-  history. The traveller's policy and approval chain apply, not the booker's.
-  Later: named "travel arrangers" (an EA) who are not admins.
+Built: the travel desk (TMC admins; counsellors with "Book for travellers")
+and corporate admins book for others (app/lib/book/bookingActor.ts,
+/tmc/book, "Who's travelling?" on the search page). bookings.employee_id is
+the traveller, booked_by the booker. At a CBT-only client the desk books on
+policy guidance with a reason code for amber/red and no approval chain;
+everywhere else the traveller's own chain decides.
+
+- **Tell the traveller by email** that someone booked for them, once
+  production email exists. Today it shows in their trips and dashboard only.
+- **Named travel arrangers** (an EA who is not an admin) -- a per-person
+  "may book for" list instead of the admin role.
+- **A guest booking is judged by the booker's policy.** "A guest" (not an
+  employee) is recorded against whoever books it, as before. Decide whether
+  guests need a policy of their own.
+- **The desk sees the sell price only.** A counsellor could be shown the
+  airline fare and the markup while booking; not built.
 - **Finance approvals for red verdicts** -- possible future approval step.
 
 ## Before real users

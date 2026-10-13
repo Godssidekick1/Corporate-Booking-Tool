@@ -58,6 +58,8 @@ interface Booking {
   } | null
   seat_fees?: number
   policy_verdict: 'green' | 'amber' | 'red' | null
+  // Booked on the traveller's behalf (travel desk or a colleague); null when self-made.
+  booked_by_name?: string | null
   policy_verdict_detail: {
     breaches?: { limit_key: string; kind: string; policyValue: unknown; actualValue: unknown }[]
     costTier?: string
@@ -347,6 +349,9 @@ export default function ConfirmBookingPage() {
         <div style={s.header}>
           <h1 style={s.heading}>Review & confirm</h1>
           <p style={s.sub}>This is the final step before booking with the airline — check the details below carefully.</p>
+          {booking.booked_by_name && (
+            <p style={{ ...s.sub, marginTop: 4 }}>Booked by <strong>{booking.booked_by_name}</strong>. Either of you can confirm it.</p>
+          )}
         </div>
 
         {/* ── Policy verdict ───────────────────────────────────────── */}

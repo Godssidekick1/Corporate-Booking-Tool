@@ -8,6 +8,8 @@ import { GET as bookingGet } from '@/app/api/book/[bookingId]/route'
 import { GET as travellersGet } from '@/app/api/book/travellers/route'
 import { GET as travellerGet } from '@/app/api/book/travellers/[id]/route'
 import { GET as historyGet } from '@/app/api/book/history/route'
+import { GET as recentGet } from '@/app/api/bookings/recent/route'
+import { GET as approvalsGet } from '@/app/api/approvals/route'
 import { call } from '../harness/call'
 import { actors, type Actors } from '../harness/actors'
 import { resetDatabase } from '../harness/db'
@@ -258,6 +260,22 @@ d('book on behalf', () => {
       expect((await price(admin, 'D4', colleague.id)).status).toBe(403)
       expect((await price(colleague, 'D4')).status).toBe(403)
     })
+  })
+
+  it('the traveller and the approver see who booked it', async () => {
+    const adminName = (await one<{ full_name: string }>(db, sql`select full_name from employees where id = ${admin.id}`)).full_name
+    const recent = (await call(recentGet, { as: colleague, url: '/api/bookings/recent?limit=50' })).json as
+      { bookings: { id: string; bookedByName: string | null }[] }
+    expect(recent.bookings.find(b => b.id === bookingId)?.bookedByName).toBe(adminName)
+
+    const detail = (await call(bookingGet, { as: colleague, url: `/api/book/${bookingId}`, params: { bookingId } })).json as
+      { booking: { booked_by_name: string | null } }
+    expect(detail.booking.booked_by_name).toBe(adminName)
+
+    const queue = (await call(approvalsGet, { as: approver, url: '/api/approvals' })).json as
+      { history: { booking: { bookedByName: string | null } | null; bookingId: string }[]; pending: { bookingId: string; booking: { bookedByName: string | null } | null }[] }
+    const card = [...queue.pending, ...queue.history].find(c => c.bookingId === bookingId)
+    expect(card?.booking?.bookedByName).toBe(adminName)
   })
 
   it('booking for yourself is recorded as such', async () => {

@@ -117,6 +117,8 @@ export const GET = route(async (req: NextRequest) => {
         itinerary: travellerItinerary(booking.itinerary),
         policyVerdict: booking.policy_verdict,
         status: booking.status,
+        // "Requested by … for …" when someone booked it on the traveller's behalf.
+        bookedByName: booking.booked_by_name,
       } : null,
       traveler: traveler ? {
         fullName: traveler.full_name,

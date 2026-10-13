@@ -31,6 +31,8 @@ interface BookingSummary {
     PassengerDetails: { FirstName: string; LastName: string }[]
   } | null
   fare_breakdown: { currency: string } | null
+  // Booked for them by the travel desk or a colleague; null when self-made.
+  booked_by_name?: string | null
 }
 
 interface TripGroup {
@@ -128,6 +130,7 @@ function FlightCard({ booking }: { booking: BookingSummary }) {
             </span>
           )}
           {booking.pnr && <span style={s.dot}>PNR {booking.pnr}</span>}
+          {booking.booked_by_name && <span style={s.dot}>Booked by {booking.booked_by_name}</span>}
         </div>
         {booking.total_cost != null && (
           <span style={s.cardFare}>{currency} {booking.total_cost.toLocaleString('en-IN')}</span>

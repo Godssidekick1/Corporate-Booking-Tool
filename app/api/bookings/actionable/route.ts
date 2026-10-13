@@ -39,6 +39,7 @@ export const GET = route(async () => {
       // Projected: the frozen itinerary carries provider keys.
       itinerary: travellerItinerary(b.itinerary),
       updatedAt: b.updated_at,
+      bookedByName: b.booked_by_name,
     })),
   })
 })

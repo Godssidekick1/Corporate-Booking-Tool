@@ -44,12 +44,20 @@ export async function tripCounts(
 
 const SELL_TOTAL = sql`coalesce(sell_total, total_cost)`
 
+// Who made it, when that was someone other than the traveller: the travel desk
+// or a colleague (20261013000000_book_on_behalf). Null when they booked it
+// themselves. Unqualified, so it reads the outer booking row however the
+// query names it (employees has neither column).
+const BOOKED_BY_NAME = sql`(select k.full_name from employees k where k.id = booked_by and booked_by <> employee_id) as booked_by_name`
+export type BookedByName = { booked_by_name: string | null }
+
 export type TravellerBookingSummary = Pick<Row<'bookings'>,
   'id' | 'status' | 'pnr' | 'total_cost' | 'itinerary' | 'traveler_snapshot' | 'fare_breakdown' | 'trip_id' | 'created_at'>
+  & BookedByName
 
 const TRAVELLER_SUMMARY = sql`
   id, status, pnr, ${SELL_TOTAL} as total_cost, itinerary, traveler_snapshot, fare_breakdown,
-  trip_id, created_at`
+  trip_id, created_at, ${BOOKED_BY_NAME}`
 
 // The traveller's bookings in these trips (one page of their trips).
 export async function forTravellerInTrips(
@@ -77,12 +85,13 @@ export async function forTravellerOutsideTrips(
 }
 
 export type RecentBooking = Pick<Row<'bookings'>,
-  'id' | 'employee_id' | 'status' | 'pnr' | 'total_cost' | 'itinerary' | 'fare_breakdown' | 'created_at'>
+  'id' | 'employee_id' | 'status' | 'pnr' | 'total_cost' | 'itinerary' | 'fare_breakdown' | 'created_at'> & BookedByName
 
 export async function recentFor(db: Queryable, employeeIds: readonly string[], limit: number): Promise<RecentBooking[]> {
   if (employeeIds.length === 0) return []
   return many<RecentBooking>(db, sql`
-    select id, employee_id, status, pnr, ${SELL_TOTAL} as total_cost, itinerary, fare_breakdown, created_at
+    select id, employee_id, status, pnr, ${SELL_TOTAL} as total_cost, itinerary, fare_breakdown, created_at,
+           ${BOOKED_BY_NAME}
     from bookings where employee_id = any(${[...employeeIds]})
     order by created_at desc, id
     limit ${limit}`)
@@ -141,7 +150,7 @@ export async function history(
   return { rows, total: count.n }
 }
 
-export type ActionableBooking = Pick<Row<'bookings'>, 'id' | 'status' | 'total_cost' | 'itinerary' | 'updated_at'>
+export type ActionableBooking = Pick<Row<'bookings'>, 'id' | 'status' | 'total_cost' | 'itinerary' | 'updated_at'> & BookedByName
 
 export async function actionableFor(
   db: Queryable,
@@ -149,7 +158,7 @@ export async function actionableFor(
   statuses: readonly string[]
 ): Promise<ActionableBooking[]> {
   return many<ActionableBooking>(db, sql`
-    select id, status, ${SELL_TOTAL} as total_cost, itinerary, updated_at
+    select id, status, ${SELL_TOTAL} as total_cost, itinerary, updated_at, ${BOOKED_BY_NAME}
     from bookings where employee_id = ${employeeId} and status = any(${[...statuses]})
     order by updated_at desc, id`)
 }
@@ -174,13 +183,14 @@ export type BookingDetail = Pick<Row<'bookings'>,
   | 'sell_total' | 'total_cost' | 'commercials' | 'itinerary' | 'traveler_snapshot' | 'fare_breakdown'
   | 'policy_status' | 'policy_verdict' | 'policy_verdict_detail' | 'employee_id' | 'trip_id' | 'is_ndc'
   | 'created_at' | 'updated_at'
->
+> & BookedByName
 
 export async function detail(db: Queryable, bookingId: string): Promise<BookingDetail | null> {
   return maybeOne<BookingDetail>(db, sql`
     select id, status, booking_type, provider, provider_order_id, pnr, ticket_numbers, sell_total,
            total_cost, commercials, itinerary, traveler_snapshot, fare_breakdown, policy_status,
-           policy_verdict, policy_verdict_detail, employee_id, trip_id, is_ndc, created_at, updated_at
+           policy_verdict, policy_verdict_detail, employee_id, trip_id, is_ndc, created_at, updated_at,
+           ${BOOKED_BY_NAME}
     from bookings where id = ${bookingId}`)
 }
 
@@ -305,12 +315,13 @@ export async function approvalTarget(db: Queryable, bookingId: string): Promise<
 // What an approver's queue shows of each booking: the SELL side, under the
 // name total_cost. The airline figure is not fetched at all.
 export type ApprovalSummary = Pick<Row<'bookings'>,
-  'id' | 'employee_id' | 'booking_type' | 'total_cost' | 'itinerary' | 'policy_verdict' | 'status'>
+  'id' | 'employee_id' | 'booking_type' | 'total_cost' | 'itinerary' | 'policy_verdict' | 'status'> & BookedByName
 
 export async function approvalSummaries(db: Queryable, bookingIds: readonly string[]): Promise<ApprovalSummary[]> {
   if (bookingIds.length === 0) return []
   return many<ApprovalSummary>(db, sql`
-    select id, employee_id, booking_type, ${SELL_TOTAL} as total_cost, itinerary, policy_verdict, status
+    select id, employee_id, booking_type, ${SELL_TOTAL} as total_cost, itinerary, policy_verdict, status,
+           ${BOOKED_BY_NAME}
     from bookings where id = any(${[...bookingIds]}) order by id`)
 }
 
