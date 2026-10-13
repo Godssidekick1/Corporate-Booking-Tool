@@ -5,6 +5,9 @@ import { POST as pricePost } from '@/app/api/book/price/route'
 import { POST as addPassengerPost } from '@/app/api/book/add-passenger/route'
 import { POST as bookPost } from '@/app/api/book/booking/route'
 import { GET as bookingGet } from '@/app/api/book/[bookingId]/route'
+import { GET as travellersGet } from '@/app/api/book/travellers/route'
+import { GET as travellerGet } from '@/app/api/book/travellers/[id]/route'
+import { GET as historyGet } from '@/app/api/book/history/route'
 import { call } from '../harness/call'
 import { actors, type Actors } from '../harness/actors'
 import { resetDatabase } from '../harness/db'
@@ -263,5 +266,72 @@ d('book on behalf', () => {
     expect(res.status).toBe(200)
     expect(await one(db, sql`select employee_id, booked_by from bookings where id = ${(res.json as { bookingId: string }).bookingId}`))
       .toEqual({ employee_id: colleague.id, booked_by: colleague.id })
+  })
+
+  // ── Choosing whom to book for, and the history ────────────────────────────
+
+  type Page<T> = { items: T[]; total: number }
+  const list = (as: { id: string }, qs = '') => call(travellersGet, { as, url: `/api/book/travellers${qs}` })
+
+  it('who may be picked: colleagues for the admin, the reach of the desk, nobody for anyone else', async () => {
+    const mine = (await list(admin)).json as Page<{ client_id: string }>
+    expect(mine.total).toBeGreaterThan(3)
+    expect(new Set(mine.items.map(p => p.client_id))).toEqual(new Set([clientId]))
+
+    const desk = (await list(a.tmcAdmin, `?clientId=${clientId}`)).json as Page<{ client_id: string }>
+    expect(desk.total).toBe(mine.total)
+
+    const found = (await list(admin, `?ids=${colleague.id},not-a-uuid`)).json as Page<{ id: string; profile_ready: boolean }>
+    expect(found.items.map(p => p.id)).toEqual([colleague.id])
+    // Readiness as flags: no profile value in the list.
+    expect(JSON.stringify(found)).not.toMatch(/passportNumber|dateOfBirth/)
+
+    expect(await list(bystander)).toEqual({ status: 403, json: { error: 'You can only book travel for yourself.' } })
+    expect((await list(a.otherTmcAdmin!, `?clientId=${clientId}`)).json).toMatchObject({ total: 0 })
+  })
+
+  it('the person chosen: profile and what applies, only for someone the caller may book for', async () => {
+    const one_ = (as: { id: string }, id: string) => call(travellerGet, { as, url: `/api/book/travellers/${id}`, params: { id } })
+    expect(await one_(admin, colleague.id)).toMatchObject({
+      status: 200, json: { ok: true, policy: 'approvals', traveller: { id: colleague.id, client_id: clientId } },
+    })
+    expect((await one_(bystander, colleague.id)).status).toBe(403)
+    expect((await one_(a.otherTmcAdmin!, colleague.id)).status).toBe(404)
+
+    await exec(db, sql`update clients set booking_mode = 'cbt' where id = ${clientId}`)
+    try {
+      expect((await one_(a.tmcAdmin, colleague.id)).json).toMatchObject({ policy: 'guidance' })
+    } finally {
+      await exec(db, sql`update clients set booking_mode = 'sbt' where id = ${clientId}`)
+    }
+  })
+
+  it('history: one traveller, what I booked for others, and the desk', async () => {
+    type Row = { id: string; employee_id: string; booked_by: string; booker_name: string | null }
+    const history = (as: { id: string }, qs: string) => call(historyGet, { as, url: `/api/book/history?${qs}` })
+
+    const theirs = (await history(admin, `traveller=${colleague.id}`)).json as Page<Row>
+    expect(theirs.items.every(b => b.employee_id === colleague.id)).toBe(true)
+    expect(new Set(theirs.items.map(b => b.booked_by))).toEqual(new Set([admin.id, colleague.id, a.tmcAdmin.id]))
+
+    const byMe = (await history(admin, 'bookedBy=me')).json as Page<Row>
+    expect(byMe.items.length).toBeGreaterThan(0)
+    expect(byMe.items.every(b => b.booked_by === admin.id && b.employee_id !== admin.id)).toBe(true)
+
+    const desk = (await history(a.tmcAdmin, `scope=desk&clientId=${clientId}`)).json as Page<Row>
+    expect(desk.items.map(b => b.booked_by)).toContain(a.tmcAdmin.id)
+    expect(desk.items.every(b => b.employee_id !== b.booked_by)).toBe(true)
+
+    expect((await history(admin, 'scope=desk')).status).toBe(403)
+    expect((await history(bystander, `traveller=${colleague.id}`)).status).toBe(403)
+    expect((await history(admin, '')).status).toBe(400)
+
+    // A CBT client's admin cannot book for colleagues, but still sees their bookings.
+    await exec(db, sql`update clients set booking_mode = 'cbt' where id = ${clientId}`)
+    try {
+      expect((await history(admin, `traveller=${colleague.id}`)).status).toBe(200)
+    } finally {
+      await exec(db, sql`update clients set booking_mode = 'sbt' where id = ${clientId}`)
+    }
   })
 })

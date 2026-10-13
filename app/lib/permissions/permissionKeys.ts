@@ -93,11 +93,10 @@ export const PERMISSIONS: PermissionDef[] = [
   },
   {
     key: 'book_on_behalf',
-    label: 'Book on behalf',
-    desc: 'Act as a counsellor and make bookings for travellers',
-    // No route or nav gate references this yet — granting it currently changes
-    // nothing. Kept because the CBT flow will need it.
-    reserved: true,
+    label: 'Book for travellers',
+    // Enforced by app/lib/book/bookingActor.ts, within the counsellor's own
+    // client access. TMC admins book for any client of the TMC without it.
+    desc: 'Search, price and book travel for anyone at the clients this TC can access',
   },
 ]
 

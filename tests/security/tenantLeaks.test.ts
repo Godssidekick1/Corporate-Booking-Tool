@@ -197,6 +197,7 @@ const POISON_FIELDS: Record<string, string> = {
   fopId: 'forms_of_payment', fop_id: 'forms_of_payment',
   employeeId: 'employees', employee_id: 'employees', managerId: 'employees', manager_id: 'employees',
   owner_employee_id: 'employees', userId: 'employees', approver_user_id: 'employees', approverUserId: 'employees',
+  travellerId: 'employees',
   categoryId: 'deal_code_categories', category_id: 'deal_code_categories',
   branchId: 'branches', branch_id: 'branches', office_id: 'branches',
   cost_centre_id: 'cost_centres',

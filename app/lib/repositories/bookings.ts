@@ -1,4 +1,5 @@
-import { sql, many, one, maybeOne, exec, json, type Queryable } from '@/app/lib/db/sql'
+import { sql, empty, many, one, maybeOne, exec, json, type Queryable } from '@/app/lib/db/sql'
+import { page } from '@/app/lib/db/fragments'
 import type { Row } from '@/app/lib/db/types.generated'
 
 // ── Bookings and price quotes ────────────────────────────────────────────────
@@ -85,6 +86,59 @@ export async function recentFor(db: Queryable, employeeIds: readonly string[], l
     from bookings where employee_id = any(${[...employeeIds]})
     order by created_at desc, id
     limit ${limit}`)
+}
+
+// ═══ Booking history, for whoever books for others ══════════════════════════
+// One person's bookings, the ones a booker made for others, or everything a
+// travel desk booked within its reach. Sell-side only, like every traveller
+// read: total_cost here is what the company is invoiced.
+
+export type HistoryFilter =
+  | { traveller: string }
+  | { bookedBy: string }
+  | { tmcId: string; clientIds: readonly string[] | null; clientId?: string | null }
+
+export interface HistoryRow {
+  id: string
+  status: string
+  pnr: string | null
+  total_cost: number
+  itinerary: unknown
+  created_at: string
+  employee_id: string
+  traveller_name: string | null
+  booked_by: string
+  booker_name: string | null
+  client_name: string | null
+  policy_verdict: string | null
+  policy_reason_code: string | null
+}
+
+export async function history(
+  db: Queryable, filter: HistoryFilter, range: { from: number; to: number }
+): Promise<{ rows: HistoryRow[]; total: number }> {
+  const where = 'traveller' in filter
+    ? sql`b.employee_id = ${filter.traveller}`
+    : 'bookedBy' in filter
+      ? sql`b.booked_by = ${filter.bookedBy} and b.employee_id <> b.booked_by`
+      : sql`b.tmc_id = ${filter.tmcId} and b.employee_id <> b.booked_by
+            ${filter.clientIds ? sql`and b.client_id = any(${[...filter.clientIds]})` : empty}
+            ${filter.clientId ? sql`and b.client_id = ${filter.clientId}` : empty}`
+  const [rows, count] = await Promise.all([
+    many<HistoryRow>(db, sql`
+      select b.id, b.status, b.pnr, coalesce(b.sell_total, b.total_cost) as total_cost, b.itinerary, b.created_at,
+             b.employee_id, t.full_name as traveller_name, b.booked_by, k.full_name as booker_name,
+             c.name as client_name, b.policy_verdict, b.policy_reason_code
+      from bookings b
+      left join employees t on t.id = b.employee_id
+      left join employees k on k.id = b.booked_by
+      left join clients c on c.id = b.client_id
+      where ${where}
+      order by b.created_at desc, b.id
+      ${page(range)}`),
+    one<{ n: number }>(db, sql`select count(*)::int as n from bookings b where ${where}`),
+  ])
+  return { rows, total: count.n }
 }
 
 export type ActionableBooking = Pick<Row<'bookings'>, 'id' | 'status' | 'total_cost' | 'itinerary' | 'updated_at'>

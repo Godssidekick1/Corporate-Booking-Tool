@@ -861,6 +861,48 @@ export interface BookableTraveller {
   booking_mode: string
 }
 
+// The people a booker may pick from (GET /api/book/travellers): one client,
+// or a TMC's clients (all of them, or a counsellor's portfolio), never the
+// deactivated nor anyone at a removed client. Readiness is reported as flags:
+// the profile values themselves are only read for the one person chosen.
+export interface BookableRow {
+  id: string
+  full_name: string
+  email: string | null
+  band_code: string | null
+  department: string | null
+  designation: string | null
+  status: string
+  client_id: string
+  client_name: string
+  booking_mode: string
+  profile_ready: boolean
+  has_passport: boolean
+}
+
+export type BookableScope =
+  | { clientId: string }
+  | { tmcId: string; clientIds: readonly string[] | null; clientId?: string | null }
+
+export async function bookableList(db: Queryable, within: BookableScope, scope: ListScope): Promise<Listed<BookableRow>> {
+  const where = 'tmcId' in within
+    ? sql`client_id in (select id from clients where tmc_id = ${within.tmcId} and status <> 'inactive'
+                         ${within.clientIds ? sql`and id = any(${[...within.clientIds]})` : empty}
+                         ${within.clientId ? sql`and id = ${within.clientId}` : empty})`
+    : sql`client_id = ${within.clientId}`
+  return listEmployees<BookableRow>(
+    db,
+    sql`id, full_name, email, band_code, department, designation, status, client_id,
+        (select c.name from clients c where c.id = employees.client_id) as client_name,
+        (select c.booking_mode from clients c where c.id = employees.client_id) as booking_mode,
+        coalesce(traveler_profile->>'dateOfBirth', '') <> '' and coalesce(traveler_profile->>'mobile', '') <> '' as profile_ready,
+        coalesce(traveler_profile->>'passportNumber', '') <> '' as has_passport`,
+    sql`${where} and status <> 'deactivated'`,
+    scope,
+    [sql`full_name`, sql`email`, sql`department`, sql`designation`]
+  )
+}
+
 export async function bookableTraveller(db: Queryable, employeeId: string): Promise<BookableTraveller | null> {
   return maybeOne<BookableTraveller>(db, sql`
     select e.id, e.client_id, e.status, c.tmc_id, c.status as client_status, c.booking_mode

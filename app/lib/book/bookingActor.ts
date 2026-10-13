@@ -42,6 +42,8 @@ export type ActorResult =
   | { ok: false; status: number; error: string }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+// Ids from a query string: anything else would reach the database as a cast error.
+export const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID.test(v)
 const NOT_FOUND = { ok: false, status: 404, error: 'Traveller not found' } as const
 
 export const PERMISSION = 'book_on_behalf'
@@ -107,6 +109,33 @@ export async function onBehalf(db: Queryable, user: Principal, travellerId: stri
     ok: true,
     actor: { traveller: { id: t.id, client_id: t.client_id }, bookerId: user.id, via, bookingMode: t.booking_mode },
   }
+}
+
+// Whom a booker can reach, as a set rather than one person: the picker of
+// people to book for, and the desk's history. Same table as above; a
+// corporate admin at a CBT-only client still reaches their colleagues for
+// HISTORY (they see everyone's bookings) but not for booking.
+export type Reach =
+  | { ok: true; clientId: string }
+  | { ok: true; tmcId: string; clientIds: string[] | null }
+  | { ok: false; status: number; error: string }
+
+export async function reach(db: Queryable, user: Principal, purpose: 'book' | 'history'): Promise<Reach> {
+  const me = user.employee
+  const role = me?.role
+  if (role === 'admin' && me?.clientId) {
+    if (purpose === 'book' && !(await canSelfBook(db, me.clientId))) {
+      return { ok: false, status: 403, error: SELF_BOOKING_OFF }
+    }
+    return { ok: true, clientId: me.clientId }
+  }
+  if ((role === 'tmc_admin' || role === 'tc') && me?.tmcId) {
+    if (role === 'tc' && !(await employees.hasPermission(db, user.id, PERMISSION))) {
+      return { ok: false, status: 403, error: `Missing permission: ${PERMISSION}` }
+    }
+    return { ok: true, tmcId: me.tmcId, clientIds: role === 'tc' ? await employees.accessibleClientIds(db, user.id) : null }
+  }
+  return { ok: false, status: 403, error: 'You can only book travel for yourself.' }
 }
 
 // For the routes given a booking id (book, ticket, the booking's own page):
