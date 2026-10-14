@@ -135,9 +135,15 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   try {
     target = new URL(url)
   } catch {
+    // Say which string was wrong: the one passed on the command line, or the
+    // environment's. Blaming DATABASE_URL for a bad argument sent people
+    // looking in .env.local.
+    const source = args.find(a => !a.startsWith('--')) ? 'The connection string given' : 'MIGRATE_DATABASE_URL / DATABASE_URL'
     console.error(
-      '[migrate] DATABASE_URL is not a valid URL. Characters such as / # ? @ : % in the\n' +
-      '  password must be percent-encoded (/ -> %2F, # -> %23, ? -> %3F, @ -> %40, : -> %3A, % -> %25).'
+      /^</.test(url)
+        ? `[migrate] ${source} is still the placeholder ${url} -- replace it, brackets included, with the real connection string.`
+        : `[migrate] ${source} is not a valid URL. Characters such as / # ? @ : % in the\n` +
+          '  password must be percent-encoded (/ -> %2F, # -> %23, ? -> %3F, @ -> %40, : -> %3A, % -> %25).'
     )
     process.exit(1)
   }
