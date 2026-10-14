@@ -147,6 +147,12 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     )
     process.exit(1)
   }
+  // A website's address (the Vercel deployment, say) is a valid URL too, and
+  // would sit trying to reach a database on the web host until it timed out.
+  if (target.protocol !== 'postgresql:' && target.protocol !== 'postgres:') {
+    console.error(`[migrate] ${target.hostname} is not a database address: a connection string starts with postgresql://`)
+    process.exit(1)
+  }
   console.log(`[migrate] ${target.hostname}:${target.port || 5432}${target.pathname}`)
   try {
     const done = await migrate(url, { status: args.includes('--status') })
