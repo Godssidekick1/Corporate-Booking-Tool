@@ -17,8 +17,15 @@ import TripCard, { FlightRow, type TripCardTrip, type TripCardFlight } from './T
 
 interface Group { trip: TripCardTrip; bookings: TripCardFlight[] }
 
-export default function TripList({ others, showUngrouped = true, allowDelete = false, emptyAction }: {
+export default function TripList({
+  others, showUngrouped = true, allowDelete = false, emptyAction, source, base = '/trips', emptyText,
+}: {
   others: boolean
+  // Where the page of trips comes from: the company side reads /api/bookings;
+  // the travel desk passes /api/tmc/trips with its scope and client filter.
+  source?: { endpoint: string; query?: Record<string, string | null | undefined> }
+  base?: '/trips' | '/tmc/trips'
+  emptyText?: { title: string; desc: string }
   // "Flights not in a trip" below the trips (My trips shows them; the trips page does not).
   showUngrouped?: boolean
   allowDelete?: boolean
@@ -34,6 +41,9 @@ export default function TripList({ others, showUngrouped = true, allowDelete = f
   const [busy, setBusy] = useState<{ id: string; what: 'submit' | 'complete' | 'delete' } | null>(null)
   const [tripErrors, setTripErrors] = useState<Record<string, string>>({})
 
+  // The source's VALUE, so an inline object does not refetch every render.
+  const sourceKey = JSON.stringify(source ?? null)
+
   // Bumped to load the page again after acting on a trip.
   const [reloadKey, setReloadKey] = useState(0)
 
@@ -41,7 +51,11 @@ export default function TripList({ others, showUngrouped = true, allowDelete = f
   // change, an action) marks it loading itself.
   useEffect(() => {
     let live = true
-    fetch(`/api/bookings?page=${page}${others ? '&for=others' : ''}`)
+    const src = JSON.parse(sourceKey) as typeof source | null
+    const qs = new URLSearchParams({ page: String(page) })
+    if (!src && others) qs.set('for', 'others')
+    for (const [k, v] of Object.entries(src?.query ?? {})) if (v) qs.set(k, v)
+    fetch(`${src?.endpoint ?? '/api/bookings'}?${qs}`)
       .then(async res => {
         const data = await res.json()
         if (!live) return
@@ -55,7 +69,7 @@ export default function TripList({ others, showUngrouped = true, allowDelete = f
       .catch(() => { if (live) setError('Something went wrong loading trips.') })
       .finally(() => { if (live) setLoading(false) })
     return () => { live = false }
-  }, [others, page, reloadKey])
+  }, [others, page, reloadKey, sourceKey])
 
   const goTo = useCallback((p: number) => { setLoading(true); setPage(p) }, [])
   const reload = () => { setLoading(true); setReloadKey(k => k + 1) }
@@ -86,11 +100,11 @@ export default function TripList({ others, showUngrouped = true, allowDelete = f
   if (groups.length === 0 && ungrouped.length === 0) {
     return (
       <div style={s.emptyState}>
-        <p style={s.emptyTitle}>{others ? 'Nothing arranged for others yet' : 'No trips yet'}</p>
+        <p style={s.emptyTitle}>{emptyText?.title ?? (others ? 'Nothing arranged for others yet' : 'No trips yet')}</p>
         <p style={s.emptyDesc}>
-          {others
+          {emptyText?.desc ?? (others
             ? 'Trips you set up for colleagues, and flights you book for them, appear here — and in their own trips too.'
-            : 'A trip groups one journey’s flights, with what it is for and its budget.'}
+            : 'A trip groups one journey’s flights, with what it is for and its budget.')}
         </p>
         {emptyAction}
       </div>
@@ -105,7 +119,8 @@ export default function TripList({ others, showUngrouped = true, allowDelete = f
           trip={g.trip}
           flights={g.bookings}
           others={others}
-          addFlightHref={others ? `/trips/${g.trip.id}` : `/book/flights?tripId=${g.trip.id}`}
+          base={base}
+          addFlightHref={others ? `${base}/${g.trip.id}` : `/book/flights?tripId=${g.trip.id}`}
           actions={{
             onSubmit: () => act(g.trip.id, 'submit'),
             submitting: busy?.id === g.trip.id && busy.what === 'submit',

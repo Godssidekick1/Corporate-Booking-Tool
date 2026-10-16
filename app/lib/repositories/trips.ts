@@ -1,4 +1,4 @@
-import { sql, many, maybeOne, one, exec, type Queryable } from '@/app/lib/db/sql'
+import { sql, empty, many, maybeOne, one, exec, type Queryable } from '@/app/lib/db/sql'
 import { page, assignments } from '@/app/lib/db/fragments'
 import type { PageParams } from '@/app/lib/pagination'
 import type { Row } from '@/app/lib/db/types.generated'
@@ -40,6 +40,7 @@ export interface TripCardRow {
   // Whether its company signs trips off (clients.trip_approval_mode), so a card
   // can offer "Submit for sign-off" without a second request.
   sign_off_required: boolean
+  client_name: string | null
 }
 
 const TRIP_CARD = sql`
@@ -49,7 +50,7 @@ const TRIP_CARD = sql`
   t.approval_status, t.submitted_at,
   (select a.full_name from employees a where a.id = t.arranged_by and t.arranged_by <> t.created_by) as arranged_by_name,
   agg.flight_count, agg.total_cost, agg.first_departure,
-  (tc.trip_approval_mode = 'on_submit') as sign_off_required`
+  (tc.trip_approval_mode = 'on_submit') as sign_off_required, tc.name as client_name`
 
 // The card's joins: the cost centre's name, and the bookings summary (one
 // index lookup per trip, idx_bookings_group).
@@ -133,6 +134,37 @@ export async function arrangedFor(
       from ${from} left join employees e on e.id = t.created_by ${CARD_JOINS}
       where ${where} order by t.created_at desc, t.id ${page(params)}`),
     one<{ n: number }>(db, sql`select count(*)::int as n from ${from} where ${where}`),
+  ])
+  return { rows, total: count.n }
+}
+
+// ── The travel desk's trips ─────────────────────────────────────────────────
+// Trips the desk looks after: set up by one of its staff (arranged_by), or
+// holding a booking one of them made. Within the caller's reach -- the TMC,
+// or a counsellor's portfolio (clientIds) -- and optionally one client.
+export interface DeskScope {
+  tmcId: string
+  clientIds: readonly string[] | null
+  clientId?: string | null
+}
+
+export async function forDesk(
+  db: Queryable, scope: DeskScope, callerId: string, params: PageParams
+): Promise<{ rows: ArrangedTrip[]; total: number }> {
+  const staff = sql`(select id from employees where tmc_id = ${scope.tmcId} and client_id is null)`
+  const where = sql`t.tmc_id = ${scope.tmcId} and t.status <> 'deleted'
+    ${scope.clientIds ? sql`and t.client_id = any(${[...scope.clientIds]})` : empty}
+    ${scope.clientId ? sql`and t.client_id = ${scope.clientId}` : empty}
+    and (t.arranged_by in ${staff}
+         or exists (select 1 from bookings b where b.trip_id = t.id and b.booked_by in ${staff}))`
+  const [rows, count] = await Promise.all([
+    many<ArrangedTrip>(db, sql`
+      select ${TRIP_CARD},
+             t.created_by as traveller_id, e.full_name as traveller_name,
+             (t.arranged_by is not distinct from ${callerId}::uuid) as arranged_by_me
+      from trips t left join employees e on e.id = t.created_by ${CARD_JOINS}
+      where ${where} order by t.created_at desc, t.id ${page(params)}`),
+    one<{ n: number }>(db, sql`select count(*)::int as n from trips t where ${where}`),
   ])
   return { rows, total: count.n }
 }

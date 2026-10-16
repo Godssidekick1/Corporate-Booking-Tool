@@ -20,8 +20,11 @@ interface TripRow { id: string; name: string | null; status: string; travel_date
 
 const NEW = '__new__'
 
-export default function TripPicker({ travellerId, travellerName, value, onChange }: {
+export default function TripPicker({ travellerId, travellerName, value, onChange, side = 'company' }: {
   travellerId: string
+  // Who is choosing: a company admin booking a colleague, or the travel desk.
+  // Only changes where the note says the trip is listed for the chooser.
+  side?: 'company' | 'desk'
   // Whose trips these are -- always said, so a booker never mistakes a
   // colleague's trip for one of their own.
   travellerName: string
@@ -85,8 +88,10 @@ export default function TripPicker({ travellerId, travellerName, value, onChange
       )}
       {(value.kind === 'new' || value.kind === 'existing') && (
         <span style={s.note}>
-          {value.kind === 'new' ? 'Will be' : 'This is'} <strong>{travellerName}</strong>&apos;s trip: it is in their My trips, and in yours under
-          Arranged for others — never mixed with your own.
+          {value.kind === 'new' ? 'Will be' : 'This is'} <strong>{travellerName}</strong>&apos;s trip: it is in their My trips
+          {side === 'desk'
+            ? ', and in the desk’s Trips below.'
+            : <>, and in yours under Arranged for others — never mixed with your own.</>}
         </span>
       )}
     </div>

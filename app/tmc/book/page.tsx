@@ -6,6 +6,9 @@ import Link from 'next/link'
 import SearchableSelect from '@/app/components/SearchableSelect'
 import BookingHistory from '@/app/components/BookingHistory'
 import TripPicker, { resolveTrip, type TripChoice } from '@/app/components/TripPicker'
+import TripCard, { type TripCardTrip } from '@/app/components/trips/TripCard'
+import TripList from '@/app/components/trips/TripList'
+import TripForm from '@/app/components/trips/TripForm'
 import { useLookup, clientOption } from '@/app/hooks/useLookup'
 import { flowStorage } from '@/app/lib/book/flowStorage'
 import { canAccess } from '@/app/lib/permissions/canAccess'
@@ -21,6 +24,11 @@ import { canAccess } from '@/app/lib/permissions/canAccess'
 // a counsellor with "Book for travellers" their own portfolio. At a CBT-only
 // client policy is guidance and an amber or red fare needs a reason; at any
 // other client the traveller's own approval chain decides.
+//
+// Trips are planned here too, with the same cards and form as the company
+// side (app/components/trips): the chosen traveller's open trips, "+ New trip"
+// with what the trip is for, and below, the trips the desk keeps for
+// travellers. Each trip is the traveller's; its page is /tmc/trips/[id].
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface TravellerDetail {
@@ -55,6 +63,12 @@ export default function TmcBookPage() {
   const [trip, setTrip] = useState<TripChoice>({ kind: 'none' })
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState('')
+  // New trip (TripForm) for the chosen traveller, and a bump that reloads the
+  // trip picker and the trip lists once one is made.
+  const [formOpen, setFormOpen] = useState(false)
+  const [tripsKey, setTripsKey] = useState(0)
+  const [theirTrips, setTheirTrips] = useState<TripCardTrip[] | null>(null)
+  const [listTab, setListTab] = useState<'trips' | 'bookings'>('trips')
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setTrip({ kind: 'none' }); setStartError('')
@@ -103,6 +117,21 @@ export default function TmcBookPage() {
     }).catch(() => { if (live) setDetailError('Could not load this traveller.') })
     return () => { live = false }
   }, [travellerId])
+
+  // Their trips still being planned, as cards (one page; the three most
+  // recent). Reloaded when the desk makes one for them.
+  useEffect(() => {
+    if (!travellerId) return
+    let live = true
+    fetch(`/api/trips?travellerId=${encodeURIComponent(travellerId)}&page=1`).then(r => r.json())
+      .then(d => {
+        if (!live) return
+        const open = d.ok ? (d.trips as TripCardTrip[]).filter(t => t.status === 'open' || t.status === 'active') : []
+        setTheirTrips(open.slice(0, 3))
+      })
+      .catch(() => { if (live) setTheirTrips([]) })
+    return () => { live = false }
+  }, [travellerId, tripsKey])
 
   const shown = travellerId && detail?.traveller.id === travellerId ? detail : null
 
@@ -218,10 +247,28 @@ export default function TmcBookPage() {
               />
             </div>
 
-            <div style={{ ...s.field, marginTop: 16, maxWidth: 420 }}>
-              <TripPicker travellerId={shown.traveller.id} travellerName={shown.traveller.full_name} value={trip} onChange={setTrip} />
-              {startError && <p style={s.errorNote}>{startError}</p>}
+            <div style={s.tripRow}>
+              <div style={{ ...s.field, flex: '1 1 300px', maxWidth: 420 }}>
+                <TripPicker key={`${shown.traveller.id}-${tripsKey}`} side="desk"
+                  travellerId={shown.traveller.id} travellerName={shown.traveller.full_name} value={trip} onChange={setTrip} />
+                {startError && <p style={s.errorNote}>{startError}</p>}
+              </div>
+              <button type="button" onClick={() => setFormOpen(true)} style={s.secondaryBtn}>
+                + New trip for {shown.traveller.full_name.split(' ')[0]}, with details
+              </button>
             </div>
+
+            {theirTrips && theirTrips.length > 0 && (
+              <>
+                <p style={{ ...s.sectionLabel, marginTop: 16 }}>Their open trips</p>
+                <div style={s.tripCards}>
+                  {theirTrips.map(t => (
+                    <TripCard key={t.id} trip={{ ...t, traveller_name: shown.traveller.full_name, client_name: shown.traveller.client_name }}
+                      base="/tmc/trips" others />
+                  ))}
+                </div>
+              </>
+            )}
 
             <p style={{ ...s.sectionLabel, marginTop: 16 }}>Their recent bookings</p>
             {shown.recentBookings.length === 0 ? (
@@ -243,7 +290,14 @@ export default function TmcBookPage() {
       </div>
 
       <div style={s.historyHead}>
-        <p style={{ ...s.sectionLabel, margin: 0 }}>Bookings by the desk</p>
+        <div style={s.toggle} role="tablist" aria-label="Trips or bookings">
+          {(['trips', 'bookings'] as const).map(v => (
+            <button key={v} role="tab" aria-selected={listTab === v} onClick={() => setListTab(v)}
+              style={{ ...s.toggleBtn, ...(listTab === v ? s.toggleOn : {}) }}>
+              {v === 'trips' ? 'Trips' : 'Bookings'}
+            </button>
+          ))}
+        </div>
         <div style={s.toggle}>
           {(['mine', 'desk'] as const).map(v => (
             <button key={v} onClick={() => setView(v)} style={{ ...s.toggleBtn, ...(view === v ? s.toggleOn : {}) }}>
@@ -253,11 +307,33 @@ export default function TmcBookPage() {
         </div>
       </div>
 
-      <BookingHistory
-        params={view === 'mine' ? { bookedBy: 'me' } : { scope: 'desk', clientId: clientId || null }}
-        columns={['traveller', 'client', 'bookedBy']}
-        empty={view === 'mine' ? 'You have not booked for anyone yet.' : 'Nothing booked on anyone’s behalf yet.'}
-      />
+      {listTab === 'trips' ? (
+        <TripList
+          key={`${view}-${clientId}-${tripsKey}`}
+          others
+          base="/tmc/trips"
+          showUngrouped={false}
+          source={{ endpoint: '/api/tmc/trips', query: { scope: view === 'mine' ? 'mine' : 'desk', clientId: clientId || null } }}
+          emptyText={view === 'mine'
+            ? { title: 'No trips set up by you yet', desc: 'Choose a traveller above, then “+ New trip” — the trip is theirs, and appears here and in their trips.' }
+            : { title: 'No trips kept by the desk yet', desc: 'Trips the desk sets up for travellers, or books into, appear here.' }}
+        />
+      ) : (
+        <BookingHistory
+          params={view === 'mine' ? { bookedBy: 'me' } : { scope: 'desk', clientId: clientId || null }}
+          columns={['traveller', 'client', 'bookedBy']}
+          empty={view === 'mine' ? 'You have not booked for anyone yet.' : 'Nothing booked on anyone’s behalf yet.'}
+        />
+      )}
+
+      {shown && (
+        <TripForm
+          open={formOpen}
+          onClose={() => setFormOpen(false)}
+          traveller={{ id: shown.traveller.id, name: shown.traveller.full_name }}
+          onCreated={id => { setFormOpen(false); setTrip({ kind: 'existing', id }); setTripsKey(k => k + 1) }}
+        />
+      )}
 
       <p style={{ ...s.muted, marginTop: 14 }}>
         Need to fix someone&apos;s details first? <Link href="/tmc/configurations/traveller-profiles" style={s.link}>Traveller profiles →</Link>
@@ -308,6 +384,12 @@ const s: Record<string, React.CSSProperties> = {
   muted: { fontSize: 12.5, color: '#9CA3AF', margin: 0 },
   errorNote: { fontSize: 12.5, color: '#DC2626', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', margin: '14px 0 0' },
 
+  tripRow: { display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap', marginTop: 16 },
+  tripCards: { display: 'flex', flexDirection: 'column', gap: 10 },
+  secondaryBtn: {
+    height: 36, padding: '0 14px', background: '#fff', color: '#000835', fontSize: 13, fontWeight: 600,
+    border: '1px solid #D1D5DB', borderRadius: 7, cursor: 'pointer',
+  },
   historyHead: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 12, flexWrap: 'wrap' },
   toggle: { display: 'flex', background: '#F3F4F6', borderRadius: 8, padding: 3 },
   toggleBtn: { border: 'none', background: 'transparent', fontSize: 12, color: '#6B7280', padding: '5px 12px', borderRadius: 6, cursor: 'pointer' },

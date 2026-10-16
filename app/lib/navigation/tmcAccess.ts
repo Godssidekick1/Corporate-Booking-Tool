@@ -13,7 +13,13 @@ import type { PermissionKey } from '@/app/lib/permissions/permissionKeys'
 
 const CONFIGURATIONS = '/tmc/configurations'
 
-const ENTRIES: NavItem[] = [...PRIMARY_NAV, ...CONFIG_GROUPS.flatMap(g => g.items)]
+// Pages the rail does not list but that belong to one of its entries: a
+// traveller's trip, opened from Book travel, asks what Book travel asks.
+const UNLISTED: NavItem[] = [
+  { label: 'Trip', href: '/tmc/trips', permission: 'book_on_behalf' },
+]
+
+const ENTRIES: NavItem[] = [...PRIMARY_NAV, ...CONFIG_GROUPS.flatMap(g => g.items), ...UNLISTED]
 
 // The permission a page needs: its most specific entry's. Null = any TMC user.
 export function requiredPermission(pathname: string): PermissionKey | null {

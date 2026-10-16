@@ -303,8 +303,10 @@ d('/api/auth and the page gate', () => {
         '/tmc/configurations/rule-engine-test', '/tmc/configurations/users']) {
         expect(location(await page(p, token))).toBe('/tmc/configurations/deal-codes')
       }
-      // Outside Configurations: to the dashboard.
+      // Outside Configurations: to the dashboard. A traveller's trip asks what
+      // Book travel asks, though the rail does not list it.
       expect(location(await page('/tmc/book', token))).toBe('/tmc/dashboard')
+      expect(location(await page('/tmc/trips/00000000-0000-0000-0000-000000000000', token))).toBe('/tmc/dashboard')
       // What they hold, and what needs nothing, opens.
       for (const p of ['/tmc/configurations/deal-codes', '/tmc/configurations/buckets', '/tmc/reports',
         '/tmc/configurations/integrations', '/tmc/dashboard', '/tmc/clients']) {
