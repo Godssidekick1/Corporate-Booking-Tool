@@ -890,8 +890,9 @@ export async function clientNames(db: Queryable, clientIds: readonly string[]): 
 export async function approvalModes(
   db: Queryable,
   clientId: string
-): Promise<Pick<Row<'clients'>, 'air_approval_mode' | 'hotel_approval_mode'> | null> {
-  return maybeOne(db, sql`select air_approval_mode, hotel_approval_mode from clients where id = ${clientId}`)
+): Promise<Pick<Row<'clients'>, 'air_approval_mode' | 'hotel_approval_mode' | 'trip_approval_mode'> | null> {
+  return maybeOne(db, sql`
+    select air_approval_mode, hotel_approval_mode, trip_approval_mode from clients where id = ${clientId}`)
 }
 
 // ═══ Assignment targets ═════════════════════════════════════════════════════

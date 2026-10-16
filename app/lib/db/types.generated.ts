@@ -3,7 +3,7 @@
 // Written by scripts/generate-db-types.mjs from the live database schema.
 // Re-run after any schema change:  node scripts/generate-db-types.mjs
 //
-// 54 tables, 0 view(s), 559 columns.
+// 54 tables, 0 view(s), 569 columns.
 
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json }
 
@@ -70,7 +70,7 @@ export interface Tables {
   approvals: {
     id: string
     client_id: string
-    booking_id: string
+    booking_id: string | null
     approver_id: string
     tier: number
     status: string
@@ -82,6 +82,7 @@ export interface Tables {
     decision_note: string | null
     chain_template_id: string | null
     tmc_id: string | null
+    trip_id: string | null
   }
   audit_log: {
     id: string
@@ -329,6 +330,7 @@ export interface Tables {
     bta_cta_manual_allowed: boolean
     fop_priority: string[]
     markup_active: boolean
+    trip_approval_mode: string
   }
   commercial_coverage: {
     tmc_id: string
@@ -674,6 +676,14 @@ export interface Tables {
     updated_at: string
     tmc_id: string | null
     arranged_by: string | null
+    travel_type: string | null
+    billable: boolean
+    project: string | null
+    currency: string
+    budget_amount: number | null
+    cost_centre_id: string | null
+    approval_status: string
+    submitted_at: string | null
   }
 }
 

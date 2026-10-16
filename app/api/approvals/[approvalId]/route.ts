@@ -4,6 +4,7 @@ import { advanceApprovalChain } from '@/app/lib/approval-engine/resolveApprovalT
 import { db, transaction } from '@/app/lib/db'
 import * as approvals from '@/app/lib/repositories/approvals'
 import * as bookings from '@/app/lib/repositories/bookings'
+import * as trips from '@/app/lib/repositories/trips'
 import * as employees from '@/app/lib/repositories/employees'
 import { route } from '@/app/lib/http/handler'
 import type { Verdict } from '@/app/lib/rule-engine/evaluateBooking'
@@ -20,6 +21,12 @@ import type { Verdict } from '@/app/lib/rule-engine/evaluateBooking'
 //     (bookings stays 'pending_approval', new approver notified) or there
 //     is no next tier and bookings flips to 'approved' (employee can now
 //     call /api/book/booking).
+//
+// A trip's sign-off (approvals.trip_id, startApprovalForTrip) is decided the
+// same way, with the trip's approval_status in the booking status's place:
+// reject -> 'rejected' (the trip can be edited and resubmitted), the last step
+// approved -> 'approved'. Its bookings are not touched: each was approved, if
+// it needed to be, when it was booked.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface DecisionBody {
@@ -61,7 +68,9 @@ export const PATCH = route(async (
     return Response.json({ error: 'decision must be "approve" or "reject"' }, { status: 400 })
   }
 
-  const booking = await bookings.approvalTarget(db, approval.booking_id)
+  if (approval.trip_id) return decideTrip(approval, approval.trip_id, decision, note ?? null, user.id)
+
+  const booking = approval.booking_id ? await bookings.approvalTarget(db, approval.booking_id) : null
 
   if (!booking) {
     return Response.json({ error: 'Booking for this approval was not found' }, { status: 404 })
@@ -111,7 +120,7 @@ export const PATCH = route(async (
       }
 
       const outcome = await advanceApprovalChain(tx, {
-        bookingId: booking.id,
+        subject: { booking: booking.id },
         clientId: approval.client_id,
         employeeId: booking.employee_id,
         chainTemplateId: approval.chain_template_id,
@@ -121,6 +130,9 @@ export const PATCH = route(async (
       })
 
       if (!outcome.requiresApproval) return { bookingStatus: await setBooking('approved') }
+      // Parallel 'all': this one is in, the rest are still deciding. It used to
+      // fall through to the next line and mark the booking misconfigured.
+      if (outcome.awaitingOthers) return { bookingStatus: 'pending_approval' }
       if (!outcome.approverId) return { bookingStatus: await setBooking('approval_misconfigured') }
 
       // Next tier's approval row was created — booking stays pending_approval.
@@ -137,3 +149,58 @@ export const PATCH = route(async (
 
   return Response.json({ ok: true, ...outcomeStatus })
 })
+
+// The trip sign-off's decision: the same chain walk, the trip's approval_status
+// as the thing it settles. One transaction, like the booking path.
+async function decideTrip(
+  approval: approvals.ApprovalForDecision,
+  tripId: string,
+  decision: 'approve' | 'reject',
+  note: string | null,
+  userId: string
+): Promise<Response> {
+  const trip = await trips.approvalTarget(db, tripId)
+  if (!trip) return Response.json({ error: 'Trip for this approval was not found' }, { status: 404 })
+  if (trip.approval_status !== 'pending') {
+    return Response.json({
+      error: `This trip is no longer awaiting sign-off (it is "${trip.approval_status}"). No action taken.`,
+    }, { status: 409 })
+  }
+
+  try {
+    const result = await transaction(async (tx) => {
+      await approvals.decide(tx, approval.id, decision === 'approve' ? 'approved' : 'rejected', note)
+      const settle = async (status: 'approved' | 'rejected') => {
+        await trips.setApprovalStatus(tx, tripId, status)
+        return { tripApprovalStatus: status }
+      }
+      if (decision === 'reject') return settle('rejected')
+      if (!approval.chain_template_id) return settle('approved')
+
+      const outcome = await advanceApprovalChain(tx, {
+        subject: { trip: tripId },
+        clientId: approval.client_id,
+        employeeId: trip.created_by,
+        chainTemplateId: approval.chain_template_id,
+        completedTier: approval.tier,
+        verdict: (approval.verdict as Verdict) ?? 'green',
+        reason: approval.reason ?? 'Trip sign-off',
+      })
+      if (!outcome.requiresApproval) return settle('approved')
+      if (outcome.awaitingOthers || outcome.approverId) {
+        return { tripApprovalStatus: 'pending' as const, nextTier: outcome.awaitingOthers ? undefined : outcome.tier }
+      }
+      // The next step has nobody to ask. Approving anyway would skip a step
+      // the company configured, so it is flagged, as a booking would be.
+      await trips.setApprovalStatus(tx, tripId, 'misconfigured')
+      return { tripApprovalStatus: 'misconfigured' as const }
+    }, { userId })
+    return Response.json({ ok: true, ...result })
+  } catch (writeError) {
+    console.error('Trip approval decision rolled back', writeError, { approvalId: approval.id, tripId })
+    return Response.json({
+      ok: false,
+      error: 'Your decision could not be recorded. Nothing was changed — please try again.',
+    }, { status: 500 })
+  }
+}

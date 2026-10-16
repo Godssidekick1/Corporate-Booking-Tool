@@ -41,17 +41,21 @@ import {
 //     min_band_rank?: number }        // only for 'any_manager_at'
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type ApprovalCategory = 'air' | 'hotel' | 'misc'
+// 'trip' is not a booking's category: it routes the trip SIGN-OFF -- the whole
+// trip, approved once when it is ready (startApprovalForTrip), not each booking
+// at booking time. categoryForTravelType never returns it.
+export type ApprovalCategory = 'air' | 'hotel' | 'misc' | 'trip'
 
 // Every category, in the order screens should offer them. One definition, so a
 // fourth category is added here rather than in each of the four places that
 // previously kept their own copy.
-export const APPROVAL_CATEGORIES: ApprovalCategory[] = ['air', 'hotel', 'misc']
+export const APPROVAL_CATEGORIES: ApprovalCategory[] = ['air', 'hotel', 'misc', 'trip']
 
 export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
   air: 'Flights',
   hotel: 'Hotels',
   misc: 'Everything else',
+  trip: 'Trip sign-off',
 }
 
 // ── categoryForTravelType ──────────────────────────────────────────────────
@@ -118,6 +122,10 @@ export interface TierOutcome {
   // stay populated with the first for callers that only handle one.
   approvalIds?: string[]
   approverIds?: string[]
+  // Parallel 'all' quorum: this approval is in, others at the same step are
+  // still outstanding. Nothing new was raised, and nothing is wrong -- the
+  // subject simply stays pending (it is NOT a misconfiguration).
+  awaitingOthers?: boolean
   // Set when a template applied but not one of its approvers could be
   // resolved to a real person — e.g. the tier wants a finance user and the
   // client has none active. The booking is NOT held on an approval nobody
@@ -197,9 +205,8 @@ async function resolveChainForEmployee(
   db: Queryable,
   employeeId: string,
   clientId: string,
-  travelType: string
+  category: ApprovalCategory
 ): Promise<ResolvedChain | null> {
-  const category = categoryForTravelType(travelType)
   const resolved = await resolveTemplateForEmployee(db, employeeId, clientId, category)
 
   if (!resolved) return null
@@ -373,13 +380,14 @@ export async function resolveApproverForTier(
 //
 // 'self' entries are logged as already-approved and never block. Everything
 // else becomes a pending row. In parallel mode every row is written at the SAME
-// tier number, because quorum finds siblings by (booking_id, tier) — entries
+// tier number, because quorum finds siblings by (subject, tier) — entries
 // carrying different tier numbers in the template would otherwise fragment one
 // parallel group into several that each clear independently.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface RaiseContext {
-  bookingId: string
+  // A booking (air approval) or a trip (its sign-off).
+  subject: approvals.Subject
   clientId: string
   employeeId: string
   verdict: Verdict
@@ -401,7 +409,7 @@ async function raiseApprovals(
   // their own approver and the reason makes clear no human reviewed it.
   const loggedAsApproved = (reason: string): approvals.NewApproval => ({
     client_id: ctx.clientId,
-    booking_id: ctx.bookingId,
+    subject: ctx.subject,
     approver_id: ctx.employeeId,
     tier: groupTier,
     status: 'approved',
@@ -477,7 +485,7 @@ async function raiseApprovals(
 
   const inserted = await approvals.raise(db, pending.map((p): approvals.NewApproval => ({
     client_id: ctx.clientId,
-    booking_id: ctx.bookingId,
+    subject: ctx.subject,
     approver_id: p.approverId,
     tier: groupTier,
     status: 'pending',
@@ -529,7 +537,7 @@ export async function startApprovalForBooking(
     }
   }
 
-  const chain = await resolveChainForEmployee(db, employeeId, clientId, travelType)
+  const chain = await resolveChainForEmployee(db, employeeId, clientId, category)
 
   if (!chain || chain.tiers.length === 0) {
     // No template covers this employee's band for this category, so there is
@@ -553,12 +561,41 @@ export async function startApprovalForBooking(
   const entries = chain.mode === 'parallel' ? eligible : [eligible[0]]
 
   return raiseApprovals(db, chain, entries, {
-    bookingId, clientId, employeeId, verdict, reason,
+    subject: { booking: bookingId }, clientId, employeeId, verdict, reason,
   })
 }
 
+// ── startApprovalForTrip ──────────────────────────────────────────────────────
+// The trip's sign-off: once, when the trip is ready, over everything in it --
+// separate from each booking's air approval, which ran at booking time. Routed
+// by the chain assigned for category 'trip' (employee > band > client default,
+// as for air). The verdict is the worst among the trip's bookings, so a step
+// that fires only on red still fires for a trip holding a red booking.
+//
+// The client's switch is checked here too, though the submit route refuses
+// first: with sign-off off, nothing is raised. No chain assigned -> nothing to
+// route, the same documented fail-open as a booking with no template.
+export async function startApprovalForTrip(
+  db: Queryable,
+  params: { tripId: string; clientId: string; employeeId: string; verdict: Verdict; reason: string }
+): Promise<TierOutcome> {
+  const { tripId, clientId, employeeId, verdict, reason } = params
+  const modes = await clients.approvalModes(db, clientId)
+  if (modes?.trip_approval_mode !== 'on_submit') return { requiresApproval: false }
+
+  const chain = await resolveChainForEmployee(db, employeeId, clientId, 'trip')
+  if (!chain || chain.tiers.length === 0) return { requiresApproval: false }
+
+  const eligible = eligibleTiers(chain.tiers, verdict)
+  if (eligible.length === 0) return { requiresApproval: false }
+
+  const entries = chain.mode === 'parallel' ? eligible : [eligible[0]]
+  return raiseApprovals(db, chain, entries, { subject: { trip: tripId }, clientId, employeeId, verdict, reason })
+}
+
 // ── advanceApprovalChain ──────────────────────────────────────────────────────
-// Called after an approval is approved, to decide whether the booking is done.
+// Called after an approval is approved, to decide whether its subject (the
+// booking, or the trip) is done.
 //
 // The caller has already flipped the acted-on row to 'approved' before this
 // runs, so anything still pending is genuinely outstanding.
@@ -566,7 +603,7 @@ export async function startApprovalForBooking(
 export async function advanceApprovalChain(
   db: Queryable,
   params: {
-    bookingId: string
+    subject: approvals.Subject
     clientId: string
     employeeId: string
     chainTemplateId: string
@@ -575,7 +612,7 @@ export async function advanceApprovalChain(
     reason: string
   }
 ): Promise<TierOutcome> {
-  const { bookingId, clientId, employeeId, chainTemplateId, completedTier, verdict, reason } = params
+  const { subject, clientId, employeeId, chainTemplateId, completedTier, verdict, reason } = params
 
   const template = await approvals.template(db, chainTemplateId)
 
@@ -601,7 +638,7 @@ export async function advanceApprovalChain(
   }
 
   if (chain.mode === 'parallel') {
-    const outstanding = await approvals.pendingAtTier(db, bookingId, completedTier)
+    const outstanding = await approvals.pendingAtTier(db, subject, completedTier)
 
     if (chain.quorum === 'any') {
       // The first approval carries it. Retire the rest so they stop appearing
@@ -610,9 +647,10 @@ export async function advanceApprovalChain(
       return { requiresApproval: false, tier: completedTier }
     }
 
-    // quorum 'all' — still blocked while anyone has yet to act.
+    // quorum 'all' — still blocked while anyone has yet to act. Nothing new is
+    // raised: the others' rows are already in their queues.
     return outstanding.length > 0
-      ? { requiresApproval: true, tier: completedTier }
+      ? { requiresApproval: true, awaitingOthers: true, tier: completedTier }
       : { requiresApproval: false, tier: completedTier }
   }
 
@@ -624,6 +662,6 @@ export async function advanceApprovalChain(
   }
 
   return raiseApprovals(db, chain, [nextTier], {
-    bookingId, clientId, employeeId, verdict, reason,
+    subject, clientId, employeeId, verdict, reason,
   })
 }

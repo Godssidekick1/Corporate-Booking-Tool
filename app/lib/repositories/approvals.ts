@@ -288,9 +288,17 @@ export async function clearDefault(db: Queryable, clientId: string, category: st
 
 // ═══ Approval rows ══════════════════════════════════════════════════════════
 
+// What an approval row approves: one booking (air approval, at booking time)
+// or one trip (the trip's sign-off, once it is ready). Exactly one -- the
+// table's approvals_one_subject_check.
+export type Subject = { booking: string } | { trip: string }
+
+const subjectIs = (s: Subject): Sql =>
+  'booking' in s ? sql`booking_id = ${s.booking}` : sql`trip_id = ${s.trip}`
+
 export interface NewApproval {
   client_id: string
-  booking_id: string
+  subject: Subject
   approver_id: string
   tier: number
   status: 'pending' | 'approved'
@@ -307,16 +315,16 @@ export async function raise(
 ): Promise<Pick<Row<'approvals'>, 'id' | 'approver_id'>[]> {
   if (rows.length === 0) return []
   return many(db, sql`
-    insert into approvals (client_id, booking_id, approver_id, tier, status, reason, chain_template_id, verdict, actioned_at)
+    insert into approvals (client_id, booking_id, trip_id, approver_id, tier, status, reason, chain_template_id, verdict, actioned_at)
     values ${join(rows.map(r => sql`(
-      ${r.client_id}, ${r.booking_id}, ${r.approver_id}, ${r.tier}, ${r.status}, ${r.reason},
+      ${r.client_id}, ${'booking' in r.subject ? r.subject.booking : null}, ${'trip' in r.subject ? r.subject.trip : null}, ${r.approver_id}, ${r.tier}, ${r.status}, ${r.reason},
       ${r.chain_template_id}, ${r.verdict}, ${r.actioned ? sql`now()` : sql`null`})`))}
     returning id, approver_id`)
 }
 
-export async function pendingAtTier(db: Queryable, bookingId: string, tier: number): Promise<string[]> {
+export async function pendingAtTier(db: Queryable, subject: Subject, tier: number): Promise<string[]> {
   const rows = await many<{ id: string }>(db, sql`
-    select id from approvals where booking_id = ${bookingId} and tier = ${tier} and status = 'pending'
+    select id from approvals where ${subjectIs(subject)} and tier = ${tier} and status = 'pending'
     order by id`)
   return rows.map(r => r.id)
 }
@@ -341,11 +349,11 @@ export async function latestForBooking(db: Queryable, bookingId: string): Promis
 }
 
 export type ApprovalForDecision = Pick<Row<'approvals'>,
-  'id' | 'booking_id' | 'client_id' | 'approver_id' | 'tier' | 'status' | 'chain_template_id' | 'verdict' | 'reason'>
+  'id' | 'booking_id' | 'trip_id' | 'client_id' | 'approver_id' | 'tier' | 'status' | 'chain_template_id' | 'verdict' | 'reason'>
 
 export async function forDecision(db: Queryable, approvalId: string): Promise<ApprovalForDecision | null> {
   return maybeOne<ApprovalForDecision>(db, sql`
-    select id, booking_id, client_id, approver_id, tier, status, chain_template_id, verdict, reason
+    select id, booking_id, trip_id, client_id, approver_id, tier, status, chain_template_id, verdict, reason
     from approvals where id = ${approvalId}`)
 }
 
@@ -367,9 +375,9 @@ export async function setVerdict(db: Queryable, approvalId: string, verdict: str
 // ═══ The approver's queue ═══════════════════════════════════════════════════
 
 export type QueueRow = Pick<Row<'approvals'>,
-  'id' | 'booking_id' | 'tier' | 'status' | 'reason' | 'decision_note' | 'verdict' | 'actioned_at' | 'created_at'>
+  'id' | 'booking_id' | 'trip_id' | 'tier' | 'status' | 'reason' | 'decision_note' | 'verdict' | 'actioned_at' | 'created_at'>
 
-const QUEUE = sql`id, booking_id, tier, status, reason, decision_note, verdict, actioned_at, created_at`
+const QUEUE = sql`id, booking_id, trip_id, tier, status, reason, decision_note, verdict, actioned_at, created_at`
 
 // Both lists are paged: an approver for a large company (finance, an admin)
 // can have thousands of decisions in a month.

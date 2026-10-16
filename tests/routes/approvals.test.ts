@@ -523,4 +523,43 @@ d('approvals', () => {
     expect(await maybeOne(db, sql`
       select 1 from client_default_approval_templates where client_id = ${bcg} and category = 'misc'`)).toBeNull()
   })
+
+  // ── Parallel chains: both quorums, end to end ───────────────────────────────
+  // Two defects, each proven by these: an 'any' chain's other rows were written
+  // as 'superseded', which the status constraint refused (the decision rolled
+  // back); an 'all' chain with someone still to decide was marked
+  // approval_misconfigured instead of staying pending.
+
+  const parallel = (quorum: 'any' | 'all') => saveChain({ mode: 'parallel', quorum, approvers: [
+    { approver_type: 'specific_user', approver_user_id: approver.id, min_verdict: 'green' },
+    { approver_type: 'specific_user', approver_user_id: secondApprover.id, min_verdict: 'green' },
+  ] })
+  const stepsOf = (bookingId: string) => many<{ id: string; approver_id: string; status: string }>(db, sql`
+    select id, approver_id, status from approvals where booking_id = ${bookingId} order by approver_id`)
+
+  it('parallel any: the first approval carries it, the others are retired', async () => {
+    expect((await parallel('any')).status).toBe(200)
+    const b = await book('P-ANY')
+    const steps = await stepsOf(b.bookingId)
+    expect(steps.map(s => s.status)).toEqual(['pending', 'pending'])
+    const mine = steps.find(s => s.approver_id === approver.id)!
+    expect(await decideAs(approver, mine.id, { decision: 'approve' }))
+      .toEqual({ status: 200, json: { ok: true, bookingStatus: 'approved' } })
+    const after = await stepsOf(b.bookingId)
+    expect(after.find(s => s.approver_id === secondApprover.id)?.status).toBe('superseded')
+  })
+
+  it('parallel all: waits for everyone, then approves', async () => {
+    expect((await parallel('all')).status).toBe(200)
+    const b = await book('P-ALL')
+    const steps = await stepsOf(b.bookingId)
+    const mine = steps.find(s => s.approver_id === approver.id)!
+    const theirs = steps.find(s => s.approver_id === secondApprover.id)!
+    expect(await decideAs(approver, mine.id, { decision: 'approve' }))
+      .toEqual({ status: 200, json: { ok: true, bookingStatus: 'pending_approval' } })
+    expect((await one<{ status: string }>(db, sql`select status from bookings where id = ${b.bookingId}`)).status)
+      .toBe('pending_approval')
+    expect(await decideAs(secondApprover, theirs.id, { decision: 'approve' }))
+      .toEqual({ status: 200, json: { ok: true, bookingStatus: 'approved' } })
+  })
 })

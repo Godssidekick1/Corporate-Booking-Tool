@@ -61,6 +61,12 @@ export const POST = route(async (
     return Response.json({ error: `This approval has already been ${approval.status} — nothing to refresh` }, { status: 409 })
   }
 
+  // A trip's sign-off has no fare of its own: its flights were priced, and
+  // approved if they needed it, when they were booked.
+  if (!approval.booking_id) {
+    return Response.json({ error: 'Only a booking’s approval has a fare to refresh' }, { status: 409 })
+  }
+
   const booking = await bookings.refreshTarget(db, approval.booking_id)
 
   if (!booking) {

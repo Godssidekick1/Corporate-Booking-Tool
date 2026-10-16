@@ -1,4 +1,4 @@
-import { sql, many, maybeOne, one, type Queryable } from '@/app/lib/db/sql'
+import { sql, many, maybeOne, one, exec, type Queryable } from '@/app/lib/db/sql'
 import { page } from '@/app/lib/db/fragments'
 import type { PageParams } from '@/app/lib/pagination'
 import type { Row } from '@/app/lib/db/types.generated'
@@ -121,6 +121,24 @@ export async function people(
            (select a.full_name from employees a where a.id = t.arranged_by and t.arranged_by <> t.created_by) as arranged_by_name
     from trips t left join employees e on e.id = t.created_by
     where t.id = ${tripId}`)
+}
+
+// ── The trip's sign-off ─────────────────────────────────────────────────────
+
+export type TripApprovalTarget = Pick<Row<'trips'>, 'id' | 'client_id' | 'created_by' | 'approval_status'>
+
+export async function approvalTarget(db: Queryable, tripId: string): Promise<TripApprovalTarget | null> {
+  return maybeOne<TripApprovalTarget>(db, sql`
+    select id, client_id, created_by, approval_status from trips where id = ${tripId}`)
+}
+
+export type TripApprovalStatus = 'none' | 'pending' | 'approved' | 'rejected' | 'misconfigured'
+
+export async function setApprovalStatus(db: Queryable, tripId: string, status: TripApprovalStatus): Promise<void> {
+  await exec(db, sql`
+    update trips set approval_status = ${status}, updated_at = now(),
+           submitted_at = case when ${status} = 'pending' then now() else submitted_at end
+    where id = ${tripId}`)
 }
 
 export async function setStatus(

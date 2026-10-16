@@ -148,4 +148,17 @@ d('schema', () => {
        where table_schema = 'public' and table_name = 'price_quotes' and column_name = 'priced_by'`)
     expect(quote).toEqual([{ nullable: 'NO' }])
   })
+
+  // A booking's air approval and a trip's sign-off share one table: each row
+  // approves exactly one of the two, never both, never neither.
+  it('an approval approves exactly one thing: a booking or a trip', async () => {
+    const [check] = await rows<{ def: string }>(`
+      select pg_get_constraintdef(oid) as def from pg_constraint
+       where conrelid = 'public.approvals'::regclass and conname = 'approvals_one_subject_check'`)
+    expect(check?.def).toMatch(/num_nonnulls\(booking_id, trip_id\) = 1/)
+    const [status] = await rows<{ def: string }>(`
+      select pg_get_constraintdef(oid) as def from pg_constraint
+       where conrelid = 'public.approvals'::regclass and conname = 'approvals_status_check'`)
+    expect(status?.def).toContain('superseded')
+  })
 })

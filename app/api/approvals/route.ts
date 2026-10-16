@@ -66,7 +66,9 @@ export const GET = route(async (req: NextRequest) => {
       : { ok: true, pending: [], history: [], pendingTotal: 0, historyTotal: 0, urgentCount: 0, pageSize: pendingParams.pageSize })
   }
 
-  const summaries = await bookings.approvalSummaries(db, Array.from(new Set(allApprovals.map(a => a.booking_id))))
+  // A row approves a booking (air approval) or a trip (its sign-off).
+  const bookingIds = Array.from(new Set(allApprovals.flatMap(a => a.booking_id ? [a.booking_id] : [])))
+  const summaries = await bookings.approvalSummaries(db, bookingIds)
   const bookingById = new Map(summaries.map(b => [b.id, b]))
 
   const travellers = await employees.travellerCards(db, Array.from(new Set(summaries.map(b => b.employee_id))))
@@ -78,7 +80,7 @@ export const GET = route(async (req: NextRequest) => {
     const oldestNames = pending
       .slice(0, 3)
       .map(a => {
-        const booking = bookingById.get(a.booking_id)
+        const booking = a.booking_id ? bookingById.get(a.booking_id) : undefined
         const traveler = booking ? travelerById.get(booking.employee_id) : undefined
         return traveler?.full_name ?? 'Unknown traveler'
       })
@@ -97,11 +99,13 @@ export const GET = route(async (req: NextRequest) => {
   }
 
   function enrich(a: approvals.QueueRow) {
-    const booking = bookingById.get(a.booking_id)
+    const booking = a.booking_id ? bookingById.get(a.booking_id) : undefined
     const traveler = booking ? travelerById.get(booking.employee_id) : undefined
     return {
       approvalId: a.id,
+      kind: a.trip_id ? 'trip' as const : 'booking' as const,
       bookingId: a.booking_id,
+      tripId: a.trip_id,
       tier: a.tier,
       status: a.status,
       reason: a.reason,
