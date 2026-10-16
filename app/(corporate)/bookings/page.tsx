@@ -3,207 +3,21 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useCanSelfBook } from '@/app/hooks/useCanSelfBook'
-import Pagination from '@/app/components/Pagination'
-import { formatTime, formatDayLabel } from '@/app/lib/book/types'
+import TripList from '@/app/components/trips/TripList'
 
 // ── /bookings — "My trips" ────────────────────────────────────────────────────
-// Shows the employee's trips, each with its flights nested underneath —
-// replaces the earlier flat list of individual flight bookings. /api/bookings
-// does the trip/booking grouping server-side; this page just renders it.
+// Every trip with its flights nested inside it, and the flights that sit in
+// no trip -- the full history. The trips page (/book) shows the same cards
+// for picking up and starting trips; both use TripList and TripCard
+// (app/components/trips), so a trip looks the same wherever it appears.
 //
-// Starting a NEW booking still goes through /book (the trip picker) — kept
-// deliberately separate from this page, which is a review/history surface.
+// A corporate admin also books for colleagues. Those trips are the
+// colleagues', and live on a tab of their own -- never mixed in with the
+// admin's own.
 // ─────────────────────────────────────────────────────────────────────────────
-
-interface BookingSummary {
-  id: string
-  status: string
-  pnr: string | null
-  total_cost: number | null
-  created_at: string
-  itinerary: {
-    origin?: { code: string; city: string; dateTime: string }
-    destination?: { code: string; city: string; dateTime: string }
-    stopCount?: number
-  } | null
-  traveler_snapshot: {
-    PassengerDetails: { FirstName: string; LastName: string }[]
-  } | null
-  fare_breakdown: { currency: string } | null
-  // Booked for them by the travel desk or a colleague; null when self-made.
-  booked_by_name?: string | null
-  // Arranged for others only: whose booking, and whether the caller made it.
-  traveller_name?: string | null
-  booked_by_me?: boolean
-}
-
-interface TripGroup {
-  trip: {
-    id: string
-    name: string
-    status: string
-    travel_date: string | null
-    created_at: string
-    // One's own trip: who set it up for them, when it was not them.
-    arranged_by_name?: string | null
-    // Arranged for others: whose trip, and whether the caller set it up.
-    traveller_name?: string | null
-    arranged_by_me?: boolean
-  }
-  bookings: BookingSummary[]
-}
-
-const STATUS_META: Record<string, { label: string; color: string; bg: string }> = {
-  ticketed:         { label: 'Ticketed',        color: '#166534', bg: '#DCFCE7' },
-  held:             { label: 'Booked',          color: '#1E40AF', bg: '#DBEAFE' },
-  passenger_added:  { label: 'In progress',     color: '#92400E', bg: '#FEF3C7' },
-  priced:           { label: 'In progress',     color: '#92400E', bg: '#FEF3C7' },
-  not_evaluated:    { label: 'Pending policy',  color: '#92400E', bg: '#FEF3C7' },
-  pending_approval: { label: 'Pending approval', color: '#92400E', bg: '#FEF3C7' },
-  approved:         { label: 'Approved',        color: '#1E40AF', bg: '#DBEAFE' },
-  rejected:         { label: 'Rejected',        color: '#991B1B', bg: '#FEE2E2' },
-  failed:           { label: 'Failed',          color: '#991B1B', bg: '#FEE2E2' },
-  cancelled:        { label: 'Cancelled',       color: '#6B7280', bg: '#F3F4F6' },
-}
-
-const TRIP_STATUS_META: Record<string, { label: string; color: string; bg: string }> = {
-  open:      { label: 'Planning',  color: '#92400E', bg: '#FEF3C7' },
-  active:    { label: 'Active',    color: '#1E40AF', bg: '#DBEAFE' },
-  completed: { label: 'Completed', color: '#166534', bg: '#DCFCE7' },
-  cancelled: { label: 'Cancelled', color: '#6B7280', bg: '#F3F4F6' },
-}
-
-function statusMeta(status: string) {
-  return STATUS_META[status] ?? { label: status, color: '#6B7280', bg: '#F3F4F6' }
-}
-
-function tripStatusMeta(status: string) {
-  return TRIP_STATUS_META[status] ?? { label: status, color: '#6B7280', bg: '#F3F4F6' }
-}
-
-// Where a booking should route to when clicked — matches the step it's
-// currently sitting at, so "My trips" can act as a resume point too, not
-// just a read-only history.
-function resumeHref(booking: BookingSummary): string {
-  if (booking.status === 'ticketed') return `/book/ticket/${booking.id}`
-  if (booking.status === 'held') return `/book/ticket/${booking.id}`
-  if (booking.status === 'pending_approval' || booking.status === 'approved') return `/book/confirm/${booking.id}`
-
-  // Everything else — failed, cancelled, rejected, approval_misconfigured —
-  // goes to the CONFIRM page, which has a terminal card explaining each of
-  // those states and exits out of them.
-  //
-  // This used to send them to the ticket page "which shows the right
-  // state/error". It does not: that page redirects every one of these statuses
-  // straight to /dashboard, so clicking a failed booking in My Trips bounced
-  // silently with no explanation of why it failed or what to do next.
-  return `/book/confirm/${booking.id}`
-}
-
-function FlightCard({ booking, others }: { booking: BookingSummary; others?: boolean }) {
-  const meta = statusMeta(booking.status)
-  const it = booking.itinerary
-  const travelers = booking.traveler_snapshot?.PassengerDetails ?? []
-  const currency = booking.fare_breakdown?.currency ?? ''
-  // Arranged for others: who booked it, said plainly -- you, a colleague, or
-  // the traveller themself.
-  const bookedBy = others
-    ? (booking.booked_by_me ? 'Booked by you' : booking.booked_by_name ? `Booked by ${booking.booked_by_name}` : 'Booked by them')
-    : booking.booked_by_name ? `Booked by ${booking.booked_by_name}` : null
-
-  return (
-    <Link href={resumeHref(booking)} style={s.card}>
-      <div style={s.cardTop}>
-        <div style={s.routeBlock}>
-          {it?.origin && it?.destination ? (
-            <>
-              <span style={s.routeCode}>{it.origin.code}</span>
-              <span style={s.routeArrow}>→</span>
-              <span style={s.routeCode}>{it.destination.code}</span>
-              {(it.stopCount ?? 0) > 0 && (
-                <span style={s.stopBadge}>{it.stopCount} stop{it.stopCount === 1 ? '' : 's'}</span>
-              )}
-            </>
-          ) : (
-            <span style={s.routeCode}>Flight booking</span>
-          )}
-        </div>
-        <span style={{ ...s.statusBadge, color: meta.color, background: meta.bg }}>{meta.label}</span>
-      </div>
-
-      <div style={s.cardBody}>
-        <div style={s.cardDetail}>
-          {others && booking.traveller_name && <span style={s.forChip}>For {booking.traveller_name}</span>}
-          {it?.origin?.dateTime && (
-            <span>{formatDayLabel(it.origin.dateTime)} · {formatTime(it.origin.dateTime)}</span>
-          )}
-          {travelers.length > 0 && (
-            <span style={s.dot}>
-              {travelers.length} traveler{travelers.length === 1 ? '' : 's'}
-            </span>
-          )}
-          {booking.pnr && <span style={s.dot}>PNR {booking.pnr}</span>}
-          {bookedBy && <span style={s.dot}>{bookedBy}</span>}
-        </div>
-        {booking.total_cost != null && (
-          <span style={s.cardFare}>{currency} {booking.total_cost.toLocaleString('en-IN')}</span>
-        )}
-      </div>
-    </Link>
-  )
-}
-
-function TripSection({ group, others, onMarkComplete, completingId }: {
-  group: TripGroup
-  others: boolean
-  onMarkComplete: (tripId: string) => void
-  completingId: string | null
-}) {
-  const meta = tripStatusMeta(group.trip.status)
-  const canComplete = group.trip.status === 'open' || group.trip.status === 'active'
-  const t = group.trip
-
-  return (
-    <div style={{ ...s.tripSection, ...(others ? s.tripSectionOthers : {}) }}>
-      <div style={s.tripHeader}>
-        <div style={s.tripHeaderLeft}>
-          <Link href={`/trips/${t.id}`} style={s.tripNameLink}>{t.name}</Link>
-          <span style={{ ...s.statusBadge, color: meta.color, background: meta.bg }}>{meta.label}</span>
-          {/* Whose trip, on every trip that is not simply one's own. */}
-          {others && t.traveller_name && <span style={s.forChip}>For {t.traveller_name}</span>}
-          {others && (
-            <span style={s.byNote}>{t.arranged_by_me ? 'Set up by you' : 'Their own trip — you booked into it'}</span>
-          )}
-          {!others && t.arranged_by_name && <span style={s.byNote}>Set up for you by {t.arranged_by_name}</span>}
-        </div>
-        {canComplete && (!others || t.arranged_by_me) && (
-          <button
-            type="button"
-            disabled={completingId === t.id}
-            onClick={() => onMarkComplete(t.id)}
-            style={{ ...s.completeBtn, opacity: completingId === t.id ? 0.6 : 1 }}
-          >
-            {completingId === t.id ? 'Marking complete…' : '✓ Mark trip complete'}
-          </button>
-        )}
-      </div>
-
-      {group.bookings.length === 0 ? (
-        <p style={s.emptyTripText}>No flights added to this trip yet.</p>
-      ) : (
-        <div style={s.list}>
-          {group.bookings.map(booking => <FlightCard key={booking.id} booking={booking} others={others} />)}
-        </div>
-      )}
-    </div>
-  )
-}
 
 export default function BookingsPage() {
   const canSelfBook = useCanSelfBook()
-  // A corporate admin also books for colleagues. Those trips are the
-  // colleagues', and are kept on a tab of their own, never mixed in with the
-  // admin's own trips.
   const [isAdmin, setIsAdmin] = useState(false)
   const [tab, setTab] = useState<'mine' | 'others'>('mine')
   useEffect(() => {
@@ -215,7 +29,7 @@ export default function BookingsPage() {
       <div className="page-frame narrow" style={s.root}>
         <div style={s.header}>
           <h1 style={s.heading}>My trips</h1>
-          {canSelfBook && <Link href="/book" style={s.newTripBtn}>+ New booking</Link>}
+          {canSelfBook && <Link href="/book" style={s.newBtn}>+ New booking</Link>}
         </div>
 
         {isAdmin && (
@@ -237,153 +51,13 @@ export default function BookingsPage() {
         )}
 
         {/* key: switching tab starts that list afresh, from page 1. */}
-        <TripsView key={tab} others={tab === 'others'} canSelfBook={canSelfBook} />
+        <TripList
+          key={tab}
+          others={tab === 'others'}
+          emptyAction={canSelfBook && tab === 'mine' ? <Link href="/book" style={s.emptyCta}>Start your first trip →</Link> : null}
+        />
       </div>
     </div>
-  )
-}
-
-function TripsView({ others, canSelfBook }: { others: boolean; canSelfBook: boolean | null }) {
-  const [trips, setTrips] = useState<TripGroup[] | null>(null)
-  const [ungrouped, setUngrouped] = useState<BookingSummary[]>([])
-  // Paged by trip, ten at a time; the server keeps a trip's flights together.
-  const [page, setPage] = useState(1)
-  const [total, setTotal] = useState(0)
-  const [pageSize, setPageSize] = useState(10)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [completingId, setCompletingId] = useState<string | null>(null)
-  const [completeError, setCompleteError] = useState('')
-
-  useEffect(() => {
-    loadBookings(page)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page])
-
-  async function loadBookings(p: number) {
-    setError('')
-    setLoading(true)
-    try {
-      const res = await fetch(`/api/bookings?page=${p}${others ? '&for=others' : ''}`)
-      const data = await res.json()
-      if (!res.ok) {
-        setError(data.error || 'Could not load your trips.')
-        return
-      }
-      setTrips(data.trips)
-      setUngrouped(data.ungroupedBookings ?? [])
-      setTotal(data.total ?? 0)
-      setPageSize(data.pageSize ?? 10)
-    } catch {
-      setError('Something went wrong loading your trips.')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  async function handleMarkComplete(tripId: string) {
-    setCompleteError('')
-    setCompletingId(tripId)
-    try {
-      const res = await fetch(`/api/trips/${tripId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'completed' }),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        setCompleteError(data.error || 'Could not mark this trip complete.')
-        return
-      }
-      // Reflect the new status locally rather than a full reload.
-      setTrips(prev => prev?.map(g => g.trip.id === tripId ? { ...g, trip: { ...g.trip, status: 'completed' } } : g) ?? null)
-    } catch {
-      setCompleteError('Something went wrong marking this trip complete.')
-    } finally {
-      setCompletingId(null)
-    }
-  }
-
-  const isEmpty = trips !== null && trips.length === 0 && ungrouped.length === 0
-
-  return (
-    <>
-      {error && (
-        <div style={s.errorCard}>
-          <p style={s.errorText}>⚠ {error}</p>
-        </div>
-      )}
-
-      {completeError && (
-        <div style={s.errorCard}>
-          <p style={s.errorText}>⚠ {completeError}</p>
-        </div>
-      )}
-
-      {!trips && !error && (
-        <div style={s.loadingCard}>
-          <div style={s.spinner} />
-        </div>
-      )}
-
-      {isEmpty && others && (
-        <div style={s.emptyState}>
-          <div style={s.emptyIcon}>✈</div>
-          <p style={s.emptyTitle}>Nothing arranged for others yet</p>
-          <p style={s.emptyDesc}>
-            Choose “A colleague” on the search page, or “For a colleague” when you create a trip.
-          </p>
-        </div>
-      )}
-
-      {isEmpty && !others && (
-        <div style={s.emptyState}>
-          <div style={s.emptyIcon}>✈</div>
-          <p style={s.emptyTitle}>No trips yet</p>
-          {canSelfBook === false ? (
-            <p style={s.emptyDesc}>Your travel desk books travel for your company. Contact them to arrange a trip; it will appear here once booked.</p>
-          ) : (
-            <>
-              <p style={s.emptyDesc}>Create a trip to start booking flights, hotels, and tracking expenses in one place.</p>
-              <Link href="/book" style={s.emptyCta}>Start your first trip →</Link>
-            </>
-          )}
-        </div>
-      )}
-
-      {trips && trips.length > 0 && (
-        <div style={s.tripsList}>
-          {trips.map(group => (
-            <TripSection
-              key={group.trip.id}
-              group={group}
-              others={others}
-              onMarkComplete={handleMarkComplete}
-              completingId={completingId}
-            />
-          ))}
-        </div>
-      )}
-
-      <Pagination
-        page={page} pageSize={pageSize} total={total}
-        onPageChange={setPage} busy={loading} noun="trips"
-      />
-
-      {ungrouped.length > 0 && (
-        <div style={s.tripSection}>
-          <div style={s.tripHeader}>
-            <div style={s.tripHeaderLeft}>
-              <span style={s.otherLabel}>{others ? 'Flights booked for others, not in a trip' : 'Other flights'}</span>
-            </div>
-          </div>
-          <p style={s.emptyTripText}>Not linked to a specific trip.</p>
-          <div style={s.list}>
-            {ungrouped.map(booking => <FlightCard key={booking.id} booking={booking} others={others} />)}
-          </div>
-        </div>
-      )}
-    </>
   )
 }
 
@@ -391,61 +65,14 @@ const s: Record<string, React.CSSProperties> = {
   page: { background: '#F9FAFB', minHeight: '100vh' },
   // Padding and width: the shared .page-frame (globals.css).
   root: { fontFamily: "'Inter', -apple-system, sans-serif" },
-
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' },
-  heading: { fontSize: '22px', fontWeight: 700, color: '#0A0A14', margin: 0, letterSpacing: '-0.4px' },
-  tabs: { display: 'flex', gap: '4px', borderBottom: '1px solid #E5E7EB', margin: '-8px 0 20px' },
+  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 20, flexWrap: 'wrap' },
+  heading: { fontSize: 22, fontWeight: 700, color: '#0A0A14', margin: 0, letterSpacing: '-0.4px' },
+  newBtn: { fontSize: 13, fontWeight: 600, color: '#fff', background: '#000835', padding: '9px 16px', borderRadius: 9, textDecoration: 'none' },
+  tabs: { display: 'flex', gap: 4, borderBottom: '1px solid #E5E7EB', margin: '-4px 0 16px' },
   // Three sides off and the bottom set, as in app/components/Tabs.tsx: border: 'none'
   // beside a changing borderBottomColor made React warn when the tab changed.
-  tab: { borderTop: 'none', borderLeft: 'none', borderRight: 'none', borderBottom: '2px solid transparent', background: 'transparent', padding: '8px 12px', fontSize: '13px', color: '#6B7280', cursor: 'pointer', marginBottom: '-1px' },
+  tab: { borderTop: 'none', borderLeft: 'none', borderRight: 'none', borderBottom: '2px solid transparent', background: 'transparent', padding: '8px 12px', fontSize: 13, color: '#6B7280', cursor: 'pointer', marginBottom: -1 },
   tabOn: { color: '#000835', fontWeight: 600, borderBottom: '2px solid #000835' },
-  tabHint: { fontSize: '12.5px', color: '#6B7280', margin: '-8px 0 18px', lineHeight: 1.6 },
-  forChip: { fontSize: '11px', fontWeight: 600, color: '#3730A3', background: '#EEF2FF', border: '1px solid #C7D2FE', borderRadius: '999px', padding: '2px 9px', whiteSpace: 'nowrap' as const },
-  byNote: { fontSize: '11.5px', color: '#6B7280' },
-  tripSectionOthers: { borderLeft: '3px solid #C7D2FE', paddingLeft: '14px' },
-  newTripBtn: {
-    fontSize: '13px', fontWeight: 600, color: '#fff', background: '#000835',
-    padding: '9px 16px', borderRadius: '9px', textDecoration: 'none',
-  },
-
-  errorCard: { padding: '16px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '12px', marginBottom: '16px' },
-  errorText: { fontSize: '13px', color: '#DC2626', margin: 0 },
-
-  loadingCard: { display: 'flex', justifyContent: 'center', padding: '60px 0' },
-  spinner: { width: '22px', height: '22px', border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%', animation: 'spin 0.7s linear infinite' },
-
-  emptyState: { display: 'flex', flexDirection: 'column' as const, alignItems: 'center', textAlign: 'center' as const, padding: '64px 20px', background: '#fff', border: '1px solid #E5E7EB', borderRadius: '16px' },
-  emptyIcon: { fontSize: '26px', marginBottom: '10px' },
-  emptyTitle: { fontSize: '15px', fontWeight: 700, color: '#111827', margin: '0 0 4px' },
-  emptyDesc: { fontSize: '13px', color: '#9CA3AF', margin: '0 0 18px', maxWidth: '320px', lineHeight: 1.6 },
-  emptyCta: { fontSize: '13px', fontWeight: 600, color: '#000835', textDecoration: 'underline' },
-
-  tripsList: { display: 'flex', flexDirection: 'column' as const, gap: '24px' },
-  tripSection: { display: 'flex', flexDirection: 'column' as const, gap: '10px', marginTop: '24px' },
-  tripHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' as const, gap: '10px' },
-  tripHeaderLeft: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' as const },
-  tripNameLink: { fontSize: '16px', fontWeight: 700, color: '#0A0A14', textDecoration: 'none' },
-  otherLabel: { fontSize: '16px', fontWeight: 700, color: '#6B7280' },
-  completeBtn: {
-    height: '32px', padding: '0 12px', background: '#fff', color: '#166534', fontSize: '12px', fontWeight: 600,
-    border: '1px solid #BBF7D0', borderRadius: '8px', cursor: 'pointer', whiteSpace: 'nowrap' as const,
-  },
-  emptyTripText: { fontSize: '12.5px', color: '#9CA3AF', margin: '0 0 4px' },
-
-  list: { display: 'flex', flexDirection: 'column' as const, gap: '10px' },
-  card: {
-    display: 'block', background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px',
-    padding: '16px 18px', textDecoration: 'none', color: 'inherit',
-  },
-  cardTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' },
-  routeBlock: { display: 'flex', alignItems: 'center', gap: '6px' },
-  routeCode: { fontSize: '15px', fontWeight: 700, color: '#0A0A14', letterSpacing: '0.2px' },
-  routeArrow: { fontSize: '13px', color: '#9CA3AF' },
-  stopBadge: { fontSize: '10px', color: '#9CA3AF', fontWeight: 500, marginLeft: '4px' },
-  statusBadge: { fontSize: '11px', fontWeight: 700, padding: '4px 10px', borderRadius: '7px' },
-
-  cardBody: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' as const, gap: '8px' },
-  cardDetail: { display: 'flex', alignItems: 'center', gap: '10px', fontSize: '12.5px', color: '#6B7280', flexWrap: 'wrap' as const },
-  dot: { display: 'flex', alignItems: 'center', gap: '10px' },
-  cardFare: { fontSize: '13px', fontWeight: 700, color: '#111827' },
+  tabHint: { fontSize: 12.5, color: '#6B7280', margin: '-6px 0 16px', lineHeight: 1.6 },
+  emptyCta: { fontSize: 13, fontWeight: 600, color: '#000835', textDecoration: 'underline' },
 }

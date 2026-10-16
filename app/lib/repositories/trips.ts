@@ -37,6 +37,9 @@ export interface TripCardRow {
   flight_count: number
   total_cost: number
   first_departure: string | null
+  // Whether its company signs trips off (clients.trip_approval_mode), so a card
+  // can offer "Submit for sign-off" without a second request.
+  sign_off_required: boolean
 }
 
 const TRIP_CARD = sql`
@@ -45,12 +48,14 @@ const TRIP_CARD = sql`
   cc.code as cost_centre_code, cc.name as cost_centre_name,
   t.approval_status, t.submitted_at,
   (select a.full_name from employees a where a.id = t.arranged_by and t.arranged_by <> t.created_by) as arranged_by_name,
-  agg.flight_count, agg.total_cost, agg.first_departure`
+  agg.flight_count, agg.total_cost, agg.first_departure,
+  (tc.trip_approval_mode = 'on_submit') as sign_off_required`
 
 // The card's joins: the cost centre's name, and the bookings summary (one
 // index lookup per trip, idx_bookings_group).
 const CARD_JOINS = sql`
   left join cost_centres cc on cc.id = t.cost_centre_id
+  left join clients tc on tc.id = t.client_id
   left join lateral (
     select count(*)::int as flight_count,
            coalesce(sum(coalesce(b.sell_total, b.total_cost)), 0) as total_cost,
