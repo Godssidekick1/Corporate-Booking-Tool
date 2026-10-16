@@ -7,6 +7,8 @@ import * as trips from '@/app/lib/repositories/trips'
 import { route } from '@/app/lib/http/handler'
 import { parsePageParams, pagedResponse } from '@/app/lib/pagination'
 import { onBehalf, refuse } from '@/app/lib/book/bookingActor'
+import * as clients from '@/app/lib/repositories/clients'
+import { parseTripDetails } from '@/app/lib/trips/details'
 
 // ── /api/trips ──────────────────────────────────────────────────────────────
 // A trip is a named container an employee creates to group everything for
@@ -26,7 +28,11 @@ import { onBehalf, refuse } from '@/app/lib/book/bookingActor'
 // (created_by), so it is in their trips; arranged_by records who set it up.
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface CreateTripBody {
+// The New trip form also sends the trip's details (app/lib/trips/details.ts):
+// travelType, billable, project, currency, budgetAmount, costCentreId. A
+// trip made from the trip picker sends a name only, and they can be added on
+// the trip page.
+interface CreateTripBody extends Record<string, unknown> {
   name: string
   travellerId?: string
 }
@@ -62,6 +68,11 @@ export const POST = route(async (req: NextRequest) => {
   const user = await requireUser()
   const body: CreateTripBody = await req.json()
   const name = typeof body.name === 'string' ? body.name.trim() : ''
+  const parsed = parseTripDetails(body)
+  if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 })
+  // A cost centre is one of the traveller's company's -- never another's.
+  const costCentreOk = async (clientId: string | null) =>
+    !parsed.details.cost_centre_id || (clientId !== null && await clients.costCentreBelongs(db, parsed.details.cost_centre_id, clientId))
 
   // A trip for someone else: theirs, set up by the caller. The desk does this
   // at a CBT-only client too -- that is where it books.
@@ -72,7 +83,12 @@ export const POST = route(async (req: NextRequest) => {
       return Response.json({ error: 'Trip name is required' }, { status: 400 })
     }
     const t = r.actor.traveller
-    const trip = await trips.create(db, { client_id: t.client_id!, created_by: t.id, arranged_by: user.id, name })
+    if (!(await costCentreOk(t.client_id))) {
+      return Response.json({ error: 'That cost centre is not one of this company\'s' }, { status: 422 })
+    }
+    const trip = await trips.create(db, {
+      client_id: t.client_id!, created_by: t.id, arranged_by: user.id, name, ...parsed.details,
+    })
     return Response.json({ ok: true, trip })
   }
 
@@ -98,7 +114,11 @@ export const POST = route(async (req: NextRequest) => {
     return Response.json({ error: "Trips belong to a company's travellers; TMC staff cannot hold one" }, { status: 403 })
   }
 
-  const trip = await trips.create(db, { client_id: employee.client_id, created_by: employee.id, name })
+  if (!(await costCentreOk(employee.client_id))) {
+    return Response.json({ error: 'That cost centre is not one of your company\'s' }, { status: 422 })
+  }
+
+  const trip = await trips.create(db, { client_id: employee.client_id, created_by: employee.id, name, ...parsed.details })
 
   return Response.json({ ok: true, trip })
 })

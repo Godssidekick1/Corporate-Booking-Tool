@@ -298,8 +298,9 @@ d('traveller bookings and trips', () => {
       .toEqual({ status: 400, json: { error: 'status must be one of: completed' } })
     expect(await call(tripPatch, { as: traveller, method: 'PATCH', ...tripAt(trip.id), body: { status: 'completed' } }))
       .toEqual({ status: 403, json: { error: 'Not authorized to edit this trip' } })
+    // The whole trip comes back (the trip page shows its details from it).
     expect(await call(tripPatch, { as: admin, method: 'PATCH', ...tripAt(trip.id), body: { status: 'completed' } }))
-      .toEqual({ status: 200, json: { ok: true, trip: { id: trip.id, status: 'completed' } } })
+      .toMatchObject({ status: 200, json: { ok: true, trip: { id: trip.id, status: 'completed', approval_status: 'none' } } })
 
     expect(await call(tripDelete, { as: admin, method: 'DELETE', ...tripAt(trip.id) }))
       .toEqual({ status: 200, json: { ok: true, trip: { id: trip.id, status: 'deleted' } } })

@@ -1,5 +1,5 @@
 import { sql, many, maybeOne, one, exec, type Queryable } from '@/app/lib/db/sql'
-import { page } from '@/app/lib/db/fragments'
+import { page, assignments } from '@/app/lib/db/fragments'
 import type { PageParams } from '@/app/lib/pagination'
 import type { Row } from '@/app/lib/db/types.generated'
 
@@ -10,9 +10,56 @@ import type { Row } from '@/app/lib/db/types.generated'
 // expenses under. Scoped to its creator: "my trips", not the client's.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type TripListRow = Pick<Row<'trips'>, 'id' | 'name' | 'status' | 'travel_date' | 'created_at' | 'updated_at'>
-  // Who set it up for them, when it was not them.
-  & { arranged_by_name: string | null }
+// ── What a trip card shows, the same for every list ─────────────────────────
+// Its details (travel type, billable, cost centre, budget, ...), its sign-off,
+// who set it up when it was not the traveller, and a summary of its LIVE
+// bookings -- cancelled, failed and rejected ones do not count towards what
+// the trip costs. The total is the sell side, what the company is invoiced,
+// as on every traveller read. Read through `t` with CARD_JOINS.
+export interface TripCardRow {
+  id: string
+  name: string | null
+  status: string
+  travel_date: string | null
+  created_at: string
+  updated_at: string
+  travel_type: 'domestic' | 'international' | null
+  billable: boolean
+  project: string | null
+  currency: string
+  budget_amount: number | null
+  cost_centre_id: string | null
+  cost_centre_code: string | null
+  cost_centre_name: string | null
+  approval_status: TripApprovalStatus
+  submitted_at: string | null
+  arranged_by_name: string | null
+  flight_count: number
+  total_cost: number
+  first_departure: string | null
+}
+
+const TRIP_CARD = sql`
+  t.id, t.name, t.status, t.travel_date, t.created_at, t.updated_at,
+  t.travel_type, t.billable, t.project, t.currency, t.budget_amount, t.cost_centre_id,
+  cc.code as cost_centre_code, cc.name as cost_centre_name,
+  t.approval_status, t.submitted_at,
+  (select a.full_name from employees a where a.id = t.arranged_by and t.arranged_by <> t.created_by) as arranged_by_name,
+  agg.flight_count, agg.total_cost, agg.first_departure`
+
+// The card's joins: the cost centre's name, and the bookings summary (one
+// index lookup per trip, idx_bookings_group).
+const CARD_JOINS = sql`
+  left join cost_centres cc on cc.id = t.cost_centre_id
+  left join lateral (
+    select count(*)::int as flight_count,
+           coalesce(sum(coalesce(b.sell_total, b.total_cost)), 0) as total_cost,
+           min(b.itinerary->'origin'->>'dateTime') as first_departure
+    from bookings b
+    where b.trip_id = t.id and b.status not in ('cancelled', 'failed', 'rejected')
+  ) agg on true`
+
+export type TripListRow = TripCardRow
 
 // Deleted trips are hidden; deletion is a status, never a row removal.
 // One page, most recently touched first. Paged: a frequent traveller's trips
@@ -20,22 +67,17 @@ export type TripListRow = Pick<Row<'trips'>, 'id' | 'name' | 'status' | 'travel_
 export async function mine(
   db: Queryable, clientId: string | null, createdBy: string, params: PageParams
 ): Promise<{ rows: TripListRow[]; total: number }> {
-  const where = sql`client_id = ${clientId} and created_by = ${createdBy} and status <> 'deleted'`
+  const where = sql`t.client_id = ${clientId} and t.created_by = ${createdBy} and t.status <> 'deleted'`
   const [rows, count] = await Promise.all([
     many<TripListRow>(db, sql`
-      select id, name, status, travel_date, created_at, updated_at,
-             (select a.full_name from employees a where a.id = trips.arranged_by and trips.arranged_by <> trips.created_by)
-               as arranged_by_name
-      from trips
-      where ${where} order by updated_at desc, id ${page(params)}`),
-    one<{ n: number }>(db, sql`select count(*)::int as n from trips where ${where}`),
+      select ${TRIP_CARD} from trips t ${CARD_JOINS}
+      where ${where} order by t.updated_at desc, t.id ${page(params)}`),
+    one<{ n: number }>(db, sql`select count(*)::int as n from trips t where ${where}`),
   ])
   return { rows, total: count.n }
 }
 
-export type OwnedTrip = Pick<Row<'trips'>, 'id' | 'name' | 'status' | 'travel_date' | 'created_at'>
-  // Who set it up for them (the desk, or an admin colleague); null when they did.
-  & { arranged_by_name: string | null }
+export type OwnedTrip = TripCardRow
 
 // Every live trip a person created, across clients -- what /api/bookings
 // groups their bookings under.
@@ -43,18 +85,17 @@ export type OwnedTrip = Pick<Row<'trips'>, 'id' | 'name' | 'status' | 'travel_da
 export async function ownedBy(
   db: Queryable, createdBy: string, params: PageParams
 ): Promise<{ rows: OwnedTrip[]; total: number }> {
-  const where = sql`trips.created_by = ${createdBy} and trips.status <> 'deleted'`
+  const where = sql`t.created_by = ${createdBy} and t.status <> 'deleted'`
   const [rows, count] = await Promise.all([
     many<OwnedTrip>(db, sql`
-      select trips.id, trips.name, trips.status, trips.travel_date, trips.created_at, a.full_name as arranged_by_name
-      from trips left join employees a on a.id = trips.arranged_by and trips.arranged_by <> trips.created_by
-      where ${where} order by trips.created_at desc, trips.id ${page(params)}`),
-    one<{ n: number }>(db, sql`select count(*)::int as n from trips where ${where}`),
+      select ${TRIP_CARD} from trips t ${CARD_JOINS}
+      where ${where} order by t.created_at desc, t.id ${page(params)}`),
+    one<{ n: number }>(db, sql`select count(*)::int as n from trips t where ${where}`),
   ])
   return { rows, total: count.n }
 }
 
-export type ArrangedTrip = Pick<Row<'trips'>, 'id' | 'name' | 'status' | 'travel_date' | 'created_at'> & {
+export type ArrangedTrip = TripCardRow & {
   traveller_id: string
   traveller_name: string | null
   // True when the caller set the trip up; false when it is the traveller's
@@ -81,10 +122,10 @@ export async function arrangedFor(
   const where = sql`t.status <> 'deleted' and t.created_by <> ${bookerId}`
   const [rows, count] = await Promise.all([
     many<ArrangedTrip>(db, sql`
-      select t.id, t.name, t.status, t.travel_date, t.created_at,
+      select ${TRIP_CARD},
              t.created_by as traveller_id, e.full_name as traveller_name,
              (t.arranged_by is not distinct from ${bookerId}::uuid) as arranged_by_me
-      from ${from} left join employees e on e.id = t.created_by
+      from ${from} left join employees e on e.id = t.created_by ${CARD_JOINS}
       where ${where} order by t.created_at desc, t.id ${page(params)}`),
     one<{ n: number }>(db, sql`select count(*)::int as n from ${from} where ${where}`),
   ])
@@ -93,23 +134,54 @@ export async function arrangedFor(
 
 // created_by is the trip's owner, the traveller; arranged_by whoever set it
 // up for them (the travel desk, or an admin colleague), null when they did.
+// A trip's details, as the new-trip form and the trip page edit them.
+// Validated by app/lib/trips/details.ts before they get here.
+export interface TripDetails {
+  travel_type?: 'domestic' | 'international' | null
+  billable?: boolean
+  project?: string | null
+  currency?: string
+  budget_amount?: number | null
+  cost_centre_id?: string | null
+}
+
 export async function create(
   db: Queryable,
-  t: Pick<Row<'trips'>, 'client_id' | 'created_by' | 'name'> & { arranged_by?: string | null }
+  t: Pick<Row<'trips'>, 'client_id' | 'created_by' | 'name'> & { arranged_by?: string | null } & TripDetails
 ): Promise<Pick<Row<'trips'>, 'id' | 'name' | 'status'>> {
   return one(db, sql`
-    insert into trips (client_id, created_by, arranged_by, name, status)
-    values (${t.client_id}, ${t.created_by}, ${t.arranged_by ?? null}, ${t.name}, 'open')
+    insert into trips (client_id, created_by, arranged_by, name, status,
+                       travel_type, billable, project, currency, budget_amount, cost_centre_id)
+    values (${t.client_id}, ${t.created_by}, ${t.arranged_by ?? null}, ${t.name}, 'open',
+            ${t.travel_type ?? null}, ${t.billable ?? false}, ${t.project ?? null}, ${t.currency ?? 'INR'},
+            ${t.budget_amount ?? null}, ${t.cost_centre_id ?? null})
     returning id, name, status`)
 }
 
-export type TripRecord = Pick<Row<'trips'>,
-  'id' | 'name' | 'status' | 'travel_date' | 'created_by' | 'client_id' | 'created_at' | 'arranged_by'>
+const EDITABLE = {
+  name: sql`name`, travel_type: sql`travel_type`, billable: sql`billable`, project: sql`project`,
+  currency: sql`currency`, budget_amount: sql`budget_amount`, cost_centre_id: sql`cost_centre_id`,
+} as const
+
+export async function update(db: Queryable, tripId: string, patch: TripDetails & { name?: string }): Promise<void> {
+  if (Object.keys(patch).length === 0) return
+  await exec(db, sql`update trips set ${assignments(EDITABLE, patch)}, updated_at = now() where id = ${tripId}`)
+}
+
+export type TripRecord = TripCardRow & Pick<Row<'trips'>, 'created_by' | 'client_id' | 'arranged_by'>
 
 export async function trip(db: Queryable, tripId: string): Promise<TripRecord | null> {
   return maybeOne<TripRecord>(db, sql`
-    select id, name, status, travel_date, created_by, client_id, created_at, arranged_by
-    from trips where id = ${tripId}`)
+    select ${TRIP_CARD}, t.created_by, t.client_id, t.arranged_by
+    from trips t ${CARD_JOINS} where t.id = ${tripId}`)
+}
+
+// The verdicts of a trip's live bookings: the sign-off is routed on the worst.
+export async function liveBookings(db: Queryable, tripId: string): Promise<{ status: string; policy_verdict: string | null }[]> {
+  return many(db, sql`
+    select status, policy_verdict from bookings
+    where trip_id = ${tripId} and status not in ('cancelled', 'failed', 'rejected')
+    order by created_at, id`)
 }
 
 // Whose trip it is and who set it up, by name: the trip page's header.
@@ -146,7 +218,7 @@ export async function setStatus(
   tripId: string,
   status: string
 ): Promise<Pick<Row<'trips'>, 'id' | 'status'> | null> {
-  return maybeOne(db, sql`update trips set status = ${status} where id = ${tripId} returning id, status`)
+  return maybeOne(db, sql`update trips set status = ${status}, updated_at = now() where id = ${tripId} returning id, status`)
 }
 
 export type TripExpense = Pick<Row<'trip_expenses'>,
