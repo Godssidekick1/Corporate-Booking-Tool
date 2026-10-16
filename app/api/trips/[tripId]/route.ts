@@ -3,6 +3,7 @@ import { travellerItinerary } from '@/app/lib/book/travellerView'
 import { db } from '@/app/lib/db'
 import * as trips from '@/app/lib/repositories/trips'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
+import * as approvals from '@/app/lib/repositories/approvals'
 import { route } from '@/app/lib/http/handler'
 import { tripAccess } from '@/app/lib/trips/access'
 import * as clients from '@/app/lib/repositories/clients'
@@ -22,10 +23,11 @@ export const GET = route(async (req: NextRequest, { params }: Ctx) => {
   const own = await ownTrip(tripId, 'view')
   if (own.error) return own.error
 
-  const [bookings, expenses, people] = await Promise.all([
+  const [bookings, expenses, people, signOff] = await Promise.all([
     bookingsRepo.forTrip(db, tripId),
     trips.expenses(db, tripId),
     trips.people(db, tripId),
+    approvals.stepsForTrip(db, tripId),
   ])
 
   return Response.json({
@@ -39,6 +41,8 @@ export const GET = route(async (req: NextRequest, { params }: Ctx) => {
     // bookings.forTrip). The itinerary is projected: it carries provider keys.
     bookings: bookings.map(b => ({ ...b, itinerary: travellerItinerary(b.itinerary) })),
     expenses,
+    // The sign-off as it went, every submission (approvals with trip_id).
+    signOff,
   })
 })
 

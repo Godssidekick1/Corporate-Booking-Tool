@@ -4290,6 +4290,7 @@ exports[`traveller bookings and trips > trip: owner only; the workspace with its
   "expenses": [],
   "mine": true,
   "ok": true,
+  "signOff": [],
   "traveller": {
     "id": "c0fc26d8-292b-4e90-9716-3b4d4f890838",
     "name": "Employee 4ae427",

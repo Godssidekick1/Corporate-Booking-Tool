@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Pagination from '@/app/components/Pagination'
 import { formatTime, formatDayLabel } from '@/app/lib/book/types'
+import { FlightRow, type TripCardTrip, type TripCardFlight } from '@/app/components/trips/TripCard'
+import { money } from '@/app/lib/trips/status'
 
 // ── /approvals ────────────────────────────────────────────────────────────
 // A manager/finance/admin's approval queue: bookings currently waiting on
@@ -16,7 +18,14 @@ import { formatTime, formatDayLabel } from '@/app/lib/book/types'
 
 interface ApprovalItem {
   approvalId: string
-  bookingId: string
+  // A booking's air approval, or a trip's sign-off (the whole trip, once it
+  // is ready: its flights were each approved, if they needed it, when booked).
+  kind: 'booking' | 'trip'
+  bookingId: string | null
+  tripId: string | null
+  trip: (TripCardTrip & {
+    bookings: { id: string; status: string; pnr: string | null; totalCost: number | null; itinerary: TripCardFlight['itinerary'] }[]
+  }) | null
   tier: number
   status: string
   reason: string | null
@@ -247,6 +256,7 @@ export default function ApprovalsPage() {
               <div key={item.approvalId} style={{ ...s.card, ...(isUrgent ? s.cardUrgent : {}) }}>
                 <div style={s.cardTop}>
                   <div>
+                    {item.kind === 'trip' && <div style={s.kindLabel}>Trip sign-off</div>}
                     <div style={s.travelerName}>{item.traveler?.fullName ?? 'Unknown traveler'}</div>
                     <div style={s.travelerSub}>
                       {item.traveler?.department ?? '—'} · Tier {item.tier}
@@ -267,7 +277,9 @@ export default function ApprovalsPage() {
                   </div>
                 </div>
 
-                {itinerary?.origin && itinerary?.destination && (
+                {item.kind === 'trip' && item.trip && <TripSignOffSummary trip={item.trip} />}
+
+                {item.kind === 'booking' && itinerary?.origin && itinerary?.destination && (
                   <div style={s.routeRow}>
                     <span style={s.routeCode}>{itinerary.origin.code}</span>
                     <span style={s.routeArrow}>→</span>
@@ -279,7 +291,7 @@ export default function ApprovalsPage() {
                   </div>
                 )}
 
-                <div style={s.costRow}>
+                {item.kind === 'booking' && <div style={s.costRow}>
                   <span style={s.costLabel}>Total cost</span>
                   <div style={s.costRight}>
                     <span style={s.costValue}>₹{item.booking?.totalCost?.toLocaleString('en-IN') ?? '—'}</span>
@@ -295,7 +307,7 @@ export default function ApprovalsPage() {
                       </button>
                     )}
                   </div>
-                </div>
+                </div>}
 
                 {item.reason && (
                   <div style={s.reasonBox}>{item.reason}</div>
@@ -347,7 +359,50 @@ export default function ApprovalsPage() {
   )
 }
 
+// A trip sign-off's body: what the trip is for, what it spent against its
+// budget, and its flights, read-only -- each was approved, if it needed to be,
+// when it was booked; this decision is about the trip as a whole.
+function TripSignOffSummary({ trip }: { trip: NonNullable<ApprovalItem['trip']> }) {
+  const currency = trip.currency ?? 'INR'
+  const total = trip.total_cost ?? 0
+  const facts = [
+    trip.name || 'Untitled trip',
+    trip.travel_type ? (trip.travel_type === 'domestic' ? 'Domestic' : 'International') : null,
+    trip.cost_centre_code ? `Cost centre ${trip.cost_centre_code}` : null,
+    trip.billable ? 'Billable' : null,
+    trip.project ? `Project: ${trip.project}` : null,
+  ].filter(Boolean)
+  return (
+    <div style={s.tripBox}>
+      <div style={s.tripFacts}>{facts.map((f, i) => <span key={i} style={i === 0 ? s.tripName : undefined}>{f}</span>)}</div>
+      <ul style={s.tripFlights}>
+        {trip.bookings.map(b => (
+          <FlightRow key={b.id} flight={{ id: b.id, status: b.status, pnr: b.pnr, total_cost: b.totalCost, itinerary: b.itinerary }} />
+        ))}
+      </ul>
+      <div style={s.costRow}>
+        <span style={s.costLabel}>Trip total</span>
+        <span style={s.costValue}>
+          {money(total, currency)}
+          {trip.budget_amount != null && (
+            <span style={{ ...s.budgetNote, ...(total > trip.budget_amount ? s.overBudget : {}) }}>
+              {' '}of {money(trip.budget_amount, currency)} budget
+            </span>
+          )}
+        </span>
+      </div>
+    </div>
+  )
+}
+
 const s: Record<string, React.CSSProperties> = {
+  kindLabel: { fontSize: 10.5, fontWeight: 700, color: '#4338CA', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 2 },
+  tripBox: { display: 'flex', flexDirection: 'column', gap: 8, margin: '10px 0' },
+  tripFacts: { display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontSize: 12.5, color: '#4B5563' },
+  tripName: { fontWeight: 700, color: '#111827' },
+  tripFlights: { listStyle: 'none', margin: 0, padding: 0, borderTop: '1px solid #F3F4F6' },
+  budgetNote: { fontSize: 12, fontWeight: 500, color: '#6B7280' },
+  overBudget: { color: '#B91C1C', fontWeight: 600 },
   // Padding and width: the shared .page-frame (globals.css).
   page: { fontFamily: "'Inter', -apple-system, sans-serif" },
 

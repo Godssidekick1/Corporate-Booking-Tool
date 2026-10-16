@@ -348,6 +348,26 @@ export async function latestForBooking(db: Queryable, bookingId: string): Promis
     limit 1`)
 }
 
+// A trip's sign-off as it went: every step, who it was asked of, what they
+// decided and when -- earlier submissions included, oldest first.
+export interface TripSignOffStep {
+  id: string
+  tier: number
+  status: string
+  approver_name: string | null
+  decision_note: string | null
+  actioned_at: string | null
+  created_at: string
+}
+
+export async function stepsForTrip(db: Queryable, tripId: string): Promise<TripSignOffStep[]> {
+  return many<TripSignOffStep>(db, sql`
+    select a.id, a.tier, a.status, e.full_name as approver_name, a.decision_note, a.actioned_at, a.created_at
+    from approvals a left join employees e on e.id = a.approver_id
+    where a.trip_id = ${tripId}
+    order by a.created_at, a.tier, a.id`)
+}
+
 export type ApprovalForDecision = Pick<Row<'approvals'>,
   'id' | 'booking_id' | 'trip_id' | 'client_id' | 'approver_id' | 'tier' | 'status' | 'chain_template_id' | 'verdict' | 'reason'>
 
