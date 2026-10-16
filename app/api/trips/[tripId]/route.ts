@@ -1,12 +1,10 @@
-import { requireUser } from '@/app/lib/auth/session'
 import { NextRequest } from 'next/server'
 import { travellerItinerary } from '@/app/lib/book/travellerView'
 import { db } from '@/app/lib/db'
-import * as employees from '@/app/lib/repositories/employees'
 import * as trips from '@/app/lib/repositories/trips'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
 import { route } from '@/app/lib/http/handler'
-import { onBehalf } from '@/app/lib/book/bookingActor'
+import { tripAccess } from '@/app/lib/trips/access'
 import * as clients from '@/app/lib/repositories/clients'
 import { parseTripDetails } from '@/app/lib/trips/details'
 
@@ -16,36 +14,8 @@ import { parseTripDetails } from '@/app/lib/trips/details'
 
 type Ctx = { params: Promise<{ tripId: string }> }
 
-// The caller and the trip, with the ownership check every verb shares.
-//
-// The trip's owner, the traveller -- or whoever may book for them (the rules
-// of app/lib/book/bookingActor.ts: an admin colleague, for one), since they
-// add that traveller's flights to it. `mine` tells the page which of the two
-// it is showing, so a trip kept for someone else is labelled as theirs.
-async function ownTrip(tripId: string, verb: string) {
-  const user = await requireUser()
-
-  const employee = await employees.traveller(db, user.id)
-
-  if (!employee) {
-    return { error: Response.json({ error: 'Employee record not found' }, { status: 404 }) }
-  }
-
-  const trip = await trips.trip(db, tripId)
-
-  if (!trip) {
-    return { error: Response.json({ error: 'Trip not found' }, { status: 404 }) }
-  }
-
-  if (trip.created_by !== employee.id) {
-    const allowed = trip.created_by ? await onBehalf(db, user, trip.created_by) : null
-    if (!allowed?.ok) {
-      return { error: Response.json({ error: `Not authorized to ${verb} this trip` }, { status: 403 }) }
-    }
-  }
-
-  return { trip, mine: trip.created_by === employee.id, callerId: employee.id }
-}
+// The caller and the trip: app/lib/trips/access.ts, shared by every trip route.
+const ownTrip = tripAccess
 
 export const GET = route(async (req: NextRequest, { params }: Ctx) => {
   const { tripId } = await params

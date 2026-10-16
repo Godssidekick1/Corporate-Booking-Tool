@@ -204,6 +204,16 @@ export async function actionableFor(
 export type TripBooking = Pick<Row<'bookings'>,
   'id' | 'booking_type' | 'status' | 'total_cost' | 'provider_order_id' | 'pnr' | 'itinerary' | 'created_at'>
 
+// Several trips' bookings at once: the approver's queue, one page of trip
+// sign-offs. Sell-side, like forTrip.
+export async function forTrips(db: Queryable, tripIds: readonly string[]): Promise<(TripBooking & { trip_id: string })[]> {
+  if (tripIds.length === 0) return []
+  return many(db, sql`
+    select id, trip_id, booking_type, status, ${SELL_TOTAL} as total_cost, provider_order_id, pnr, itinerary, created_at
+    from bookings where trip_id = any(${[...tripIds]})
+    order by created_at, id`)
+}
+
 export async function forTrip(db: Queryable, tripId: string): Promise<TripBooking[]> {
   return many<TripBooking>(db, sql`
     select id, booking_type, status, ${SELL_TOTAL} as total_cost, provider_order_id, pnr, itinerary, created_at

@@ -4,6 +4,7 @@ import { travellerItinerary } from '@/app/lib/book/travellerView'
 import { db } from '@/app/lib/db'
 import * as approvals from '@/app/lib/repositories/approvals'
 import * as bookings from '@/app/lib/repositories/bookings'
+import * as trips from '@/app/lib/repositories/trips'
 import * as employees from '@/app/lib/repositories/employees'
 import { route } from '@/app/lib/http/handler'
 import { parsePageParams } from '@/app/lib/pagination'
@@ -71,7 +72,19 @@ export const GET = route(async (req: NextRequest) => {
   const summaries = await bookings.approvalSummaries(db, bookingIds)
   const bookingById = new Map(summaries.map(b => [b.id, b]))
 
-  const travellers = await employees.travellerCards(db, Array.from(new Set(summaries.map(b => b.employee_id))))
+  // Trip sign-offs: the trip as a card, and its bookings (each one already
+  // through its own air approval, if it needed it, when it was booked).
+  const tripIds = Array.from(new Set(allApprovals.flatMap(a => a.trip_id ? [a.trip_id] : [])))
+  const [tripCards, tripBookings] = summaryOnly
+    ? [await trips.cards(db, tripIds), []]
+    : await Promise.all([trips.cards(db, tripIds), bookings.forTrips(db, tripIds)])
+  const tripById = new Map(tripCards.map(t => [t.id, t]))
+  const bookingsByTrip = new Map<string, typeof tripBookings>()
+  for (const b of tripBookings) bookingsByTrip.set(b.trip_id, [...(bookingsByTrip.get(b.trip_id) ?? []), b])
+
+  const travellers = await employees.travellerCards(db, Array.from(new Set([
+    ...summaries.map(b => b.employee_id), ...tripCards.map(t => t.traveller_id),
+  ])))
   const travelerById = new Map(travellers.map(t => [t.id, t]))
 
   if (summaryOnly) {
@@ -81,7 +94,9 @@ export const GET = route(async (req: NextRequest) => {
       .slice(0, 3)
       .map(a => {
         const booking = a.booking_id ? bookingById.get(a.booking_id) : undefined
-        const traveler = booking ? travelerById.get(booking.employee_id) : undefined
+        const tripCard = a.trip_id ? tripById.get(a.trip_id) : undefined
+        const travellerId = booking?.employee_id ?? tripCard?.traveller_id
+        const traveler = travellerId ? travelerById.get(travellerId) : undefined
         return traveler?.full_name ?? 'Unknown traveler'
       })
 
@@ -100,7 +115,9 @@ export const GET = route(async (req: NextRequest) => {
 
   function enrich(a: approvals.QueueRow) {
     const booking = a.booking_id ? bookingById.get(a.booking_id) : undefined
-    const traveler = booking ? travelerById.get(booking.employee_id) : undefined
+    const tripCard = a.trip_id ? tripById.get(a.trip_id) : undefined
+    const travellerId = booking?.employee_id ?? tripCard?.traveller_id
+    const traveler = travellerId ? travelerById.get(travellerId) : undefined
     return {
       approvalId: a.id,
       kind: a.trip_id ? 'trip' as const : 'booking' as const,
@@ -123,6 +140,14 @@ export const GET = route(async (req: NextRequest) => {
         status: booking.status,
         // "Requested by … for …" when someone booked it on the traveller's behalf.
         bookedByName: booking.booked_by_name,
+      } : null,
+      // A trip sign-off: the trip and what is in it, sell-side.
+      trip: tripCard ? {
+        ...tripCard,
+        bookings: (bookingsByTrip.get(tripCard.id) ?? []).map(b => ({
+          id: b.id, bookingType: b.booking_type, status: b.status, pnr: b.pnr, totalCost: b.total_cost,
+          itinerary: travellerItinerary(b.itinerary),
+        })),
       } : null,
       traveler: traveler ? {
         fullName: traveler.full_name,

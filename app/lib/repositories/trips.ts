@@ -176,6 +176,16 @@ export async function trip(db: Queryable, tripId: string): Promise<TripRecord | 
     from trips t ${CARD_JOINS} where t.id = ${tripId}`)
 }
 
+// Several trips as cards, with whose they are: the approver's queue.
+export async function cards(
+  db: Queryable, tripIds: readonly string[]
+): Promise<(TripCardRow & { traveller_id: string; client_id: string })[]> {
+  if (tripIds.length === 0) return []
+  return many(db, sql`
+    select ${TRIP_CARD}, t.created_by as traveller_id, t.client_id
+    from trips t ${CARD_JOINS} where t.id = any(${[...tripIds]}) order by t.id`)
+}
+
 // The verdicts of a trip's live bookings: the sign-off is routed on the worst.
 export async function liveBookings(db: Queryable, tripId: string): Promise<{ status: string; policy_verdict: string | null }[]> {
   return many(db, sql`
