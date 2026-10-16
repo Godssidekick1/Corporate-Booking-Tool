@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import SearchableSelect from '@/app/components/SearchableSelect'
 import { useLookup, clientOption } from '@/app/hooks/useLookup'
+import { APPROVAL_CATEGORY_OPTIONS } from '@/app/lib/approval-engine/categories'
 
 // ── DirectChain ──────────────────────────────────────────────────────────────
 // The whole direct-mapping flow: client, who it covers, the approvers in
@@ -30,11 +31,8 @@ interface Approver {
   min_verdict: string
 }
 
-const CATEGORIES = [
-  { value: 'air',   label: 'Flights' },
-  { value: 'hotel', label: 'Hotels' },
-  { value: 'misc', label: 'Everything else' },
-]
+// One list, shared with the engine (app/lib/approval-engine/categories.ts).
+const CATEGORIES = APPROVAL_CATEGORY_OPTIONS
 
 const APPROVER_TYPES: { value: ApproverType; label: string }[] = [
   { value: 'specific_user',  label: 'A specific person…' },

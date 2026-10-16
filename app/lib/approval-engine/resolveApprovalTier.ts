@@ -11,6 +11,7 @@ import {
   type ChainQuorum,
   type TemplateTier,
 } from './linkedApprovalTemplates'
+import { categoryForTravelType, type ApprovalCategory } from './categories'
 
 // Every function here takes `db` -- the pool, or a transaction's connection,
 // which is where approval writes belong: a decision, the booking's status and
@@ -41,39 +42,12 @@ import {
 //     min_band_rank?: number }        // only for 'any_manager_at'
 // ─────────────────────────────────────────────────────────────────────────────
 
-// 'trip' is not a booking's category: it routes the trip SIGN-OFF -- the whole
-// trip, approved once when it is ready (startApprovalForTrip), not each booking
-// at booking time. categoryForTravelType never returns it.
-export type ApprovalCategory = 'air' | 'hotel' | 'misc' | 'trip'
-
-// Every category, in the order screens should offer them. One definition, so a
-// fourth category is added here rather than in each of the four places that
-// previously kept their own copy.
-export const APPROVAL_CATEGORIES: ApprovalCategory[] = ['air', 'hotel', 'misc', 'trip']
-
-export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
-  air: 'Flights',
-  hotel: 'Hotels',
-  misc: 'Everything else',
-  trip: 'Trip sign-off',
-}
-
-// ── categoryForTravelType ──────────────────────────────────────────────────
-// The only place travelType's finer granularity gets collapsed to a routing
-// category. Anything starting with 'flight' is air, 'hotel' is hotel, and
-// everything else (car_rental, misc expenses, and any future travel type
-// nobody's thought of yet) defaults to misc rather than silently matching no
-// bucket at all — which would mean no approval on a booking type nobody
-// remembered to classify.
-export function categoryForTravelType(travelType: string): ApprovalCategory {
-  if (travelType.startsWith('flight')) return 'air'
-  if (travelType.startsWith('hotel')) return 'hotel'
-  return 'misc'
-}
-
-export function isApprovalCategory(value: string): value is ApprovalCategory {
-  return (APPROVAL_CATEGORIES as string[]).includes(value)
-}
+// The categories live in ./categories (pure, so the TMC screens import the
+// same list); re-exported for the callers that import them from here.
+export {
+  APPROVAL_CATEGORIES, APPROVAL_CATEGORY_LABELS, categoryForTravelType, isApprovalCategory,
+  type ApprovalCategory,
+} from './categories'
 
 // 'unbound' is not a choice anyone makes — it is what a step resolves to when
 // this client has not said who fills it. Modelled as a type rather than a

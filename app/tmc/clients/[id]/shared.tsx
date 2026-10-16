@@ -60,6 +60,7 @@ export interface Client {
   processing_fee_active: boolean
   air_approval_mode: string
   hotel_approval_mode: string
+  trip_approval_mode: string
 }
 
 // The generic setter every tab uses. Declared once so a tab cannot accidentally

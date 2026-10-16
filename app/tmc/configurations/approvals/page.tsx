@@ -6,6 +6,7 @@ import { useLookup, clientOption } from '@/app/hooks/useLookup'
 import Tabs, { useUrlTab } from '@/app/components/Tabs'
 import StepApprovers, { type TemplateStep } from './StepApprovers'
 import DirectChain from './DirectChain'
+import { APPROVAL_CATEGORY_OPTIONS } from '@/app/lib/approval-engine/categories'
 
 // NOTE: no TmcShell here. app/tmc/configurations/layout.tsx supplies the
 // Settings sidebar and page chrome for everything under /tmc/configurations —
@@ -50,11 +51,8 @@ interface RosterBand {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const CATEGORIES: { value: string; label: string }[] = [
-  { value: 'air',   label: 'Flights' },
-  { value: 'hotel', label: 'Hotels' },
-  { value: 'misc', label: 'Everything else' },
-]
+// One list, shared with the engine (app/lib/approval-engine/categories.ts).
+const CATEGORIES = APPROVAL_CATEGORY_OPTIONS
 
 const VERDICTS: { value: string; label: string }[] = [
   { value: 'green', label: 'Always' },

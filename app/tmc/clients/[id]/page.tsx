@@ -13,6 +13,7 @@ import Toggle from './Toggle'
 import GstTab from './GstTab'
 import AllocationsTab from './AllocationsTab'
 import { Field, s, type Client } from './shared'
+import { APPROVAL_CATEGORIES, APPROVAL_CATEGORY_LABELS } from '@/app/lib/approval-engine/categories'
 
 // ── Corporate Settings ───────────────────────────────────────────────────────
 // Everything the TMC configures about one client, in one place.
@@ -46,6 +47,13 @@ const BOOKING_MODES = [
 const APPROVAL_MODES = [
   { value: 'before_booking', label: 'Required before booking' },
   { value: 'not_required', label: 'Not required' },
+]
+
+// The trip sign-off: the whole trip, approved once when it is ready -- not each
+// booking (that is air approval, above). Off unless a company wants it.
+const TRIP_APPROVAL_MODES = [
+  { value: 'not_required', label: 'Not required' },
+  { value: 'on_submit', label: 'Required when the trip is submitted' },
 ]
 
 const TAB_IDS = ['identity', 'gst', 'contacts', 'controls', 'allocations', 'policy'] as const
@@ -507,6 +515,15 @@ export default function CorporateSettingsPage() {
                 {APPROVAL_MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
               </select>
             </Field>
+            <Field label="Trip sign-off" hint="Travellers submit a finished trip; the chain assigned for 'Trip sign-off' approves it.">
+              <select
+                value={form.trip_approval_mode ?? 'not_required'}
+                onChange={e => set('trip_approval_mode', e.target.value)}
+                style={s.input}
+              >
+                {TRIP_APPROVAL_MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+              </select>
+            </Field>
             <Field label="Policy control" hint="Switching this off is on the Controls tab.">
               <input
                 readOnly disabled
@@ -552,13 +569,13 @@ export default function CorporateSettingsPage() {
 
           <p style={s.subLabel}>Default approval chain</p>
           <ul style={s.linkList}>
-            {(['air', 'hotel', 'misc'] as const).map(cat => (
+            {APPROVAL_CATEGORIES.map(cat => (
               <li key={cat} style={s.linkItem}>
-                <span style={s.linkName}>
-                  {cat === 'air' ? 'Flights' : cat === 'hotel' ? 'Hotels' : 'Everything else'}
-                </span>
+                <span style={s.linkName}>{APPROVAL_CATEGORY_LABELS[cat]}</span>
                 <span style={s.muted}>
-                  {approvalDefaults[cat] ? 'Chain assigned' : 'No chain — bookings go through unapproved'}
+                  {approvalDefaults[cat]
+                    ? 'Chain assigned'
+                    : cat === 'trip' ? 'No chain — submitted trips are signed off at once' : 'No chain — bookings go through unapproved'}
                 </span>
               </li>
             ))}

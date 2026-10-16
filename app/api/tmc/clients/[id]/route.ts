@@ -36,6 +36,8 @@ const ALLOWED_SIZES = ['1-50', '51-200', '201-1000', '1001+'] as const
 const ALLOWED_STATUSES = ['active', 'inactive'] as const
 
 const ALLOWED_APPROVAL_MODES = ['before_booking', 'not_required'] as const
+// The trip sign-off is asked for when a trip is submitted, not before booking.
+const ALLOWED_TRIP_APPROVAL_MODES = ['not_required', 'on_submit'] as const
 
 // ── The Corporate Settings surface ───────────────────────────────────────────
 // GET and PATCH return the same record (clients.ClientSettings, one column list
@@ -97,6 +99,7 @@ type UpdateClientBody = {
   branch_id?: string | null
   air_approval_mode?: string
   hotel_approval_mode?: string
+  trip_approval_mode?: string
 } & Partial<Record<typeof TEXT_FIELDS[number], string | null>>
   & Partial<Record<typeof BOOLEAN_FIELDS[number], boolean>>
 
@@ -202,6 +205,14 @@ export const PATCH = route(async (req: NextRequest, { params }: Ctx) => {
       return Response.json({ error: `Invalid ${mode}: ${value}` }, { status: 400 })
     }
     update[mode] = value
+  }
+
+  if (body.trip_approval_mode !== undefined) {
+    const value = body.trip_approval_mode
+    if (!ALLOWED_TRIP_APPROVAL_MODES.includes(value as typeof ALLOWED_TRIP_APPROVAL_MODES[number])) {
+      return Response.json({ error: `Invalid trip_approval_mode: ${value}` }, { status: 400 })
+    }
+    update.trip_approval_mode = value
   }
 
   if (body.size !== undefined) {

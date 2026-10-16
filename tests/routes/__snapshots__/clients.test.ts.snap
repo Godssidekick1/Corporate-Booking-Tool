@@ -286,6 +286,7 @@ exports[`tmc/clients > PATCH: saves, normalises, and returns the same shape as G
     "state": null,
     "status": "active",
     "timezone": "Asia/Kolkata",
+    "trip_approval_mode": "not_required",
   },
   "ok": true,
 }
@@ -444,6 +445,7 @@ exports[`tmc/clients > detail: the full Corporate Settings record 1`] = `
     "state": null,
     "status": "active",
     "timezone": "Asia/Kolkata",
+    "trip_approval_mode": "not_required",
   },
   "ok": true,
 }

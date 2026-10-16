@@ -127,6 +127,8 @@ d('tmc/clients', () => {
       [{ timezone: ' ' }, 'Timezone cannot be empty'],
       [{ currency: 'usd' }, 'Unsupported currency: usd'],
       [{ air_approval_mode: 'sometimes' }, 'Invalid air_approval_mode: sometimes'],
+      // The trip sign-off is asked for on submit; 'before_booking' is air's.
+      [{ trip_approval_mode: 'before_booking' }, 'Invalid trip_approval_mode: before_booking'],
       [{ size: '5' }, 'Invalid size: 5. Must be one of 1-50, 51-200, 201-1000, 1001+'],
       [{ status: 'gone' }, 'Invalid status: gone. Must be one of active, inactive'],
       [{ fop_priority: ['a'] }, 'fop_priority must list each of agency, corporate, bta_cta, bta_cta_manual exactly once'],
@@ -139,6 +141,11 @@ d('tmc/clients', () => {
       expect(res.json, JSON.stringify(body)).toEqual({ error })
       expect(res.status).toBe(400)
     }
+  })
+
+  it('PATCH: the trip sign-off switch', async () => {
+    expect((await patch(bcg, { trip_approval_mode: 'on_submit' })).json).toMatchObject({ client: { trip_approval_mode: 'on_submit' } })
+    expect((await patch(bcg, { trip_approval_mode: 'not_required' })).json).toMatchObject({ client: { trip_approval_mode: 'not_required' } })
   })
 
   it('PATCH: references must belong to this TMC', async () => {
