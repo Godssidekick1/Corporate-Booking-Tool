@@ -73,6 +73,29 @@ everywhere else the traveller's own chain decides.
   airline fare and the markup while booking; not built.
 - **Finance approvals for red verdicts** -- possible future approval step.
 
+## Trips and their sign-off (built 2026-10-16; what is left)
+
+Built: a trip carries what it is for (travel type, billable, cost centre,
+currency, budget, project as free text); one trip card, form and page on
+every side (app/components/trips); the trip sign-off -- the whole trip,
+approved once when every booking in it is booked, by the chain assigned for
+"Trip sign-off", switched per client (clients.trip_approval_mode, off by
+default). Air approval is unchanged: per booking, at booking time. The desk
+plans and submits trips for travellers (/tmc/book, /tmc/trips/[id]).
+
+- **Hotels and cabs inside the sign-off.** When hotels and cabs exist, the
+  sign-off should show them and approve the ones not yet approved, then sign
+  the trip off -- the approver sees the approved flights as today.
+- **A managed project list** per company (picked, not typed) if free text
+  proves too loose; trips.project would map onto it.
+- **Tell the approver and the traveller by email** when a trip is submitted
+  and decided, once production email exists. Today: the approvals queue and
+  the trip page.
+- **Booking into a signed-off trip** is blocked on the trip page; a booking
+  started elsewhere into that trip is not yet refused by add-passenger.
+- **Trip-level reports** (spend against budget by cost centre, billable
+  trips) now have the data.
+
 ## Before real users
 
 - Production email (SMTP: `SMTP_URL`, `MAIL_FROM`). Until then Vercel needs
