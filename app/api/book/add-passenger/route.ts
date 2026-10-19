@@ -116,6 +116,18 @@ export const POST = route(async (req: NextRequest) => {
     if (!trip || trip.created_by !== employee.id) {
       return Response.json({ error: 'Trip not found or not owned by you' }, { status: 403 })
     }
+
+    // A trip sent for sign-off is what the approver is looking at; one signed
+    // off is closed. Neither takes another booking -- refused here, before the
+    // airline is asked for anything. A rejected trip can take more and be
+    // submitted again.
+    if (trip.approval_status === 'pending' || trip.approval_status === 'approved') {
+      return Response.json({
+        error: trip.approval_status === 'pending'
+          ? 'This trip is awaiting sign-off, so it cannot take another booking until it is decided.'
+          : 'This trip is signed off and cannot take another booking.',
+      }, { status: 409 })
+    }
   }
 
   // ── The quote ──────────────────────────────────────────────────────────────

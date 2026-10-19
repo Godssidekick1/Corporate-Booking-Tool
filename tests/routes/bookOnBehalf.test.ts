@@ -304,6 +304,14 @@ d('book on behalf', () => {
     const own = ((await tripsCall(admin, { name: 'My own' })).json as { trip: { id: string } }).trip.id
     expect((await price(admin, 'T2', colleague.id)).status).toBe(200)
     expect((await addPassenger(admin, 'T2', colleague.id, { tripId: own })).status).toBe(403)
+
+    // A trip awaiting sign-off, or signed off, takes no more bookings.
+    for (const status of ['pending', 'approved']) {
+      await exec(db, sql`update trips set approval_status = ${status} where id = ${tripId}`)
+      expect((await price(admin, `T3-${status}`, colleague.id)).status).toBe(200)
+      expect((await addPassenger(admin, `T3-${status}`, colleague.id, { tripId })).status).toBe(409)
+    }
+    await exec(db, sql`update trips set approval_status = 'none' where id = ${tripId}`)
   })
 
   // An admin's own trips and the ones they arrange for colleagues are two lists

@@ -91,8 +91,6 @@ plans and submits trips for travellers (/tmc/book, /tmc/trips/[id]).
 - **Tell the approver and the traveller by email** when a trip is submitted
   and decided, once production email exists. Today: the approvals queue and
   the trip page.
-- **Booking into a signed-off trip** is blocked on the trip page; a booking
-  started elsewhere into that trip is not yet refused by add-passenger.
 - **Trip-level reports** (spend against budget by cost centre, billable
   trips) now have the data.
 
