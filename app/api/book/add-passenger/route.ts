@@ -15,6 +15,8 @@ import { refusalFor } from '@/app/lib/policy/searchFilter'
 import { startApprovalForBooking, buildReason } from '@/app/lib/approval-engine/resolveApprovalTier'
 import { stampDealCodes } from '@/app/lib/deal-codes/stampBooking'
 import { stampFop } from '@/app/lib/fop/stampFop'
+import { loadClientGates } from '@/app/lib/clients/clientGates'
+import { QUOTE_EXPIRED_MESSAGE } from '@/app/lib/book/quoteHold'
 import type { FlatFlightResult } from '@/app/lib/book/types'
 
 // ── POST /api/book/add-passenger ─────────────────────────────────────────────
@@ -77,9 +79,17 @@ interface AddPassengerBody {
 
   // Booking for someone else; absent = oneself.
   travellerId?: string
-  // The travel desk at a CBT-only client, booking an amber or red fare: why.
+  // Why an amber or red fare goes ahead: the travel desk at a CBT-only client
+  // always, everyone else when their company asks for it.
   policyReasonCode?: string
   policyReasonNote?: string
+  // A personal trip (when the company allows them); absent = business.
+  purpose?: 'business' | 'personal'
+  // Booked for a guest, someone who is not an employee (when allowed).
+  forGuest?: boolean
+  // Booking anyway, after being told the traveller already holds a booking on
+  // the same route and day (when the company warns rather than blocks).
+  confirmDuplicate?: boolean
 }
 
 export const POST = route(async (req: NextRequest) => {
@@ -106,6 +116,20 @@ export const POST = route(async (req: NextRequest) => {
 
   if (!customerInfo?.PassengerDetails?.length) {
     return Response.json({ error: 'customerInfo.PassengerDetails must include at least one passenger' }, { status: 400 })
+  }
+
+  // ── How this company books (Corporate Settings) ───────────────────────────
+  // Each refused here, before the airline sees a passenger.
+  const gates = await loadClientGates(db, employee.client_id)
+  const personal = body.purpose === 'personal'
+  if (personal && !gates.personalBookingsAllowed) {
+    return Response.json({ error: 'Your company does not allow personal trips to be booked here.', code: 'PERSONAL_NOT_ALLOWED' }, { status: 403 })
+  }
+  if (personal && tripId) {
+    return Response.json({ error: 'A personal trip cannot go into a business trip.' }, { status: 400 })
+  }
+  if (body.forGuest === true && !gates.guestBookingsAllowed) {
+    return Response.json({ error: 'Your company does not allow bookings for guests.', code: 'GUEST_NOT_ALLOWED' }, { status: 403 })
   }
 
   // If this booking is being made under a trip, confirm the trip actually
@@ -149,6 +173,9 @@ export const POST = route(async (req: NextRequest) => {
   // held for this traveller AND priced by this caller: someone else's quote is
   // not one to book from.
   const clientId = employee.client_id
+  if (quote?.expires_at && new Date(quote.expires_at).getTime() < Date.now()) {
+    return Response.json({ error: QUOTE_EXPIRED_MESSAGE, code: 'QUOTE_EXPIRED' }, { status: 409 })
+  }
   if (!quote || quote.employee_id !== employee.id || quote.priced_by !== user.id || !clientId) {
     // Refused rather than falling back to the browser's number. The fallback is
     // the bug: it would send a marked-up fare to the airline. Re-pricing is one
@@ -167,6 +194,23 @@ export const POST = route(async (req: NextRequest) => {
     : null
   if (refusal) {
     return Response.json({ error: refusal, code: 'POLICY_DISALLOWED' }, { status: 422 })
+  }
+
+  // ── The same trip, booked twice ─────────────────────────────────────────────
+  // The outbound's route and day against the traveller's live bookings. 'warn'
+  // asks once (the screen offers "Book anyway"); 'block' refuses.
+  const outbound = (itinerary as FlatFlightResult | undefined)?.journeys?.[0] ?? (itinerary as FlatFlightResult | undefined)
+  const day = outbound?.origin?.dateTime?.slice(0, 10)
+  if (gates.duplicateCheck !== 'off' && outbound?.origin?.code && outbound.destination?.code && day
+      && !(gates.duplicateCheck === 'warn' && body.confirmDuplicate === true)) {
+    const existing = await bookings.sameTripBooking(db, employee.id, outbound.origin.code, outbound.destination.code, day)
+    if (existing) {
+      const what = `${outbound.origin.code} to ${outbound.destination.code} on ${day}${existing.pnr ? ` (PNR ${existing.pnr})` : ''}`
+      return Response.json(gates.duplicateCheck === 'block'
+        ? { error: `This traveller already has a booking from ${what}. Your company does not allow a second one.`, code: 'DUPLICATE_BOOKING', existingBookingId: existing.id }
+        : { error: `This traveller already has a booking from ${what}. Book this one as well?`, code: 'DUPLICATE_WARNING', existingBookingId: existing.id },
+      { status: 409 })
+    }
   }
 
   const airlineComponents = quote.airline_components as { total?: number } | null
@@ -208,7 +252,11 @@ export const POST = route(async (req: NextRequest) => {
     // already an edge case checkBookingAgainstPolicy can't evaluate either.
     let travelTypeForApproval: string = 'flight_domestic'
 
-    if (flight) {
+    if (flight && personal) {
+      // A personal trip is the traveller's own: not judged by company policy.
+      // Recorded as not evaluated, which is exactly what it is.
+      reason = 'Personal trip: not checked against company policy.'
+    } else if (flight) {
       // customerInfo.PassengerDetails[].SeatListDetails is the final, real
       // seat selection at submit time (flat array per passenger, already
       // stripped of legIndex by the frontend — see toSeatListDetails in the
@@ -273,16 +321,35 @@ export const POST = route(async (req: NextRequest) => {
     // traveller's own approval chain decides, below.
     const deskGuidance = actor.actor.via === 'tmc' && actor.actor.bookingMode === 'cbt'
     const outsidePolicy = policyVerdict === 'amber' || policyVerdict === 'red'
-    const deskReason = deskGuidance && outsidePolicy
+
+    // A company that does not book red fares at all: refused for whoever books,
+    // the desk included -- it is the company's rule, not the traveller's.
+    if (policyVerdict === 'red' && gates.blockRed) {
+      return Response.json({
+        error: 'This fare is outside your company\'s travel policy, and your company does not allow those to be booked. Please choose another fare.',
+        code: 'POLICY_BLOCKED', verdict: policyVerdict,
+      }, { status: 409 })
+    }
+
+    // Why an amber or red fare goes ahead. Always asked of the desk at a
+    // CBT-only client (no approver will look at it); asked of everyone when
+    // the company says so, and then it rides along to the approver as well.
+    const policyReason = outsidePolicy && (deskGuidance || gates.outOfPolicyReasonRequired)
       ? { code: body.policyReasonCode, note: body.policyReasonNote?.trim() || null }
       : null
-    if (deskReason) {
-      const problem = reasonProblem(deskReason.code, deskReason.note)
+    if (policyReason) {
+      const problem = reasonProblem(policyReason.code, policyReason.note)
       if (problem) {
         return Response.json({
           error: problem, code: 'POLICY_REASON_REQUIRED', verdict: policyVerdict, reasons: POLICY_REASONS,
         }, { status: 400 })
       }
+    }
+    const deskReason = deskGuidance ? policyReason : null
+    // The approver reads the reason beside the breach.
+    if (policyReason && !deskGuidance) {
+      const label = POLICY_REASONS.find(r => r.code === policyReason.code)?.label ?? String(policyReason.code)
+      reason = `${reason}. Reason given: ${policyReason.code === 'other' ? policyReason.note : label}${policyReason.code !== 'other' && policyReason.note ? ` (${policyReason.note})` : ''}`
     }
 
     const result = await amadeus.addPassenger(
@@ -305,7 +372,7 @@ export const POST = route(async (req: NextRequest) => {
     // in parallel since neither depends on the other.
     const [resolvedDealCodes, resolvedFop] = await Promise.all([
       stampDealCodes(db, clientId, flight ?? null),
-      stampFop(db, clientId, flight ?? null),
+      stampFop(db, clientId, flight ?? null, { travellerPays: personal }),
     ])
 
     // Insert immediately after a successful AddPassenger call — this is the
@@ -342,8 +409,10 @@ export const POST = route(async (req: NextRequest) => {
         policy_status: policyStatus,
         policy_verdict: policyVerdict,
         policy_verdict_detail: policyVerdictDetail,
-        policy_reason_code: deskReason?.code ?? null,
-        policy_reason_note: deskReason?.note ?? null,
+        policy_reason_code: policyReason?.code ?? null,
+        policy_reason_note: policyReason?.note ?? null,
+        purpose: personal ? 'personal' : 'business',
+        for_guest: body.forGuest === true,
       })
     } catch (insertError) {
       // The airline has the passenger data and we do not have a booking row.
@@ -372,7 +441,11 @@ export const POST = route(async (req: NextRequest) => {
     // 'self' (exempt from approval — startApprovalForBooking already
     // logged that as its own approvals row with status 'approved').
     let finalStatus = 'pending_approval'
-    if (deskGuidance) {
+    if (personal) {
+      // The traveller's own trip: no company approval to ask for.
+      finalStatus = 'approved'
+      await bookings.setStatus(db, booking.id, 'approved')
+    } else if (deskGuidance) {
       // No chain at a CBT-only client (above). Going ahead outside policy is
       // the decision an approval would have recorded, so it is recorded here.
       finalStatus = 'approved'

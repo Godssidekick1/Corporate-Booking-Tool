@@ -1,6 +1,7 @@
 import { resolveActor, refuse } from '@/app/lib/book/bookingActor'
 import { policyListsFor } from '@/app/lib/rule-engine/policyLists'
 import { refusalFor } from '@/app/lib/policy/searchFilter'
+import { QUOTE_HOLD_MINUTES } from '@/app/lib/book/quoteHold'
 import { requireUser } from '@/app/lib/auth/session'
 import { db } from '@/app/lib/db'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
@@ -265,10 +266,9 @@ if (!key || !pricingKey || !provider || !resultIndex) {
           airline_components: components,
           commercials: record,
           sell_total: record.sellTotal,
-          // Comfortably longer than a booking flow and shorter than a fare's own
-          // life. A missing quote is recoverable — add-passenger falls back to
-          // re-pricing — so an aggressive TTL costs latency, not correctness.
-          expires_at: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
+          // Enforced by add-passenger (app/lib/book/quoteHold.ts). An expired
+          // quote is refused there and the fare is priced again.
+          expires_at: new Date(Date.now() + QUOTE_HOLD_MINUTES * 60 * 1000).toISOString(),
         })
       } catch (quoteError) {
         // Not fatal. The traveller can still be quoted; add-passenger will

@@ -3,7 +3,7 @@
 // Written by scripts/generate-db-types.mjs from the live database schema.
 // Re-run after any schema change:  node scripts/generate-db-types.mjs
 //
-// 54 tables, 0 view(s), 570 columns.
+// 54 tables, 0 view(s), 576 columns.
 
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json }
 
@@ -163,6 +163,8 @@ export interface Tables {
     confirmed_by: string | null
     policy_reason_code: string | null
     policy_reason_note: string | null
+    purpose: string
+    for_guest: boolean
   }
   branches: {
     id: string
@@ -331,6 +333,10 @@ export interface Tables {
     fop_priority: string[]
     markup_active: boolean
     trip_approval_mode: string
+    guest_bookings_allowed: boolean
+    out_of_policy_reason_required: boolean
+    out_of_policy_handling: string
+    duplicate_booking_check: string
   }
   commercial_coverage: {
     tmc_id: string

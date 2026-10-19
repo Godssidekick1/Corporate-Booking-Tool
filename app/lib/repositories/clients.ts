@@ -19,6 +19,7 @@ export type ClientGateSettings = Pick<Row<'clients'>,
   | 'status' | 'booking_mode'
   | 'booking_activation' | 'hold_activation' | 'dom_ticketing' | 'intl_ticketing'
   | 'policy_controlling' | 'personal_bookings_allowed'
+  | 'guest_bookings_allowed' | 'out_of_policy_reason_required' | 'out_of_policy_handling' | 'duplicate_booking_check'
   | 'agency_fop_allowed' | 'corporate_fop_allowed'
   | 'bta_cta_allowed' | 'bta_cta_manual_allowed' | 'fop_priority'
   | 'markup_active' | 'discount_active' | 'processing_fee_active'
@@ -29,6 +30,7 @@ export async function gateSettings(db: Queryable, clientId: string): Promise<Cli
     select status, booking_mode,
            booking_activation, hold_activation, dom_ticketing, intl_ticketing,
            policy_controlling, personal_bookings_allowed,
+           guest_bookings_allowed, out_of_policy_reason_required, out_of_policy_handling, duplicate_booking_check,
            agency_fop_allowed, corporate_fop_allowed,
            bta_cta_allowed, bta_cta_manual_allowed, fop_priority,
            markup_active, discount_active, processing_fee_active
@@ -381,6 +383,7 @@ export type ClientSettings = Pick<Row<'clients'>,
   | 'personal_bookings_allowed' | 'agency_fop_allowed' | 'corporate_fop_allowed' | 'bta_cta_allowed'
   | 'bta_cta_manual_allowed' | 'fop_priority' | 'markup_active' | 'discount_active'
   | 'processing_fee_active' | 'air_approval_mode' | 'hotel_approval_mode' | 'trip_approval_mode'
+  | 'guest_bookings_allowed' | 'out_of_policy_reason_required' | 'out_of_policy_handling' | 'duplicate_booking_check'
 >
 
 const SETTINGS = sql`
@@ -391,7 +394,8 @@ const SETTINGS = sql`
   hold_activation, dom_ticketing, intl_ticketing, hold_auto_issue, sbt_ticketing, policy_controlling,
   personal_bookings_allowed, agency_fop_allowed, corporate_fop_allowed, bta_cta_allowed,
   bta_cta_manual_allowed, fop_priority, markup_active, discount_active, processing_fee_active,
-  air_approval_mode, hotel_approval_mode, trip_approval_mode`
+  air_approval_mode, hotel_approval_mode, trip_approval_mode,
+  guest_bookings_allowed, out_of_policy_reason_required, out_of_policy_handling, duplicate_booking_check`
 
 // Everything on the record except its identity, its TMC, its creation time and
 // setup_completed (derived onboarding progress, not a setting).
@@ -418,6 +422,9 @@ const SETTINGS_EDITABLE: Record<EditableSetting, Sql> = {
   fop_priority: sql`fop_priority`, markup_active: sql`markup_active`,
   discount_active: sql`discount_active`, processing_fee_active: sql`processing_fee_active`,
   air_approval_mode: sql`air_approval_mode`, hotel_approval_mode: sql`hotel_approval_mode`,
+  guest_bookings_allowed: sql`guest_bookings_allowed`,
+  out_of_policy_reason_required: sql`out_of_policy_reason_required`,
+  out_of_policy_handling: sql`out_of_policy_handling`, duplicate_booking_check: sql`duplicate_booking_check`,
   trip_approval_mode: sql`trip_approval_mode`,
 }
 

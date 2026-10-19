@@ -38,6 +38,8 @@ const ALLOWED_STATUSES = ['active', 'inactive'] as const
 const ALLOWED_APPROVAL_MODES = ['before_booking', 'not_required'] as const
 // The trip sign-off is asked for when a trip is submitted, not before booking.
 const ALLOWED_TRIP_APPROVAL_MODES = ['not_required', 'on_submit'] as const
+const ALLOWED_OUT_OF_POLICY = ['approve', 'block_red'] as const
+const ALLOWED_DUPLICATE_CHECKS = ['off', 'warn', 'block'] as const
 
 // ── The Corporate Settings surface ───────────────────────────────────────────
 // GET and PATCH return the same record (clients.ClientSettings, one column list
@@ -67,6 +69,7 @@ const UPPERCASE_FIELDS = ['client_code'] as const
 const BOOLEAN_FIELDS = [
   'booking_activation', 'hold_activation', 'dom_ticketing', 'intl_ticketing',
   'hold_auto_issue', 'sbt_ticketing', 'policy_controlling', 'personal_bookings_allowed',
+  'guest_bookings_allowed', 'out_of_policy_reason_required',
   'agency_fop_allowed', 'corporate_fop_allowed',
   // "Traveller pays" splits in two: bta_cta is their card already stored here,
   // bta_cta_manual is them typing it at the gateway. See app/lib/fop/paymentTypes.ts
@@ -100,6 +103,8 @@ type UpdateClientBody = {
   air_approval_mode?: string
   hotel_approval_mode?: string
   trip_approval_mode?: string
+  out_of_policy_handling?: string
+  duplicate_booking_check?: string
 } & Partial<Record<typeof TEXT_FIELDS[number], string | null>>
   & Partial<Record<typeof BOOLEAN_FIELDS[number], boolean>>
 
@@ -213,6 +218,22 @@ export const PATCH = route(async (req: NextRequest, { params }: Ctx) => {
       return Response.json({ error: `Invalid trip_approval_mode: ${value}` }, { status: 400 })
     }
     update.trip_approval_mode = value
+  }
+
+  if (body.out_of_policy_handling !== undefined) {
+    const value = body.out_of_policy_handling
+    if (!ALLOWED_OUT_OF_POLICY.includes(value as typeof ALLOWED_OUT_OF_POLICY[number])) {
+      return Response.json({ error: `Invalid out_of_policy_handling: ${value}` }, { status: 400 })
+    }
+    update.out_of_policy_handling = value
+  }
+
+  if (body.duplicate_booking_check !== undefined) {
+    const value = body.duplicate_booking_check
+    if (!ALLOWED_DUPLICATE_CHECKS.includes(value as typeof ALLOWED_DUPLICATE_CHECKS[number])) {
+      return Response.json({ error: `Invalid duplicate_booking_check: ${value}` }, { status: 400 })
+    }
+    update.duplicate_booking_check = value
   }
 
   if (body.size !== undefined) {

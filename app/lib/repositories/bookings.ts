@@ -308,12 +308,38 @@ export async function saveQuote(db: Queryable, q: NewQuote): Promise<void> {
       expires_at = excluded.expires_at`)
 }
 
-export type HeldQuote = Pick<Row<'price_quotes'>, 'airline_components' | 'commercials' | 'sell_total' | 'employee_id' | 'priced_by'>
+export type HeldQuote = Pick<Row<'price_quotes'>, 'airline_components' | 'commercials' | 'sell_total' | 'employee_id' | 'priced_by' | 'expires_at'>
 
 export async function heldQuote(db: Queryable, amadeusKey: string, referenceNo: string): Promise<HeldQuote | null> {
   return maybeOne<HeldQuote>(db, sql`
-    select airline_components, commercials, sell_total, employee_id, priced_by from price_quotes
+    select airline_components, commercials, sell_total, employee_id, priced_by, expires_at from price_quotes
     where amadeus_key = ${amadeusKey} and reference_no = ${referenceNo}`)
+}
+
+export interface SameTripBooking {
+  id: string
+  pnr: string | null
+  status: string
+  departure: string | null
+}
+
+// The traveller's live booking on the same route and day, if any: the
+// duplicate check (clients.duplicate_booking_check). Live means not cancelled,
+// failed or rejected. The route and day are the outbound's, which is what a
+// traveller means by "the same flight" for a one-way or a return alike.
+export async function sameTripBooking(
+  db: Queryable, employeeId: string, origin: string, destination: string, day: string,
+): Promise<SameTripBooking | null> {
+  return maybeOne<SameTripBooking>(db, sql`
+    select id, pnr, status, itinerary->'origin'->>'dateTime' as departure
+    from bookings
+    where employee_id = ${employeeId}
+      and status not in ('cancelled', 'failed', 'rejected')
+      and itinerary->'origin'->>'code' = ${origin}
+      and itinerary->'destination'->>'code' = ${destination}
+      and left(itinerary->'origin'->>'dateTime', 10) = ${day}
+    order by created_at desc, id
+    limit 1`)
 }
 
 // ═══ The booking row ════════════════════════════════════════════════════════
@@ -331,6 +357,8 @@ export type NewBooking = Pick<Row<'bookings'>,
   traveler_snapshot: unknown
   fare_breakdown: unknown
   policy_verdict_detail: unknown
+  purpose?: 'business' | 'personal'
+  for_guest?: boolean
 }
 
 // Written once, right after the airline accepts the passengers (add-passenger).
@@ -340,14 +368,15 @@ export async function insert(db: Queryable, b: NewBooking): Promise<{ id: string
       client_id, employee_id, booked_by, booking_type, status, total_cost, sell_total, provider,
       provider_order_id, amadeus_key, pricing_key, result_index, search_key, trip_id, is_ndc,
       policy_status, policy_verdict, policy_reason_code, policy_reason_note, resolved_deal_codes, resolved_fop, commercials, itinerary,
-      traveler_snapshot, fare_breakdown, policy_verdict_detail)
+      traveler_snapshot, fare_breakdown, policy_verdict_detail, purpose, for_guest)
     values (
       ${b.client_id}, ${b.employee_id}, ${b.booked_by}, ${b.booking_type}, ${b.status}, ${b.total_cost},
       ${b.sell_total}, ${b.provider}, ${b.provider_order_id}, ${b.amadeus_key}, ${b.pricing_key},
       ${b.result_index}, ${b.search_key}, ${b.trip_id}, ${b.is_ndc}, ${b.policy_status}, ${b.policy_verdict},
       ${b.policy_reason_code}, ${b.policy_reason_note},
       ${json(b.resolved_deal_codes)}, ${json(b.resolved_fop)}, ${json(b.commercials)}, ${json(b.itinerary)},
-      ${json(b.traveler_snapshot)}, ${json(b.fare_breakdown)}, ${json(b.policy_verdict_detail)})
+      ${json(b.traveler_snapshot)}, ${json(b.fare_breakdown)}, ${json(b.policy_verdict_detail)},
+      ${b.purpose ?? 'business'}, ${b.for_guest ?? false})
     returning id`)
 }
 

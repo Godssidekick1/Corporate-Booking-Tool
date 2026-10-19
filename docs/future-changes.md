@@ -94,6 +94,29 @@ plans and submits trips for travellers (/tmc/book, /tmc/trips/[id]).
 - **Trip-level reports** (spend against budget by cost centre, billable
   trips) now have the data.
 
+## Policy and booking controls (built 2026-10-19; what is left)
+
+Built: carrier tier, refundable fare, advance booking, max stops and max
+journey time are checked; blocked airlines and fare types outside a group's
+allowed list are not shown (search) and refused (price, add-passenger);
+preferred airlines are marked. Corporate Settings: personal trips, guest
+bookings, a reason for out-of-policy fares from everyone, blocking red fares,
+the duplicate check; a priced fare is held 30 minutes.
+
+- **Phase 2:** max layover, max cancellation penalty, lowest logical fare
+  (a cheaper fare within N minutes of the chosen one), re-approval when a
+  re-priced fare rises by more than X, approval escalation
+  (approvals.escalates_at).
+- **Phase 3:** booking emails per event (needs production SMTP), ticket
+  footer text.
+- **A guest is what the booker says.** for_guest is the booker's own choice;
+  the server cannot tell a guest's name from an employee's. Good enough while
+  it is a company preference rather than a control anyone gains by evading.
+- **Personal trips are paid by the traveller's card** when the resolver can
+  pick one; no demo or template client has a traveller-paid form of payment
+  yet, so that branch is untested against real rows.
+- **Show "Personal" and "Guest"** on My trips and the approvals queue.
+
 ## Before real users
 
 - Production email (SMTP: `SMTP_URL`, `MAIL_FROM`). Until then Vercel needs

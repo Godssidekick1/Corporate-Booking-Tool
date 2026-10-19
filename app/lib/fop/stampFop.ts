@@ -37,7 +37,10 @@ export interface StampedFop extends ResolvedFop {
 export async function stampFop(
   db: Queryable,
   clientId: string,
-  flight: FlatFlightResult | null
+  flight: FlatFlightResult | null,
+  // A personal trip is the traveller's to pay: only their own card may be
+  // chosen, whatever the company's order of preference.
+  opts: { travellerPays?: boolean } = {},
 ): Promise<StampedFop | null> {
   try {
     const client = await clients.stampProfile(db, clientId)
@@ -99,7 +102,9 @@ export async function stampFop(
     const resolved = resolveFop({
       fops,
       assignments,
-      allowedPayers: gates.allowedPayers,
+      allowedPayers: opts.travellerPays
+        ? new Set([...gates.allowedPayers].filter(p => p === 'traveller'))
+        : gates.allowedPayers,
       paymentPriority: gates.paymentPriority,
       branchId: client.branch_id,
       airlineCode,

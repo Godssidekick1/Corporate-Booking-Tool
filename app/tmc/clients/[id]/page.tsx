@@ -448,7 +448,12 @@ export default function CorporateSettingsPage() {
             <Toggle
               label="Personal bookings" checked={form.personal_bookings_allowed === true}
               onChange={v => set('personal_bookings_allowed', v)}
-              effect="On: travellers may book personal trips as well as business. Which bands may is still a policy rule."
+              effect="On: travellers may mark a trip as personal: not checked against policy, no approval, paid by their own card."
+            />
+            <Toggle
+              label="Guest bookings" checked={form.guest_bookings_allowed !== false}
+              onChange={v => set('guest_bookings_allowed', v)}
+              effect="Off: every booking is for an employee; the ‘A guest’ option is not offered."
             />
             <Toggle
               label="Hold auto-issue" checked={form.hold_auto_issue === true}
@@ -522,6 +527,37 @@ export default function CorporateSettingsPage() {
                 style={s.input}
               >
                 {TRIP_APPROVAL_MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+              </select>
+            </Field>
+            <Field label="Out-of-policy fares" hint="What happens to a red fare: approval decides, or it cannot be booked at all.">
+              <select
+                value={form.out_of_policy_handling ?? 'approve'}
+                onChange={e => set('out_of_policy_handling', e.target.value)}
+                style={s.input}
+              >
+                <option value="approve">Allow, with approval</option>
+                <option value="block_red">Block red fares</option>
+              </select>
+            </Field>
+            <Field label="Reason for out-of-policy fares" hint="Whoever books an amber or red fare says why; the approver sees it. The desk at a CBT-only client always does.">
+              <select
+                value={form.out_of_policy_reason_required ? 'yes' : 'no'}
+                onChange={e => set('out_of_policy_reason_required', e.target.value === 'yes')}
+                style={s.input}
+              >
+                <option value="no">Not asked</option>
+                <option value="yes">Required from everyone</option>
+              </select>
+            </Field>
+            <Field label="Duplicate bookings" hint="The traveller already has a live booking on the same route and day.">
+              <select
+                value={form.duplicate_booking_check ?? 'off'}
+                onChange={e => set('duplicate_booking_check', e.target.value)}
+                style={s.input}
+              >
+                <option value="off">Not checked</option>
+                <option value="warn">Warn, and ask to confirm</option>
+                <option value="block">Block the second booking</option>
               </select>
             </Field>
             <Field label="Policy control" hint="Switching this off is on the Controls tab.">

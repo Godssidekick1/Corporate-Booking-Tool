@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useFlowExits } from '@/app/hooks/useFlowExits'
@@ -422,9 +422,35 @@ export default function BookingDetailsPage() {
   const [reasonNote, setReasonNote] = useState('')
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { setWho(flowStorage.onBehalf()) }, [])
-  const needsReason = reasonAsked ||
-    (who?.policy === 'guidance' && (verdict?.verdict === 'amber' || verdict?.verdict === 'red'))
+  // How the traveller's company books (Corporate Settings): whether every
+  // amber or red fare needs a reason, and whether a red one cannot be booked.
+  // add-passenger checks both again.
+  const [controls, setControls] = useState<{ reasonRequired: boolean; blocksRed: boolean; quoteHoldMinutes: number } | null>(null)
+  useEffect(() => {
+    let live = true
+    const id = flowStorage.travellerId()
+    fetch(`/api/book/controls${id ? `?travellerId=${encodeURIComponent(id)}` : ''}`).then(r => r.json())
+      .then(d => { if (live && d.ok) setControls(d) }).catch(() => {})
+    return () => { live = false }
+  }, [])
+  const outsidePolicy = verdict?.verdict === 'amber' || verdict?.verdict === 'red'
+  const personalTrip = flowStorage.getPurpose() === 'personal'
+  const needsReason = !personalTrip && (reasonAsked ||
+    ((who?.policy === 'guidance' || controls?.reasonRequired === true) && outsidePolicy))
+  const redBlocked = !personalTrip && controls?.blocksRed === true && verdict?.verdict === 'red'
+  // The same route and day already booked: the company asks to confirm.
+  const [duplicateAsk, setDuplicateAsk] = useState('')
+  const confirmDuplicate = useRef(false)
   const [verdictLoading, setVerdictLoading] = useState(false)
+
+  // ── The fare hold ────────────────────────────────────────────────────────
+  // A priced fare is held for a fixed time (app/lib/book/quoteHold.ts); past
+  // it add-passenger refuses it. Counted down from when it was priced.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [])
 
   useEffect(() => {
     const storedFlight = flowStorage.findResultByFlightKey(flightKey)
@@ -776,6 +802,11 @@ export default function BookingDetailsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           travellerId: flowStorage.travellerId(),
+          purpose: flowStorage.getPurpose(),
+          // A guest: typed in by hand, not an employee (never when booking for
+          // a colleague, whose own profile fills the form).
+          forGuest: flowStorage.isGuestBooking() && !flowStorage.onBehalf(),
+          confirmDuplicate: confirmDuplicate.current || undefined,
           policyReasonCode: needsReason ? reasonCode || undefined : undefined,
           policyReasonNote: needsReason ? reasonNote.trim() || undefined : undefined,
           key: priced.key,
@@ -842,6 +873,11 @@ export default function BookingDetailsPage() {
           // Nothing reached the airline: give the reason and continue.
           setReasonAsked(true)
           setError(data.error)
+          return
+        }
+        if (data.code === 'DUPLICATE_WARNING') {
+          // Nothing reached the airline: confirm, and submit again.
+          setDuplicateAsk(data.error)
           return
         }
         if (data.code === 'ORPHANED_PNR') {
@@ -1473,13 +1509,38 @@ export default function BookingDetailsPage() {
             </div>
           )}
 
+          {redBlocked && (
+            <div style={s.errorBanner}>
+              <span style={s.bannerIcon}>⚠</span> This fare is outside {who ? `${who.name.split(' ')[0]}'s` : 'your'} travel policy, and your company does not allow those to be booked. Go back and choose another fare.
+            </div>
+          )}
+
+          {duplicateAsk && (
+            <div style={s.reasonBox}>
+              <p style={s.reasonTitle}>{duplicateAsk}</p>
+              <button type="submit" onClick={() => { confirmDuplicate.current = true; setDuplicateAsk('') }} style={s.secondaryInline}>
+                Book anyway
+              </button>
+            </div>
+          )}
+
           {error && (
             <div style={s.errorBanner}>
               <span style={s.bannerIcon}>⚠</span> {error}
             </div>
           )}
 
-          <button type="submit" disabled={submitting} style={{ ...s.continueBtn, opacity: submitting ? 0.7 : 1 }}>
+          {priced?.pricedAt && controls && (() => {
+            const left = priced.pricedAt + controls.quoteHoldMinutes * 60_000 - now
+            if (left <= 0) {
+              return <p style={s.holdExpired}>This price is no longer held. Go back to the fare and price it again.</p>
+            }
+            const m = Math.floor(left / 60_000)
+            const sec = Math.floor((left % 60_000) / 1000)
+            return <p style={{ ...s.holdNote, ...(left < 5 * 60_000 ? s.holdNoteSoon : {}) }}>Fare held for {m}:{String(sec).padStart(2, '0')}</p>
+          })()}
+
+          <button type="submit" disabled={submitting || redBlocked} style={{ ...s.continueBtn, opacity: submitting || redBlocked ? 0.7 : 1 }}>
             {submitting ? <ButtonBusy label="Saving travellers…" /> : 'Continue to review →'}
           </button>
         </form>
@@ -1579,6 +1640,13 @@ const s: Record<string, React.CSSProperties> = {
   verdictList: { margin: '8px 0 0', paddingLeft: '18px', display: 'flex', flexDirection: 'column' as const, gap: '4px' },
   verdictListItem: { fontSize: '12px', lineHeight: 1.5 },
   verdictFootnote: { fontSize: '11px', color: '#6B7280', margin: '10px 0 0', lineHeight: 1.5 },
+  holdNote: { fontSize: '12px', color: '#6B7280', margin: '0 0 8px', textAlign: 'right' as const },
+  holdNoteSoon: { color: '#B45309', fontWeight: 600 },
+  holdExpired: { fontSize: '12.5px', color: '#B91C1C', margin: '0 0 8px', textAlign: 'right' as const, fontWeight: 600 },
+  secondaryInline: {
+    marginTop: 8, background: '#fff', border: '1px solid #D97706', color: '#92400E', borderRadius: 8,
+    padding: '6px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+  },
   reasonBox: { background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '10px', padding: '12px 14px', marginBottom: '16px' },
   reasonTitle: { fontSize: '13px', fontWeight: 600, color: '#92400E', margin: 0 },
 

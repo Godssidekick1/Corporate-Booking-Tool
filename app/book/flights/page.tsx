@@ -140,6 +140,28 @@ export default function BookFlightsSearchPage() {
   // The colleague's trip this goes under: theirs, not the admin's (TripPicker).
   const [trip, setTrip] = useState<TripChoice>({ kind: 'none' })
 
+  // How the traveller's company books (Corporate Settings): a personal trip
+  // and a guest booking are offered only where allowed. add-passenger checks
+  // both again; this only keeps the page from offering what it would refuse.
+  const [controls, setControls] = useState<{ personalAllowed: boolean; guestAllowed: boolean } | null>(null)
+  const [purpose, setPurpose] = useState<'business' | 'personal'>('business')
+  const personal = purpose === 'personal' && controls?.personalAllowed === true
+  const guestAllowed = controls?.guestAllowed !== false
+  useEffect(() => {
+    let live = true
+    const q = who?.travellerId ? `?travellerId=${encodeURIComponent(who.travellerId)}` : ''
+    fetch(`/api/book/controls${q}`).then(r => r.json()).then(d => {
+      if (!live || !d.ok) return
+      setControls(d)
+      // A guest booking the company does not allow is not left selected.
+      if (!d.guestAllowed) {
+        setBookingForSelf(true)
+        setMode(m => (m === 'guest' ? 'me' : m))
+      }
+    }).catch(() => {})
+    return () => { live = false }
+  }, [who?.travellerId])
+
   function chooseTrip(choice: TripChoice) {
     setTrip(choice)
     // An existing trip or none applies now; a new one is created at search.
@@ -327,7 +349,7 @@ export default function BookFlightsSearchPage() {
     try {
       // A new trip for the colleague is created now, the first moment it is
       // certainly wanted; once made it is an existing one.
-      if (who && trip.kind === 'new') {
+      if (who && trip.kind === 'new' && !personal) {
         let id: string | null
         try {
           id = await resolveTrip(who.travellerId, trip)
@@ -373,6 +395,9 @@ export default function BookFlightsSearchPage() {
       // A guest is typed in by hand; a colleague's details come from their
       // profile (the passenger page reads flowStorage.onBehalf).
       flowStorage.setGuestBooking(who ? false : !bookingForSelf)
+      // A personal trip is the traveller's own: never inside a business trip.
+      flowStorage.setPurpose(personal ? 'personal' : 'business')
+      if (personal) flowStorage.setTripId(null)
 
       // Save results + search context to sessionStorage so /book/price/[flightKey]
       // can look up the exact result the user picked without re-searching, and
@@ -471,7 +496,7 @@ export default function BookFlightsSearchPage() {
             <div style={s.whoRow}>
               <span style={s.selfToggleText}>Who&apos;s travelling?</span>
               <div style={s.whoToggle}>
-                {(['me', 'colleague', 'guest'] as const).map(m => (
+                {(['me', 'colleague', 'guest'] as const).filter(m => m !== 'guest' || guestAllowed).map(m => (
                   <button key={m} type="button" onClick={() => chooseMode(m)}
                     style={{ ...s.whoBtn, ...(mode === m ? s.whoBtnOn : {}) }}>
                     {m === 'me' ? 'Me' : m === 'colleague' ? 'A colleague' : 'A guest'}
@@ -492,7 +517,7 @@ export default function BookFlightsSearchPage() {
                   />
                 </div>
               )}
-              {mode === 'colleague' && who && (
+              {mode === 'colleague' && who && !personal && (
                 <div style={{ minWidth: 240, maxWidth: 340 }}>
                   <TripPicker travellerId={who.travellerId} travellerName={who.name} value={trip} onChange={chooseTrip} />
                 </div>
@@ -501,7 +526,7 @@ export default function BookFlightsSearchPage() {
                 <span style={s.selfToggleText}>Not an employee — enter their details on the passenger page.</span>
               )}
             </div>
-          ) : (
+          ) : !guestAllowed ? null : (
             <label style={s.selfToggleRow}>
               <input
                 type="checkbox"
@@ -515,6 +540,23 @@ export default function BookFlightsSearchPage() {
                   : 'Booking for someone else — enter their details manually.'}
               </span>
             </label>
+          )}
+
+          {controls?.personalAllowed && (
+            <div style={s.whoRow}>
+              <span style={s.selfToggleText}>Trip purpose</span>
+              <div style={s.whoToggle}>
+                {(['business', 'personal'] as const).map(p => (
+                  <button key={p} type="button" onClick={() => setPurpose(p)}
+                    style={{ ...s.whoBtn, ...(purpose === p ? s.whoBtnOn : {}) }}>
+                    {p === 'business' ? 'Business' : 'Personal'}
+                  </button>
+                ))}
+              </div>
+              {personal && (
+                <span style={s.selfToggleText}>A personal trip: not checked against company policy, no approval, paid by the traveller&apos;s own card.</span>
+              )}
+            </div>
           )}
 
           <div style={s.routeFieldsWrap}>

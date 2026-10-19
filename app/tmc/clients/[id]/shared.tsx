@@ -61,6 +61,10 @@ export interface Client {
   air_approval_mode: string
   hotel_approval_mode: string
   trip_approval_mode: string
+  guest_bookings_allowed: boolean
+  out_of_policy_reason_required: boolean
+  out_of_policy_handling: string
+  duplicate_booking_check: string
 }
 
 // The generic setter every tab uses. Declared once so a tab cannot accidentally

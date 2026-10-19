@@ -17,6 +17,7 @@ const PRICED_KEY_PREFIX = 'cbt:book:priced:' // + flightKey
 const SEATS_KEY_PREFIX = 'cbt:book:seats:'   // + flightKey
 const TRIP_ID_KEY = 'cbt:book:tripId'
 const GUEST_BOOKING_KEY = 'cbt:book:isGuestBooking'
+const PURPOSE_KEY = 'cbt:book:purpose'
 const ON_BEHALF_KEY = 'cbt:book:onBehalf'
 // Who this tab's flow belongs to: the signed-in employee, set by claim().
 const OWNER_KEY = 'cbt:book:owner'
@@ -88,6 +89,9 @@ export interface PricedFare {
   brandedFareName?: string
   brandedFareDescription?: string
   brandedServices?: string[]
+  // When this fare was priced (ms since epoch): the passenger page counts the
+  // quote hold down from it (app/lib/book/quoteHold.ts).
+  pricedAt?: number
 }
 
 function safeGet<T>(key: string): T | null {
@@ -255,6 +259,16 @@ export const flowStorage = {
 
   isGuestBooking(): boolean {
     return safeGet<boolean>(GUEST_BOOKING_KEY) ?? false
+  },
+
+  // Business (the default) or a personal trip, chosen on the search page where
+  // the company allows personal trips. Sent to add-passenger, which checks it.
+  setPurpose(purpose: 'business' | 'personal') {
+    safeSet(PURPOSE_KEY, purpose)
+  },
+
+  getPurpose(): 'business' | 'personal' {
+    return safeGet<string>(PURPOSE_KEY) === 'personal' ? 'personal' : 'business'
   },
 
   clearGuestBooking() {

@@ -58,6 +58,15 @@ export interface ClientGates {
   intlTicketing: boolean
   policyControlling: boolean
   personalBookingsAllowed: boolean
+  // Whether a booking may be for a guest: someone who is not an employee.
+  guestBookingsAllowed: boolean
+  // An amber or red fare needs a reason from whoever books it (the travel
+  // desk at a CBT-only client always gives one, whatever this says).
+  outOfPolicyReasonRequired: boolean
+  // A red fare cannot be booked at all, rather than going to approval.
+  blockRed: boolean
+  // When the traveller already holds a live booking on the same route and day.
+  duplicateCheck: 'off' | 'warn' | 'block'
   // Which payer types may reach a booking for this client. The per-client filter
   // over the payer dimension noted when forms of payment were built. Derived
   // from the four flags below — `traveller` is in the set when either BTA/CTA
@@ -97,6 +106,10 @@ const PERMISSIVE: ClientGates = {
   // travel tool offering personal trips because a query failed is a surprise,
   // not a safe default.
   personalBookingsAllowed: false,
+  guestBookingsAllowed: true,
+  outOfPolicyReasonRequired: false,
+  blockRed: false,
+  duplicateCheck: 'off',
   allowedPayers: new Set(['agency', 'corporate', 'traveller'] as const),
   allowedPaymentTypes: new Set(PAYMENT_TYPES),
   paymentPriority: DEFAULT_PAYMENT_PRIORITY,
@@ -179,6 +192,12 @@ export async function loadClientGates(
       intlTicketing: active && data.intl_ticketing !== false,
       policyControlling: data.policy_controlling !== false,
       personalBookingsAllowed: data.personal_bookings_allowed === true,
+      guestBookingsAllowed: data.guest_bookings_allowed !== false,
+      outOfPolicyReasonRequired: data.out_of_policy_reason_required === true,
+      blockRed: data.out_of_policy_handling === 'block_red',
+      duplicateCheck: data.duplicate_booking_check === 'warn' || data.duplicate_booking_check === 'block'
+        ? data.duplicate_booking_check
+        : 'off',
       allowedPayers: payers,
       allowedPaymentTypes: types,
       paymentPriority: normalisePriority(data.fop_priority),
