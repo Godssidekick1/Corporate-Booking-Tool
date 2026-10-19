@@ -199,6 +199,9 @@ export interface FlatFlightResult {
   flightKey: string
   provider: string
   isLcc: boolean
+  // Set by the search when the traveller's policy names one of this flight's
+  // carriers as preferred (app/lib/policy/searchFilter.ts). A badge only.
+  preferred?: boolean
   itemNo: string
   cabin?: string
   // The first leg's RBD. Retained because several screens already read it;

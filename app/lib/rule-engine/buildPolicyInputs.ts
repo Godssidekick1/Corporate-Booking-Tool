@@ -45,6 +45,25 @@ export interface PolicyInputSource {
   // by passenger. Omit or pass [] if nothing's been picked yet (no seat
   // selection made is not a policy violation).
   selectedSeatFees?: string[]
+  // "Now", for the advance-booking count. Defaults to the real clock; tests
+  // pass a fixed one.
+  now?: Date
+}
+
+// ── daysAhead ────────────────────────────────────────────────────────────
+// Whole calendar days from today to the first departure, both read as dates in
+// India (the provider sends local times as "YYYY-MM-DDTHH:MM:SS", no zone).
+// A flight tonight is 0 days ahead, tomorrow morning 1. Null when there is no
+// usable departure date, so the check is skipped rather than guessed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function daysAhead(departure: string | undefined, now: Date): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(departure ?? '')
+  if (!match) return null
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(now)
+  const [y, m, d] = today.split('-').map(Number)
+  const days = (Date.UTC(+match[1], +match[2] - 1, +match[3]) - Date.UTC(y, m - 1, d)) / 86_400_000
+  return Number.isFinite(days) ? Math.round(days) : null
 }
 
 export interface BuiltPolicyInputs {
@@ -63,7 +82,7 @@ export interface BuiltPolicyInputs {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function buildPolicyInputsFromFlight(source: PolicyInputSource): BuiltPolicyInputs {
-  const { flight, totalFare, isRefundable, selectedSeatFees } = source
+  const { flight, totalFare, isRefundable, selectedSeatFees, now = new Date() } = source
 
   // Amadeus sends fare/fee amounts as strings, matching the pattern already
   // seen elsewhere in this codebase (fare totals, taxes, etc.) — never
@@ -99,38 +118,37 @@ export function buildPolicyInputsFromFlight(source: PolicyInputSource): BuiltPol
   const isLongHaul = hours > 8
   const cabinLimitKey = isLongHaul ? 'cabin_class_long_haul' : 'cabin_class_short_haul'
 
+  // A connection is an intermediate stop WITHIN a direction. A round trip's
+  // turnaround is not one: it is where the outbound ends. Reading the
+  // flight-level stopCount would have counted it, and flagged every non-stop
+  // return as a connecting flight.
+  const stops = flight.journeys?.length
+    ? Math.max(...flight.journeys.map(j => j.stopCount ?? 0))
+    : flight.stopCount ?? 0
+
+  const advance = daysAhead(flight.journeys?.[0]?.origin?.dateTime ?? flight.origin?.dateTime, now)
+
   return {
     travelType,
     totalCost: totalFare,
     numericValues: {
       [classification === 'domestic' ? 'max_fare_domestic' : 'max_fare_intl']: totalFare,
       max_seat_selection_fee: seatFeeTotal,
-      // advance_booking_days deliberately omitted here: it needs the
-      // original search's departDate in a confirmed DD/MM/YYYY format, and
-      // no current call site reliably threads that through (flowStorage's
-      // SearchMeta.departDate is only loosely documented as "display-
-      // formatted"). Wire this once the passengers page is confirmed to
-      // pass a real DD/MM/YYYY string — guessing the format risks flagging
-      // every booking as an advance-booking violation.
+      max_stops: stops,
+      // Read from the flight itself (its departure as the provider sent it),
+      // not from the search form, whose date format is display-only.
+      ...(advance !== null ? { advance_booking_days: advance } : {}),
+      ...(hours > 0 ? { max_journey_hours: Math.round(hours * 100) / 100 } : {}),
     },
     booleanValues: {
-      // refundable_fare_required deliberately omitted: its actual-value
-      // polarity (does "used=true" mean "booked non-refundable" or "booked
-      // refundable"?) is ambiguous against evaluateBooking's used-and-not-
-      // allowed check, and tmc/settings/policy/page.tsx notes it isn't
-      // reliably wired end-to-end yet. Revisit once that's confirmed rather
-      // than risk false breaches here.
-      // A connection is an intermediate stop WITHIN a direction. A round
-      // trip's turnaround is not one — it is where the outbound ends — and
-      // reading the flight-level stopCount would have counted it, flagging
-      // every non-stop return as a connecting flight and breaching a
-      // "no connections" policy that was never broken.
-      connecting_flights_allowed: flight.journeys?.length
-        ? flight.journeys.some(journey => journey.stopCount > 0)
-        : flight.stopCount > 0,
+      // What the fare IS, not an entitlement used: evaluateBooking compares it
+      // with refundable_fare_required.
+      refundable_fare: isRefundable,
     },
     tierValues: {
       [cabinLimitKey]: cabinRank(flight.cabin),
+      // 0 = budget (low-cost carrier), 1 = full-service, as CARRIER_OPTIONS.
+      carrier_tier: flight.isLcc ? 0 : 1,
     },
   }
 }

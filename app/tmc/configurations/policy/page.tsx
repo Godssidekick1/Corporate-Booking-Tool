@@ -10,6 +10,7 @@ import {
   type CategoryDef,
   type FieldDef,
 } from '@/app/lib/policy/fields'
+import ListFields from './ListFields'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -31,6 +32,7 @@ interface RuleRow {
   limit_key: string
   limit_value: number | null
   limit_bool: boolean | null
+  limit_list?: string[] | null
 }
 
 interface ClientLink {
@@ -110,7 +112,7 @@ function ranksLabel(bandRanks: number[]): string {
 
 // ── Grid helpers ──────────────────────────────────────────────────────────────
 
-type CellVal = number | boolean | null
+type CellVal = number | boolean | string[] | null
 // One row of limits per group, keyed by field. It used to be nested by rank —
 // Record<rank, Record<field, value>> — which is what let a group covering ranks
 // 1-3 hold three sets of limits free to disagree with each other.
@@ -118,14 +120,14 @@ type Grid = Record<string, CellVal>
 
 function buildEmptyGrid(): Grid {
   const g: Grid = {}
-  for (const f of ALL_FIELDS) g[f.key] = f.kind === 'boolean' ? false : null
+  for (const f of ALL_FIELDS) g[f.key] = f.kind === 'boolean' ? false : f.kind === 'list' ? [] : null
   return g
 }
 
 function rowsToGrid(rows: RuleRow[]): Grid {
   const g = buildEmptyGrid()
   for (const r of rows) {
-    g[r.limit_key] = r.limit_value ?? r.limit_bool ?? null
+    g[r.limit_key] = r.limit_value ?? r.limit_bool ?? r.limit_list ?? null
   }
   return g
 }
@@ -135,6 +137,13 @@ function gridToRules(grid: Grid): RuleRow[] {
   for (const f of ALL_FIELDS) {
     const val = grid[f.key]
     if (val === null || val === undefined) continue
+    // An empty list is "not set": nothing blocked, every fare type allowed.
+    if (f.kind === 'list') {
+      if (Array.isArray(val) && val.length > 0) {
+        rows.push({ travel_type: f.travelType, limit_key: f.key, limit_value: null, limit_bool: null, limit_list: val })
+      }
+      continue
+    }
     rows.push({
       travel_type: f.travelType,
       limit_key: f.key,
@@ -153,7 +162,8 @@ function countSetFields(grid: Grid, category: CategoryDef): { set: number; total
   const countableFields = category.fields.filter(f => f.kind !== 'boolean')
   let set = 0
   for (const f of countableFields) {
-    if (grid[f.key] !== null && grid[f.key] !== undefined) set++
+    const v = grid[f.key]
+    if (v !== null && v !== undefined && !(Array.isArray(v) && v.length === 0)) set++
   }
   return { set, total: countableFields.length }
 }
@@ -688,6 +698,13 @@ export default function TmcPolicyPage() {
                         {open && (
                           <div style={s.tableInner}>
                             {cat.description && <p style={s.categoryDesc}>{cat.description}</p>}
+                            {cat.fields.every(f => f.kind === 'list') ? (
+                              <ListFields
+                                fields={cat.fields}
+                                values={Object.fromEntries(cat.fields.map(f => [f.key, Array.isArray(grid[f.key]) ? grid[f.key] as string[] : []]))}
+                                onChange={(key, v) => handleCellChange(key, v)}
+                              />
+                            ) : (
                             <div style={s.tableWrap}>
                               <table style={s.table}>
                                 <thead>
@@ -768,6 +785,7 @@ export default function TmcPolicyPage() {
                                 </tbody>
                               </table>
                             </div>
+                            )}
                           </div>
                         )}
                       </div>

@@ -28,6 +28,7 @@ interface EffectiveRow {
   limit_key: string
   limit_value: number | null
   limit_bool: boolean | null
+  limit_list: string[] | null
   policy_group_id: string
   group_name: string
 }
@@ -149,6 +150,7 @@ export const GET = route(async () => {
         limit_key: rule.limit_key,
         limit_value: rule.limit_value,
         limit_bool: rule.limit_bool,
+        limit_list: rule.limit_list,
         policy_group_id: group.id,
         group_name: group.name,
       })

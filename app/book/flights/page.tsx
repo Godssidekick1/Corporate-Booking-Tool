@@ -894,6 +894,8 @@ export default function BookFlightsSearchPage() {
 
                       <div style={s.resultBottom}>
                         <div style={s.metaTags}>
+                          {/* The traveller's policy names this carrier as preferred. */}
+                          {flight.preferred && <span style={{ ...s.tag, ...s.tagPreferred }}>★ Preferred</span>}
                           <span style={{ ...s.tag, ...(flight.isLcc ? s.tagBudget : s.tagFullService) }}>
                             {flight.isLcc ? 'Budget carrier' : 'Full-service'}
                           </span>
@@ -1059,6 +1061,7 @@ const s: Record<string, React.CSSProperties> = {
   tag: { fontSize: '10px', color: '#6B7280', background: '#F3F4F6', padding: '3px 9px', borderRadius: '5px', fontWeight: 500 },
   tagBudget: { color: '#7C2D12', background: '#FFF7ED' },
   tagFullService: { color: '#14532D', background: '#F0FDF4' },
+  tagPreferred: { color: '#1E3A8A', background: '#DBEAFE', fontWeight: 600 },
 
   selectBtn: { height: '34px', padding: '0 18px', background: '#000835', color: '#fff', fontSize: '12px', fontWeight: 600, border: 'none', borderRadius: '8px', cursor: 'pointer' },
 

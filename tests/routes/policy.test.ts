@@ -146,7 +146,7 @@ d('policy', () => {
     const post = (body: unknown) => call(rulesPost, { as: a.tmcAdmin, method: 'POST', url: '/api/tmc/policy-rules', body })
     expect((await post({ policyGroupId: groupD, rules: [] })).status).toBe(400)
     expect((await post({ policyGroupId: groupD, rules: [{ travel_type: 'flight', limit_key: 'x' }] })).json)
-      .toEqual({ error: 'Rule (flight/x) needs either limit_value or limit_bool' })
+      .toEqual({ error: 'Rule (flight/x) needs a limit_value, limit_bool or limit_list' })
     expect((await post({ policyGroupId: groupD, rules: [
       { travel_type: 'flight', limit_key: 'x', limit_value: 1 }, { travel_type: 'flight', limit_key: 'x', limit_value: 2 },
     ] })).json).toEqual({ error: 'Duplicate rule: flight::x' })
@@ -187,6 +187,22 @@ d('policy', () => {
     expect(res.status).toBe(200)
     expect(res.json).toMatchSnapshot()
     expect((await call(ruleEngineTest, { as: a.otherTmcAdmin!, method: 'POST', url: '/api/rule-engine/test', body })).status).toBe(404)
+  })
+
+  it('rules POST: list rules are validated, then stored normalised', async () => {
+    const post = (rules: unknown[]) => call(rulesPost, { as: a.tmcAdmin, method: 'POST', url: '/api/tmc/policy-rules', body: { policyGroupId: groupD, rules } })
+    const rule = (limit_list: unknown, extra: object = {}) => ({ travel_type: 'flight', limit_key: 'blocked_airlines', limit_list, ...extra })
+    for (const bad of ['AI', [1], ['A I'], ['x'.repeat(17)], Array(201).fill('AI')]) {
+      expect((await post([rule(bad)])).status).toBe(400)
+    }
+    expect((await post([rule(['AI'], { limit_bool: true })])).json)
+      .toEqual({ error: 'Rule (flight/blocked_airlines) can set only one of limit_value, limit_bool and limit_list' })
+
+    const res = await post([rule(['sg', 'AI', 'SG']), { travel_type: 'flight', limit_key: 'max_fare_domestic', limit_value: 9000 }])
+    expect(res.status).toBe(200)
+    const after = await call(rulesGet, { as: a.tmcAdmin, url: `/api/tmc/policy-rules?groupId=${groupD}` })
+    const rows = (after.json as { rows: { limit_key: string; limit_list: string[] | null }[] }).rows
+    expect(rows.find(r => r.limit_key === 'blocked_airlines')?.limit_list).toEqual(['AI', 'SG'])
   })
 
   // ── Delete ─────────────────────────────────────────────────────────────────

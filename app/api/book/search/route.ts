@@ -14,6 +14,8 @@ import type {
 } from '@/app/lib/book/types'
 import type { ItineraryInfo } from '@/app/lib/amadeus/client'
 import { cabinLetter, CABIN_LABELS } from '@/app/lib/book/cabin'
+import { policyListsFor } from '@/app/lib/rule-engine/policyLists'
+import { filterResults } from '@/app/lib/policy/searchFilter'
 import { NextRequest, after } from 'next/server'
 
 // ── POST /api/book/search ────────────────────────────────────────────
@@ -267,6 +269,14 @@ export const POST = route(async (req: NextRequest) => {
     // same try, so a rejection surfaces here like any other. loadCommercialContext
     // does not throw in any case — it returns an empty context on failure.
     const contextPromise = loadCommercialContext(db, employee.client_id)
+
+    // The traveller's blocked airlines and allowed fare types, overlapped with
+    // the provider call the same way. Unlike the commercial context this can
+    // throw (a database failure); the empty catch only marks the promise as
+    // handled while the provider is called, and the await below still throws.
+    // A failure is a failed search, never results the policy would have hidden.
+    const listsPromise = policyListsFor(db, employee.id)
+    listsPromise.catch(() => {})
 
     const availability = await amadeus.searchFlights({
       segments: isReturn
@@ -522,7 +532,9 @@ export const POST = route(async (req: NextRequest) => {
     // taxLines and fuelSurcharge to any client that happens to have no markup —
     // inconsistent, and the browser has no use for either.
     const context = await contextPromise
-    const priced = results.map(result => applyMarkup(context, result, adult + child))
+    // Filtered before markup: nothing the policy hides is priced or sent.
+    const allowed = filterResults(results, await listsPromise)
+    const priced = allowed.map(result => applyMarkup(context, result, adult + child))
 
     return Response.json({
   ok: true,

@@ -30,8 +30,8 @@ exports[`GET /api/reference/airlines > a page past the end is empty, not an erro
   "ok": true,
   "page": 99,
   "pageSize": 10,
-  "total": 14,
-  "totalPages": 2,
+  "total": 42,
+  "totalPages": 5,
 }
 `;
 
@@ -45,6 +45,12 @@ exports[`GET /api/reference/airlines > first page, any signed-in user 1`] = `
       "name": "6E",
     },
     {
+      "code": "9I",
+      "id": "9I",
+      "last_seen_at": "2026-10-19T00:00:00.000Z",
+      "name": "Alliance Air",
+    },
+    {
       "code": "AA",
       "id": "AA",
       "last_seen_at": "2026-09-17T11:01:01.677Z",
@@ -57,10 +63,22 @@ exports[`GET /api/reference/airlines > first page, any signed-in user 1`] = `
       "name": "Air Canada",
     },
     {
+      "code": "AF",
+      "id": "AF",
+      "last_seen_at": "2026-10-19T00:00:00.000Z",
+      "name": "Air France",
+    },
+    {
       "code": "AI",
       "id": "AI",
       "last_seen_at": "2026-09-22T10:34:37.855Z",
       "name": "Air India",
+    },
+    {
+      "code": "AK",
+      "id": "AK",
+      "last_seen_at": "2026-10-19T00:00:00.000Z",
+      "name": "AirAsia",
     },
     {
       "code": "AZ",
@@ -69,47 +87,35 @@ exports[`GET /api/reference/airlines > first page, any signed-in user 1`] = `
       "name": "Alitalia",
     },
     {
-      "code": "EK",
-      "id": "EK",
-      "last_seen_at": "2026-09-17T11:01:01.677Z",
-      "name": "Emirates",
+      "code": "BA",
+      "id": "BA",
+      "last_seen_at": "2026-10-19T00:00:00.000Z",
+      "name": "British Airways",
     },
     {
-      "code": "EY",
-      "id": "EY",
-      "last_seen_at": "2026-09-17T11:01:01.677Z",
-      "name": "Etihad Airways",
-    },
-    {
-      "code": "FB",
-      "id": "FB",
-      "last_seen_at": "2026-09-17T11:01:01.677Z",
-      "name": "Bulgaria Air",
-    },
-    {
-      "code": "IX",
-      "id": "IX",
-      "last_seen_at": "2026-09-22T10:34:37.855Z",
-      "name": "IX",
-    },
-    {
-      "code": "LH",
-      "id": "LH",
-      "last_seen_at": "2026-09-17T11:01:01.677Z",
-      "name": "Lufthansa",
+      "code": "CX",
+      "id": "CX",
+      "last_seen_at": "2026-10-19T00:00:00.000Z",
+      "name": "Cathay Pacific",
     },
   ],
   "ok": true,
   "page": 1,
   "pageSize": 10,
-  "total": 14,
-  "totalPages": 2,
+  "total": 42,
+  "totalPages": 5,
 }
 `;
 
 exports[`GET /api/reference/airlines > search matches code or name, case-insensitively 1`] = `
 {
   "items": [
+    {
+      "code": "9I",
+      "id": "9I",
+      "last_seen_at": "2026-10-19T00:00:00.000Z",
+      "name": "Alliance Air",
+    },
     {
       "code": "AA",
       "id": "AA",
@@ -123,10 +129,40 @@ exports[`GET /api/reference/airlines > search matches code or name, case-insensi
       "name": "Air Canada",
     },
     {
+      "code": "AF",
+      "id": "AF",
+      "last_seen_at": "2026-10-19T00:00:00.000Z",
+      "name": "Air France",
+    },
+    {
       "code": "AI",
       "id": "AI",
       "last_seen_at": "2026-09-22T10:34:37.855Z",
       "name": "Air India",
+    },
+    {
+      "code": "AK",
+      "id": "AK",
+      "last_seen_at": "2026-10-19T00:00:00.000Z",
+      "name": "AirAsia",
+    },
+    {
+      "code": "BA",
+      "id": "BA",
+      "last_seen_at": "2026-10-19T00:00:00.000Z",
+      "name": "British Airways",
+    },
+    {
+      "code": "DL",
+      "id": "DL",
+      "last_seen_at": "2026-10-19T00:00:00.000Z",
+      "name": "Delta Air Lines",
+    },
+    {
+      "code": "ET",
+      "id": "ET",
+      "last_seen_at": "2026-10-19T00:00:00.000Z",
+      "name": "Ethiopian Airlines",
     },
     {
       "code": "EY",
@@ -134,30 +170,12 @@ exports[`GET /api/reference/airlines > search matches code or name, case-insensi
       "last_seen_at": "2026-09-17T11:01:01.677Z",
       "name": "Etihad Airways",
     },
-    {
-      "code": "FB",
-      "id": "FB",
-      "last_seen_at": "2026-09-17T11:01:01.677Z",
-      "name": "Bulgaria Air",
-    },
-    {
-      "code": "SQ",
-      "id": "SQ",
-      "last_seen_at": "2026-09-17T11:01:01.677Z",
-      "name": "Singapore Air",
-    },
-    {
-      "code": "SV",
-      "id": "SV",
-      "last_seen_at": "2026-09-17T11:01:01.677Z",
-      "name": "Saudi Arabian Air",
-    },
   ],
   "ok": true,
   "page": 1,
   "pageSize": 10,
-  "total": 7,
-  "totalPages": 1,
+  "total": 27,
+  "totalPages": 3,
 }
 `;
 
@@ -183,34 +201,70 @@ exports[`GET /api/reference/airlines > second page 1`] = `
 {
   "items": [
     {
-      "code": "NH",
-      "id": "NH",
-      "last_seen_at": "2026-09-17T11:01:01.677Z",
-      "name": "All Nippon",
+      "code": "DL",
+      "id": "DL",
+      "last_seen_at": "2026-10-19T00:00:00.000Z",
+      "name": "Delta Air Lines",
     },
     {
-      "code": "QR",
-      "id": "QR",
+      "code": "EK",
+      "id": "EK",
       "last_seen_at": "2026-09-17T11:01:01.677Z",
-      "name": "Qatar",
+      "name": "Emirates",
     },
     {
-      "code": "SQ",
-      "id": "SQ",
-      "last_seen_at": "2026-09-17T11:01:01.677Z",
-      "name": "Singapore Air",
+      "code": "ET",
+      "id": "ET",
+      "last_seen_at": "2026-10-19T00:00:00.000Z",
+      "name": "Ethiopian Airlines",
     },
     {
-      "code": "SV",
-      "id": "SV",
+      "code": "EY",
+      "id": "EY",
       "last_seen_at": "2026-09-17T11:01:01.677Z",
-      "name": "Saudi Arabian Air",
+      "name": "Etihad Airways",
+    },
+    {
+      "code": "FB",
+      "id": "FB",
+      "last_seen_at": "2026-09-17T11:01:01.677Z",
+      "name": "Bulgaria Air",
+    },
+    {
+      "code": "FZ",
+      "id": "FZ",
+      "last_seen_at": "2026-10-19T00:00:00.000Z",
+      "name": "flydubai",
+    },
+    {
+      "code": "G9",
+      "id": "G9",
+      "last_seen_at": "2026-10-19T00:00:00.000Z",
+      "name": "Air Arabia",
+    },
+    {
+      "code": "GF",
+      "id": "GF",
+      "last_seen_at": "2026-10-19T00:00:00.000Z",
+      "name": "Gulf Air",
+    },
+    {
+      "code": "IC",
+      "id": "IC",
+      "last_seen_at": "2026-10-19T00:00:00.000Z",
+      "name": "Fly91",
+    },
+    {
+      "code": "IX",
+      "id": "IX",
+      "last_seen_at": "2026-09-22T10:34:37.855Z",
+      "name": "IX",
     },
   ],
   "ok": true,
   "page": 2,
   "pageSize": 10,
-  "total": 14,
-  "totalPages": 2,
+  "total": 42,
+  "totalPages": 5,
 }
 `;

@@ -1,4 +1,6 @@
 import { resolveActor, refuse } from '@/app/lib/book/bookingActor'
+import { policyListsFor } from '@/app/lib/rule-engine/policyLists'
+import { refusalFor } from '@/app/lib/policy/searchFilter'
 import { requireUser } from '@/app/lib/auth/session'
 import { db } from '@/app/lib/db'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
@@ -169,6 +171,27 @@ if (!key || !pricingKey || !provider || !resultIndex) {
         ok: false,
         error: 'Pricing succeeded but returned no fare details. Please try again.',
       }, { status: 200 })
+    }
+
+    // ── The traveller's airline and fare-type lists ─────────────────────────
+    // Search never shows these fares; this is for one that arrives anyway.
+    // Judged on the airline's own pricing answer, not on the itinerary the
+    // browser sent, and before any quote is held: no quote, no booking.
+    const priced = pricing.AirPricingResponse?.[0]
+    const pricedInfo = priced?.PricingInfos?.PricingInfo?.[0]
+    const refusal = refusalFor(
+      {
+        legs: (priced?.Itineraries?.Itinerary ?? []).map(i => ({
+          airlineCode: i.AirLine?.OperatingCarrier || i.AirLine?.Code,
+        })),
+        journeys: [],
+        fareOptions: [],
+      },
+      { fareType: pricedInfo?.FareType, brandedFareName: pricedInfo?.BrandedFareName || undefined, isNdc: pricedInfo?.IsNDC },
+      await policyListsFor(db, actor.actor.traveller.id),
+    )
+    if (refusal) {
+      return Response.json({ ok: false, error: refusal, code: 'POLICY_DISALLOWED' }, { status: 422 })
     }
 
     // ── Commercials ──────────────────────────────────────────────────────────

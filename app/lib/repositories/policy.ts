@@ -42,7 +42,7 @@ export async function linkedGroups(db: Queryable, clientId: string): Promise<Pol
     order by g.name, g.id`)
 }
 
-export type LiveRule = Pick<Row<'policy_rules'>, 'version' | 'travel_type' | 'limit_key' | 'limit_value' | 'limit_bool'>
+export type LiveRule = Pick<Row<'policy_rules'>, 'version' | 'travel_type' | 'limit_key' | 'limit_value' | 'limit_bool' | 'limit_list'>
 
 // Every live (not soft-deleted) rule of a group, newest version first. The
 // caller keeps the newest version of the WHOLE set -- see
@@ -50,7 +50,7 @@ export type LiveRule = Pick<Row<'policy_rules'>, 'version' | 'travel_type' | 'li
 // has this category".
 export async function liveRules(db: Queryable, groupId: string): Promise<LiveRule[]> {
   return many<LiveRule>(db, sql`
-    select version, travel_type, limit_key, limit_value, limit_bool
+    select version, travel_type, limit_key, limit_value, limit_bool, limit_list
     from policy_rules
     where policy_group_id = ${groupId} and deleted_at is null
     order by version desc, id`)
@@ -170,24 +170,24 @@ export async function latestVersion(db: Queryable, groupId: string): Promise<num
   return row.v ?? 0
 }
 
-export type RuleRow = Pick<Row<'policy_rules'>, 'id' | 'travel_type' | 'limit_key' | 'limit_value' | 'limit_bool' | 'version'>
+export type RuleRow = Pick<Row<'policy_rules'>, 'id' | 'travel_type' | 'limit_key' | 'limit_value' | 'limit_bool' | 'limit_list' | 'version'>
 
 export async function rulesAtVersion(db: Queryable, groupId: string, version: number): Promise<RuleRow[]> {
   return many<RuleRow>(db, sql`
-    select id, travel_type, limit_key, limit_value, limit_bool, version from policy_rules
+    select id, travel_type, limit_key, limit_value, limit_bool, limit_list, version from policy_rules
     where policy_group_id = ${groupId} and version = ${version} and deleted_at is null
     order by created_at, id`)
 }
 
 export type LatestRule = Pick<Row<'policy_rules'>,
-  'policy_group_id' | 'version' | 'travel_type' | 'limit_key' | 'limit_value' | 'limit_bool'>
+  'policy_group_id' | 'version' | 'travel_type' | 'limit_key' | 'limit_value' | 'limit_bool' | 'limit_list'>
 
 // Each group's newest live version, in ONE query: the groups version
 // independently, so there is no single version number to filter on.
 export async function latestRulesFor(db: Queryable, groupIds: readonly string[]): Promise<LatestRule[]> {
   if (groupIds.length === 0) return []
   return many<LatestRule>(db, sql`
-    select r.policy_group_id, r.version, r.travel_type, r.limit_key, r.limit_value, r.limit_bool
+    select r.policy_group_id, r.version, r.travel_type, r.limit_key, r.limit_value, r.limit_bool, r.limit_list
     from policy_rules r
     join (
       select policy_group_id, max(version) as version from policy_rules
@@ -205,6 +205,7 @@ export interface NewRule {
   limit_key: string
   limit_value: number | null
   limit_bool: boolean | null
+  limit_list: string[] | null
   version: number
   updated_by: string | null
 }
@@ -214,8 +215,8 @@ export async function insertRules(db: Queryable, rules: readonly NewRule[]): Pro
   if (rules.length === 0) return
   await exec(db, sql`
     insert into policy_rules (client_id, tmc_id, policy_group_id, band_id, band_code, travel_type, limit_key,
-                              limit_value, limit_bool, locked, version, updated_by)
+                              limit_value, limit_bool, limit_list, locked, version, updated_by)
     values ${join(rules.map(r => sql`(
       null, ${r.tmc_id}, ${r.policy_group_id}, null, null, ${r.travel_type}, ${r.limit_key},
-      ${r.limit_value}, ${r.limit_bool}, false, ${r.version}, ${r.updated_by})`))}`)
+      ${r.limit_value}, ${r.limit_bool}, ${r.limit_list}::text[], false, ${r.version}, ${r.updated_by})`))}`)
 }

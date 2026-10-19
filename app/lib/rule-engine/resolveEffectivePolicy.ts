@@ -11,6 +11,9 @@ export interface ResolvedPolicy {
   bandRank: number
   version: number
   limits: Record<string, number | boolean>
+  // List rules (blocked/preferred airlines, allowed fare types), by key. These
+  // never feed the verdict: they decide what the traveller is shown at all.
+  lists: Record<string, string[]>
 }
 
 export interface PolicyBlocked {
@@ -171,11 +174,14 @@ export async function resolveEffectivePolicy(
   }
 
   const limits: Record<string, number | boolean> = {}
+  const lists: Record<string, string[]> = {}
   for (const row of rows) {
     if (row.limit_value !== null && row.limit_value !== undefined) {
       limits[row.limit_key] = row.limit_value
     } else if (row.limit_bool !== null && row.limit_bool !== undefined) {
       limits[row.limit_key] = row.limit_bool
+    } else if (row.limit_list) {
+      lists[row.limit_key] = row.limit_list
     }
   }
 
@@ -187,5 +193,6 @@ export async function resolveEffectivePolicy(
     bandRank,
     version: latestVersion,
     limits,
+    lists,
   }
 }

@@ -26,6 +26,7 @@ interface EffectiveRow {
   limit_key: string
   limit_value: number | null
   limit_bool: boolean | null
+  limit_list?: string[] | null
   policy_group_id: string
   group_name: string
 }
@@ -38,14 +39,14 @@ interface UnresolvedBand {
   detail: string
 }
 
-type CellVal = number | boolean | null
+type CellVal = number | boolean | string[] | null
 type Grid = Record<string, Record<string, CellVal>>
 
 function rowsToGrid(rows: EffectiveRow[]): Grid {
   const grid: Grid = {}
   for (const row of rows) {
     if (!grid[row.band_code]) grid[row.band_code] = {}
-    grid[row.band_code][row.limit_key] = row.limit_value ?? row.limit_bool ?? null
+    grid[row.band_code][row.limit_key] = row.limit_value ?? row.limit_bool ?? row.limit_list ?? null
   }
   return grid
 }

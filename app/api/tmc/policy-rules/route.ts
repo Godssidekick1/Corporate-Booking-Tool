@@ -23,7 +23,15 @@ interface RuleInput {
   limit_key: string
   limit_value?: number | null
   limit_bool?: boolean | null
+  // Codes: airline codes, or fare types (app/lib/policy/fareTypes.ts).
+  limit_list?: string[] | null
 }
+
+// A list holds short codes, never prose: an airline code is two characters and
+// a fare type is one of a fixed set. Bounded so a bad client cannot store an
+// unbounded array in every version of every rule.
+const LIST_ITEM = /^[A-Za-z0-9]{1,16}$/
+const LIST_MAX = 200
 
 export const GET = route(async (req: NextRequest) => {
   const user = await requireUser()
@@ -111,18 +119,32 @@ export const POST = route(async (req: NextRequest) => {
 
     const isNumeric = input.limit_value !== undefined && input.limit_value !== null
     const isBool = input.limit_bool !== undefined && input.limit_bool !== null
+    const isList = input.limit_list !== undefined && input.limit_list !== null
+    const kinds = [isNumeric, isBool, isList].filter(Boolean).length
 
-    if (!isNumeric && !isBool) {
+    if (kinds === 0) {
       return Response.json(
-        { error: `Rule (${input.travel_type}/${input.limit_key}) needs either limit_value or limit_bool` },
+        { error: `Rule (${input.travel_type}/${input.limit_key}) needs a limit_value, limit_bool or limit_list` },
         { status: 400 }
       )
     }
-    if (isNumeric && isBool) {
+    if (kinds > 1) {
       return Response.json(
-        { error: `Rule (${input.travel_type}/${input.limit_key}) cannot set both limit_value and limit_bool` },
+        { error: `Rule (${input.travel_type}/${input.limit_key}) can set only one of limit_value, limit_bool and limit_list` },
         { status: 400 }
       )
+    }
+
+    let list: string[] | null = null
+    if (isList) {
+      const raw = input.limit_list
+      if (!Array.isArray(raw) || raw.length > LIST_MAX || raw.some(v => typeof v !== 'string' || !LIST_ITEM.test(v))) {
+        return Response.json(
+          { error: `Rule (${input.travel_type}/${input.limit_key}) has an invalid list: up to ${LIST_MAX} short codes` },
+          { status: 400 }
+        )
+      }
+      list = [...new Set(raw.map(v => v.toUpperCase()))].sort()
     }
 
     const dedupeKey = `${input.travel_type}::${input.limit_key}`
@@ -138,6 +160,7 @@ export const POST = route(async (req: NextRequest) => {
       limit_key: input.limit_key,
       limit_value: isNumeric ? Number(input.limit_value) : null,
       limit_bool: isBool ? Boolean(input.limit_bool) : null,
+      limit_list: list,
       version: currentVersion + 1,
       updated_by: updatedBy,
     })

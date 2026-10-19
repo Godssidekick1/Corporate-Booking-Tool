@@ -10,6 +10,8 @@ import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic, CustomerInfo } from '
 import { NextRequest } from 'next/server'
 import { checkBookingAgainstPolicy, type RuleEngineResult } from '@/app/lib/rule-engine/checkBookingAgainstPolicy'
 import { buildPolicyInputsFromFlight } from '@/app/lib/rule-engine/buildPolicyInputs'
+import { policyListsFor } from '@/app/lib/rule-engine/policyLists'
+import { refusalFor } from '@/app/lib/policy/searchFilter'
 import { startApprovalForBooking, buildReason } from '@/app/lib/approval-engine/resolveApprovalTier'
 import { stampDealCodes } from '@/app/lib/deal-codes/stampBooking'
 import { stampFop } from '@/app/lib/fop/stampFop'
@@ -155,6 +157,16 @@ export const POST = route(async (req: NextRequest) => {
       error: 'This price is no longer held. Please go back and price this flight again.',
       code: 'QUOTE_EXPIRED',
     }, { status: 409 })
+  }
+
+  // The traveller's blocked airlines and allowed fare types. A held quote means
+  // /api/book/price already passed this; checked again because the policy may
+  // have changed since, and nothing reaches the airline that it would refuse.
+  const refusal = itinerary
+    ? refusalFor(itinerary as FlatFlightResult, { fareType, isNdc }, await policyListsFor(db, employee.id))
+    : null
+  if (refusal) {
+    return Response.json({ error: refusal, code: 'POLICY_DISALLOWED' }, { status: 422 })
   }
 
   const airlineComponents = quote.airline_components as { total?: number } | null

@@ -1299,7 +1299,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "createdAt": "<now>",
       "decisionNote": null,
       "kind": "booking",
-      "reason": "domestic fare limit exceeded (policy: 7000, actual: 11720)",
+      "reason": "domestic fare limit exceeded (policy: 7000, actual: 11720); preferred carrier tier exceeded (policy: Budget only, actual: Full-service)",
       "status": "pending",
       "tier": 1,
       "traveler": {

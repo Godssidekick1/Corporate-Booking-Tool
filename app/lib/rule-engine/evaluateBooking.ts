@@ -25,13 +25,17 @@ const NUMERIC_LIMIT_KEYS = [
   'per_diem_allowance',
   'max_trip_duration',
   'max_seat_selection_fee',
+  // Stops in the worst direction. Numeric, not a tier: a stop over the limit is
+  // the old "connecting flights not allowed" breach, red for non-stop-only
+  // (1 over 0) exactly as that was. 3 means "any" and is skipped below.
+  'max_stops',
+  // Hours door to door in the longest direction, layovers included.
+  'max_journey_hours',
 ] as const
 
 const BOOLEAN_ENTITLEMENT_KEYS = [
   'breakfast_included',
   'sponsored_transport_allowed',
-  'refundable_fare_required',
-  'connecting_flights_allowed',
   'red_eye_restricted',
   'personal_trips_allowed',
 ] as const
@@ -69,6 +73,7 @@ export function evaluateBooking(policy: ResolvedPolicy, booking: BookingInput): 
     if (rawPolicyValue === undefined || actualValue === undefined) continue
 
     const policyValue = Number(rawPolicyValue)
+    if (key === 'max_stops' && policyValue >= 3) continue
 
     const isViolation = key === 'advance_booking_days'
       ? actualValue < policyValue
@@ -107,6 +112,21 @@ export function evaluateBooking(policy: ResolvedPolicy, booking: BookingInput): 
         severity: 'red',
       })
     }
+  }
+
+  // ── Required fare conditions ─────────────────────────────────────────────
+  // The opposite polarity to an entitlement: the policy REQUIRES something and
+  // the fare does not have it. Read as one, "refundable required" breached only
+  // when a fare was refundable, which is backwards; that is why it was never
+  // supplied before.
+  if (policy.limits['refundable_fare_required'] === true && booking.booleanValues['refundable_fare'] === false) {
+    breaches.push({
+      limit_key: 'refundable_fare_required',
+      kind: 'boolean',
+      policyValue: true,
+      actualValue: false,
+      severity: 'red',
+    })
   }
 
   // ── Tier limits (cabin class, seat selection, carrier tier) ──────────────

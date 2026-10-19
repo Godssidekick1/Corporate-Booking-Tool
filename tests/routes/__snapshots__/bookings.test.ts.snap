@@ -1855,11 +1855,19 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
 
 exports[`traveller bookings and trips > policy preview: validation, and a verdict for a covered traveller 1`] = `
 {
-  "breaches": [],
+  "breaches": [
+    {
+      "actualValue": 1,
+      "kind": "tier",
+      "limit_key": "carrier_tier",
+      "policyValue": 0,
+      "severity": "amber",
+    },
+  ],
   "costTier": "not_evaluated",
   "ok": true,
-  "reason": "Within policy",
-  "verdict": "green",
+  "reason": "preferred carrier tier exceeded (policy: Budget only, actual: Full-service)",
+  "verdict": "amber",
 }
 `;
 

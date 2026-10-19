@@ -12,6 +12,7 @@ import {
   type TemplateTier,
 } from './linkedApprovalTemplates'
 import { categoryForTravelType, type ApprovalCategory } from './categories'
+import { breachLine } from '@/app/lib/policy/breachText'
 
 // Every function here takes `db` -- the pool, or a transaction's connection,
 // which is where approval writes belong: a decision, the booking's status and
@@ -108,41 +109,10 @@ export interface TierOutcome {
 }
 
 // ── buildReason ────────────────────────────────────────────────────────────
-const LIMIT_LABELS: Record<string, string> = {
-  max_fare_domestic: 'domestic fare limit',
-  max_fare_intl: 'international fare limit',
-  advance_booking_days: 'minimum advance booking window',
-  max_rate_major_city: 'hotel rate limit (major city)',
-  max_rate_other_city: 'hotel rate limit (other city)',
-  max_hotel_stars: 'hotel star rating limit',
-  max_car_rate_per_day: 'car rental daily rate limit',
-  baggage_extra_bags: 'extra baggage allowance',
-  per_diem_allowance: 'per diem allowance',
-  max_trip_duration: 'maximum trip duration',
-  breakfast_included: 'breakfast inclusion entitlement',
-  sponsored_transport_allowed: 'sponsored transport entitlement',
-  refundable_fare_required: 'refundable fare requirement',
-  connecting_flights_allowed: 'connecting flights entitlement',
-  red_eye_restricted: 'red-eye flight restriction',
-  personal_trips_allowed: 'personal trips entitlement',
-  cabin_class_short_haul: 'cabin class entitlement (short-haul)',
-  cabin_class_long_haul: 'cabin class entitlement (long-haul)',
-  seat_selection: 'seat selection entitlement',
-  carrier_tier: 'preferred carrier tier',
-  max_seat_selection_fee: 'seat selection spend limit',
-}
-
 export function buildReason(breaches: VerdictBreach[], costTier: string, totalCost: number): string {
   const parts: string[] = []
 
-  for (const b of breaches) {
-    const label = LIMIT_LABELS[b.limit_key] ?? b.limit_key
-    if (b.kind === 'boolean') {
-      parts.push(`${label} is not permitted for this employee`)
-    } else {
-      parts.push(`${label} exceeded (policy: ${b.policyValue}, actual: ${b.actualValue})`)
-    }
-  }
+  for (const b of breaches) parts.push(breachLine(b))
 
   if (costTier === 'finance_approval') {
     parts.push(`total cost ₹${totalCost} exceeds the finance approval threshold`)

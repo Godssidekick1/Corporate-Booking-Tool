@@ -15,6 +15,7 @@ import { genderForTitle } from '@/app/lib/places/profileFormat'
 import { mealCodesFor, mealLabel, fromProfilePreference, NO_MEAL_PREFERENCE } from '@/app/lib/book/mealCodes'
 import { ButtonBusy, BusyOverlay } from '@/app/components/FlowLoader'
 import { classifyTrip } from '@/app/lib/rule-engine/classifyTrip'
+import { breachLine } from '@/app/lib/policy/breachText'
 
 // ── /book/details/[flightKey] ─────────────────────────────────────────────────
 // Merges what used to be two separate steps (/book/seats then
@@ -63,22 +64,6 @@ const VERDICT_META: Record<string, { label: string; color: string; bg: string; b
   green: { label: 'Within policy',       color: '#166534', bg: '#F0FDF4', border: '#BBF7D0' },
   amber: { label: 'Minor policy breach', color: '#92400E', bg: '#FFFBEB', border: '#FDE68A' },
   red:   { label: 'Policy breach',       color: '#991B1B', bg: '#FEF2F2', border: '#FECACA' },
-}
-
-const LIMIT_LABELS: Record<string, string> = {
-  max_fare_domestic: 'domestic fare limit',
-  max_fare_intl: 'international fare limit',
-  advance_booking_days: 'minimum advance booking window',
-  cabin_class_short_haul: 'cabin class entitlement (short-haul)',
-  cabin_class_long_haul: 'cabin class entitlement (long-haul)',
-  connecting_flights_allowed: 'connecting flights entitlement',
-  max_seat_selection_fee: 'seat selection spend limit',
-}
-
-function breachLine(b: { limit_key: string; kind: string; policyValue: unknown; actualValue: unknown }): string {
-  const label = LIMIT_LABELS[b.limit_key] ?? b.limit_key
-  if (b.kind === 'boolean') return `${label} is not permitted for this employee`
-  return `${label} exceeded (policy: ${b.policyValue}, actual: ${b.actualValue})`
 }
 
 function emptyPassenger(paxType: PassengerForm['paxType']): PassengerForm {
