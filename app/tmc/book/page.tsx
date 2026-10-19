@@ -52,6 +52,23 @@ const day = (iso?: string) =>
 const money = (n: number) => `₹${Math.round(Number(n)).toLocaleString('en-IN')}`
 const statusLabel = (st: string) => st.replace(/_/g, ' ')
 
+// GET a JSON endpoint, retrying once when the answer is not one: a network
+// blip, a 5xx, or an HTML page instead of JSON -- what a dev server gives while
+// it compiles a route on first use, and what made a traveller's profile fail
+// to load on the first pick and stay failed (picking them again changed
+// nothing to refetch). A real refusal (a 4xx with an error) is not retried.
+async function getJson(url: string): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await fetch(url)
+      const isJson = (res.headers.get('content-type') ?? '').includes('application/json')
+      if (isJson && res.status < 500) return { ok: res.ok, status: res.status, body: await res.json() }
+    } catch { /* retried below */ }
+    if (attempt >= 1) return { ok: false, status: 0, body: null }
+    await new Promise(r => setTimeout(r, 700))
+  }
+}
+
 export default function TmcBookPage() {
   const router = useRouter()
   const [clientId, setClientId] = useState('')
@@ -108,30 +125,34 @@ export default function TmcBookPage() {
     if (q.get('traveller')) setTravellerId(q.get('traveller')!)
   }, [])
 
+  // Bumped by "Try again" to load the same traveller once more.
+  const [detailKey, setDetailKey] = useState(0)
   useEffect(() => {
     if (!travellerId) return
     let live = true
-    fetch(`/api/book/travellers/${travellerId}`).then(r => r.json()).then(d => {
+    getJson(`/api/book/travellers/${travellerId}`).then(r => {
       if (!live) return
-      if (d.ok) { setDetail(d); setDetailError('') } else { setDetail(null); setDetailError(d.error || 'Could not load this traveller.') }
-    }).catch(() => { if (live) setDetailError('Could not load this traveller.') })
+      if (r.ok && r.body?.ok) { setDetail(r.body as unknown as TravellerDetail); setDetailError('') }
+      else {
+        setDetail(null)
+        setDetailError(typeof r.body?.error === 'string' ? r.body.error : 'Could not load their profile.')
+      }
+    })
     return () => { live = false }
-  }, [travellerId])
+  }, [travellerId, detailKey])
 
   // Their trips still being planned, as cards (one page; the three most
   // recent). Reloaded when the desk makes one for them.
   useEffect(() => {
     if (!travellerId) return
     let live = true
-    fetch(`/api/trips?travellerId=${encodeURIComponent(travellerId)}&page=1`).then(r => r.json())
-      .then(d => {
-        if (!live) return
-        const open = d.ok ? (d.trips as TripCardTrip[]).filter(t => t.status === 'open' || t.status === 'active') : []
-        setTheirTrips(open.slice(0, 3))
-      })
-      .catch(() => { if (live) setTheirTrips([]) })
+    getJson(`/api/trips?travellerId=${encodeURIComponent(travellerId)}&page=1`).then(r => {
+      if (!live) return
+      const open = r.ok && r.body?.ok ? (r.body.trips as TripCardTrip[]).filter(t => t.status === 'open' || t.status === 'active') : []
+      setTheirTrips(open.slice(0, 3))
+    })
     return () => { live = false }
-  }, [travellerId, tripsKey])
+  }, [travellerId, tripsKey, detailKey])
 
   const shown = travellerId && detail?.traveller.id === travellerId ? detail : null
 
@@ -210,7 +231,13 @@ export default function TmcBookPage() {
           </div>
         </div>
 
-        {detailError && travellerId && <p style={s.errorNote}>{detailError}</p>}
+        {detailError && travellerId && (
+          <p style={s.errorNote}>
+            {detailError}{' '}
+            <button type="button" onClick={() => { setDetailError(''); setDetailKey(k => k + 1) }} style={s.retryBtn}>Try again</button>
+          </p>
+        )}
+        {!detailError && travellerId && !shown && <p style={s.muted}>Loading their profile…</p>}
 
         {shown && (
           <div style={s.person}>
@@ -384,6 +411,7 @@ const s: Record<string, React.CSSProperties> = {
   muted: { fontSize: 12.5, color: '#9CA3AF', margin: 0 },
   errorNote: { fontSize: 12.5, color: '#DC2626', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', margin: '14px 0 0' },
 
+  retryBtn: { background: 'none', border: 'none', padding: 0, color: '#000835', fontWeight: 600, textDecoration: 'underline', cursor: 'pointer', fontSize: 'inherit' },
   tripRow: { display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap', marginTop: 16 },
   tripCards: { display: 'flex', flexDirection: 'column', gap: 10 },
   secondaryBtn: {
