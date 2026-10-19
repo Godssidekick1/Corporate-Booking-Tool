@@ -130,7 +130,7 @@ const s: Record<string, React.CSSProperties> = {
   },
   picker: { maxWidth: 360, marginTop: 8 },
   toggleChip: {
-    fontSize: 12, padding: '5px 11px', borderRadius: 999, border: '1px solid #D1D5DB',
+    fontSize: 12, padding: '5px 11px', borderRadius: 999, borderWidth: 1, borderStyle: 'solid', borderColor: '#D1D5DB',
     background: '#fff', color: '#374151', cursor: 'pointer', fontWeight: 500,
   },
   toggleChipOn: { background: '#000835', borderColor: '#000835', color: '#fff' },

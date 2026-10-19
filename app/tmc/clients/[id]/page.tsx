@@ -448,12 +448,12 @@ export default function CorporateSettingsPage() {
             <Toggle
               label="Personal bookings" checked={form.personal_bookings_allowed === true}
               onChange={v => set('personal_bookings_allowed', v)}
-              effect="On: travellers may mark a trip as personal: not checked against policy, no approval, paid by their own card."
+              effect="On: travellers whose policy group allows personal trips may mark a trip as personal: not checked against policy, no approval, paid by their own card."
             />
             <Toggle
               label="Guest bookings" checked={form.guest_bookings_allowed !== false}
               onChange={v => set('guest_bookings_allowed', v)}
-              effect="Off: every booking is for an employee; the ‘A guest’ option is not offered."
+              effect="Off: every booking is for an employee; the ‘A guest’ option is not offered. On: a policy group can still refuse guests for its bands."
             />
             <Toggle
               label="Hold auto-issue" checked={form.hold_auto_issue === true}

@@ -16,6 +16,7 @@ import { startApprovalForBooking, buildReason } from '@/app/lib/approval-engine/
 import { stampDealCodes } from '@/app/lib/deal-codes/stampBooking'
 import { stampFop } from '@/app/lib/fop/stampFop'
 import { loadClientGates } from '@/app/lib/clients/clientGates'
+import { bookingRightsFor } from '@/app/lib/rule-engine/bookingRights'
 import { QUOTE_EXPIRED_MESSAGE } from '@/app/lib/book/quoteHold'
 import type { FlatFlightResult } from '@/app/lib/book/types'
 
@@ -120,16 +121,27 @@ export const POST = route(async (req: NextRequest) => {
 
   // ── How this company books (Corporate Settings) ───────────────────────────
   // Each refused here, before the airline sees a passenger.
+  // Personal trips and guests: the company allows them at all, and the
+  // traveller's policy group allows them for their band (bookingRights).
   const gates = await loadClientGates(db, employee.client_id)
   const personal = body.purpose === 'personal'
-  if (personal && !gates.personalBookingsAllowed) {
-    return Response.json({ error: 'Your company does not allow personal trips to be booked here.', code: 'PERSONAL_NOT_ALLOWED' }, { status: 403 })
+  const forGuest = body.forGuest === true
+  const rights = personal || forGuest ? await bookingRightsFor(db, employee.id, gates) : null
+  const whosePolicy = actor.actor.via === 'self' ? 'Your travel policy' : "The traveller's travel policy"
+  if (personal && rights && !rights.personal.allowed) {
+    const error = rights.personal.by === 'company'
+      ? 'Your company does not allow personal trips to be booked here.'
+      : `${whosePolicy} does not allow personal trips.`
+    return Response.json({ error, code: 'PERSONAL_NOT_ALLOWED' }, { status: 403 })
   }
   if (personal && tripId) {
     return Response.json({ error: 'A personal trip cannot go into a business trip.' }, { status: 400 })
   }
-  if (body.forGuest === true && !gates.guestBookingsAllowed) {
-    return Response.json({ error: 'Your company does not allow bookings for guests.', code: 'GUEST_NOT_ALLOWED' }, { status: 403 })
+  if (forGuest && rights && !rights.guest.allowed) {
+    const error = rights.guest.by === 'company'
+      ? 'Your company does not allow bookings for guests.'
+      : `${whosePolicy} does not allow bookings for guests.`
+    return Response.json({ error, code: 'GUEST_NOT_ALLOWED' }, { status: 403 })
   }
 
   // If this booking is being made under a trip, confirm the trip actually
@@ -412,7 +424,7 @@ export const POST = route(async (req: NextRequest) => {
         policy_reason_code: policyReason?.code ?? null,
         policy_reason_note: policyReason?.note ?? null,
         purpose: personal ? 'personal' : 'business',
-        for_guest: body.forGuest === true,
+        for_guest: forGuest,
       })
     } catch (insertError) {
       // The airline has the passenger data and we do not have a booking row.

@@ -33,6 +33,9 @@ export interface FieldDef {
   // For 'list' fields: what the codes are, which decides the picker.
   listOf?: 'airlines' | 'fare_types'
   help?: string
+  // For 'boolean' fields: the value a group has until someone sets it (the
+  // editor shows it, bookingRights enforces it). Absent = No.
+  defaultBool?: boolean
 }
 
 export interface CategoryDef {
@@ -56,8 +59,11 @@ export const CABIN_CLASS_OPTIONS: TierOption[] = [
 // max stops, max journey time, the seat-fee cap and the approval thresholds.
 // Blocked airlines and allowed fare types are not a verdict at all: those
 // fares are left out of the traveller's search (app/lib/policy/searchFilter.ts).
-// Stored but not yet checked: extra bags, red-eye, personal trips, and every
-// hotel, ground and general field (nothing books those yet).
+// Personal trips and guest bookings are not a verdict either: with the
+// company's switch they decide whether such a booking may be made at all
+// (app/lib/rule-engine/bookingRights.ts).
+// Stored but not yet checked: extra bags, red-eye, and every hotel, ground and
+// general field (nothing books those yet).
 export const CARRIER_OPTIONS: TierOption[] = [
   { label: 'Budget only',  value: 0 },
   { label: 'Full-service', value: 1 },
@@ -88,6 +94,7 @@ export const CATEGORIES: CategoryDef[] = [
       { key: 'max_journey_hours',           label: 'Max journey time (each way)', unit: 'h',  kind: 'numeric', travelType: 'flight' },
       { key: 'red_eye_restricted',          label: 'Red-eye flights restricted',              kind: 'boolean', travelType: 'flight' },
       { key: 'personal_trips_allowed',      label: 'Personal trips allowed',                  kind: 'boolean', travelType: 'flight' },
+      { key: 'guest_bookings_allowed',      label: 'Guest bookings allowed',                  kind: 'boolean', travelType: 'flight', defaultBool: true },
     ],
   },
   {
@@ -139,6 +146,10 @@ export const ALL_FIELDS: FieldDef[] = CATEGORIES.flatMap(c => c.fields)
 
 export const FIELD_BY_KEY: Record<string, FieldDef> =
   Object.fromEntries(ALL_FIELDS.map(f => [f.key, f]))
+
+// Each boolean field's value before a group sets it.
+export const FIELD_DEFAULTS: Record<string, boolean> =
+  Object.fromEntries(ALL_FIELDS.filter(f => f.kind === 'boolean').map(f => [f.key, f.defaultBool ?? false]))
 
 // ── formatFieldValue ─────────────────────────────────────────────────────────
 // Renders a stored limit for display. Used by the corporate read-only view,

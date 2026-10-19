@@ -101,7 +101,10 @@ journey time are checked; blocked airlines and fare types outside a group's
 allowed list are not shown (search) and refused (price, add-passenger);
 preferred airlines are marked. Corporate Settings: personal trips, guest
 bookings, a reason for out-of-policy fares from everyone, blocking red fares,
-the duplicate check; a priced fare is held 30 minutes.
+the duplicate check; a priced fare is held 30 minutes. Personal trips and guest
+bookings need both the company switch and the traveller's policy group
+(personal No and guests Yes until a group says otherwise; no policy to check
+means the company switch alone).
 
 - **Phase 2:** max layover, max cancellation penalty, lowest logical fare
   (a cheaper fare within N minutes of the chosen one), re-approval when a

@@ -120,7 +120,7 @@ type Grid = Record<string, CellVal>
 
 function buildEmptyGrid(): Grid {
   const g: Grid = {}
-  for (const f of ALL_FIELDS) g[f.key] = f.kind === 'boolean' ? false : f.kind === 'list' ? [] : null
+  for (const f of ALL_FIELDS) g[f.key] = f.kind === 'boolean' ? f.defaultBool ?? false : f.kind === 'list' ? [] : null
   return g
 }
 

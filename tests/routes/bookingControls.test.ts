@@ -5,6 +5,8 @@ import { GET as controlsGet } from '@/app/api/book/controls/route'
 import { PATCH as clientPatch } from '@/app/api/tmc/clients/[id]/route'
 import { POST as tripsPost } from '@/app/api/trips/route'
 import { POST as chainPost } from '@/app/api/tmc/approval-chains/direct/route'
+import { GET as rulesGet, POST as rulesPost } from '@/app/api/tmc/policy-rules/route'
+import { resolveEffectivePolicy } from '@/app/lib/rule-engine/resolveEffectivePolicy'
 import { call } from '../harness/call'
 import { actors, type Actors } from '../harness/actors'
 import { resetDatabase } from '../harness/db'
@@ -12,7 +14,8 @@ import { db } from '@/app/lib/db'
 import { sql, one, maybeOne, exec } from '@/app/lib/db/sql'
 
 // ── How a company books (Corporate Settings), through add-passenger ──────────
-// Personal trips, guest bookings, a reason for out-of-policy fares, blocking
+// Personal trips, guest bookings (the company switch AND the traveller's
+// band, through their policy group), a reason for out-of-policy fares, blocking
 // red fares, the duplicate check, and the quote hold. Each is refused before
 // the airline sees a passenger, which the fake's call count proves.
 //
@@ -87,6 +90,22 @@ d('booking controls (Corporate Settings)', () => {
   const setClient = (fields: Record<string, unknown>) =>
     call(clientPatch, { as: a.tmcAdmin, method: 'PATCH', url: `/api/tmc/clients/${clientId}`, params: { id: clientId }, body: fields })
 
+  // One yes/no rule of the colleague's policy group, saved as the editor
+  // does: a new version carrying every other rule unchanged.
+  async function setBandRule(key: string, value: boolean) {
+    const policy = await resolveEffectivePolicy(db, colleague.id, 'flight')
+    if (!policy.ok) throw new Error(policy.message)
+    const got = await call(rulesGet, { as: a.tmcAdmin, url: `/api/tmc/policy-rules?groupId=${policy.policyGroupId}` })
+    const rows = (got.json as { rows: { travel_type: string; limit_key: string }[] }).rows.filter(r => r.limit_key !== key)
+    const res = await call(rulesPost, {
+      as: a.tmcAdmin, method: 'POST', url: '/api/tmc/policy-rules',
+      body: { policyGroupId: policy.policyGroupId, rules: [...rows, { travel_type: 'flight', limit_key: key, limit_bool: value }] },
+    })
+    expect(res.status).toBe(200)
+  }
+  const controls = async () =>
+    (await call(controlsGet, { as: a.corpAdmin, url: `/api/book/controls?travellerId=${colleague.id}` })).json as { personalAllowed: boolean; guestAllowed: boolean }
+
   async function price(ref: string, day: string) {
     fake.pricing.mockResolvedValueOnce(pricing(ref))
     const res = await call(pricePost, {
@@ -151,13 +170,27 @@ d('booking controls (Corporate Settings)', () => {
     })
   })
 
-  it('personal: refused unless allowed; then no policy, no approval, and never in a trip', async () => {
+  it('personal: refused unless the company and the band allow it; then no policy, no approval, never in a trip', async () => {
     await price('P1', '2030-01-01')
     expect(await addPassenger('P1', '2030-01-01', { purpose: 'personal' }))
-      .toMatchObject({ status: 403, json: { code: 'PERSONAL_NOT_ALLOWED' } })
+      .toMatchObject({ status: 403, json: { code: 'PERSONAL_NOT_ALLOWED', error: 'Your company does not allow personal trips to be booked here.' } })
     expect(fake.addPassenger).not.toHaveBeenCalled()
 
+    // The company allows it; the colleague's band does not (the group says No).
     expect((await setClient({ personal_bookings_allowed: true })).status).toBe(200)
+    expect(await addPassenger('P1', '2030-01-01', { purpose: 'personal' }))
+      .toMatchObject({ status: 403, json: { code: 'PERSONAL_NOT_ALLOWED', error: "The traveller's travel policy does not allow personal trips." } })
+    expect(fake.addPassenger).not.toHaveBeenCalled()
+    expect((await controls()).personalAllowed).toBe(false)
+
+    // The band allows it, but the company switch still decides first.
+    await setBandRule('personal_trips_allowed', true)
+    await setClient({ personal_bookings_allowed: false })
+    expect((await controls()).personalAllowed).toBe(false)
+    expect((await addPassenger('P1', '2030-01-01', { purpose: 'personal' })).status).toBe(403)
+
+    await setClient({ personal_bookings_allowed: true })
+    expect((await controls()).personalAllowed).toBe(true)
     verdict = 'red'  // a personal trip is not judged at all
     const res = await addPassenger('P1', '2030-01-01', { purpose: 'personal' })
     expect(res.status).toBe(200)
@@ -173,9 +206,18 @@ d('booking controls (Corporate Settings)', () => {
     await price('P2', '2030-01-02')
     expect((await addPassenger('P2', '2030-01-02', { purpose: 'personal', tripId })).status).toBe(400)
     await setClient({ personal_bookings_allowed: false })
+    await setBandRule('personal_trips_allowed', false)
   })
 
-  it('guest: refused when the company books employees only', async () => {
+  it('personal: with policy control off, the company switch alone decides', async () => {
+    await setClient({ personal_bookings_allowed: true, policy_controlling: false })
+    expect((await controls()).personalAllowed).toBe(true)
+    await price('P3', '2030-01-03')
+    expect((await addPassenger('P3', '2030-01-03', { purpose: 'personal' })).status).toBe(200)
+    await setClient({ personal_bookings_allowed: false, policy_controlling: true })
+  })
+
+  it('guest: refused when the company books employees only, or the band may not', async () => {
     await setClient({ guest_bookings_allowed: false })
     await price('G1', '2030-02-01')
     expect(await addPassenger('G1', '2030-02-01', { forGuest: true }))
@@ -183,6 +225,16 @@ d('booking controls (Corporate Settings)', () => {
     expect(fake.addPassenger).not.toHaveBeenCalled()
 
     await setClient({ guest_bookings_allowed: true })
+    // The group never set the rule, so guests were allowed (the first test);
+    // a band that may not is refused.
+    await setBandRule('guest_bookings_allowed', false)
+    expect(await addPassenger('G1', '2030-02-01', { forGuest: true }))
+      .toMatchObject({ status: 403, json: { code: 'GUEST_NOT_ALLOWED', error: "The traveller's travel policy does not allow bookings for guests." } })
+    expect((await controls()).guestAllowed).toBe(false)
+    expect(fake.addPassenger).not.toHaveBeenCalled()
+
+    await setBandRule('guest_bookings_allowed', true)
+    expect((await controls()).guestAllowed).toBe(true)
     expect((await addPassenger('G1', '2030-02-01', { forGuest: true })).status).toBe(200)
     expect(await bookingFor('G1')).toMatchObject({ for_guest: true, purpose: 'business' })
   })

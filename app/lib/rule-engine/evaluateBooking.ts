@@ -37,7 +37,6 @@ const BOOLEAN_ENTITLEMENT_KEYS = [
   'breakfast_included',
   'sponsored_transport_allowed',
   'red_eye_restricted',
-  'personal_trips_allowed',
 ] as const
 
 // Tier keys — stored as numeric rank (0=Economy, 1=Premium Economy, etc.)
