@@ -1861,13 +1861,12 @@ exports[`traveller bookings and trips > policy preview: validation, and a verdic
       "kind": "tier",
       "limit_key": "carrier_tier",
       "policyValue": 0,
-      "severity": "amber",
+      "severity": "red",
     },
   ],
-  "costTier": "not_evaluated",
   "ok": true,
   "reason": "preferred carrier tier exceeded (policy: Budget only, actual: Full-service)",
-  "verdict": "amber",
+  "verdict": "red",
 }
 `;
 

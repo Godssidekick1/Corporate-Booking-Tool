@@ -54,8 +54,7 @@ interface PassengerForm {
 interface PolicyPreview {
   ok: boolean
   verdict?: 'green' | 'amber' | 'red'
-  breaches?: { limit_key: string; kind: string; policyValue: unknown; actualValue: unknown }[]
-  costTier?: string
+  breaches?: { limit_key: string; kind: string; policyValue: unknown; actualValue: unknown; graceLimit?: number }[]
   reason?: string
   message?: string
 }

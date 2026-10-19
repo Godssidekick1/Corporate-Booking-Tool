@@ -75,11 +75,11 @@ describe('isApprovalCategory', () => {
 
 describe('buildReason', () => {
   it('says "Within policy" when nothing was breached', () => {
-    expect(buildReason([], 'auto_approve', 5000)).toBe('Within policy')
+    expect(buildReason([])).toBe('Within policy')
   })
 
   it('names a numeric breach with both the policy and the actual value', () => {
-    const reason = buildReason([breach()], 'auto_approve', 15000)
+    const reason = buildReason([breach()])
 
     expect(reason).toContain('domestic fare limit')
     expect(reason).toContain('10000')
@@ -91,8 +91,6 @@ describe('buildReason', () => {
     // not a sentence. A boolean limit is permission, not a threshold.
     const reason = buildReason(
       [breach({ limit_key: 'red_eye_restricted', kind: 'boolean', policyValue: false, actualValue: true })],
-      'auto_approve',
-      5000
     )
 
     expect(reason).toContain('red-eye flight restriction is not permitted for this employee')
@@ -101,28 +99,21 @@ describe('buildReason', () => {
 
   it('translates every known limit key to human words', () => {
     // A bare key leaves the approver guessing what they are approving.
-    const reason = buildReason([breach({ limit_key: 'cabin_class_long_haul', kind: 'boolean' })], 'auto_approve', 1)
+    const reason = buildReason([breach({ limit_key: 'cabin_class_long_haul', kind: 'boolean' })])
     expect(reason).toContain('cabin class entitlement (long-haul)')
   })
 
   it('falls back to the raw key for a limit it does not know', () => {
     // Better than dropping the breach silently.
-    const reason = buildReason([breach({ limit_key: 'some_future_limit' })], 'auto_approve', 1)
+    const reason = buildReason([breach({ limit_key: 'some_future_limit' })])
     expect(reason).toContain('some_future_limit')
   })
 
-  it('adds the cost-tier explanation above the finance threshold', () => {
-    const reason = buildReason([], 'finance_approval', 250000)
-
-    expect(reason).toContain('250000')
-    expect(reason).toContain('finance approval threshold')
-  })
-
-  it('distinguishes "above auto-approval" from "over the finance threshold"', () => {
-    const reason = buildReason([], 'within_finance_limit', 50000)
-
-    expect(reason).toContain('within finance limits')
-    expect(reason).not.toContain('exceeds the finance approval threshold')
+  it('says which side of the grace a fare landed', () => {
+    const within = buildReason([breach({ policyValue: 10000, actualValue: 10500, graceLimit: 11000 })])
+    expect(within).toContain('within the ₹1,000 grace')
+    const beyond = buildReason([breach({ policyValue: 10000, actualValue: 12000, graceLimit: 11000 })])
+    expect(beyond).toContain('beyond the ₹1,000 grace')
   })
 
   it('joins several breaches into one readable sentence', () => {
@@ -131,13 +122,10 @@ describe('buildReason', () => {
         breach({ limit_key: 'max_fare_domestic' }),
         breach({ limit_key: 'advance_booking_days', policyValue: 14, actualValue: 2 }),
       ],
-      'finance_approval',
-      99000
     )
 
     expect(reason).toContain('domestic fare limit')
     expect(reason).toContain('minimum advance booking window')
-    expect(reason).toContain('finance approval threshold')
-    expect(reason.split(';')).toHaveLength(3)
+    expect(reason.split(';')).toHaveLength(2)
   })
 })

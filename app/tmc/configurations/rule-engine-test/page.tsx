@@ -16,7 +16,6 @@ interface TestResult {
   ok: boolean
   verdict?: 'green' | 'amber' | 'red'
   breaches?: VerdictBreach[]
-  costTier?: string
   policyGroupName?: string
   bandCode?: string
   reason?: string
@@ -221,7 +220,7 @@ export default function RuleEngineTestPage() {
                 </span>
               </div>
               <p style={s.metaText}>
-                Policy group: <strong>{result.policyGroupName}</strong> · Band: <strong>{result.bandCode}</strong> · Cost tier: <strong>{result.costTier}</strong>
+                Policy group: <strong>{result.policyGroupName}</strong> · Band: <strong>{result.bandCode}</strong>
               </p>
 
               {result.breaches && result.breaches.length > 0 ? (

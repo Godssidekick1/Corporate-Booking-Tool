@@ -161,8 +161,8 @@ export const POST = route(async (
 
       if (ruleResult.ok) {
         policyVerdict = ruleResult.verdict
-        policyVerdictDetail = { breaches: ruleResult.breaches, costTier: ruleResult.costTier }
-        reason = buildReason(ruleResult.breaches, ruleResult.costTier, newSellTotal)
+        policyVerdictDetail = { breaches: ruleResult.breaches }
+        reason = buildReason(ruleResult.breaches)
       } else {
         reason = ruleResult.message
       }

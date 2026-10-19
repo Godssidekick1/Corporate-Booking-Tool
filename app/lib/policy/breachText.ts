@@ -19,6 +19,7 @@ export interface BreachLike {
   kind: string
   policyValue: unknown
   actualValue: unknown
+  graceLimit?: number
 }
 
 export const BREACH_LABELS: Record<string, string> = {
@@ -79,6 +80,15 @@ export function breachLine(b: BreachLike): string {
     const options = FIELD_BY_KEY[b.limit_key]?.options
     const name = (v: number) => options?.find(o => o.value === v)?.label
     if (name(policy) && name(actual)) return `${label} exceeded (policy: ${name(policy)}, actual: ${name(actual)})`
+  }
+
+  // A fare cap with grace says which side of it the fare landed.
+  if (typeof b.graceLimit === 'number') {
+    const inr = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`
+    const grace = inr(b.graceLimit - policy)
+    return actual <= b.graceLimit
+      ? `${label} exceeded, within the ${grace} grace (policy: ${b.policyValue}, actual: ${b.actualValue})`
+      : `${label} exceeded, beyond the ${grace} grace (policy: ${b.policyValue}, actual: ${b.actualValue})`
   }
 
   return `${label} exceeded (policy: ${b.policyValue}, actual: ${b.actualValue})`

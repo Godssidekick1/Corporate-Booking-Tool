@@ -113,13 +113,12 @@ exports[`policy > rule-engine test: evaluates for the TMC that owns the travelle
         "kind": "numeric",
         "limit_key": "max_fare_domestic",
         "policyValue": 9000,
-        "severity": "amber",
+        "severity": "red",
       },
     ],
-    "costTier": "not_evaluated",
     "ok": true,
     "policyGroupName": "d",
-    "verdict": "amber",
+    "verdict": "red",
   },
 }
 `;

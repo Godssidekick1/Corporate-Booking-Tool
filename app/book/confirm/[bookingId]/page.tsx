@@ -65,8 +65,7 @@ interface Booking {
   // Booked on the traveller's behalf (travel desk or a colleague); null when self-made.
   booked_by_name?: string | null
   policy_verdict_detail: {
-    breaches?: { limit_key: string; kind: string; policyValue: unknown; actualValue: unknown }[]
-    costTier?: string
+    breaches?: { limit_key: string; kind: string; policyValue: unknown; actualValue: unknown; graceLimit?: number }[]
   } | null
   itinerary: {
     airline?: { code: string; name: string }

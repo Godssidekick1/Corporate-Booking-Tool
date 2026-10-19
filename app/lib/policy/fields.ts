@@ -55,8 +55,8 @@ export const CABIN_CLASS_OPTIONS: TierOption[] = [
 ]
 
 // What a booking is checked against (evaluateBooking + buildPolicyInputs):
-// the fare caps, both cabins, carrier tier, advance booking, refundable fare,
-// max stops, max journey time, the seat-fee cap and the approval thresholds.
+// the fare caps (with their grace), both cabins, carrier tier, advance
+// booking, refundable fare, max stops, max journey time and the seat-fee cap.
 // Blocked airlines and allowed fare types are not a verdict at all: those
 // fares are left out of the traveller's search (app/lib/policy/searchFilter.ts).
 // Personal trips and guest bookings are not a verdict either: with the
@@ -67,6 +67,13 @@ export const CABIN_CLASS_OPTIONS: TierOption[] = [
 export const CARRIER_OPTIONS: TierOption[] = [
   { label: 'Budget only',  value: 0 },
   { label: 'Full-service', value: 1 },
+]
+
+// How the fare caps' grace is counted: a share of the cap, or a fixed amount.
+// A share suits a group with both caps: ₹500 means little on a ₹60,000 cap.
+export const GRACE_UNIT_OPTIONS: TierOption[] = [
+  { label: '% of the cap', value: 0 },
+  { label: '₹ over the cap', value: 1 },
 ]
 
 // "Any" is 3: no itinerary we are offered has more, so it never fires.
@@ -83,6 +90,9 @@ export const CATEGORIES: CategoryDef[] = [
     fields: [
       { key: 'max_fare_domestic',           label: 'Max domestic fare',         unit: '₹',    kind: 'numeric', travelType: 'flight' },
       { key: 'max_fare_intl',               label: 'Max international fare',    unit: '₹',    kind: 'numeric', travelType: 'flight' },
+      { key: 'fare_grace',                  label: 'Grace above the fare cap',                kind: 'numeric', travelType: 'flight',
+        help: 'A fare within the grace always goes for approval; beyond it is out of policy. Empty: no grace.' },
+      { key: 'fare_grace_unit',             label: 'Grace counted as',                        kind: 'tier',    travelType: 'flight', options: GRACE_UNIT_OPTIONS },
       { key: 'cabin_class_short_haul',      label: 'Cabin class (short haul)',                kind: 'tier',    travelType: 'flight', options: CABIN_CLASS_OPTIONS },
       { key: 'cabin_class_long_haul',       label: 'Cabin class (long haul >8h)',             kind: 'tier',    travelType: 'flight', options: CABIN_CLASS_OPTIONS },
       { key: 'max_seat_selection_fee',      label: 'Max seat selection spend',  unit: '₹',    kind: 'numeric', travelType: 'flight' },
@@ -133,13 +143,9 @@ export const CATEGORIES: CategoryDef[] = [
       { key: 'max_trip_duration',  label: 'Max trip duration',  unit: 'days',  kind: 'numeric', travelType: 'general', wholeNumber: true },
     ],
   },
-  {
-    id: 'approval', label: 'Approval thresholds', color: '#F9FAFB', textColor: '#374151',
-    fields: [
-      { key: 'auto_approve_under',    label: 'Auto-approve under',             unit: '₹', kind: 'numeric', travelType: 'approval' },
-      { key: 'finance_approval_over', label: 'Finance approval required over', unit: '₹', kind: 'numeric', travelType: 'approval' },
-    ],
-  },
+  // The approval thresholds (auto_approve_under, finance_approval_over) were
+  // removed on 2026-10-20: what a trip costs overall is expense management's
+  // question. Rows already stored are not read, and drop out on the next save.
 ]
 
 export const ALL_FIELDS: FieldDef[] = CATEGORIES.flatMap(c => c.fields)

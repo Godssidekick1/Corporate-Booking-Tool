@@ -53,8 +53,8 @@ function judge(limits: Record<string, number | boolean>, f: FlatFlightResult, is
 const keys = (r: ReturnType<typeof judge>) => r.breaches.map(b => `${b.limit_key}:${b.severity}`)
 
 describe('verdict checks', () => {
-  it('carrier tier: a full-service carrier on a budget-only policy is amber', () => {
-    expect(keys(judge({ carrier_tier: 0 }, flight({ isLcc: false })))).toEqual(['carrier_tier:amber'])
+  it('carrier tier: a full-service carrier on a budget-only policy is out of policy', () => {
+    expect(keys(judge({ carrier_tier: 0 }, flight({ isLcc: false })))).toEqual(['carrier_tier:red'])
     expect(keys(judge({ carrier_tier: 0 }, flight({ isLcc: true })))).toEqual([])
     expect(keys(judge({ carrier_tier: 1 }, flight({ isLcc: false })))).toEqual([])
   })
@@ -67,11 +67,11 @@ describe('verdict checks', () => {
 
   it('advance booking: counted in days from today in India to the departure date', () => {
     const on = (date: string) => flight({}, [journey(1, 'DEL', 'BOM', date)])
-    // 20 Oct (today in India) -> 0 days; 25 Oct -> 5; 30 Oct -> 10. Short by
-    // more than half the window is red, less is amber (as every numeric limit).
+    // 20 Oct (today in India) -> 0 days; 25 Oct -> 5; 30 Oct -> 10. Any day
+    // short is out of policy: only fare caps have grace.
     expect(judge({ advance_booking_days: 7 }, on('2026-10-20T23:00:00')).breaches[0])
       .toMatchObject({ limit_key: 'advance_booking_days', actualValue: 0, policyValue: 7, severity: 'red' })
-    expect(keys(judge({ advance_booking_days: 7 }, on('2026-10-25T08:00:00')))).toEqual(['advance_booking_days:amber'])
+    expect(keys(judge({ advance_booking_days: 7 }, on('2026-10-25T08:00:00')))).toEqual(['advance_booking_days:red'])
     expect(keys(judge({ advance_booking_days: 7 }, on('2026-10-30T08:00:00')))).toEqual([])
     // No usable departure: not judged, rather than guessed.
     expect(keys(judge({ advance_booking_days: 7 }, on('soon')))).toEqual([])
@@ -111,6 +111,41 @@ describe('verdict checks', () => {
       'refundable fare requirement not met: this fare is non-refundable',
       'preferred carrier tier exceeded (policy: Budget only, actual: Full-service)',
     ]))
+  })
+})
+
+describe('fare caps and grace', () => {
+  const fareOf = (limits: Record<string, number | boolean>, amount: number, key = 'max_fare_domestic') =>
+    evaluateBooking(policy(limits), { totalCost: amount, numericValues: { [key]: amount }, booleanValues: {} })
+
+  it('no grace: any amount over the cap is out of policy', () => {
+    expect(fareOf({ max_fare_domestic: 8000 }, 8000)).toMatchObject({ verdict: 'green', breaches: [] })
+    expect(fareOf({ max_fare_domestic: 8000 }, 8001).verdict).toBe('red')
+  })
+
+  it('a percentage grace: within it needs approval, beyond it is out of policy', () => {
+    const g = { max_fare_intl: 50000, fare_grace: 10, fare_grace_unit: 0 }
+    expect(fareOf(g, 55000, 'max_fare_intl')).toMatchObject({ verdict: 'amber', breaches: [{ severity: 'amber', graceLimit: 55000 }] })
+    expect(fareOf(g, 55001, 'max_fare_intl').verdict).toBe('red')
+  })
+
+  it('a fixed grace in rupees', () => {
+    const g = { max_fare_domestic: 8000, fare_grace: 500, fare_grace_unit: 1 }
+    expect(fareOf(g, 8500).verdict).toBe('amber')
+    expect(fareOf(g, 8501).verdict).toBe('red')
+  })
+
+  it('grace never softens another rule, and the worst outcome wins', () => {
+    const r = evaluateBooking(policy({ max_fare_domestic: 8000, fare_grace: 10, cabin_class_short_haul: 0 }), {
+      totalCost: 8400, numericValues: { max_fare_domestic: 8400 }, booleanValues: {}, tierValues: { cabin_class_short_haul: 1 },
+    })
+    expect(keys(r)).toEqual(['max_fare_domestic:amber', 'cabin_class_short_haul:red'])
+    expect(r.verdict).toBe('red')
+  })
+
+  it('the old approval amounts are not read', () => {
+    expect(fareOf({ max_fare_domestic: 8000, auto_approve_under: 1000, finance_approval_over: 2000 }, 5000))
+      .toEqual({ verdict: 'green', breaches: [] })
   })
 })
 

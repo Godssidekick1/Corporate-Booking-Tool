@@ -1,5 +1,15 @@
 import { ResolvedPolicy } from './resolveEffectivePolicy'
 
+// Three outcomes, stored by their old colour names:
+//   green  Within policy   -- every cap and rule met. Whether it still goes for
+//                             approval is the company's choice (Corporate
+//                             Settings: within_policy_approval).
+//   amber  Needs approval  -- over a fare cap but within the group's grace. Always
+//                             goes for approval; never blocked.
+//   red    Out of policy   -- beyond grace, or any rule broken. Approval, or
+//                             refused where the company blocks out-of-policy fares.
+// Only the fare caps have grace. Every other rule is strict: one cabin above
+// entitlement is a broken rule, not "somewhat over".
 export type Verdict = 'green' | 'amber' | 'red'
 
 export interface VerdictBreach {
@@ -8,12 +18,26 @@ export interface VerdictBreach {
   policyValue: number | boolean
   actualValue: number | boolean
   severity: 'amber' | 'red'
+  // A fare cap with grace: the most the fare may be and still need approval
+  // rather than be out of policy.
+  graceLimit?: number
 }
 
 export interface VerdictResult {
   verdict: Verdict
   breaches: VerdictBreach[]
-  costTier: 'auto_approve' | 'finance_approval' | 'within_finance_limit' | 'not_evaluated'
+}
+
+const FARE_CAP_KEYS: ReadonlySet<string> = new Set(['max_fare_domestic', 'max_fare_intl'])
+
+// The fare cap plus the group's grace: a percentage of the cap, or a fixed
+// amount (fare_grace_unit 1 = ₹). No grace set: the cap itself. Rounded to
+// the paisa, so 10% over ₹50,000 is ₹55,000 and not a float just above it.
+export function graceLimitFor(cap: number, limits: ResolvedPolicy['limits']): number {
+  const grace = Number(limits['fare_grace'] ?? 0)
+  if (!(grace > 0)) return cap
+  const limit = Number(limits['fare_grace_unit'] ?? 0) === 1 ? cap + grace : cap * (1 + grace / 100)
+  return Math.round(limit * 100) / 100
 }
 
 const NUMERIC_LIMIT_KEYS = [
@@ -56,6 +80,8 @@ const TIER_LIMIT_KEYS = [
 ] as const
 
 interface BookingInput {
+  // The booking's total. Not judged by itself: what a trip costs overall is
+  // expense management's question, not the flight policy's.
   totalCost: number
   numericValues: Partial<Record<string, number>>
   booleanValues: Partial<Record<string, boolean>>
@@ -79,17 +105,18 @@ export function evaluateBooking(policy: ResolvedPolicy, booking: BookingInput): 
       : actualValue > policyValue
 
     if (isViolation) {
-      const overRatio = key === 'advance_booking_days'
-        ? (policyValue - actualValue) / Math.max(policyValue, 1)
-        : (actualValue - policyValue) / Math.max(policyValue, 1)
-
-      breaches.push({
-        limit_key: key,
-        kind: 'numeric',
-        policyValue,
-        actualValue,
-        severity: overRatio > 0.5 ? 'red' : 'amber',
-      })
+      // A fare within the group's grace needs approval; beyond it, or over
+      // any other limit, is out of policy.
+      if (FARE_CAP_KEYS.has(key)) {
+        const graceLimit = graceLimitFor(policyValue, policy.limits)
+        breaches.push({
+          limit_key: key, kind: 'numeric', policyValue, actualValue,
+          severity: actualValue <= graceLimit ? 'amber' : 'red',
+          ...(graceLimit > policyValue ? { graceLimit } : {}),
+        })
+      } else {
+        breaches.push({ limit_key: key, kind: 'numeric', policyValue, actualValue, severity: 'red' })
+      }
     }
   }
 
@@ -130,7 +157,7 @@ export function evaluateBooking(policy: ResolvedPolicy, booking: BookingInput): 
 
   // ── Tier limits (cabin class, seat selection, carrier tier) ──────────────
   // Higher numeric rank = better/more expensive option.
-  // Actual rank must be <= policy rank. Exceeding by 1 tier = amber, 2+ = red.
+  // Actual rank must be <= policy rank. Any tier above is out of policy.
   for (const key of TIER_LIMIT_KEYS) {
     const rawPolicyValue = policy.limits[key]
     const actualValue = booking.tierValues?.[key]
@@ -139,44 +166,16 @@ export function evaluateBooking(policy: ResolvedPolicy, booking: BookingInput): 
     const policyValue = Number(rawPolicyValue)
 
     if (actualValue > policyValue) {
-      const tierDiff = actualValue - policyValue
-      breaches.push({
-        limit_key: key,
-        kind: 'tier',
-        policyValue,
-        actualValue,
-        severity: tierDiff >= 2 ? 'red' : 'amber',
-      })
-    }
-  }
-
-  // ── Cost-tier thresholds ─────────────────────────────────────────────────
-  const rawAutoApproveUnder = policy.limits['auto_approve_under']
-  const rawFinanceApprovalOver = policy.limits['finance_approval_over']
-
-  let costTier: VerdictResult['costTier'] = 'not_evaluated'
-  let costSeverity: 'amber' | 'red' | null = null
-
-  if (rawAutoApproveUnder !== undefined && rawFinanceApprovalOver !== undefined) {
-    const autoApproveUnder = Number(rawAutoApproveUnder)
-    const financeApprovalOver = Number(rawFinanceApprovalOver)
-
-    if (booking.totalCost <= autoApproveUnder) {
-      costTier = 'auto_approve'
-    } else if (booking.totalCost <= financeApprovalOver) {
-      costTier = 'within_finance_limit'
-      costSeverity = 'amber'
-    } else {
-      costTier = 'finance_approval'
-      costSeverity = 'red'
+      breaches.push({ limit_key: key, kind: 'tier', policyValue, actualValue, severity: 'red' })
     }
   }
 
   // ── Combine: worst signal wins ───────────────────────────────────────────
-  const hasRedBreach = breaches.some(b => b.severity === 'red') || costSeverity === 'red'
-  const hasAmberBreach = breaches.some(b => b.severity === 'amber') || costSeverity === 'amber'
+  // The old cost thresholds (auto_approve_under, finance_approval_over) are
+  // no longer read: they coloured fares that were under their cap, mixing
+  // "is this within policy" with "how much is spent".
+  const verdict: Verdict = breaches.some(b => b.severity === 'red') ? 'red'
+    : breaches.some(b => b.severity === 'amber') ? 'amber' : 'green'
 
-  const verdict: Verdict = hasRedBreach ? 'red' : hasAmberBreach ? 'amber' : 'green'
-
-  return { verdict, breaches, costTier }
+  return { verdict, breaches }
 }

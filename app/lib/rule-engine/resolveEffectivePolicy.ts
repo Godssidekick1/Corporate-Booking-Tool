@@ -123,7 +123,7 @@ export async function resolveEffectivePolicy(
   const group = matchingGroups[0]
 
   const storedCategory = toStoredCategory(travelType)
-  const categoriesToFetch = Array.from(new Set([storedCategory, 'approval']))
+  const categoriesToFetch = [storedCategory]
 
   // One query, not two. This used to read the latest version number and then
   // fetch that version's rows separately, which left a window: anything that

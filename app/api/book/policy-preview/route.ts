@@ -65,7 +65,6 @@ export const POST = route(async (req: NextRequest) => {
     ok: true,
     verdict: result.verdict,
     breaches: result.breaches,
-    costTier: result.costTier,
-    reason: buildReason(result.breaches, result.costTier, totalFare),
+    reason: buildReason(result.breaches),
   })
 })

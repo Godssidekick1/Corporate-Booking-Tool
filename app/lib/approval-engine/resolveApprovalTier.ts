@@ -109,18 +109,8 @@ export interface TierOutcome {
 }
 
 // ── buildReason ────────────────────────────────────────────────────────────
-export function buildReason(breaches: VerdictBreach[], costTier: string, totalCost: number): string {
-  const parts: string[] = []
-
-  for (const b of breaches) parts.push(breachLine(b))
-
-  if (costTier === 'finance_approval') {
-    parts.push(`total cost ₹${totalCost} exceeds the finance approval threshold`)
-  } else if (costTier === 'within_finance_limit') {
-    parts.push(`total cost ₹${totalCost} is above auto-approval but within finance limits`)
-  }
-
-  return parts.length > 0 ? parts.join('; ') : 'Within policy'
+export function buildReason(breaches: VerdictBreach[]): string {
+  return breaches.length > 0 ? breaches.map(breachLine).join('; ') : 'Within policy'
 }
 
 // ── resolveChainForEmployee ──────────────────────────────────────────────────

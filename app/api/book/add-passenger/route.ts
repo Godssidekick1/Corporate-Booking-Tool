@@ -310,8 +310,8 @@ export const POST = route(async (req: NextRequest) => {
       } else if (ruleResult.ok) {
         policyStatus = 'evaluated'
         policyVerdict = ruleResult.verdict
-        policyVerdictDetail = { breaches: ruleResult.breaches, costTier: ruleResult.costTier }
-        reason = buildReason(ruleResult.breaches, ruleResult.costTier, sellGrandTotal)
+        policyVerdictDetail = { breaches: ruleResult.breaches }
+        reason = buildReason(ruleResult.breaches)
       } else {
         // no_band / no_policy_group / overlapping_policy_groups /
         // no_policy_rules — leave policyStatus as 'not_evaluated', but
