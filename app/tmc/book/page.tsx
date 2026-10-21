@@ -260,7 +260,7 @@ export default function TmcBookPage() {
                 label="What applies"
                 value={shown.policy === 'guidance' ? 'Policy as guidance' : 'Policy + approval chain'}
                 sub={shown.policy === 'guidance'
-                  ? 'No approval. Amber or red needs a reason.'
+                  ? 'No approval. A fare needing approval or out of policy needs a reason.'
                   : 'Their own chain decides, as if they booked.'}
               />
               <Fact

@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { flowStorage } from '@/app/lib/book/flowStorage'
 import { ButtonBusy } from '@/app/components/FlowLoader'
 import { breachLine } from '@/app/lib/policy/breachText'
+import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
 import {
   FlatFlightResult, FareOption, formatTime, formatDayLabel, journeysOf, journeyLabel,
   baggageLabel,
@@ -73,11 +74,6 @@ interface PolicyPreview {
   message?: string
 }
 
-const VERDICT_META: Record<string, { label: string; color: string; bg: string; border: string }> = {
-  green: { label: 'Within policy',       color: '#166534', bg: '#F0FDF4', border: '#BBF7D0' },
-  amber: { label: 'Minor policy breach', color: '#92400E', bg: '#FFFBEB', border: '#FDE68A' },
-  red:   { label: 'Policy breach',       color: '#991B1B', bg: '#FEF2F2', border: '#FECACA' },
-}
 
 function penaltySummary(lines: { paxType: string; text: string }[] | undefined): string | null {
   if (!lines || lines.length === 0) return null

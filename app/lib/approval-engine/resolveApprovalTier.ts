@@ -169,6 +169,21 @@ function eligibleTiers(tiers: ChainTier[], verdict: Verdict): ChainTier[] {
     .filter(t => verdictRank(verdict) >= verdictRank(t.min_verdict))
 }
 
+// ── stepsFor ─────────────────────────────────────────────────────────────────
+// Where something SENT for approval goes: the steps its outcome triggers, or
+// the chain's first step when none does. A fare within grace must reach a
+// person, and so must every booking at a company that sends within-policy
+// bookings too; a chain whose only step is "out of policy only" (finance, say)
+// would otherwise wave those through with nobody having looked.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function stepsFor(tiers: ChainTier[], verdict: Verdict): ChainTier[] {
+  const eligible = eligibleTiers(tiers, verdict)
+  if (eligible.length > 0) return eligible
+  const first = [...tiers].sort((a, b) => a.tier - b.tier)[0]
+  return first ? [first] : []
+}
+
 // ── Choosing an approver ─────────────────────────────────────────────────────
 // Three outcomes, not two. "Nobody" splits into a configuration gap and a
 // legitimate absence — the person at the top of the hierarchy has no manager
@@ -469,6 +484,11 @@ export async function startApprovalForBooking(
     if (mode === 'not_required') {
       return { requiresApproval: false }
     }
+    // A within-policy booking (or one not evaluated, routed the same) is sent
+    // only when the company says so. Needs-approval and out-of-policy always are.
+    if (verdict === 'green' && modes?.within_policy_approval !== 'required') {
+      return { requiresApproval: false }
+    }
   }
 
   const chain = await resolveChainForEmployee(db, employeeId, clientId, category)
@@ -484,11 +504,7 @@ export async function startApprovalForBooking(
     return { requiresApproval: false }
   }
 
-  const eligible = eligibleTiers(chain.tiers, verdict)
-
-  if (eligible.length === 0) {
-    return { requiresApproval: false }
-  }
+  const eligible = stepsFor(chain.tiers, verdict)
 
   // Sequential stops at the first triggered tier and walks the rest as each
   // approval comes back. Parallel raises every triggered entry at once.
@@ -520,8 +536,9 @@ export async function startApprovalForTrip(
   const chain = await resolveChainForEmployee(db, employeeId, clientId, 'trip')
   if (!chain || chain.tiers.length === 0) return { requiresApproval: false }
 
-  const eligible = eligibleTiers(chain.tiers, verdict)
-  if (eligible.length === 0) return { requiresApproval: false }
+  // A submitted trip is asking for its sign-off: always sent, whatever the
+  // verdicts of its bookings, to the steps they trigger or the first.
+  const eligible = stepsFor(chain.tiers, verdict)
 
   const entries = chain.mode === 'parallel' ? eligible : [eligible[0]]
   return raiseApprovals(db, chain, entries, { subject: { trip: tripId }, clientId, employeeId, verdict, reason })

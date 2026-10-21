@@ -384,6 +384,7 @@ export type ClientSettings = Pick<Row<'clients'>,
   | 'bta_cta_manual_allowed' | 'fop_priority' | 'markup_active' | 'discount_active'
   | 'processing_fee_active' | 'air_approval_mode' | 'hotel_approval_mode' | 'trip_approval_mode'
   | 'guest_bookings_allowed' | 'out_of_policy_reason_required' | 'out_of_policy_handling' | 'duplicate_booking_check'
+  | 'within_policy_approval'
 >
 
 const SETTINGS = sql`
@@ -395,7 +396,8 @@ const SETTINGS = sql`
   personal_bookings_allowed, agency_fop_allowed, corporate_fop_allowed, bta_cta_allowed,
   bta_cta_manual_allowed, fop_priority, markup_active, discount_active, processing_fee_active,
   air_approval_mode, hotel_approval_mode, trip_approval_mode,
-  guest_bookings_allowed, out_of_policy_reason_required, out_of_policy_handling, duplicate_booking_check`
+  guest_bookings_allowed, out_of_policy_reason_required, out_of_policy_handling, duplicate_booking_check,
+  within_policy_approval`
 
 // Everything on the record except its identity, its TMC, its creation time and
 // setup_completed (derived onboarding progress, not a setting).
@@ -425,7 +427,7 @@ const SETTINGS_EDITABLE: Record<EditableSetting, Sql> = {
   guest_bookings_allowed: sql`guest_bookings_allowed`,
   out_of_policy_reason_required: sql`out_of_policy_reason_required`,
   out_of_policy_handling: sql`out_of_policy_handling`, duplicate_booking_check: sql`duplicate_booking_check`,
-  trip_approval_mode: sql`trip_approval_mode`,
+  trip_approval_mode: sql`trip_approval_mode`, within_policy_approval: sql`within_policy_approval`,
 }
 
 export async function settings(db: Queryable, clientId: string, tmcId: string): Promise<ClientSettings | null> {
@@ -898,9 +900,10 @@ export async function clientNames(db: Queryable, clientIds: readonly string[]): 
 export async function approvalModes(
   db: Queryable,
   clientId: string
-): Promise<Pick<Row<'clients'>, 'air_approval_mode' | 'hotel_approval_mode' | 'trip_approval_mode'> | null> {
+): Promise<Pick<Row<'clients'>, 'air_approval_mode' | 'hotel_approval_mode' | 'trip_approval_mode' | 'within_policy_approval'> | null> {
   return maybeOne(db, sql`
-    select air_approval_mode, hotel_approval_mode, trip_approval_mode from clients where id = ${clientId}`)
+    select air_approval_mode, hotel_approval_mode, trip_approval_mode, within_policy_approval
+    from clients where id = ${clientId}`)
 }
 
 // ═══ Assignment targets ═════════════════════════════════════════════════════

@@ -7,6 +7,7 @@ import Tabs, { useUrlTab } from '@/app/components/Tabs'
 import StepApprovers, { type TemplateStep } from './StepApprovers'
 import DirectChain from './DirectChain'
 import { APPROVAL_CATEGORY_OPTIONS } from '@/app/lib/approval-engine/categories'
+import { STEP_CONDITIONS } from '@/app/lib/policy/verdictLabels'
 
 // NOTE: no TmcShell here. app/tmc/configurations/layout.tsx supplies the
 // Settings sidebar and page chrome for everything under /tmc/configurations —
@@ -54,17 +55,12 @@ interface RosterBand {
 // One list, shared with the engine (app/lib/approval-engine/categories.ts).
 const CATEGORIES = APPROVAL_CATEGORY_OPTIONS
 
-const VERDICTS: { value: string; label: string }[] = [
-  { value: 'green', label: 'Always' },
-  { value: 'amber', label: 'Amber and worse' },
-  { value: 'red',   label: 'Red only' },
-]
 
 const MODES = ['direct', 'template', 'assign'] as const
 type Mode = typeof MODES[number]
 
 function emptyStep(n: number): TemplateStep {
-  return { tier: n, min_verdict: 'amber', label: '' }
+  return { tier: n, min_verdict: 'green', label: '' }
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -400,9 +396,9 @@ function StepEditor({ chain, onChanged, onError, onSuccess }: {
           <select
             value={step.min_verdict}
             onChange={e => update(i, { min_verdict: e.target.value })}
-            style={{ ...s.input, width: 170 }}
+            style={{ ...s.input, width: 240 }}
           >
-            {VERDICTS.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
+            {STEP_CONDITIONS.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
           </select>
           <button onClick={() => remove(i)} disabled={steps.length === 1} style={{ ...s.deleteBtn, opacity: steps.length === 1 ? 0.3 : 1 }}>
             ✕

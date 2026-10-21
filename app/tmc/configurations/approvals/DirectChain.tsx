@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import SearchableSelect from '@/app/components/SearchableSelect'
 import { useLookup, clientOption } from '@/app/hooks/useLookup'
 import { APPROVAL_CATEGORY_OPTIONS } from '@/app/lib/approval-engine/categories'
+import { STEP_CONDITIONS } from '@/app/lib/policy/verdictLabels'
 
 // ── DirectChain ──────────────────────────────────────────────────────────────
 // The whole direct-mapping flow: client, who it covers, the approvers in
@@ -43,14 +44,9 @@ const APPROVER_TYPES: { value: ApproverType; label: string }[] = [
   { value: 'self',           label: 'No review needed (auto-approve)' },
 ]
 
-const VERDICTS = [
-  { value: 'amber', label: 'when out of policy' },
-  { value: 'red',   label: 'only on serious breaches' },
-  { value: 'green', label: 'on every booking' },
-]
 
 function blankApprover(): Approver {
-  return { approver_type: '', approver_user_id: null, min_band_rank: null, min_verdict: 'amber' }
+  return { approver_type: '', approver_user_id: null, min_band_rank: null, min_verdict: 'green' }
 }
 
 // One toOption for every employee picker here, so the person you pick and the
@@ -283,9 +279,9 @@ export default function DirectChain() {
                 <select
                   value={a.min_verdict}
                   onChange={e => update(i, { min_verdict: e.target.value })}
-                  style={{ ...s.input, width: 190 }}
+                  style={{ ...s.input, width: 240 }}
                 >
-                  {VERDICTS.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
+                  {STEP_CONDITIONS.map(v => <option key={v.value} value={v.value}>{v.label}</option>)}
                 </select>
 
                 <button

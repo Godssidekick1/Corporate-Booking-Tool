@@ -40,6 +40,7 @@ const ALLOWED_APPROVAL_MODES = ['before_booking', 'not_required'] as const
 const ALLOWED_TRIP_APPROVAL_MODES = ['not_required', 'on_submit'] as const
 const ALLOWED_OUT_OF_POLICY = ['approve', 'block_red'] as const
 const ALLOWED_DUPLICATE_CHECKS = ['off', 'warn', 'block'] as const
+const ALLOWED_WITHIN_POLICY = ['auto', 'required'] as const
 
 // ── The Corporate Settings surface ───────────────────────────────────────────
 // GET and PATCH return the same record (clients.ClientSettings, one column list
@@ -105,6 +106,7 @@ type UpdateClientBody = {
   trip_approval_mode?: string
   out_of_policy_handling?: string
   duplicate_booking_check?: string
+  within_policy_approval?: string
 } & Partial<Record<typeof TEXT_FIELDS[number], string | null>>
   & Partial<Record<typeof BOOLEAN_FIELDS[number], boolean>>
 
@@ -234,6 +236,14 @@ export const PATCH = route(async (req: NextRequest, { params }: Ctx) => {
       return Response.json({ error: `Invalid duplicate_booking_check: ${value}` }, { status: 400 })
     }
     update.duplicate_booking_check = value
+  }
+
+  if (body.within_policy_approval !== undefined) {
+    const value = body.within_policy_approval
+    if (!ALLOWED_WITHIN_POLICY.includes(value as typeof ALLOWED_WITHIN_POLICY[number])) {
+      return Response.json({ error: `Invalid within_policy_approval: ${value}` }, { status: 400 })
+    }
+    update.within_policy_approval = value
   }
 
   if (body.size !== undefined) {

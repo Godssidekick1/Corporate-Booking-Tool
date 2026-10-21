@@ -529,17 +529,27 @@ export default function CorporateSettingsPage() {
                 {TRIP_APPROVAL_MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
               </select>
             </Field>
-            <Field label="Out-of-policy fares" hint="What happens to a red fare: approval decides, or it cannot be booked at all.">
+            <Field label="Within-policy bookings" hint="A fare within every cap and rule. One within a fare cap's grace, or out of policy, always goes for approval.">
+              <select
+                value={form.within_policy_approval ?? 'auto'}
+                onChange={e => set('within_policy_approval', e.target.value)}
+                style={s.input}
+              >
+                <option value="auto">Approved automatically</option>
+                <option value="required">Sent for approval</option>
+              </select>
+            </Field>
+            <Field label="Out-of-policy fares" hint="Beyond a fare cap's grace, or a rule broken. A fare that only needs approval can always be booked.">
               <select
                 value={form.out_of_policy_handling ?? 'approve'}
                 onChange={e => set('out_of_policy_handling', e.target.value)}
                 style={s.input}
               >
                 <option value="approve">Allow, with approval</option>
-                <option value="block_red">Block red fares</option>
+                <option value="block_red">Block out-of-policy fares</option>
               </select>
             </Field>
-            <Field label="Reason for out-of-policy fares" hint="Whoever books an amber or red fare says why; the approver sees it. The desk at a CBT-only client always does.">
+            <Field label="Reason for out-of-policy fares" hint="Whoever books a fare that needs approval or is out of policy says why; the approver sees it. The desk at a CBT-only client always does.">
               <select
                 value={form.out_of_policy_reason_required ? 'yes' : 'no'}
                 onChange={e => set('out_of_policy_reason_required', e.target.value === 'yes')}

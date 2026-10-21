@@ -291,6 +291,7 @@ exports[`tmc/clients > PATCH: saves, normalises, and returns the same shape as G
     "status": "active",
     "timezone": "Asia/Kolkata",
     "trip_approval_mode": "not_required",
+    "within_policy_approval": "required",
   },
   "ok": true,
 }
@@ -454,6 +455,7 @@ exports[`tmc/clients > detail: the full Corporate Settings record 1`] = `
     "status": "active",
     "timezone": "Asia/Kolkata",
     "trip_approval_mode": "not_required",
+    "within_policy_approval": "required",
   },
   "ok": true,
 }

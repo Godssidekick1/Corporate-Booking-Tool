@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { PersonPicker } from './DirectChain'
+import { STEP_CONDITION_LABEL } from '@/app/lib/policy/verdictLabels'
 
 // ── StepApprovers ────────────────────────────────────────────────────────────
 // Who fills each step of one approval chain at one client.
@@ -40,11 +41,6 @@ const APPROVER_TYPES: { value: ApproverType; label: string }[] = [
   { value: 'self',           label: 'No review needed (auto-approve)' },
 ]
 
-const VERDICT_LABEL: Record<string, string> = {
-  green: 'Always',
-  amber: 'Amber and worse',
-  red: 'Red only',
-}
 
 interface Props {
   clientId: string
@@ -185,7 +181,7 @@ export default function StepApprovers({ clientId, templateId, steps }: Props) {
               <div style={s.stepHead}>
                 <span style={s.stepBadge}>Step {step.tier}</span>
                 <span style={s.stepLabel}>{step.label || 'Unnamed step'}</span>
-                <span style={s.stepVerdict}>{VERDICT_LABEL[step.min_verdict] ?? step.min_verdict}</span>
+                <span style={s.stepVerdict}>{STEP_CONDITION_LABEL[step.min_verdict] ?? step.min_verdict}</span>
               </div>
 
               <div style={s.stepControls}>

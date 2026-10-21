@@ -199,7 +199,7 @@ export const POST = route(async (req: NextRequest) => {
   // (booking_id, tier).
   const tiers = approvers.map((a, i) => ({
     tier: i + 1,
-    min_verdict: a.min_verdict ?? 'amber',
+    min_verdict: a.min_verdict ?? 'green',
     label: null,
   }))
 

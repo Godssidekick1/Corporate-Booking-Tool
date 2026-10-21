@@ -6,6 +6,7 @@ import Pagination from '@/app/components/Pagination'
 import { formatTime, formatDayLabel } from '@/app/lib/book/types'
 import { FlightRow, type TripCardTrip, type TripCardFlight } from '@/app/components/trips/TripCard'
 import { money } from '@/app/lib/trips/status'
+import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
 
 // ── /approvals ────────────────────────────────────────────────────────────
 // A manager/finance/admin's approval queue: bookings currently waiting on
@@ -53,11 +54,6 @@ interface ApprovalItem {
   } | null
 }
 
-const VERDICT_META: Record<string, { label: string; color: string; bg: string }> = {
-  green: { label: 'Within policy', color: '#166534', bg: '#F0FDF4' },
-  amber: { label: 'Minor breach', color: '#92400E', bg: '#FFFBEB' },
-  red: { label: 'Policy breach', color: '#991B1B', bg: '#FEF2F2' },
-}
 
 const STATUS_META: Record<string, { label: string; color: string; bg: string }> = {
   approved: { label: 'Approved', color: '#166534', bg: '#F0FDF4' },

@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import SearchableSelect from '@/app/components/SearchableSelect'
 import { useLookup, clientOption } from '@/app/hooks/useLookup'
+import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
 
 interface VerdictBreach {
   limit_key: string
@@ -29,11 +30,6 @@ const TRAVEL_TYPES = [
   { value: 'car_rental', label: 'Car rental' },
 ]
 
-const VERDICT_STYLE: Record<string, { bg: string; fg: string; label: string }> = {
-  green: { bg: '#ECFDF5', fg: '#065F46', label: 'GREEN — likely auto-approved' },
-  amber: { bg: '#FEF3C7', fg: '#92400E', label: 'AMBER — approval required' },
-  red:   { bg: '#FEF2F2', fg: '#DC2626', label: 'RED — approval required, exceptional circumstances only' },
-}
 
 export default function RuleEngineTestPage() {
   const [selectedClientId, setSelectedClientId] = useState('')
@@ -214,9 +210,9 @@ export default function RuleEngineTestPage() {
             </div>
           ) : (
             <>
-              <div style={{ ...s.verdictBanner, background: VERDICT_STYLE[result.verdict!].bg }}>
-                <span style={{ ...s.verdictLabel, color: VERDICT_STYLE[result.verdict!].fg }}>
-                  {VERDICT_STYLE[result.verdict!].label}
+              <div style={{ ...s.verdictBanner, background: VERDICT_META[result.verdict!].bg }}>
+                <span style={{ ...s.verdictLabel, color: VERDICT_META[result.verdict!].color }}>
+                  {VERDICT_META[result.verdict!].label}
                 </span>
               </div>
               <p style={s.metaText}>

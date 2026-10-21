@@ -16,6 +16,7 @@ import { mealCodesFor, mealLabel, fromProfilePreference, NO_MEAL_PREFERENCE } fr
 import { ButtonBusy, BusyOverlay } from '@/app/components/FlowLoader'
 import { classifyTrip } from '@/app/lib/rule-engine/classifyTrip'
 import { breachLine } from '@/app/lib/policy/breachText'
+import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
 
 // ── /book/details/[flightKey] ─────────────────────────────────────────────────
 // Merges what used to be two separate steps (/book/seats then
@@ -59,11 +60,6 @@ interface PolicyPreview {
   message?: string
 }
 
-const VERDICT_META: Record<string, { label: string; color: string; bg: string; border: string }> = {
-  green: { label: 'Within policy',       color: '#166534', bg: '#F0FDF4', border: '#BBF7D0' },
-  amber: { label: 'Minor policy breach', color: '#92400E', bg: '#FFFBEB', border: '#FDE68A' },
-  red:   { label: 'Policy breach',       color: '#991B1B', bg: '#FEF2F2', border: '#FECACA' },
-}
 
 function emptyPassenger(paxType: PassengerForm['paxType']): PassengerForm {
   return {
@@ -424,7 +420,7 @@ export default function BookingDetailsPage() {
   // How the traveller's company books (Corporate Settings): whether every
   // amber or red fare needs a reason, and whether a red one cannot be booked.
   // add-passenger checks both again.
-  const [controls, setControls] = useState<{ reasonRequired: boolean; blocksRed: boolean; quoteHoldMinutes: number } | null>(null)
+  const [controls, setControls] = useState<{ reasonRequired: boolean; blocksRed: boolean; quoteHoldMinutes: number; withinPolicyApproval: 'auto' | 'required' } | null>(null)
   useEffect(() => {
     let live = true
     const id = flowStorage.travellerId()
@@ -1052,7 +1048,9 @@ export default function BookingDetailsPage() {
                 : who
                   ? `${who.name.split(' ')[0]}'s own approval chain decides whether this needs approval before it is confirmed.`
                   : verdict.verdict === 'green'
-                    ? "You'll still need approval before this booking is confirmed — your manager will be notified."
+                    ? (controls?.withinPolicyApproval === 'required'
+                      ? 'Your company sends every booking for approval: this goes to your approver before it is confirmed.'
+                      : 'Within policy: no approval is needed.')
                     : 'This will need approval before it can be confirmed with the airline.'}
             </p>
           </div>

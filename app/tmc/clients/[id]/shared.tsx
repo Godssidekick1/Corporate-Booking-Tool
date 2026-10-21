@@ -65,6 +65,7 @@ export interface Client {
   out_of_policy_reason_required: boolean
   out_of_policy_handling: string
   duplicate_booking_check: string
+  within_policy_approval: string
 }
 
 // The generic setter every tab uses. Declared once so a tab cannot accidentally

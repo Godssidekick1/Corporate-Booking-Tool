@@ -47,11 +47,11 @@ d('trip sign-off', () => {
 
   // A copy of one of the company's bookings, for this traveller, in this trip
   // and state: a fresh id, and nothing that must be unique carried over.
-  const addBooking = (tripId: string, employeeId: string, status: string) => exec(db, sql`
+  const addBooking = (tripId: string, employeeId: string, status: string, verdict = 'amber') => exec(db, sql`
     insert into bookings
     select (jsonb_populate_record(null::bookings, to_jsonb(b) || jsonb_build_object(
       'id', gen_random_uuid(), 'trip_id', ${tripId}::uuid, 'employee_id', ${employeeId}::uuid,
-      'booked_by', ${employeeId}::uuid, 'status', ${status}::text, 'policy_verdict', 'amber',
+      'booked_by', ${employeeId}::uuid, 'status', ${status}::text, 'policy_verdict', ${verdict}::text,
       'share_token', null, 'pnr', null, 'provider_order_id', null, 'amadeus_key', null))).*
     from (select * from bookings where client_id = ${clientId} order by created_at, id limit 1) b`)
 
@@ -130,6 +130,25 @@ d('trip sign-off', () => {
     const tripId = await tripWith('ticketed')
     expect(await submit(colleague, tripId)).toEqual({ status: 403, json: { error: 'Not authorized to submit this trip' } })
     expect((await submit(approver, tripId)).status).toBe(200)
+  })
+
+  it('a submitted trip always reaches a person, even all within policy with an out-of-policy-only chain', async () => {
+    const chainFor = (minVerdict: string) => call(chainPost, {
+      as: a.tmcAdmin, method: 'POST', url: '/api/tmc/approval-chains/direct',
+      body: { clientId, employeeId: traveller.id, category: 'trip', mode: 'sequential', quorum: 'all',
+        approvers: [{ approver_type: 'specific_user', approver_user_id: approver.id, min_verdict: minVerdict }] },
+    })
+    expect((await chainFor('red')).status).toBe(200)
+    try {
+      const trip = await one<{ id: string }>(db, sql`
+        insert into trips (client_id, created_by, name, status) values (${clientId}, ${traveller.id}, 'All green', 'open')
+        returning id`)
+      await addBooking(trip.id, traveller.id, 'ticketed', 'green')
+      expect(await submit(traveller, trip.id)).toEqual({ status: 200, json: { ok: true, approvalStatus: 'pending', tier: 1 } })
+      expect(await stepFor(trip.id)).toMatchObject({ approver_id: approver.id, verdict: 'green' })
+    } finally {
+      await chainFor('green')
+    }
   })
 
   it('no trip chain for someone: signed off at once, as a booking with no chain is approved', async () => {

@@ -86,6 +86,15 @@ d('booking controls (Corporate Settings)', () => {
   let a: Actors
   let clientId: string
   let colleague: { id: string }
+  let approverId: string
+
+  // The colleague's own air chain: one named approver, acting on the given
+  // outcomes (min_verdict).
+  const setChain = (minVerdict: string) => call(chainPost, {
+    as: a.tmcAdmin, method: 'POST', url: '/api/tmc/approval-chains/direct',
+    body: { clientId, employeeId: colleague.id, category: 'air', mode: 'sequential', quorum: 'all',
+      approvers: [{ approver_type: 'specific_user', approver_user_id: approverId, min_verdict: minVerdict }] },
+  })
 
   const setClient = (fields: Record<string, unknown>) =>
     call(clientPatch, { as: a.tmcAdmin, method: 'PATCH', url: `/api/tmc/clients/${clientId}`, params: { id: clientId }, body: fields })
@@ -146,12 +155,8 @@ d('booking controls (Corporate Settings)', () => {
     const approver = await one<{ id: string }>(db, sql`
       select id from employees where client_id = ${clientId} and id not in (${a.corpAdmin.id}, ${colleague.id})
         and role = 'employee' and status = 'active' order by id limit 1`)
-    const chain = await call(chainPost, {
-      as: a.tmcAdmin, method: 'POST', url: '/api/tmc/approval-chains/direct',
-      body: { clientId, employeeId: colleague.id, category: 'air', mode: 'sequential', quorum: 'all',
-        approvers: [{ approver_type: 'specific_user', approver_user_id: approver.id, min_verdict: 'green' }] },
-    })
-    expect(chain.status).toBe(200)
+    approverId = approver.id
+    expect((await setChain('green')).status).toBe(200)
   })
   afterAll(() => { vi.useRealTimers() })
   beforeEach(() => {
@@ -167,6 +172,9 @@ d('booking controls (Corporate Settings)', () => {
     expect(res.json).toEqual({
       ok: true, personalAllowed: false, guestAllowed: true, reasonRequired: false, blocksRed: false,
       duplicateCheck: 'off', quoteHoldMinutes: 30,
+      // The template client has a chain step that fires on every booking, so
+      // the migration started it as "sent for approval".
+      withinPolicyApproval: 'required',
     })
   })
 
@@ -299,6 +307,49 @@ d('booking controls (Corporate Settings)', () => {
     await exec(db, sql`update bookings set status = 'cancelled' where provider_order_id in ('D1', 'D2')`)
     expect((await addPassenger('D4', '2030-05-01')).status).toBe(200)
     await setClient({ duplicate_booking_check: 'off' })
+  })
+
+  it('within-policy bookings: approved automatically, or sent, as the company says; a fare needing approval always is', async () => {
+    const approvalsOf = async (ref: string) => (await one<{ n: number }>(db, sql`
+      select count(*)::int as n from approvals where booking_id = ${(await bookingFor(ref))!.id}`)).n
+
+    await setClient({ within_policy_approval: 'auto' })
+    await price('W1', '2030-07-01')
+    expect((await addPassenger('W1', '2030-07-01')).status).toBe(200)
+    expect(await bookingFor('W1')).toMatchObject({ status: 'approved' })
+    expect(await approvalsOf('W1')).toBe(0)
+
+    // Within a fare cap's grace: sent even though within-policy ones are not.
+    verdict = 'amber'
+    await price('W2', '2030-07-02')
+    expect((await addPassenger('W2', '2030-07-02')).status).toBe(200)
+    expect(await bookingFor('W2')).toMatchObject({ status: 'pending_approval' })
+
+    verdict = 'green'
+    await setClient({ within_policy_approval: 'required' })
+    await price('W3', '2030-07-03')
+    expect((await addPassenger('W3', '2030-07-03')).status).toBe(200)
+    expect(await bookingFor('W3')).toMatchObject({ status: 'pending_approval' })
+    expect(await approvalsOf('W3')).toBe(1)
+    expect((await setClient({ within_policy_approval: 'sometimes' })).status).toBe(400)
+  })
+
+  it('something sent for approval reaches the first step even when no step acts on it', async () => {
+    // Only an "out of policy only" step: a fare within grace still reaches it.
+    expect((await setChain('red')).status).toBe(200)
+    try {
+      await setClient({ within_policy_approval: 'auto' })
+      verdict = 'amber'
+      await price('F1', '2030-08-01')
+      expect((await addPassenger('F1', '2030-08-01')).status).toBe(200)
+      const booking = await bookingFor('F1')
+      expect(booking).toMatchObject({ status: 'pending_approval' })
+      expect(await one(db, sql`select tier, approver_id from approvals where booking_id = ${booking!.id}`))
+        .toEqual({ tier: 1, approver_id: approverId })
+    } finally {
+      await setChain('green')
+      await setClient({ within_policy_approval: 'required' })
+    }
   })
 
   it('quote hold: a fare priced more than 30 minutes ago is not booked', async () => {
