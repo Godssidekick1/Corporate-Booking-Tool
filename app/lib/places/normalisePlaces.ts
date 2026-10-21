@@ -38,12 +38,62 @@ export type PlaceResult =
 
 export const DEFAULT_COUNTRY = 'IN'
 
+// ── Reference data, held in memory ───────────────────────────────────────────
+// Saving one profile used to look the same country up three times (nationality,
+// issuing country, address), and ask whether cities are loaded, each a query
+// waiting on the one before: on a pooled, distant database that alone was
+// seconds per save. Countries change only with a migration, so they are read
+// once an hour. That a country's cities ARE loaded is remembered (they are
+// loaded once, by scripts/load-cities.mjs, and stay); that they are not is
+// asked again each time, so a load takes effect on the very next save.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const COUNTRIES_FOR = 60 * 60_000
+
+type CountryIndex = { byKey: Map<string, reference.Country> }
+let countries: { at: number; index: Promise<CountryIndex> } | null = null
+const citiesLoaded = new Set<string>()
+
+function countryIndex(db: Queryable): Promise<CountryIndex> {
+  if (!countries || Date.now() - countries.at > COUNTRIES_FOR) {
+    const index = reference.countriesForLookup(db).then(rows => {
+      const byKey = new Map<string, reference.Country>()
+      for (const r of rows) {
+        const c = { code: r.code, name: r.name }
+        byKey.set(`code:${r.code.toUpperCase()}`, c)
+        if (r.iso3) byKey.set(`iso3:${r.iso3.toUpperCase()}`, c)
+        byKey.set(`name:${r.name.toLowerCase()}`, c)
+      }
+      return { byKey }
+    })
+    // A failed read is not remembered: the next save asks again.
+    index.catch(() => { countries = null })
+    countries = { at: Date.now(), index }
+  }
+  return countries.index
+}
+
+// A country by its code, ISO3 code or English name, case-insensitively -- as
+// reference.findCountry, from memory.
+async function findCountry(db: Queryable, value: string): Promise<reference.Country | null> {
+  const { byKey } = await countryIndex(db)
+  return byKey.get(`code:${value.toUpperCase()}`) ?? byKey.get(`iso3:${value.toUpperCase()}`)
+    ?? byKey.get(`name:${value.toLowerCase()}`) ?? null
+}
+
+async function hasCities(db: Queryable, country: string): Promise<boolean> {
+  if (citiesLoaded.has(country)) return true
+  const yes = await reference.hasCities(db, country)
+  if (yes) citiesLoaded.add(country)
+  return yes
+}
+
 export async function resolveCountryCode(db: Queryable, value: string): Promise<string | null> {
   const v = value.trim()
   if (!v) return null
   const demonym = countryForDemonym(v)
   if (demonym) return demonym
-  return (await reference.findCountry(db, v))?.code ?? null
+  return (await findCountry(db, v))?.code ?? null
 }
 
 const LABEL: Record<keyof PlaceFields, string> = {
@@ -59,16 +109,20 @@ export async function normalisePlaces(
 ): Promise<PlaceResult> {
   const out: PlaceFields = {}
 
-  for (const field of ['nationality', 'issuingCountry', 'country'] as const) {
-    const value = input[field]
-    if (value === undefined) continue
-    if (!value.trim()) { out[field] = ''; continue }
-    const code = await resolveCountryCode(db, value)
-    if (!code) return { ok: false, field, error: `${LABEL[field]} "${value.trim()}" is not a country. Choose one from the list.` }
-    out[field] = code
+  // The three country fields together (from memory, so no waiting on each).
+  const countryFields = (['nationality', 'issuingCountry', 'country'] as const).filter(f => input[f] !== undefined)
+  const codes = await Promise.all(countryFields.map(f => input[f]!.trim() ? resolveCountryCode(db, input[f]!) : Promise.resolve('')))
+  for (const [i, field] of countryFields.entries()) {
+    const value = input[field]!
+    if (codes[i] === null) return { ok: false, field, error: `${LABEL[field]} "${value.trim()}" is not a country. Choose one from the list.` }
+    out[field] = codes[i] as string
   }
 
   const country = out.country || (await resolveCountryCode(db, existing.country ?? '')) || DEFAULT_COUNTRY
+
+  // Whether this country's cities are loaded, asked alongside the state.
+  const citiesKnown = input.city !== undefined && input.city.trim() ? hasCities(db, country) : null
+  citiesKnown?.catch(() => {})
 
   let regionCode: string | null = null
   if (input.state !== undefined) {
@@ -87,7 +141,7 @@ export async function normalisePlaces(
   if (input.city !== undefined) {
     const value = input.city.trim()
     if (!value) out.city = ''
-    else if (!(await reference.hasCities(db, country))) out.city = value
+    else if (!(await citiesKnown)) out.city = value
     else {
       const city = await reference.findCity(db, country, regionCode, value)
       if (!city) {
@@ -102,5 +156,5 @@ export async function normalisePlaces(
 }
 
 async function countryName(db: Queryable, code: string): Promise<string> {
-  return (await reference.findCountry(db, code))?.name ?? code
+  return (await findCountry(db, code))?.name ?? code
 }

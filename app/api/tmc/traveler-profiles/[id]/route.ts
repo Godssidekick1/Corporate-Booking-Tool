@@ -71,23 +71,43 @@ export const PATCH = route(async (
   if (body.department !== undefined) update.department = body.department?.trim() || null
   if (body.designation !== undefined) update.designation = body.designation?.trim() || null
 
-  if (body.costCentre !== undefined) {
-    const code = body.costCentre?.trim() || null
+  // The cost centre, the band and the places are independent checks: asked
+  // together rather than each waiting on the last (on a pooled, distant
+  // database every query here is several round trips). Refused in the same
+  // order as before.
+  const existing = target.traveler_profile ?? {}
+  const incoming: employees.ProfileJson = {}
+  if (body.profile !== undefined) {
+    for (const field of PROFILE_FIELDS) {
+      if (body.profile[field] === undefined) continue
+      const value = body.profile[field]
+      incoming[field] = typeof value === 'string' ? value.trim() : value
+    }
+  }
+  const costCode = body.costCentre !== undefined ? body.costCentre?.trim() || null : null
+  const [costCentreKnown, bandRow, places] = await Promise.all([
+    costCode ? clients.hasCostCentre(db, clientId, costCode) : Promise.resolve(true),
+    body.band !== undefined ? employees.bandByCode(db, clientId, body.band) : Promise.resolve(null),
+    // Countries become ISO codes, states and cities their real names; a
+    // place that does not exist is refused rather than stored.
+    body.profile !== undefined
+      ? normalisePlaces(db, incoming as Record<string, string>, existing as Record<string, string>)
+      : Promise.resolve(null),
+  ])
 
+  if (body.costCentre !== undefined) {
     // Checked against the client's own list so a typo doesn't silently create a
     // cost centre that exists on exactly one person and matches nothing in a report.
-    if (code && !(await clients.hasCostCentre(db, clientId, code))) {
+    if (costCode && !costCentreKnown) {
       return Response.json({
-        error: `"${code}" is not one of this client's cost centres. Add it under Cost centres first.`,
+        error: `"${costCode}" is not one of this client's cost centres. Add it under Cost centres first.`,
       }, { status: 422 })
     }
 
-    update.cost_centre = code
+    update.cost_centre = costCode
   }
 
   if (body.band !== undefined) {
-    const bandRow = await employees.bandByCode(db, clientId, body.band)
-
     if (!bandRow) {
       return Response.json(
         { error: `Band "${body.band}" is not configured for this client` },
@@ -102,22 +122,9 @@ export const PATCH = route(async (
     update.band_rank = bandRow.rank
   }
 
-  if (body.profile !== undefined) {
-    const existing = target.traveler_profile ?? {}
-    const incoming: employees.ProfileJson = {}
-
-    for (const field of PROFILE_FIELDS) {
-      if (body.profile[field] === undefined) continue
-      const value = body.profile[field]
-      incoming[field] = typeof value === 'string' ? value.trim() : value
-    }
-
-    // Countries become ISO codes, states and cities their real names; a
-    // place that does not exist is refused rather than stored.
-    const places = await normalisePlaces(db, incoming as Record<string, string>, existing as Record<string, string>)
+  if (places) {
     if (!places.ok) return Response.json({ error: places.error, field: places.field }, { status: 422 })
     Object.assign(incoming, places.fields)
-
     update.traveler_profile = { ...existing, ...incoming }
   }
 

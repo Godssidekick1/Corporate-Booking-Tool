@@ -146,12 +146,11 @@ export async function listRegions(db: Queryable, countryCode: string): Promise<R
     select code, name from regions where country_code = ${countryCode} order by name`)
 }
 
-// A country by its code, ISO3 code or English name, case-insensitively.
-export async function findCountry(db: Queryable, value: string): Promise<Country | null> {
-  return maybeOne<Country>(db, sql`
-    select code, name from countries
-    where upper(code) = upper(${value}) or upper(iso3) = upper(${value}) or lower(name) = lower(${value})
-    limit 1`)
+// Every country with the three ways to name it, for an in-memory lookup: the
+// list is fixed reference data (about 250 rows), so it is read once rather
+// than queried for each field of each profile saved.
+export async function countriesForLookup(db: Queryable): Promise<(Country & { iso3: string | null })[]> {
+  return many<Country & { iso3: string | null }>(db, sql`select code, name, iso3 from countries`)
 }
 
 // A region of a country by its name or code, case-insensitively.
