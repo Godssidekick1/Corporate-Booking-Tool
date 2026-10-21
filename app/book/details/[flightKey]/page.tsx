@@ -560,8 +560,11 @@ export default function BookingDetailsPage() {
           travellerId: flowStorage.travellerId(),
           flight,
           totalFare: priced.totalFare,
+          sellTotal: priced.sellTotal,
           isRefundable: priced.isRefundable,
           cancelPenalties: priced.cancelPenalties,
+          searchKey: priced.searchKey,
+          pricingKey: priced.pricingKey,
           selectedSeatFees,
         }),
       })

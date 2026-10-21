@@ -6,6 +6,7 @@ import { NextRequest } from 'next/server'
 import { checkBookingAgainstPolicy } from '@/app/lib/rule-engine/checkBookingAgainstPolicy'
 import { buildPolicyInputsFromFlight } from '@/app/lib/rule-engine/buildPolicyInputs'
 import { buildReason } from '@/app/lib/approval-engine/resolveApprovalTier'
+import * as bookings from '@/app/lib/repositories/bookings'
 import type { FlatFlightResult, PenaltyLine } from '@/app/lib/book/types'
 
 // ── POST /api/book/policy-preview ────────────────────────────────────────────
@@ -25,9 +26,15 @@ interface PreviewBody {
   travellerId?: string // booking for someone else: THEIR policy is previewed
   flight: FlatFlightResult
   totalFare: number
+  // The price the company pays (with markup, discount and fee), which is what
+  // add-passenger judges. Older pages sent only totalFare, the airline's.
+  sellTotal?: number
   isRefundable: boolean
   cancelPenalties?: PenaltyLine[]
   selectedSeatFees?: string[]
+  // The search it came from and the fare chosen, for the lowest logical fare.
+  searchKey?: string
+  pricingKey?: string
 }
 
 export const POST = route(async (req: NextRequest) => {
@@ -40,13 +47,16 @@ export const POST = route(async (req: NextRequest) => {
   const actor = await resolveActor(db, user, body.travellerId)
   if (!actor.ok) return refuse(actor)
   const employee = actor.actor.traveller
-  const { flight, totalFare, isRefundable, selectedSeatFees, cancelPenalties } = body
+  const { flight, totalFare, sellTotal, isRefundable, selectedSeatFees, cancelPenalties, searchKey, pricingKey } = body
 
   if (!flight || totalFare === undefined) {
     return Response.json({ error: 'flight and totalFare are required' }, { status: 400 })
   }
 
-  const inputs = buildPolicyInputsFromFlight({ flight, totalFare, isRefundable, selectedSeatFees, cancelPenalties })
+  const inputs = buildPolicyInputsFromFlight({
+    flight, totalFare: sellTotal ?? totalFare, isRefundable, selectedSeatFees, cancelPenalties,
+  })
+  const shown = searchKey && pricingKey ? await bookings.searchFares(db, searchKey, employee.id) : null
   const result = await checkBookingAgainstPolicy(db, {
     employeeId: employee.id,
     travelType: inputs.travelType,
@@ -54,6 +64,7 @@ export const POST = route(async (req: NextRequest) => {
     numericValues: inputs.numericValues,
     booleanValues: inputs.booleanValues,
     tierValues: inputs.tierValues,
+    search: shown && pricingKey ? { flights: shown, flightKey: flight.flightKey, pricingKey } : undefined,
   })
 
   if (!result.ok) {

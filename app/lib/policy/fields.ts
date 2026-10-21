@@ -97,6 +97,8 @@ export const CATEGORIES: CategoryDef[] = [
       { key: 'cabin_class_short_haul',      label: 'Cabin class (short haul)',                kind: 'tier',    travelType: 'flight', options: CABIN_CLASS_OPTIONS },
       { key: 'cabin_class_long_haul',       label: 'Cabin class (long haul >8h)',             kind: 'tier',    travelType: 'flight', options: CABIN_CLASS_OPTIONS },
       { key: 'max_seat_selection_fee',      label: 'Max seat selection spend',  unit: '₹',    kind: 'numeric', travelType: 'flight' },
+      { key: 'lowest_fare_window_minutes',  label: 'Lowest fare window (±)',    unit: 'min',  kind: 'numeric', travelType: 'flight', wholeNumber: true,
+        help: 'A cheaper fare departing within this many minutes of the chosen one means the booking needs approval. Empty: not checked.' },
       { key: 'carrier_tier',                label: 'Carrier tier',                            kind: 'tier',    travelType: 'flight', options: CARRIER_OPTIONS },
       { key: 'advance_booking_days',        label: 'Min. advance booking',      unit: 'days', kind: 'numeric', travelType: 'flight', wholeNumber: true },
       { key: 'baggage_extra_bags',          label: 'Extra bags allowed',        unit: 'bags', kind: 'numeric', travelType: 'flight', wholeNumber: true },

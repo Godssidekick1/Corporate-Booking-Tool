@@ -2,6 +2,7 @@ import { sql, empty, many, one, maybeOne, exec, json, type Queryable } from '@/a
 import { page } from '@/app/lib/db/fragments'
 import type { Row } from '@/app/lib/db/types.generated'
 import type { FareConditions } from '@/app/lib/book/types'
+import type { ShownFlight } from '@/app/lib/policy/lowestLogicalFare'
 
 // ── Bookings and price quotes ────────────────────────────────────────────────
 // Owns: bookings, price_quotes.
@@ -316,6 +317,27 @@ export async function heldQuote(db: Queryable, amadeusKey: string, referenceNo: 
   return maybeOne<HeldQuote>(db, sql`
     select airline_components, commercials, sell_total, employee_id, priced_by, expires_at, fare_conditions from price_quotes
     where amadeus_key = ${amadeusKey} and reference_no = ${referenceNo}`)
+}
+
+// ═══ What a search showed (search_fares) ═════════════════════════════════════
+// Kept briefly for the lowest-logical-fare check: anything older than two
+// hours goes on the next insert.
+
+export async function saveSearchFares(
+  db: Queryable,
+  s: { search_key: string; client_id: string; traveller_id: string; flights: ShownFlight[] },
+): Promise<void> {
+  await exec(db, sql`delete from search_fares where created_at < now() - interval '2 hours'`)
+  await exec(db, sql`
+    insert into search_fares (search_key, client_id, traveller_id, flights)
+    values (${s.search_key}, ${s.client_id}, ${s.traveller_id}, ${json(s.flights)})`)
+}
+
+export async function searchFares(db: Queryable, searchKey: string, travellerId: string): Promise<ShownFlight[] | null> {
+  const row = await maybeOne<{ flights: ShownFlight[] }>(db, sql`
+    select flights from search_fares where search_key = ${searchKey} and traveller_id = ${travellerId}
+    order by created_at desc limit 1`)
+  return row?.flights ?? null
 }
 
 export interface SameTripBooking {

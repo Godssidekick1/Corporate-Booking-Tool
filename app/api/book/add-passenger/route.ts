@@ -299,6 +299,8 @@ export const POST = route(async (req: NextRequest) => {
       // stranded the passenger at the airline with no record on our side.)
       let ruleResult: RuleEngineResult | null = null
       try {
+        // What this traveller's search showed, for the lowest logical fare.
+        const shown = searchKey ? await bookings.searchFares(db, searchKey, employee.id) : null
         ruleResult = await checkBookingAgainstPolicy(db, {
           employeeId: employee.id,
           travelType: inputs.travelType,
@@ -306,6 +308,7 @@ export const POST = route(async (req: NextRequest) => {
           numericValues: inputs.numericValues,
           booleanValues: inputs.booleanValues,
           tierValues: inputs.tierValues,
+          search: shown ? { flights: shown, flightKey: flight.flightKey, pricingKey } : undefined,
         })
       } catch (policyErr) {
         console.error('[add-passenger] policy check failed; booking recorded as not evaluated', policyErr)

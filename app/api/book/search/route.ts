@@ -16,6 +16,8 @@ import type { ItineraryInfo } from '@/app/lib/amadeus/client'
 import { cabinLetter, CABIN_LABELS } from '@/app/lib/book/cabin'
 import { policyListsFor } from '@/app/lib/rule-engine/policyLists'
 import { filterResults } from '@/app/lib/policy/searchFilter'
+import { shownFlights } from '@/app/lib/policy/lowestLogicalFare'
+import * as bookingsRepo from '@/app/lib/repositories/bookings'
 import { NextRequest, after } from 'next/server'
 
 // ── POST /api/book/search ────────────────────────────────────────────
@@ -535,6 +537,19 @@ export const POST = route(async (req: NextRequest) => {
     // Filtered before markup: nothing the policy hides is priced or sent.
     const allowed = filterResults(results, await listsPromise)
     const priced = allowed.map(result => applyMarkup(context, result, adult + child))
+
+    // What the traveller was shown, kept for the lowest-logical-fare check at
+    // booking. Not fatal: without it that check is skipped, never guessed.
+    if (employee.client_id) {
+      try {
+        await bookingsRepo.saveSearchFares(db, {
+          search_key: availability.Key, client_id: employee.client_id, traveller_id: employee.id,
+          flights: shownFlights(priced),
+        })
+      } catch (err) {
+        console.error('Could not keep the search for the lowest-fare check', err)
+      }
+    }
 
     return Response.json({
   ok: true,

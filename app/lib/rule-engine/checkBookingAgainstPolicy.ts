@@ -2,6 +2,7 @@ import { resolveEffectivePolicy, PolicyBlocked } from './resolveEffectivePolicy'
 import { evaluateBooking, VerdictResult } from './evaluateBooking'
 import { loadClientGates } from '@/app/lib/clients/clientGates'
 import type { Queryable } from '@/app/lib/db'
+import type { ShownFlight } from '@/app/lib/policy/lowestLogicalFare'
 import * as employees from '@/app/lib/repositories/employees'
 
 export interface BookingCheckInput {
@@ -11,6 +12,8 @@ export interface BookingCheckInput {
   numericValues: Partial<Record<string, number>>
   booleanValues: Partial<Record<string, boolean>>
   tierValues?: Partial<Record<string, number>>
+  // What the search showed and which fare was chosen (lowest logical fare).
+  search?: { flights: ShownFlight[]; flightKey: string; pricingKey: string }
 }
 
 export type RuleEngineResult =
@@ -57,6 +60,7 @@ export async function checkBookingAgainstPolicy(
     numericValues: input.numericValues,
     booleanValues: input.booleanValues,
     tierValues: input.tierValues,
+    search: input.search,
   })
 
   return {

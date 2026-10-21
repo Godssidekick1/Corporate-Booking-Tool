@@ -20,6 +20,7 @@ export interface BreachLike {
   policyValue: unknown
   actualValue: unknown
   graceLimit?: number
+  alternative?: { total: number; departure: string; label: string }
 }
 
 export const BREACH_LABELS: Record<string, string> = {
@@ -43,6 +44,7 @@ export const BREACH_LABELS: Record<string, string> = {
   max_journey_hours: 'journey time limit',
   max_layover_hours: 'layover limit',
   max_cancel_penalty: 'cancellation fee limit',
+  lowest_fare_window_minutes: 'lowest logical fare',
   red_eye_restricted: 'red-eye flight restriction',
   personal_trips_allowed: 'personal trips entitlement',
   cabin_class_short_haul: 'cabin class entitlement (short-haul)',
@@ -86,6 +88,14 @@ export function breachLine(b: BreachLike): string {
     const options = FIELD_BY_KEY[b.limit_key]?.options
     const name = (v: number) => options?.find(o => o.value === v)?.label
     if (name(policy) && name(actual)) return `${label} exceeded (policy: ${name(policy)}, actual: ${name(actual)})`
+  }
+
+  // The cheaper flight, by its time and price as the traveller saw them.
+  if (b.limit_key === 'lowest_fare_window_minutes' && b.alternative) {
+    const inr = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`
+    const time = /T(\d{2}:\d{2})/.exec(b.alternative.departure)?.[1] ?? b.alternative.departure
+    const flight = b.alternative.label ? `${b.alternative.label} at ${time}` : `a flight at ${time}`
+    return `${label} not taken: ${flight} was ${inr(b.alternative.total)}, within ${policy} minutes, against ${inr(actual)} for this fare`
   }
 
   // A fare cap with grace says which side of it the fare landed.

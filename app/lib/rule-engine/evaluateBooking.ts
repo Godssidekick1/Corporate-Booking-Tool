@@ -1,11 +1,13 @@
 import { ResolvedPolicy } from './resolveEffectivePolicy'
+import { cheaperNearby, type ShownFlight } from '@/app/lib/policy/lowestLogicalFare'
 
 // Three outcomes, stored by their old colour names:
 //   green  Within policy   -- every cap and rule met. Whether it still goes for
 //                             approval is the company's choice (Corporate
 //                             Settings: within_policy_approval).
-//   amber  Needs approval  -- over a fare cap but within the group's grace. Always
-//                             goes for approval; never blocked.
+//   amber  Needs approval  -- over a fare cap but within the group's grace, or a
+//                             cheaper fare departs within the group's lowest-fare
+//                             window. Always goes for approval; never blocked.
 //   red    Out of policy   -- beyond grace, or any rule broken. Approval, or
 //                             refused where the company blocks out-of-policy fares.
 // Only the fare caps have grace. Every other rule is strict: one cabin above
@@ -21,6 +23,8 @@ export interface VerdictBreach {
   // A fare cap with grace: the most the fare may be and still need approval
   // rather than be out of policy.
   graceLimit?: number
+  // Lowest logical fare: the cheaper flight the traveller was also shown.
+  alternative?: { total: number; departure: string; label: string }
 }
 
 export interface VerdictResult {
@@ -90,6 +94,9 @@ interface BookingInput {
   numericValues: Partial<Record<string, number>>
   booleanValues: Partial<Record<string, boolean>>
   tierValues?: Partial<Record<string, number>>
+  // What the search showed, and which fare was chosen from it: for the lowest
+  // logical fare. Absent (no search kept): not checked.
+  search?: { flights: ShownFlight[]; flightKey: string; pricingKey: string }
 }
 
 export function evaluateBooking(policy: ResolvedPolicy, booking: BookingInput): VerdictResult {
@@ -171,6 +178,21 @@ export function evaluateBooking(policy: ResolvedPolicy, booking: BookingInput): 
 
     if (actualValue > policyValue) {
       breaches.push({ limit_key: key, kind: 'tier', policyValue, actualValue, severity: 'red' })
+    }
+  }
+
+  // ── Lowest logical fare ──────────────────────────────────────────────────
+  // A cheaper flight departing within the window needs approval, never more:
+  // the chosen one may be the only one that suits.
+  const windowMinutes = Number(policy.limits['lowest_fare_window_minutes'] ?? 0)
+  if (windowMinutes > 0 && booking.search) {
+    const cheaper = cheaperNearby(booking.search.flights, booking.search.flightKey, booking.search.pricingKey, windowMinutes)
+    if (cheaper) {
+      breaches.push({
+        limit_key: 'lowest_fare_window_minutes', kind: 'numeric', policyValue: windowMinutes,
+        actualValue: cheaper.chosenTotal, severity: 'amber',
+        alternative: { total: cheaper.total, departure: cheaper.departure, label: cheaper.label },
+      })
     }
   }
 

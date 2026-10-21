@@ -5,6 +5,7 @@ import type { ResolvedPolicy } from '@/app/lib/rule-engine/resolveEffectivePolic
 import { fareTypeOf } from '@/app/lib/policy/fareTypes'
 import { filterResults, refusalFor, NO_LISTS, type PolicyLists } from '@/app/lib/policy/searchFilter'
 import { breachLine } from '@/app/lib/policy/breachText'
+import { cheaperNearby, type ShownFlight } from '@/app/lib/policy/lowestLogicalFare'
 import type { FareOption, FlatFlightResult, Journey } from '@/app/lib/book/types'
 
 // ── The policy checks added on 2026-10-19 ────────────────────────────────────
@@ -178,6 +179,47 @@ describe('fare caps and grace', () => {
   it('the old approval amounts are not read', () => {
     expect(fareOf({ max_fare_domestic: 8000, auto_approve_under: 1000, finance_approval_over: 2000 }, 5000))
       .toEqual({ verdict: 'green', breaches: [] })
+  })
+})
+
+describe('lowest logical fare', () => {
+  const shown = (key: string, dep: string, total: number, extra: Partial<ShownFlight> = {}): ShownFlight => ({
+    flightKey: key, departure: `2030-11-10T${dep}:00`, origin: 'DEL', destination: 'BOM', journeys: 1,
+    label: key.toUpperCase(), fares: [{ pricingKey: `${key}-f`, total }], ...extra,
+  })
+
+  it('the cheapest other flight on the same route within the window', () => {
+    const flights = [shown('a', '08:00', 6000), shown('b', '08:30', 5500), shown('c', '08:50', 5000), shown('d', '10:00', 3000)]
+    expect(cheaperNearby(flights, 'a', 'a-f', 60)).toEqual({ chosenTotal: 6000, total: 5000, departure: '2030-11-10T08:50:00', label: 'C' })
+    expect(cheaperNearby(flights, 'a', 'a-f', 20)).toBeNull()
+    // Before the chosen one counts as much as after.
+    expect(cheaperNearby([shown('a', '08:00', 6000), shown('e', '07:30', 5000)], 'a', 'a-f', 30)?.label).toBe('E')
+  })
+
+  it('another route, a round trip against a one-way, or the same price: not a cheaper fare', () => {
+    const chosen = shown('a', '08:00', 6000)
+    expect(cheaperNearby([chosen, shown('x', '08:10', 1000, { destination: 'GOI' })], 'a', 'a-f', 60)).toBeNull()
+    expect(cheaperNearby([chosen, shown('y', '08:10', 1000, { journeys: 2 })], 'a', 'a-f', 60)).toBeNull()
+    expect(cheaperNearby([chosen, shown('z', '08:10', 5999.5)], 'a', 'a-f', 60)).toBeNull()
+  })
+
+  it('a fare not in what was shown, or no window: not judged', () => {
+    const flights = [shown('a', '08:00', 6000), shown('b', '08:10', 5000)]
+    expect(cheaperNearby(flights, 'a', 'other-fare', 60)).toBeNull()
+    expect(cheaperNearby(flights, 'gone', 'gone-f', 60)).toBeNull()
+    expect(cheaperNearby(flights, 'a', 'a-f', 0)).toBeNull()
+  })
+
+  it('needs approval, never out of policy', () => {
+    const r = evaluateBooking(policy({ lowest_fare_window_minutes: 60 }), {
+      totalCost: 6000, numericValues: {}, booleanValues: {},
+      search: { flights: [shown('a', '08:00', 6000), shown('b', '08:10', 600)], flightKey: 'a', pricingKey: 'a-f' },
+    })
+    expect(r.verdict).toBe('amber')
+    expect(breachLine(r.breaches[0])).toBe('lowest logical fare not taken: B at 08:10 was ₹600, within 60 minutes, against ₹6,000 for this fare')
+    // No window set: the search is not judged at all.
+    expect(evaluateBooking(policy({}), { totalCost: 6000, numericValues: {}, booleanValues: {},
+      search: { flights: [shown('a', '08:00', 6000), shown('b', '08:10', 600)], flightKey: 'a', pricingKey: 'a-f' } }).verdict).toBe('green')
   })
 })
 

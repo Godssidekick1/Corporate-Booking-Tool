@@ -3,6 +3,7 @@ import { POST as searchPost } from '@/app/api/book/search/route'
 import { POST as pricePost } from '@/app/api/book/price/route'
 import { POST as addPassengerPost } from '@/app/api/book/add-passenger/route'
 import { GET as rulesGet, POST as rulesPost } from '@/app/api/tmc/policy-rules/route'
+import { POST as previewPost } from '@/app/api/book/policy-preview/route'
 import { call } from '../harness/call'
 import { actors, type Actors } from '../harness/actors'
 import { resetDatabase } from '../harness/db'
@@ -194,5 +195,58 @@ d('policy lists: blocked airlines and allowed fare types', () => {
     })
     expect(res).toEqual({ status: 422, json: { error: "The traveller's travel policy does not allow AI flights.", code: 'POLICY_DISALLOWED' } })
     expect(fake.addPassenger).not.toHaveBeenCalled()
+  })
+
+  // ── Lowest logical fare: what the search showed is kept, and judged ────────
+  it('lowest logical fare: a cheaper flight within the window needs approval; outside it, nothing', async () => {
+    await setLists({})
+    // The group's window, saved as the editor does: every other rule unchanged.
+    async function setWindow(minutes: number) {
+      const current = await call(rulesGet, { as: a.tmcAdmin, url: `/api/tmc/policy-rules?groupId=${groupD}` })
+      const rows = (current.json as { rows: { travel_type: string; limit_key: string; limit_value: number | null; limit_bool: boolean | null; limit_list: string[] | null }[] }).rows
+        .filter(r => r.limit_key !== 'lowest_fare_window_minutes' && r.limit_list === null)
+        .map(({ travel_type, limit_key, limit_value, limit_bool }) => ({ travel_type, limit_key, limit_value, limit_bool }))
+      expect((await call(rulesPost, { as: a.tmcAdmin, method: 'POST', url: '/api/tmc/policy-rules',
+        body: { policyGroupId: groupD, rules: [...rows, { travel_type: 'flight', limit_key: 'lowest_fare_window_minutes', limit_value: minutes }] } })).status).toBe(200)
+    }
+    const at = (key: string, airline: string, dep: string, fares: [string, string, number][]) => {
+      const r = result(key, airline, fares)
+      const seg = { ...segment(airline), Origin: place('DEL', dep) }
+      return { ...r, Itineraries: { Itinerary: [seg] } }
+    }
+    fake.searchFlights.mockResolvedValue({ Key: 'LLF-KEY', Availibilities: [{ Availibility: [
+      at('ai-0800', 'AI', '2030-11-10T08:00:00', [['c-0800', 'NRM', 6000]]),
+      at('uk-0840', 'UK', '2030-11-10T08:40:00', [['c-0840', 'NRM', 5200]]),
+      at('sg-0900', 'SG', '2030-11-10T09:00:00', [['c-0900', 'NRM', 4000]]),
+    ] }] })
+    expect((await search()).status).toBe(200)
+    // Kept as shown: each flight, its departure and its fares.
+    const kept = await one<{ flights: { flightKey: string; departure: string; fares: { pricingKey: string; total: number }[] }[] }>(db, sql`
+      select flights from search_fares where search_key = 'LLF-KEY' and traveller_id = ${colleague.id}`)
+    expect(kept.flights.map(f => [f.flightKey, f.departure, f.fares.map(x => x.pricingKey)])).toEqual([
+      ['ai-0800', '2030-11-10T08:00:00', ['c-0800']],
+      ['uk-0840', '2030-11-10T08:40:00', ['c-0840']],
+      ['sg-0900', '2030-11-10T09:00:00', ['c-0900']],
+    ])
+
+    const preview = () => call(previewPost, {
+      as: a.corpAdmin, method: 'POST', url: '/api/book/policy-preview',
+      body: { travellerId: colleague.id, flight: { ...ITINERARY, flightKey: 'ai-0800' }, totalFare: 6000, isRefundable: true,
+        searchKey: 'LLF-KEY', pricingKey: 'c-0800' },
+    }).then(r => r.json as { verdict: string; breaches: { limit_key: string; severity: string; alternative?: unknown }[]; reason: string })
+
+    // Group d's other rules (a budget-only carrier tier) judge this fare too;
+    // only the lowest-fare line is this test's.
+    const lowest = (p: Awaited<ReturnType<typeof preview>>) => p.breaches.filter(b => b.limit_key === 'lowest_fare_window_minutes')
+
+    // 45 minutes: the 08:40 flight at 5,200 is the cheaper one in reach.
+    await setWindow(45)
+    const within = await preview()
+    expect(lowest(within)).toEqual([expect.objectContaining({ severity: 'amber' })])
+    expect(within.reason).toContain('UK 101 at 08:40 was ₹5,200')
+
+    // 30 minutes: nothing cheaper close enough.
+    await setWindow(30)
+    expect(lowest(await preview())).toEqual([])
   })
 })
