@@ -455,6 +455,14 @@ export default function CorporateSettingsPage() {
               onChange={v => set('guest_bookings_allowed', v)}
               effect="Off: every booking is for an employee; the ‘A guest’ option is not offered. On: a policy group can still refuse guests for its bands."
             />
+            <Field label="Ticket footer" hint="Printed at the foot of this company's e-tickets: a helpline, a travel desk address. Up to 500 characters.">
+              <textarea
+                value={form.ticket_footer_text ?? ''}
+                maxLength={500} rows={3}
+                onChange={e => set('ticket_footer_text', e.target.value)}
+                style={{ ...s.input, height: 'auto', padding: '8px 10px', resize: 'vertical' as const }}
+              />
+            </Field>
             <Toggle
               label="Hold auto-issue" checked={form.hold_auto_issue === true}
               onChange={v => set('hold_auto_issue', v)}
@@ -558,6 +566,32 @@ export default function CorporateSettingsPage() {
                 <option value="no">Not asked</option>
                 <option value="yes">Required from everyone</option>
               </select>
+            </Field>
+            <Field label="Re-approve a fare that rises" hint="Booking an approved fare whose price has to be checked again: a rise above this sends it back for approval. Empty: never.">
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  type="number" min={0} step="any" placeholder="e.g. 5"
+                  value={form.fare_rise_reapproval ?? ''}
+                  onChange={e => set('fare_rise_reapproval', e.target.value === '' ? null : Number(e.target.value))}
+                  style={{ ...s.input, flex: 1 }}
+                />
+                <select
+                  value={form.fare_rise_reapproval_unit ?? 'pct'}
+                  onChange={e => set('fare_rise_reapproval_unit', e.target.value)}
+                  style={{ ...s.input, width: 150 }}
+                >
+                  <option value="pct">% of the fare</option>
+                  <option value="inr">₹</option>
+                </select>
+              </div>
+            </Field>
+            <Field label="Escalate a waiting approval" hint="After this many hours, the step passes to the approver's own manager, once. Empty: never.">
+              <input
+                type="number" min={1} max={720} step={1} placeholder="e.g. 24"
+                value={form.approval_escalation_hours ?? ''}
+                onChange={e => set('approval_escalation_hours', e.target.value === '' ? null : Math.round(Number(e.target.value)))}
+                style={s.input}
+              />
             </Field>
             <Field label="Duplicate bookings" hint="The traveller already has a live booking on the same route and day.">
               <select

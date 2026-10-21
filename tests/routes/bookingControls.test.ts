@@ -5,6 +5,7 @@ import { GET as controlsGet } from '@/app/api/book/controls/route'
 import { PATCH as clientPatch } from '@/app/api/tmc/clients/[id]/route'
 import { POST as tripsPost } from '@/app/api/trips/route'
 import { POST as chainPost } from '@/app/api/tmc/approval-chains/direct/route'
+import { GET as bookingGet } from '@/app/api/book/[bookingId]/route'
 import { GET as rulesGet, POST as rulesPost } from '@/app/api/tmc/policy-rules/route'
 import { resolveEffectivePolicy } from '@/app/lib/rule-engine/resolveEffectivePolicy'
 import { call } from '../harness/call'
@@ -358,6 +359,35 @@ d('booking controls (Corporate Settings)', () => {
     expect((await addPassenger('C1', '2030-09-01', { isRefundable: false })).status).toBe(200)
     expect(await one(db, sql`select fare_breakdown->>'isRefundable' as r from bookings where provider_order_id = 'C1'`))
       .toEqual({ r: 'true' })
+  })
+
+  it('re-approval, escalation and the ticket footer: validated, and the footer reaches the ticket', async () => {
+    for (const bad of [
+      { fare_rise_reapproval: -1 }, { fare_rise_reapproval: 'five' }, { fare_rise_reapproval_unit: 'usd' },
+      { approval_escalation_hours: 0 }, { approval_escalation_hours: 1.5 }, { approval_escalation_hours: 721 },
+      { ticket_footer_text: 'x'.repeat(501) },
+    ]) expect((await setClient(bad)).status).toBe(400)
+
+    expect((await setClient({
+      fare_rise_reapproval: 7.5, fare_rise_reapproval_unit: 'inr', approval_escalation_hours: 24,
+      ticket_footer_text: '  Travel desk: +91 00000 00000  ',
+    })).status).toBe(200)
+    expect(await one(db, sql`
+      select fare_rise_reapproval, fare_rise_reapproval_unit, approval_escalation_hours, ticket_footer_text
+      from clients where id = ${clientId}`)).toEqual({
+      fare_rise_reapproval: 7.5, fare_rise_reapproval_unit: 'inr', approval_escalation_hours: 24,
+      ticket_footer_text: 'Travel desk: +91 00000 00000',
+    })
+
+    await price('T1', '2030-10-01')
+    expect((await addPassenger('T1', '2030-10-01')).status).toBe(200)
+    const id = (await bookingFor('T1'))!.id
+    const detail = await call(bookingGet, { as: a.corpAdmin, url: `/api/book/${id}`, params: { bookingId: id } })
+    expect((detail.json as { booking: { ticket_footer_text: string } }).booking.ticket_footer_text).toBe('Travel desk: +91 00000 00000')
+
+    // Cleared back: empty text is no footer.
+    expect((await setClient({ fare_rise_reapproval: null, approval_escalation_hours: null, ticket_footer_text: '' })).status).toBe(200)
+    expect(await one(db, sql`select ticket_footer_text from clients where id = ${clientId}`)).toEqual({ ticket_footer_text: null })
   })
 
   it('quote hold: a fare priced more than 30 minutes ago is not booked', async () => {

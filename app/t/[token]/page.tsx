@@ -46,6 +46,8 @@ interface Journey {
 
 interface PublicTicket {
   pnr: string | null
+  // The traveller's company's own words for its tickets (Corporate Settings).
+  footer?: string | null
   reference: string | null
   itinerary: {
     airline?: { code: string; name: string }
@@ -294,6 +296,8 @@ export default function PublicTicketPage() {
           {ticket.reference && <p style={s.reference}>Booking reference {ticket.reference}</p>}
         </section>
 
+        {ticket.footer && <p style={s.companyFooter}>{ticket.footer}</p>}
+
         <button type="button" className="no-print" onClick={() => window.print()} style={s.printBtn}>
           Download / print
         </button>
@@ -320,6 +324,7 @@ const s: Record<string, React.CSSProperties> = {
   eyebrow: { fontSize: '10px', fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase' as const, color: '#9CA3AF', margin: '0 0 4px' },
   airline: { fontSize: '20px', fontWeight: 700, color: '#0A0A14', margin: 0 },
   headerRight: { textAlign: 'right' as const },
+  companyFooter: { fontSize: '12px', color: '#6B7280', lineHeight: 1.5, margin: '0 0 16px', whiteSpace: 'pre-line' as const },
   pnrLabel: { fontSize: '10px', fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase' as const, color: '#9CA3AF', margin: '0 0 4px' },
   pnrValue: { fontSize: '18px', fontWeight: 700, color: '#0A0A14', letterSpacing: '1px', margin: 0, fontVariantNumeric: 'tabular-nums' },
 

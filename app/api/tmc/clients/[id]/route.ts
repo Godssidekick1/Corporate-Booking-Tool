@@ -107,6 +107,13 @@ type UpdateClientBody = {
   out_of_policy_handling?: string
   duplicate_booking_check?: string
   within_policy_approval?: string
+  // A re-priced fare rising by more than this (% of the approved fare, or ₹)
+  // goes back for approval. Null: never.
+  fare_rise_reapproval?: number | null
+  fare_rise_reapproval_unit?: string
+  // A waiting approval passes to the approver's manager after this. Null: never.
+  approval_escalation_hours?: number | null
+  ticket_footer_text?: string | null
 } & Partial<Record<typeof TEXT_FIELDS[number], string | null>>
   & Partial<Record<typeof BOOLEAN_FIELDS[number], boolean>>
 
@@ -244,6 +251,34 @@ export const PATCH = route(async (req: NextRequest, { params }: Ctx) => {
       return Response.json({ error: `Invalid within_policy_approval: ${value}` }, { status: 400 })
     }
     update.within_policy_approval = value
+  }
+
+  if (body.fare_rise_reapproval !== undefined) {
+    const v = body.fare_rise_reapproval
+    if (v !== null && !(typeof v === 'number' && Number.isFinite(v) && v >= 0)) {
+      return Response.json({ error: 'fare_rise_reapproval must be a number of 0 or more, or null' }, { status: 400 })
+    }
+    update.fare_rise_reapproval = v
+  }
+  if (body.fare_rise_reapproval_unit !== undefined) {
+    if (body.fare_rise_reapproval_unit !== 'pct' && body.fare_rise_reapproval_unit !== 'inr') {
+      return Response.json({ error: `Invalid fare_rise_reapproval_unit: ${body.fare_rise_reapproval_unit}` }, { status: 400 })
+    }
+    update.fare_rise_reapproval_unit = body.fare_rise_reapproval_unit
+  }
+  if (body.approval_escalation_hours !== undefined) {
+    const v = body.approval_escalation_hours
+    if (v !== null && !(Number.isInteger(v) && v >= 1 && v <= 720)) {
+      return Response.json({ error: 'approval_escalation_hours must be a whole number of hours from 1 to 720, or null' }, { status: 400 })
+    }
+    update.approval_escalation_hours = v
+  }
+  if (body.ticket_footer_text !== undefined) {
+    const text = typeof body.ticket_footer_text === 'string' ? body.ticket_footer_text.trim() : null
+    if (text && text.length > 500) {
+      return Response.json({ error: 'The ticket footer can be at most 500 characters' }, { status: 400 })
+    }
+    update.ticket_footer_text = text || null
   }
 
   if (body.size !== undefined) {

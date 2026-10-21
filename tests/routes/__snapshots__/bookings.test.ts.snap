@@ -137,6 +137,7 @@ exports[`traveller bookings and trips > booking: the sell-side view, with no air
     "seat_fees": 0,
     "sell_total": 11494,
     "status": "ticketed",
+    "ticket_footer_text": null,
     "ticket_numbers": [
       "000-0000000001",
     ],
@@ -201,6 +202,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
             "isRefundable": false,
             "seatFees": 0,
           },
+          "for_guest": false,
           "id": "7623146c-1f51-41ff-9628-ca580b88d367",
           "itinerary": {
             "airline": {
@@ -281,6 +283,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
             "totalDuration": "01:10",
           },
           "pnr": null,
+          "purpose": "business",
           "status": "failed",
           "total_cost": 4464.9,
           "traveler_snapshot": {
@@ -349,6 +352,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
             "isRefundable": false,
             "seatFees": 0,
           },
+          "for_guest": false,
           "id": "b007376c-1265-4519-ad2f-fa912ce5f915",
           "itinerary": {
             "airline": {
@@ -429,6 +433,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
             "totalDuration": "02:40",
           },
           "pnr": null,
+          "purpose": "business",
           "status": "ticketed",
           "total_cost": 11494,
           "traveler_snapshot": {
@@ -469,6 +474,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
             "isRefundable": true,
             "seatFees": 0,
           },
+          "for_guest": false,
           "id": "8017bcb3-760f-4a91-88d4-1208a1bfc45d",
           "itinerary": {
             "airline": {
@@ -549,6 +555,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
             "totalDuration": "02:20",
           },
           "pnr": null,
+          "purpose": "business",
           "status": "failed",
           "total_cost": 7159,
           "traveler_snapshot": {
@@ -589,6 +596,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
             "isRefundable": false,
             "seatFees": 1600,
           },
+          "for_guest": false,
           "id": "9728aaf2-c9a7-4773-b166-40033f1f9cff",
           "itinerary": {
             "airline": {
@@ -645,6 +653,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
             "totalDuration": "05:00",
           },
           "pnr": null,
+          "purpose": "business",
           "status": "held",
           "total_cost": 10986,
           "traveler_snapshot": {
@@ -714,6 +723,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
             "isRefundable": true,
             "seatFees": 0,
           },
+          "for_guest": false,
           "id": "2ee9448c-d23f-4ba9-a695-3cccdb0532c2",
           "itinerary": {
             "airline": {
@@ -757,6 +767,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
             "totalDuration": "02:20",
           },
           "pnr": null,
+          "purpose": "business",
           "status": "failed",
           "total_cost": 7159,
           "traveler_snapshot": {
@@ -797,6 +808,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
             "isRefundable": false,
             "seatFees": 0,
           },
+          "for_guest": false,
           "id": "c3586144-c46e-492d-a295-db908a862c9f",
           "itinerary": {
             "airline": {
@@ -853,6 +865,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
             "totalDuration": "19:15",
           },
           "pnr": null,
+          "purpose": "business",
           "status": "held",
           "total_cost": 9424,
           "traveler_snapshot": {
@@ -908,6 +921,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
             "isRefundable": false,
             "seatFees": 650,
           },
+          "for_guest": false,
           "id": "02e3f04c-4da1-46dd-80fd-82cd93f4f12d",
           "itinerary": {
             "airline": {
@@ -943,6 +957,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
             "totalDuration": "01:30",
           },
           "pnr": null,
+          "purpose": "business",
           "status": "ticketed",
           "total_cost": 7886,
           "traveler_snapshot": {
@@ -998,6 +1013,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
             "isRefundable": false,
             "seatFees": 0,
           },
+          "for_guest": false,
           "id": "a3962ca6-0156-4399-b485-51891c96f6de",
           "itinerary": {
             "airline": {
@@ -1033,6 +1049,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
             "totalDuration": "01:30",
           },
           "pnr": null,
+          "purpose": "business",
           "status": "failed",
           "total_cost": 6385,
           "traveler_snapshot": {
@@ -1101,6 +1118,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
             "isRefundable": false,
             "seatFees": 0,
           },
+          "for_guest": false,
           "id": "9eef1d3c-4fb9-403c-b4a4-18d6882184c9",
           "itinerary": {
             "airline": {
@@ -1181,6 +1199,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
             "totalDuration": "02:20",
           },
           "pnr": "598A2D",
+          "purpose": "business",
           "status": "ticketed",
           "total_cost": 7717.5,
           "traveler_snapshot": {
@@ -1236,6 +1255,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
             "isRefundable": true,
             "seatFees": 0,
           },
+          "for_guest": false,
           "id": "e9d5da38-539c-4557-9047-d5f631faf3b4",
           "itinerary": {
             "airline": {
@@ -1343,6 +1363,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
             "totalDuration": "16:15",
           },
           "pnr": null,
+          "purpose": "business",
           "status": "ticketed",
           "total_cost": 31350,
           "traveler_snapshot": {
@@ -1398,6 +1419,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
             "isRefundable": false,
             "seatFees": 0,
           },
+          "for_guest": false,
           "id": "f87dd291-e50f-4c75-ab45-ac1223fa68ab",
           "itinerary": {
             "airline": {
@@ -1521,6 +1543,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
             "totalDuration": "02:05",
           },
           "pnr": null,
+          "purpose": "business",
           "status": "held",
           "total_cost": 15702,
           "traveler_snapshot": {
@@ -1589,6 +1612,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
         "isRefundable": false,
         "seatFees": 0,
       },
+      "for_guest": false,
       "id": "e7fea9ae-0449-4be8-b15c-e146fcd7d256",
       "itinerary": {
         "airline": {
@@ -1624,6 +1648,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
         "totalDuration": "04:20",
       },
       "pnr": null,
+      "purpose": "business",
       "status": "ticketed",
       "total_cost": 19918,
       "traveler_snapshot": {
@@ -1679,6 +1704,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
         "isRefundable": true,
         "seatFees": 0,
       },
+      "for_guest": false,
       "id": "57c4be8e-7180-4c42-aa75-b2e50e2f0331",
       "itinerary": {
         "airline": {
@@ -1721,6 +1747,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
         "totalDuration": "06:15",
       },
       "pnr": null,
+      "purpose": "business",
       "status": "failed",
       "total_cost": 15793,
       "traveler_snapshot": {
@@ -1761,6 +1788,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
         "isRefundable": false,
         "seatFees": 0,
       },
+      "for_guest": false,
       "id": "1575cffa-7dc2-4a60-9d94-c5cf4f11ef2f",
       "itinerary": {
         "airline": {
@@ -1803,6 +1831,7 @@ exports[`traveller bookings and trips > bookings: my trips, grouped, sell-side o
         "totalDuration": "04:30",
       },
       "pnr": null,
+      "purpose": "business",
       "status": "ticketed",
       "total_cost": 8328,
       "traveler_snapshot": {
@@ -1901,6 +1930,7 @@ exports[`traveller bookings and trips > public ticket: the receipt, passport mas
       "taxTotal": 1940,
       "total": 11494,
     },
+    "footer": null,
     "itinerary": {
       "airline": {
         "code": "AI",

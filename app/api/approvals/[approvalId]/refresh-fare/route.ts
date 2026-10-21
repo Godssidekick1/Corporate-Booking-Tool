@@ -7,13 +7,7 @@ import { route } from '@/app/lib/http/handler'
 import { NextRequest } from 'next/server'
 import { amadeus, AmadeusError } from '@/app/lib/amadeus/client'
 import { extractPricingDetails } from '@/app/api/book/price/route'
-import { checkBookingAgainstPolicy } from '@/app/lib/rule-engine/checkBookingAgainstPolicy'
-import { buildPolicyInputsFromFlight } from '@/app/lib/rule-engine/buildPolicyInputs'
-import { buildReason } from '@/app/lib/approval-engine/resolveApprovalTier'
-import { stampCommercials } from '@/app/lib/commercials/stampCommercials'
-import { emptyCommercials } from '@/app/lib/commercials/composeSellPrice'
-import type { FareComponents } from '@/app/lib/commercials/fareComponents'
-import type { FlatFlightResult } from '@/app/lib/book/types'
+import { priceAgain } from '@/app/lib/book/repriceBooking'
 import { travellerFareBreakdown } from '@/app/lib/book/travellerView'
 
 // ── POST /api/approvals/[approvalId]/refresh-fare ────────────────────────
@@ -97,96 +91,15 @@ export const POST = route(async (
       return Response.json({ error: 'Pricing succeeded but returned no fare details. Please try again.' }, { status: 502 })
     }
 
-    // Seat fees were already chosen and paid for as part of this booking —
-    // a re-price doesn't change what seats were selected, only the fare
-    // itself, so carry the existing seat fee total forward into the new
-    // grand total rather than dropping it.
-    const existingSeatFees = (booking.fare_breakdown as { seatFees?: number } | null)?.seatFees ?? 0
-
-    const flight = booking.itinerary as Parameters<typeof buildPolicyInputsFromFlight>[0]['flight'] | null
-
-    // ── Re-run the commercials too ───────────────────────────────────────────
-    // A refresh "becomes the new official price/key for this booking", so the
-    // sell price has to be recomputed with it. Without this the booking would
-    // carry a fresh airline fare against a stale markup and an approver would be
-    // signing off a number that no longer reconciles.
-    //
-    // Rules are re-resolved rather than reused from the original quote, on
-    // purpose: they are date-windowed, and a rule that lapsed between booking
-    // and approval should stop applying.
-    const components: FareComponents = {
-      base: details.baseFare ?? 0,
-      otherTax: details.tax ?? 0,
-      fuelSurcharge: details.fuelSurcharge ?? 0,
-      taxLines: details.taxLines ?? [],
-      total: details.totalFare ?? 0,
-    }
-
-    const { record } = booking.client_id
-      ? await stampCommercials(db, {
-          clientId: booking.client_id,
-          flight: (flight as FlatFlightResult | null) ?? null,
-          components,
-          pax: Math.max(1, details.passengerBreakup?.length ?? 1),
-        })
-      : { record: emptyCommercials(components) }
-
-    // The airline side keeps total_cost; the client side gets sell_total. Seat
-    // fees are an airline charge and land on both, unmarked-up.
-    const newTotalFare = (details.totalFare ?? 0) + existingSeatFees
-    const newSellTotal = record.sellTotal + existingSeatFees
-
-    let policyVerdict: string | null = null
-    let policyVerdictDetail: unknown = null
-    let reason = 'Policy could not be re-evaluated for this booking.'
-
-    if (flight) {
-      // Against the SELL total, matching add-passenger: a markup the traveller
-      // cannot see is still money the company spends.
-      const inputs = buildPolicyInputsFromFlight({
-        flight,
-        totalFare: newSellTotal,
-        isRefundable: details.isRefundable ?? false,
-        selectedSeatFees: existingSeatFees ? [String(existingSeatFees)] : [],
-        cancelPenalties: details.cancelPenalties,
-      })
-
-      const ruleResult = await checkBookingAgainstPolicy(db, {
-        employeeId: booking.employee_id,
-        travelType: inputs.travelType,
-        totalCost: inputs.totalCost,
-        numericValues: inputs.numericValues,
-        booleanValues: inputs.booleanValues,
-        tierValues: inputs.tierValues,
-      })
-
-      if (ruleResult.ok) {
-        policyVerdict = ruleResult.verdict
-        policyVerdictDetail = { breaches: ruleResult.breaches }
-        reason = buildReason(ruleResult.breaches)
-      } else {
-        reason = ruleResult.message
-      }
-    }
+    // The fresh price becomes the booking's official one: commercials and
+    // policy again, on the sell total (app/lib/book/repriceBooking.ts).
+    const repriced = await priceAgain(db, booking, details)
+    const { sellTotal: newSellTotal, reason } = repriced
+    const policyVerdict = repriced.verdict
 
     let updated: bookings.RefreshedBooking
     try {
-      updated = await bookings.applyRefreshedFare(db, booking.id, {
-        total_cost: newTotalFare,
-        sell_total: newSellTotal,
-        commercials: record,
-        amadeus_key: details.key,
-        policy_verdict: policyVerdict,
-        policy_verdict_detail: policyVerdictDetail,
-        fare_breakdown: {
-          ...(booking.fare_breakdown as object ?? {}),
-          currency: details.currency,
-          isRefundable: details.isRefundable,
-          fareType: details.fareType,
-          passengerBreakup: details.passengerBreakup,
-          seatFees: existingSeatFees,
-        },
-      })
+      updated = await bookings.applyRefreshedFare(db, booking.id, repriced.fare)
     } catch (updateError) {
       console.error('Refreshed fare successfully but failed to save it to the booking', updateError, { bookingId: booking.id })
       return Response.json({ error: 'Got a fresh price but could not save it — please try again.' }, { status: 500 })

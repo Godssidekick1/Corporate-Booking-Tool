@@ -66,6 +66,10 @@ export interface Client {
   out_of_policy_handling: string
   duplicate_booking_check: string
   within_policy_approval: string
+  fare_rise_reapproval: number | null
+  fare_rise_reapproval_unit: string
+  approval_escalation_hours: number | null
+  ticket_footer_text: string | null
 }
 
 // The generic setter every tab uses. Declared once so a tab cannot accidentally

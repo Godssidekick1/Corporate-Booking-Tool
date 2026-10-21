@@ -130,6 +130,8 @@ export const GET = route(async (req: NextRequest) => {
       verdict: a.verdict,
       createdAt: a.created_at,
       actionedAt: a.actioned_at,
+      // Passed on to this approver after waiting too long (escalation).
+      escalatedFromName: a.escalated_from_name,
       booking: booking ? {
         bookingType: booking.booking_type,
         totalCost: booking.total_cost,
@@ -140,6 +142,8 @@ export const GET = route(async (req: NextRequest) => {
         status: booking.status,
         // "Requested by … for …" when someone booked it on the traveller's behalf.
         bookedByName: booking.booked_by_name,
+        // A guest's booking is tagged; personal trips never reach approval.
+        forGuest: booking.for_guest,
       } : null,
       // A trip sign-off: the trip and what is in it, sell-side.
       trip: tripCard ? {

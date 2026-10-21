@@ -3,7 +3,7 @@
 // Written by scripts/generate-db-types.mjs from the live database schema.
 // Re-run after any schema change:  node scripts/generate-db-types.mjs
 //
-// 54 tables, 0 view(s), 578 columns.
+// 55 tables, 0 view(s), 590 columns.
 
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json }
 
@@ -83,6 +83,7 @@ export interface Tables {
     chain_template_id: string | null
     tmc_id: string | null
     trip_id: string | null
+    escalated_from: string | null
   }
   audit_log: {
     id: string
@@ -338,6 +339,10 @@ export interface Tables {
     out_of_policy_handling: string
     duplicate_booking_check: string
     within_policy_approval: string
+    fare_rise_reapproval: number | null
+    fare_rise_reapproval_unit: string
+    approval_escalation_hours: number | null
+    ticket_footer_text: string | null
   }
   commercial_coverage: {
     tmc_id: string
@@ -638,6 +643,15 @@ export interface Tables {
     filename: string
     sha256: string
     applied_at: string
+  }
+  search_fares: {
+    id: string
+    search_key: string
+    client_id: string
+    tmc_id: string | null
+    traveller_id: string
+    created_at: string
+    flights: Json
   }
   sessions: {
     id: string

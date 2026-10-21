@@ -8,6 +8,10 @@ import { loadClientGates, SELF_BOOKING_OFF } from '@/app/lib/clients/clientGates
 import { NextRequest } from 'next/server'
 import util from 'util'
 import { db } from '@/app/lib/db'
+import * as clientsRepo from '@/app/lib/repositories/clients'
+import { extractPricingDetails } from '@/app/api/book/price/route'
+import { priceAgain, fareRoseTooFar } from '@/app/lib/book/repriceBooking'
+import { startApprovalForBooking } from '@/app/lib/approval-engine/resolveApprovalTier'
 
 // ── POST /api/book/book ───────────────────────────────────────────────────────
 // Fourth step (search → price → add-passenger → book → ticket). Commits the
@@ -276,12 +280,48 @@ export const POST = route(async (req: NextRequest) => {
         throw pricingErr
       }
 
+      // ── The fare rose after it was approved ────────────────────────────
+      // Past the company's threshold (Corporate Settings), the new price is
+      // saved and the booking goes back for approval instead of being booked:
+      // the approver signed off a price, not "whatever the airline asks now".
+      // Measured on the sell total, the figure the approver saw.
+      let passengerTotal = String(booking.total_cost)
+      const modes = booking.client_id ? await clientsRepo.approvalModes(db, booking.client_id) : null
+      const details = modes?.fare_rise_reapproval != null ? extractPricingDetails(freshPricing) : null
+      const target = details ? await bookingsRepo.refreshTarget(db, bookingId) : null
+      if (modes && details && target && booking.client_id) {
+        const repriced = await priceAgain(db, target, details)
+        const approvedSell = Number(booking.sell_total ?? booking.total_cost)
+        if (fareRoseTooFar(approvedSell, repriced.sellTotal, Number(modes.fare_rise_reapproval), modes.fare_rise_reapproval_unit)) {
+          const inr = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`
+          await bookingsRepo.applyRefreshedFare(db, bookingId, repriced.fare)
+          await bookingsRepo.setStatus(db, bookingId, 'pending_approval')
+          const outcome = await startApprovalForBooking(db, {
+            bookingId, clientId: booking.client_id, employeeId: booking.employee_id, travelType: 'flight',
+            verdict: (repriced.verdict as 'green' | 'amber' | 'red' | null) ?? 'green',
+            reason: `Fare rose from ${inr(approvedSell)} to ${inr(repriced.sellTotal)} after it was approved; ${repriced.reason}`,
+            alwaysSend: true,
+          })
+          if (outcome.requiresApproval) {
+            if (!outcome.approverId) await bookingsRepo.setStatus(db, bookingId, 'approval_misconfigured')
+            return Response.json({
+              error: `The fare rose from ${inr(approvedSell)} to ${inr(repriced.sellTotal)} since it was approved, so it has gone back for approval.`,
+              code: 'FARE_ROSE', approvedTotal: approvedSell, newTotal: repriced.sellTotal,
+            }, { status: 409 })
+          }
+          // No chain to send it to (the documented no-chain rule): booked at
+          // the new price, which is now on the booking.
+          await bookingsRepo.setStatus(db, bookingId, 'approved')
+          passengerTotal = String(repriced.totalCost)
+        }
+      }
+
       const freshAddPassenger = await amadeus.addPassenger(
         freshPricing.Key,
         freshPricing.ReferenceNo,
         booking.traveler_snapshot as unknown as CustomerInfo,
-        String(booking.total_cost),
-        String(booking.total_cost)
+        passengerTotal,
+        passengerTotal
       )
 
       bookingKey = freshPricing.Key

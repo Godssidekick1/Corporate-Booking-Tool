@@ -54,12 +54,13 @@ const BOOKED_BY_NAME = sql`(select k.full_name from employees k where k.id = boo
 export type BookedByName = { booked_by_name: string | null }
 
 export type TravellerBookingSummary = Pick<Row<'bookings'>,
-  'id' | 'status' | 'pnr' | 'total_cost' | 'itinerary' | 'traveler_snapshot' | 'fare_breakdown' | 'trip_id' | 'created_at'>
+  'id' | 'status' | 'pnr' | 'total_cost' | 'itinerary' | 'traveler_snapshot' | 'fare_breakdown' | 'trip_id' | 'created_at'
+  | 'purpose' | 'for_guest'>
   & BookedByName
 
 const TRAVELLER_SUMMARY = sql`
   id, status, pnr, ${SELL_TOTAL} as total_cost, itinerary, traveler_snapshot, fare_breakdown,
-  trip_id, created_at, ${BOOKED_BY_NAME}`
+  trip_id, created_at, purpose, for_guest, ${BOOKED_BY_NAME}`
 
 // The traveller's bookings in these trips (one page of their trips).
 export async function forTravellerInTrips(
@@ -233,28 +234,32 @@ export type BookingDetail = Pick<Row<'bookings'>,
   | 'sell_total' | 'total_cost' | 'commercials' | 'itinerary' | 'traveler_snapshot' | 'fare_breakdown'
   | 'policy_status' | 'policy_verdict' | 'policy_verdict_detail' | 'employee_id' | 'trip_id' | 'is_ndc'
   | 'created_at' | 'updated_at'
-> & BookedByName
+> & BookedByName & TicketFooter
+
+// The company's own words at the foot of its e-tickets (Corporate Settings).
+type TicketFooter = { ticket_footer_text: string | null }
+const TICKET_FOOTER = sql`(select c.ticket_footer_text from clients c where c.id = client_id) as ticket_footer_text`
 
 export async function detail(db: Queryable, bookingId: string): Promise<BookingDetail | null> {
   return maybeOne<BookingDetail>(db, sql`
     select id, status, booking_type, provider, provider_order_id, pnr, ticket_numbers, sell_total,
            total_cost, commercials, itinerary, traveler_snapshot, fare_breakdown, policy_status,
            policy_verdict, policy_verdict_detail, employee_id, trip_id, is_ndc, created_at, updated_at,
-           ${BOOKED_BY_NAME}
+           ${BOOKED_BY_NAME}, ${TICKET_FOOTER}
     from bookings where id = ${bookingId}`)
 }
 
 export type PublicTicketRow = Pick<Row<'bookings'>,
   | 'id' | 'status' | 'pnr' | 'ticket_numbers' | 'provider_order_id' | 'sell_total' | 'commercials'
   | 'itinerary' | 'traveler_snapshot' | 'fare_breakdown'
->
+> & TicketFooter
 
 // By the unguessable share token -- the ONLY lookup an unauthenticated caller
 // can make. Callers validate the token's shape before asking.
 export async function byShareToken(db: Queryable, token: string): Promise<PublicTicketRow | null> {
   return maybeOne<PublicTicketRow>(db, sql`
     select id, status, pnr, ticket_numbers, provider_order_id, sell_total, commercials, itinerary,
-           traveler_snapshot, fare_breakdown
+           traveler_snapshot, fare_breakdown, ${TICKET_FOOTER}
     from bookings where share_token = ${token}`)
 }
 
@@ -416,13 +421,13 @@ export async function approvalTarget(db: Queryable, bookingId: string): Promise<
 // What an approver's queue shows of each booking: the SELL side, under the
 // name total_cost. The airline figure is not fetched at all.
 export type ApprovalSummary = Pick<Row<'bookings'>,
-  'id' | 'employee_id' | 'booking_type' | 'total_cost' | 'itinerary' | 'policy_verdict' | 'status'> & BookedByName
+  'id' | 'employee_id' | 'booking_type' | 'total_cost' | 'itinerary' | 'policy_verdict' | 'status' | 'purpose' | 'for_guest'> & BookedByName
 
 export async function approvalSummaries(db: Queryable, bookingIds: readonly string[]): Promise<ApprovalSummary[]> {
   if (bookingIds.length === 0) return []
   return many<ApprovalSummary>(db, sql`
     select id, employee_id, booking_type, ${SELL_TOTAL} as total_cost, itinerary, policy_verdict, status,
-           ${BOOKED_BY_NAME}
+           purpose, for_guest, ${BOOKED_BY_NAME}
     from bookings where id = any(${[...bookingIds]}) order by id`)
 }
 
@@ -472,13 +477,13 @@ export async function setStatus(db: Queryable, bookingId: string, status: string
 
 export type HoldTarget = Pick<Row<'bookings'>,
   | 'id' | 'employee_id' | 'booked_by' | 'client_id' | 'status' | 'provider' | 'provider_order_id' | 'amadeus_key'
-  | 'pricing_key' | 'search_key' | 'result_index' | 'total_cost' | 'traveler_snapshot'
+  | 'pricing_key' | 'search_key' | 'result_index' | 'total_cost' | 'sell_total' | 'traveler_snapshot'
 >
 
 export async function holdTarget(db: Queryable, bookingId: string): Promise<HoldTarget | null> {
   return maybeOne<HoldTarget>(db, sql`
     select id, employee_id, booked_by, client_id, status, provider, provider_order_id, amadeus_key, pricing_key,
-           search_key, result_index, total_cost, traveler_snapshot
+           search_key, result_index, total_cost, sell_total, traveler_snapshot
     from bookings where id = ${bookingId}`)
 }
 

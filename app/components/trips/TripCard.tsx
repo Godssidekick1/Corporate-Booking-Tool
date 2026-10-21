@@ -58,6 +58,9 @@ export interface TripCardFlight {
   booked_by_name?: string | null
   booked_by_me?: boolean
   traveller_name?: string | null
+  // A personal trip (the traveller's own) or a booking for a guest.
+  purpose?: string | null
+  for_guest?: boolean | null
 }
 
 export interface TripCardActions {
@@ -194,6 +197,8 @@ export function FlightRow({ flight, others = false }: { flight: TripCardFlight; 
         </span>
         <span style={s.flightMeta}>
           {others && flight.traveller_name && <span style={s.forChip}>For {flight.traveller_name}</span>}
+          {flight.purpose === 'personal' && <span style={s.forChip}>Personal</span>}
+          {flight.for_guest && <span style={s.forChip}>Guest</span>}
           {it?.origin?.dateTime && <span>{formatDayLabel(it.origin.dateTime)} · {formatTime(it.origin.dateTime)}</span>}
           {flight.pnr && <span>PNR {flight.pnr}</span>}
           {bookedBy && <span>{bookedBy}</span>}

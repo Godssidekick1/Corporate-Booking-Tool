@@ -3,6 +3,7 @@ import { POST as searchPost } from '@/app/api/book/search/route'
 import { POST as pricePost } from '@/app/api/book/price/route'
 import { POST as bookPost } from '@/app/api/book/booking/route'
 import { POST as ticketPost } from '@/app/api/book/ticket/route'
+import { POST as chainPost } from '@/app/api/tmc/approval-chains/direct/route'
 import { AmadeusError } from '@/app/lib/amadeus/client'
 import { call } from '../harness/call'
 import { actors, type Actors } from '../harness/actors'
@@ -207,6 +208,63 @@ d('booking flow', () => {
     expect(await row(bookingId)).toMatchObject({
       status: 'held', pnr: 'PNR002', amadeus_key: 'K-NEW', provider_order_id: 'R-NEW',
     })
+  })
+
+  it('book: a re-priced fare that rose past the company threshold goes back for approval', async () => {
+    const clientId = a.corpAdmin.client_id!
+    // The owner's own chain: one named colleague, so the outcome is fixed.
+    const approver = await one<{ id: string }>(db, sql`
+      select id from employees where client_id = ${clientId} and id <> ${owner.id}
+        and role = 'employee' and status = 'active' order by id limit 1`)
+    expect((await call(chainPost, {
+      as: a.tmcAdmin, method: 'POST', url: '/api/tmc/approval-chains/direct',
+      body: { clientId, employeeId: owner.id, category: 'air', mode: 'sequential', quorum: 'all',
+        approvers: [{ approver_type: 'specific_user', approver_user_id: approver.id, min_verdict: 'green' }] },
+    })).status).toBe(200)
+
+    // Approved at 10,000; the airline now asks 10,800 before any markup.
+    const reset = () => exec(db, sql`
+      update bookings set status = 'approved', amadeus_key = 'K-OLD', provider_order_id = 'R-OLD',
+        search_key = 'SK', pricing_key = 'PK', result_index = '1', total_cost = 10000, sell_total = 10000,
+        itinerary = ${JSON.stringify(ITINERARY)}::jsonb,
+        fare_breakdown = '{"seatFees":0}'::jsonb, pnr = null,
+        traveler_snapshot = coalesce(traveler_snapshot, '{"PassengerDetails":[]}'::jsonb)
+      where id = ${bookingId}`)
+    const expire = () => {
+      fake.booking
+        .mockRejectedValueOnce(new AmadeusError('Amadeus Booking failed: Result Session Expired'))
+        .mockResolvedValueOnce({ ReferenceNo: 'R-NEW', AirBookingResponse: [{ PNR: 'PNR003' }] })
+      fake.pricing.mockResolvedValue(PRICING)
+      fake.addPassenger.mockResolvedValue({ ReferenceNo: 'R-NEW' })
+    }
+
+    try {
+      // A 5% threshold: an 8%+ rise goes back to the approver, not to the airline.
+      await exec(db, sql`update clients set fare_rise_reapproval = 5, fare_rise_reapproval_unit = 'pct' where id = ${clientId}`)
+      await reset()
+      expire()
+      const res = await book(bookingId)
+      expect(res).toMatchObject({ status: 409, json: { code: 'FARE_ROSE', approvedTotal: 10000 } })
+      expect((res.json as { newTotal: number }).newTotal).toBeGreaterThan(10500)
+      expect(fake.addPassenger).not.toHaveBeenCalled()
+      expect(await row(bookingId)).toMatchObject({ status: 'pending_approval', amadeus_key: 'KEY-1', pnr: null })
+      const step = await one<{ approver_id: string; reason: string }>(db, sql`
+        select approver_id, reason from approvals where booking_id = ${bookingId} and status = 'pending'
+        order by created_at desc limit 1`)
+      expect(step.approver_id).toBe(approver.id)
+      expect(step.reason).toMatch(/^Fare rose from ₹10,000 to ₹/)
+
+      // A 50% threshold: the same rise is booked, as before.
+      await exec(db, sql`update approvals set status = 'superseded' where booking_id = ${bookingId} and status = 'pending'`)
+      await exec(db, sql`update clients set fare_rise_reapproval = 50 where id = ${clientId}`)
+      await reset()
+      fake.booking.mockReset(); fake.pricing.mockReset(); fake.addPassenger.mockReset()
+      expire()
+      expect((await book(bookingId)).status).toBe(200)
+      expect(await row(bookingId)).toMatchObject({ status: 'held', pnr: 'PNR003' })
+    } finally {
+      await exec(db, sql`update clients set fare_rise_reapproval = null where id = ${clientId}`)
+    }
   })
 
   it('book: a search too old to re-price fails the booking with SEARCH_EXPIRED', async () => {

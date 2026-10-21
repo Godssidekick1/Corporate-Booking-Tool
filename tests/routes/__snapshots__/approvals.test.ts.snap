@@ -132,6 +132,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "booking": {
         "bookedByName": null,
         "bookingType": "flight",
+        "forGuest": false,
         "itinerary": {
           "airline": {
             "code": "AI",
@@ -217,6 +218,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "bookingId": "7623146c-1f51-41ff-9628-ca580b88d367",
       "createdAt": "2026-09-20T17:18:49.564Z",
       "decisionNote": null,
+      "escalatedFromName": null,
       "kind": "booking",
       "reason": "Self-approved (this band requires no review): Policy group "e" has no limits configured yet. Contact your TMC.",
       "status": "approved",
@@ -236,6 +238,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "booking": {
         "bookedByName": null,
         "bookingType": "flight",
+        "forGuest": false,
         "itinerary": {
           "airline": {
             "code": "AI",
@@ -321,6 +324,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "bookingId": "9eef1d3c-4fb9-403c-b4a4-18d6882184c9",
       "createdAt": "2026-09-17T12:13:10.906Z",
       "decisionNote": null,
+      "escalatedFromName": null,
       "kind": "booking",
       "reason": "Self-approved (this band requires no review): Policy group "e" has no limits configured yet. Contact your TMC.",
       "status": "approved",
@@ -340,6 +344,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "booking": {
         "bookedByName": null,
         "bookingType": "flight",
+        "forGuest": false,
         "itinerary": {
           "airline": {
             "code": "SV",
@@ -452,6 +457,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "bookingId": "e9d5da38-539c-4557-9047-d5f631faf3b4",
       "createdAt": "2026-09-17T11:02:27.148Z",
       "decisionNote": null,
+      "escalatedFromName": null,
       "kind": "booking",
       "reason": "Self-approved (this band requires no review): Policy group "e" has no limits configured yet. Contact your TMC.",
       "status": "approved",
@@ -471,6 +477,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "booking": {
         "bookedByName": null,
         "bookingType": "flight",
+        "forGuest": false,
         "itinerary": {
           "airline": {
             "code": "IX",
@@ -599,6 +606,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "bookingId": "f87dd291-e50f-4c75-ab45-ac1223fa68ab",
       "createdAt": "2026-09-17T10:54:24.127Z",
       "decisionNote": null,
+      "escalatedFromName": null,
       "kind": "booking",
       "reason": "Self-approved (this band requires no review): Policy group "e" has no limits configured yet. Contact your TMC.",
       "status": "approved",
@@ -618,6 +626,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "booking": {
         "bookedByName": null,
         "bookingType": "flight",
+        "forGuest": false,
         "itinerary": {
           "airline": {
             "code": "AI",
@@ -703,6 +712,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "bookingId": "b007376c-1265-4519-ad2f-fa912ce5f915",
       "createdAt": "2026-09-17T09:05:06.423Z",
       "decisionNote": null,
+      "escalatedFromName": null,
       "kind": "booking",
       "reason": "Self-approved (this band requires no review): Policy group "e" has no limits configured yet. Contact your TMC.",
       "status": "approved",
@@ -722,6 +732,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "booking": {
         "bookedByName": null,
         "bookingType": "flight",
+        "forGuest": false,
         "itinerary": {
           "airline": {
             "code": "AI",
@@ -807,6 +818,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "bookingId": "8017bcb3-760f-4a91-88d4-1208a1bfc45d",
       "createdAt": "2026-09-16T11:30:41.626Z",
       "decisionNote": null,
+      "escalatedFromName": null,
       "kind": "booking",
       "reason": "Self-approved (this band requires no review): Policy group "e" has no limits configured yet. Contact your TMC.",
       "status": "approved",
@@ -826,6 +838,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "booking": {
         "bookedByName": null,
         "bookingType": "flight",
+        "forGuest": false,
         "itinerary": {
           "airline": {
             "code": "AI",
@@ -887,6 +900,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "bookingId": "9728aaf2-c9a7-4773-b166-40033f1f9cff",
       "createdAt": "2026-09-16T09:47:03.149Z",
       "decisionNote": null,
+      "escalatedFromName": null,
       "kind": "booking",
       "reason": "Self-approved (this band requires no review): Policy group "e" has no limits configured yet. Contact your TMC.",
       "status": "approved",
@@ -906,6 +920,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "booking": {
         "bookedByName": null,
         "bookingType": "flight",
+        "forGuest": false,
         "itinerary": {
           "airline": {
             "code": "AI",
@@ -954,6 +969,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "bookingId": "2ee9448c-d23f-4ba9-a695-3cccdb0532c2",
       "createdAt": "2026-09-16T09:45:12.872Z",
       "decisionNote": null,
+      "escalatedFromName": null,
       "kind": "booking",
       "reason": "Self-approved (this band requires no review): Policy group "e" has no limits configured yet. Contact your TMC.",
       "status": "approved",
@@ -973,6 +989,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "booking": {
         "bookedByName": null,
         "bookingType": "flight",
+        "forGuest": false,
         "itinerary": {
           "airline": {
             "code": "AI",
@@ -1034,6 +1051,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "bookingId": "c3586144-c46e-492d-a295-db908a862c9f",
       "createdAt": "2026-09-11T11:12:48.106Z",
       "decisionNote": null,
+      "escalatedFromName": null,
       "kind": "booking",
       "reason": "Self-approved (this band requires no review): Policy group "e" has no limits configured yet. Contact your TMC.",
       "status": "approved",
@@ -1053,6 +1071,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "booking": {
         "bookedByName": null,
         "bookingType": "flight",
+        "forGuest": false,
         "itinerary": {
           "airline": {
             "code": "AI",
@@ -1093,6 +1112,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "bookingId": "02e3f04c-4da1-46dd-80fd-82cd93f4f12d",
       "createdAt": "2026-09-01T11:03:04.757Z",
       "decisionNote": null,
+      "escalatedFromName": null,
       "kind": "booking",
       "reason": "Self-approved (this band requires no review): Within policy",
       "status": "approved",
@@ -1112,6 +1132,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "booking": {
         "bookedByName": null,
         "bookingType": "flight",
+        "forGuest": false,
         "itinerary": {
           "airline": {
             "code": "AI",
@@ -1152,6 +1173,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "bookingId": "a3962ca6-0156-4399-b485-51891c96f6de",
       "createdAt": "2026-09-01T10:55:13.130Z",
       "decisionNote": null,
+      "escalatedFromName": null,
       "kind": "booking",
       "reason": "Self-approved (this band requires no review): Within policy",
       "status": "approved",
@@ -1171,6 +1193,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "booking": {
         "bookedByName": null,
         "bookingType": "flight",
+        "forGuest": false,
         "itinerary": {
           "airline": {
             "code": "AI",
@@ -1211,6 +1234,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "bookingId": "a7658d35-ef7a-446f-904c-3c46694d5962",
       "createdAt": "2026-08-26T11:11:29.012Z",
       "decisionNote": "acceptable, have a good trip.",
+      "escalatedFromName": null,
       "kind": "booking",
       "reason": "domestic fare limit exceeded (policy: 8000, actual: 8891)",
       "status": "approved",
@@ -1233,6 +1257,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "booking": {
         "bookedByName": null,
         "bookingType": "flight",
+        "forGuest": false,
         "itinerary": {
           "airline": {
             "code": "AI",
@@ -1298,6 +1323,7 @@ exports[`approvals > queue: the approver sees it, sell-side, with a summary for 
       "bookingId": "<booking 1>",
       "createdAt": "<now>",
       "decisionNote": null,
+      "escalatedFromName": null,
       "kind": "booking",
       "reason": "domestic fare limit exceeded (policy: 7000, actual: 11720); preferred carrier tier exceeded (policy: Budget only, actual: Full-service)",
       "status": "pending",

@@ -432,6 +432,9 @@ async function raiseApprovals(
     }
   }
 
+  // How long the company lets a step wait before it passes to the approver's
+  // manager (app/lib/approval-engine/escalate.ts).
+  const escalateAfter = (await clients.approvalModes(db, ctx.clientId))?.approval_escalation_hours ?? null
   const inserted = await approvals.raise(db, pending.map((p): approvals.NewApproval => ({
     client_id: ctx.clientId,
     subject: ctx.subject,
@@ -442,6 +445,7 @@ async function raiseApprovals(
     chain_template_id: chain.templateId,
     verdict: ctx.verdict,
     actioned: false,
+    escalate_after_hours: escalateAfter,
   })))
 
   return {
@@ -465,9 +469,12 @@ export async function startApprovalForBooking(
     travelType: string
     verdict: Verdict
     reason: string
+    // Sent whatever the outcome: a fare that rose past the company's
+    // threshold after approval goes back to a person.
+    alwaysSend?: boolean
   }
 ): Promise<TierOutcome> {
-  const { bookingId, clientId, employeeId, travelType, verdict, reason } = params
+  const { bookingId, clientId, employeeId, travelType, verdict, reason, alwaysSend } = params
 
   // Corporate Settings can switch approval off per product — a client commonly
   // wants flights reviewed and hotels not. Checked before the chain is resolved
@@ -486,7 +493,7 @@ export async function startApprovalForBooking(
     }
     // A within-policy booking (or one not evaluated, routed the same) is sent
     // only when the company says so. Needs-approval and out-of-policy always are.
-    if (verdict === 'green' && modes?.within_policy_approval !== 'required') {
+    if (verdict === 'green' && modes?.within_policy_approval !== 'required' && !alwaysSend) {
       return { requiresApproval: false }
     }
   }

@@ -98,6 +98,8 @@ interface Booking {
   pnr: string | null
   ticket_numbers: (string | null)[] | null
   total_cost: number
+  // The company's own words for its tickets (Corporate Settings).
+  ticket_footer_text?: string | null
   itinerary: FlightItinerary | null
   traveler_snapshot: {
     Email: string
@@ -659,6 +661,8 @@ export default function TicketPage() {
               <span style={s.fareFooterValue}>{currency} {booking.total_cost?.toLocaleString('en-IN')}</span>
             </div>
 
+            {booking.ticket_footer_text && <p style={s.companyFooter}>{booking.ticket_footer_text}</p>}
+
             <div className="no-print" style={s.ticketActions}>
               <button type="button" onClick={() => window.print()} style={s.ticketActionPrimary}>
                 Download / print
@@ -818,6 +822,7 @@ const s: Record<string, React.CSSProperties> = {
   mutedLine: { fontSize: '12px', color: '#9CA3AF', margin: 0 },
 
   fareFooter: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 4px 20px', fontSize: '12px', color: '#9CA3AF' },
+  companyFooter: { fontSize: '12px', color: '#6B7280', lineHeight: 1.5, margin: '0 4px 16px', whiteSpace: 'pre-line' as const },
   fareFooterValue: { fontSize: '13px', fontWeight: 600, color: '#6B7280' },
 
   // The 16px matches the gap above the action row, so the three groups down the

@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "migrate": "node scripts/migrate.mjs",
+    "escalate": "node scripts/escalate.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "scale": "vitest run -c vitest.scale.config.mts",

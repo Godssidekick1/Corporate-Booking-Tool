@@ -202,7 +202,7 @@ export default function TripWorkspace({ tripId, home, backHref, backLabel }: {
                   <li key={st.id} style={s.step}>
                     <span style={s.stepWho}>Step {st.tier} · {st.approver_name ?? 'Approver'}</span>
                     <span style={{ ...s.pill, color: meta?.color, background: meta?.bg }}>
-                      {st.status === 'pending' ? 'Waiting' : st.status === 'approved' ? 'Approved' : st.status === 'rejected' ? 'Rejected' : 'Not needed'}
+                      {st.status === 'pending' ? 'Waiting' : st.status === 'approved' ? 'Approved' : st.status === 'rejected' ? 'Rejected' : st.status === 'escalated' ? 'Passed to their manager' : 'Not needed'}
                     </span>
                     <span style={s.stepWhen}>{shortDate(st.actioned_at ?? st.created_at)}</span>
                     {st.decision_note && <span style={s.stepNote}>“{st.decision_note}”</span>}

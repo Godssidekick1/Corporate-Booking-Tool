@@ -110,6 +110,7 @@ export const GET = route(async (
     ok: true,
     ticket: {
       pnr: booking.pnr,
+      footer: booking.ticket_footer_text,
       reference: booking.provider_order_id,
       // Projected: the frozen itinerary carries provider session keys, and
       // this page needs no login. See app/lib/book/travellerView.

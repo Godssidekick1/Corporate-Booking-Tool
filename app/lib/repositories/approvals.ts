@@ -307,6 +307,9 @@ export interface NewApproval {
   verdict: string
   // Set for rows logged as already approved (self, top of hierarchy).
   actioned: boolean
+  // A pending row passes to the approver's manager after this many hours
+  // (the company's approval_escalation_hours). Absent or null: never.
+  escalate_after_hours?: number | null
 }
 
 export async function raise(
@@ -315,11 +318,56 @@ export async function raise(
 ): Promise<Pick<Row<'approvals'>, 'id' | 'approver_id'>[]> {
   if (rows.length === 0) return []
   return many(db, sql`
-    insert into approvals (client_id, booking_id, trip_id, approver_id, tier, status, reason, chain_template_id, verdict, actioned_at)
+    insert into approvals (client_id, booking_id, trip_id, approver_id, tier, status, reason, chain_template_id, verdict, actioned_at, escalates_at)
     values ${join(rows.map(r => sql`(
       ${r.client_id}, ${'booking' in r.subject ? r.subject.booking : null}, ${'trip' in r.subject ? r.subject.trip : null}, ${r.approver_id}, ${r.tier}, ${r.status}, ${r.reason},
-      ${r.chain_template_id}, ${r.verdict}, ${r.actioned ? sql`now()` : sql`null`})`))}
+      ${r.chain_template_id}, ${r.verdict}, ${r.actioned ? sql`now()` : sql`null`},
+      ${r.status === 'pending' && r.escalate_after_hours ? sql`now() + make_interval(hours => ${r.escalate_after_hours}::int)` : sql`null`})`))}
     returning id, approver_id`)
+}
+
+// ═══ Escalation ══════════════════════════════════════════════════════════════
+// app/lib/approval-engine/escalate.ts: a step waiting past its company's limit
+// passes to the approver's own manager, once.
+
+export type DueEscalation = Pick<Row<'approvals'>,
+  'id' | 'client_id' | 'booking_id' | 'trip_id' | 'approver_id' | 'tier' | 'reason' | 'verdict' | 'chain_template_id'>
+
+export async function dueForEscalation(db: Queryable, now: Date): Promise<DueEscalation[]> {
+  return many<DueEscalation>(db, sql`
+    select id, client_id, booking_id, trip_id, approver_id, tier, reason, verdict, chain_template_id
+    from approvals where status = 'pending' and escalates_at <= ${now.toISOString()}
+    order by escalates_at, id limit 500`)
+}
+
+// Takes the row for this run: its timer cleared, so it is escalated (or kept)
+// once. False when it was decided, or claimed, since it was read.
+export async function claimForEscalation(db: Queryable, approvalId: string): Promise<boolean> {
+  return (await exec(db, sql`
+    update approvals set escalates_at = null
+    where id = ${approvalId} and status = 'pending' and escalates_at is not null`)) === 1
+}
+
+// The approver's own manager: active, at the same company, and not the
+// traveller (nobody approves their own booking or trip).
+export async function escalationTarget(db: Queryable, row: DueEscalation): Promise<string | null> {
+  const found = await maybeOne<{ id: string }>(db, sql`
+    select m.id from employees a join employees m on m.id = a.manager_id
+    where a.id = ${row.approver_id} and m.id <> a.id and m.status = 'active' and m.client_id = ${row.client_id}
+      and m.id is distinct from coalesce(
+        (select employee_id from bookings where id = ${row.booking_id}),
+        (select created_by from trips where id = ${row.trip_id}))`)
+  return found?.id ?? null
+}
+
+// The old row hands over; a new pending one, the same step, for the manager.
+export async function escalate(db: Queryable, row: DueEscalation, managerId: string): Promise<string> {
+  await exec(db, sql`update approvals set status = 'escalated', actioned_at = now() where id = ${row.id}`)
+  return (await one<{ id: string }>(db, sql`
+    insert into approvals (client_id, booking_id, trip_id, approver_id, tier, status, reason, chain_template_id, verdict, escalated_from)
+    values (${row.client_id}, ${row.booking_id}, ${row.trip_id}, ${managerId}, ${row.tier}, 'pending', ${row.reason},
+            ${row.chain_template_id}, ${row.verdict}, ${row.id})
+    returning id`)).id
 }
 
 export async function pendingAtTier(db: Queryable, subject: Subject, tier: number): Promise<string[]> {
@@ -396,8 +444,12 @@ export async function setVerdict(db: Queryable, approvalId: string, verdict: str
 
 export type QueueRow = Pick<Row<'approvals'>,
   'id' | 'booking_id' | 'trip_id' | 'tier' | 'status' | 'reason' | 'decision_note' | 'verdict' | 'actioned_at' | 'created_at'>
+  // Who had this step before it was passed on (escalation), by name.
+  & { escalated_from_name: string | null }
 
-const QUEUE = sql`id, booking_id, trip_id, tier, status, reason, decision_note, verdict, actioned_at, created_at`
+const QUEUE = sql`id, booking_id, trip_id, tier, status, reason, decision_note, verdict, actioned_at, created_at,
+  (select e.full_name from approvals p join employees e on e.id = p.approver_id
+   where p.id = approvals.escalated_from) as escalated_from_name`
 
 // Both lists are paged: an approver for a large company (finance, an admin)
 // can have thousands of decisions in a month.
