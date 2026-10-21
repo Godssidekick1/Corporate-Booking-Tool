@@ -106,19 +106,40 @@ bookings need both the company switch and the traveller's policy group
 (personal No and guests Yes until a group says otherwise; no policy to check
 means the company switch alone).
 
-- **Phase 2:** max layover, max cancellation penalty, lowest logical fare
-  (a cheaper fare within N minutes of the chosen one), re-approval when a
-  re-priced fare rises by more than X, approval escalation
-  (approvals.escalates_at).
-- **Phase 3:** booking emails per event (needs production SMTP), ticket
-  footer text.
+Then (2026-10-20), the three outcomes:
+- **Within policy:** the company decides (Corporate Settings, "Within-policy
+  bookings") whether it is approved automatically or sent.
+- **Needs approval:** within a fare cap's grace, or a cheaper flight in the
+  lowest-fare window. Always sent; never blocked.
+- **Out of policy:** beyond grace, or a rule broken.
+
+Also added then: grace per policy group (% or ₹), the approval amounts
+removed, and anything sent for approval reaches at least the chain's first
+step. Phase 2 too: max layover, max cancellation fee, lowest logical fare,
+re-approval when a re-priced fare rises, escalation to the approver's
+manager, Personal and Guest tags, and a ticket footer.
+
+- **Schedule the escalation sweep.** `npm run escalate` (or POST
+  /api/internal/escalate with `x-internal-secret`) every 15 minutes, from
+  Windows Task Scheduler, cron or a Vercel cron job. Until something runs
+  it, no approval escalates.
+- **Booking emails per event** (needs production SMTP), including an
+  escalation and a fare sent back for re-approval.
+- **Lowest logical fare compares the outbound departure** of one-way and
+  round trips alike. A round trip whose return is far less convenient can
+  count as "cheaper nearby".
+- **A fare re-priced at booking but still under the threshold** is booked
+  at the airline's new price while the booking keeps the approved totals,
+  as before this change. Recording the new price there too is a small
+  follow-up.
+- **Old approval rules** (auto_approve_under, finance_approval_over) stay in
+  stored policy versions until a group is saved again. They are not read.
 - **A guest is what the booker says.** for_guest is the booker's own choice;
   the server cannot tell a guest's name from an employee's. Good enough while
   it is a company preference rather than a control anyone gains by evading.
 - **Personal trips are paid by the traveller's card** when the resolver can
   pick one; no demo or template client has a traveller-paid form of payment
   yet, so that branch is untested against real rows.
-- **Show "Personal" and "Guest"** on My trips and the approvals queue.
 
 ## Before real users
 
@@ -128,6 +149,10 @@ means the company switch alone).
 - Move database hosting off Supabase (deferred by the mentor).
 
 ## Operational (one-off)
+
+- Apply the 2026-10-20 migrations to the hosted database (within-policy
+  approval, quote fare conditions, search_fares, re-approval / escalation /
+  ticket footer). Local is up to date.
 
 - Run `npm run migrate` (places, no-manager, airports) and then
   `node scripts/load-cities.mjs` on the hosted database. Local is up to date.
