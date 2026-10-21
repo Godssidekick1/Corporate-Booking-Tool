@@ -234,7 +234,9 @@ export default function TmcPolicyPage() {
 
   const [grid, setGrid] = useState<Grid>({})
   const [version, setVersion] = useState(0)
-  const [openCategories, setOpenCategories] = useState<Record<string, boolean>>({ flight: true })
+  // An accordion: one section open at a time, Fares first. Opening another
+  // folds the one before; the folded headers say what each one holds.
+  const [openCategory, setOpenCategory] = useState<string | null>('flight')
   // Linked companies whose own Corporate Setting decides within-policy
   // approval, whatever this group says.
   const [overrides, setOverrides] = useState<ClientOverride[]>([])
@@ -482,12 +484,7 @@ export default function TmcPolicyPage() {
   }
 
   function toggleCategory(id: string) {
-    setOpenCategories(prev => ({ ...prev, [id]: !prev[id] }))
-  }
-
-  const allOpen = CATEGORIES.every(c => openCategories[c.id])
-  function toggleAll() {
-    setOpenCategories(allOpen ? {} : Object.fromEntries(CATEGORIES.map(c => [c.id, true])))
+    setOpenCategory(prev => (prev === id ? null : id))
   }
 
   const linkedIds = new Set(links.map(l => l.policyGroupId))
@@ -721,18 +718,14 @@ export default function TmcPolicyPage() {
                 </div>
               ) : (
                 <div style={s.categories}>
-                  <div style={s.expandRow}>
-                    <button type="button" onClick={toggleAll} style={s.expandBtn}>
-                      {allOpen ? 'Collapse all' : 'Expand all'}
-                    </button>
-                  </div>
                   {CATEGORIES.map((cat, ci) => {
-                    const open = !!openCategories[cat.id]
+                    const open = openCategory === cat.id
                     const { set, total } = countSetFields(grid, cat)
                     return (
                       <div key={cat.id} style={{ ...s.categoryBlock, marginTop: ci === 0 ? 0 : 12 }}>
                         <button
                           onClick={() => toggleCategory(cat.id)}
+                          aria-expanded={open}
                           style={{ ...s.categoryHeader, background: cat.color }}
                         >
                           <div style={s.categoryHeaderLeft}>
@@ -971,8 +964,6 @@ const s: Record<string, React.CSSProperties> = {
   categoryLabel: { fontSize: 13, fontWeight: 600 },
   categoryBadge: { fontSize: 10, fontWeight: 600, border: '1px solid', borderRadius: 4, padding: '2px 7px' },
   categoryChevron: { fontSize: 13, transition: 'transform 0.2s', display: 'block' },
-  expandRow: { display: 'flex', justifyContent: 'flex-end', marginBottom: 8 },
-  expandBtn: { fontSize: 12, fontWeight: 600, color: '#374151', background: '#fff', border: '1px solid #D1D5DB', borderRadius: 6, padding: '5px 12px', cursor: 'pointer' },
   categorySummary: { flex: 1, minWidth: 0, margin: '0 12px', fontSize: 12, opacity: 0.85, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'right' },
   overrideNote: { margin: '4px 16px 12px', padding: '10px 12px', fontSize: 12.5, lineHeight: 1.55, color: '#92400E', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8 },
   overrideDiffers: { fontWeight: 700, textDecoration: 'underline' },
