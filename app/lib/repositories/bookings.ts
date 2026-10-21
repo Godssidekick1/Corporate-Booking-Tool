@@ -1,6 +1,7 @@
 import { sql, empty, many, one, maybeOne, exec, json, type Queryable } from '@/app/lib/db/sql'
 import { page } from '@/app/lib/db/fragments'
 import type { Row } from '@/app/lib/db/types.generated'
+import type { FareConditions } from '@/app/lib/book/types'
 
 // ── Bookings and price quotes ────────────────────────────────────────────────
 // Owns: bookings, price_quotes.
@@ -287,7 +288,7 @@ export async function saveTravellerSnapshot(db: Queryable, bookingId: string, sn
 export type NewQuote = Pick<Row<'price_quotes'>,
   | 'client_id' | 'employee_id' | 'priced_by' | 'amadeus_key' | 'reference_no' | 'pricing_key' | 'provider'
   | 'result_index' | 'sell_total' | 'expires_at'
-> & { airline_components: unknown; commercials: unknown }
+> & { airline_components: unknown; commercials: unknown; fare_conditions: FareConditions | null }
 
 // Re-pricing the same itinerary is normal; the newest quote is the one that
 // counts, so the pair (amadeus_key, reference_no) is upserted. employee_id is
@@ -296,23 +297,24 @@ export type NewQuote = Pick<Row<'price_quotes'>,
 export async function saveQuote(db: Queryable, q: NewQuote): Promise<void> {
   await exec(db, sql`
     insert into price_quotes (client_id, employee_id, priced_by, amadeus_key, reference_no, pricing_key, provider,
-                              result_index, airline_components, commercials, sell_total, expires_at)
+                              result_index, airline_components, commercials, sell_total, expires_at, fare_conditions)
     values (${q.client_id}, ${q.employee_id}, ${q.priced_by}, ${q.amadeus_key}, ${q.reference_no}, ${q.pricing_key},
             ${q.provider}, ${q.result_index}, ${json(q.airline_components)}, ${json(q.commercials)},
-            ${q.sell_total}, ${q.expires_at})
+            ${q.sell_total}, ${q.expires_at}, ${q.fare_conditions ? json(q.fare_conditions) : null})
     on conflict (amadeus_key, reference_no) do update set
       client_id = excluded.client_id, employee_id = excluded.employee_id, priced_by = excluded.priced_by,
       pricing_key = excluded.pricing_key, provider = excluded.provider,
       result_index = excluded.result_index, airline_components = excluded.airline_components,
       commercials = excluded.commercials, sell_total = excluded.sell_total,
-      expires_at = excluded.expires_at`)
+      expires_at = excluded.expires_at, fare_conditions = excluded.fare_conditions`)
 }
 
 export type HeldQuote = Pick<Row<'price_quotes'>, 'airline_components' | 'commercials' | 'sell_total' | 'employee_id' | 'priced_by' | 'expires_at'>
+  & { fare_conditions: FareConditions | null }
 
 export async function heldQuote(db: Queryable, amadeusKey: string, referenceNo: string): Promise<HeldQuote | null> {
   return maybeOne<HeldQuote>(db, sql`
-    select airline_components, commercials, sell_total, employee_id, priced_by, expires_at from price_quotes
+    select airline_components, commercials, sell_total, employee_id, priced_by, expires_at, fare_conditions from price_quotes
     where amadeus_key = ${amadeusKey} and reference_no = ${referenceNo}`)
 }
 

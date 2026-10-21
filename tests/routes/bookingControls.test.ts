@@ -352,6 +352,14 @@ d('booking controls (Corporate Settings)', () => {
     }
   })
 
+  it('fare conditions come from the airline at pricing, not from the request', async () => {
+    // The airline priced the fare as refundable; the request claims otherwise.
+    await price('C1', '2030-09-01')
+    expect((await addPassenger('C1', '2030-09-01', { isRefundable: false })).status).toBe(200)
+    expect(await one(db, sql`select fare_breakdown->>'isRefundable' as r from bookings where provider_order_id = 'C1'`))
+      .toEqual({ r: 'true' })
+  })
+
   it('quote hold: a fare priced more than 30 minutes ago is not booked', async () => {
     await price('Q1', '2030-06-01')
     await price('Q2', '2030-06-02')

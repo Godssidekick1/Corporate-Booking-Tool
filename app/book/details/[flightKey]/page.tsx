@@ -561,6 +561,7 @@ export default function BookingDetailsPage() {
           flight,
           totalFare: priced.totalFare,
           isRefundable: priced.isRefundable,
+          cancelPenalties: priced.cancelPenalties,
           selectedSeatFees,
         }),
       })

@@ -89,6 +89,8 @@ export interface PricedFare {
   brandedFareName?: string
   brandedFareDescription?: string
   brandedServices?: string[]
+  // The airline's cancellation fees for this fare, for the policy preview.
+  cancelPenalties?: { paxType: string; text: string }[]
   // When this fare was priced (ms since epoch): the passenger page counts the
   // quote hold down from it (app/lib/book/quoteHold.ts).
   pricedAt?: number

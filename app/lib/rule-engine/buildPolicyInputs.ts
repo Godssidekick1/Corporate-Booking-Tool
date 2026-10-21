@@ -1,5 +1,5 @@
 import { classifyFlight } from './classifyTrip'
-import type { FlatFlightResult } from '@/app/lib/book/types'
+import type { FlatFlightResult, PenaltyLine } from '@/app/lib/book/types'
 
 // ── CABIN_RANK ────────────────────────────────────────────────────────────
 // Mirrors CABIN_CLASS_OPTIONS in app/tmc/configurations/policy/page.tsx exactly —
@@ -45,6 +45,9 @@ export interface PolicyInputSource {
   // by passenger. Omit or pass [] if nothing's been picked yet (no seat
   // selection made is not a policy violation).
   selectedSeatFees?: string[]
+  // The airline's cancellation fees for this fare (pricing's CancelPenalty).
+  // Absent: max_cancel_penalty is not checked, unless the fare is non-refundable.
+  cancelPenalties?: PenaltyLine[]
   // "Now", for the advance-booking count. Defaults to the real clock; tests
   // pass a fixed one.
   now?: Date
@@ -66,6 +69,43 @@ function daysAhead(departure: string | undefined, now: Date): number | null {
   return Number.isFinite(days) ? Math.round(days) : null
 }
 
+// ── longestLayoverHours ──────────────────────────────────────────────────────
+// The longest wait at any stop, in any direction: from landing to taking off
+// again at the same airport, so both times are local to it and subtract
+// directly. Null when no stop carries both times.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function longestLayoverHours(flight: FlatFlightResult): number | null {
+  const stops = flight.journeys?.length ? flight.journeys.flatMap(j => j.stops ?? []) : flight.stops ?? []
+  let longest: number | null = null
+  for (const s of stops) {
+    const arrived = Date.parse(s.arrivalDateTime)
+    const leaves = s.departureDateTime ? Date.parse(s.departureDateTime) : NaN
+    if (!Number.isFinite(arrived) || !Number.isFinite(leaves) || leaves < arrived) continue
+    const hours = (leaves - arrived) / 3_600_000
+    longest = Math.max(longest ?? 0, hours)
+  }
+  return longest === null ? null : Math.round(longest * 100) / 100
+}
+
+// ── cancelPenaltyAmount ──────────────────────────────────────────────────────
+// What cancelling would cost, in rupees. A non-refundable fare loses the whole
+// fare. Otherwise the airline's fee lines, as it sends them ("INR3000", "0"):
+// the adult lines when there are any, the highest one. A fee in another
+// currency or in words is not read, so the check is skipped, not guessed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function cancelPenaltyAmount(lines: PenaltyLine[] | undefined, isRefundable: boolean, totalFare: number): number | null {
+  if (!isRefundable) return totalFare
+  if (!lines?.length) return null
+  const adult = lines.filter(l => l.paxType === 'ADT')
+  const amounts = (adult.length ? adult : lines)
+    .map(l => /^(?:INR\s*)?(\d+(?:\.\d+)?)$/i.exec(l.text.trim()))
+    .filter((m): m is RegExpExecArray => m !== null)
+    .map(m => Number(m[1]))
+  return amounts.length ? Math.max(...amounts) : null
+}
+
 export interface BuiltPolicyInputs {
   travelType: 'flight_domestic' | 'flight_international'
   totalCost: number
@@ -82,7 +122,7 @@ export interface BuiltPolicyInputs {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function buildPolicyInputsFromFlight(source: PolicyInputSource): BuiltPolicyInputs {
-  const { flight, totalFare, isRefundable, selectedSeatFees, now = new Date() } = source
+  const { flight, totalFare, isRefundable, selectedSeatFees, cancelPenalties, now = new Date() } = source
 
   // Amadeus sends fare/fee amounts as strings, matching the pattern already
   // seen elsewhere in this codebase (fare totals, taxes, etc.) — never
@@ -127,6 +167,8 @@ export function buildPolicyInputsFromFlight(source: PolicyInputSource): BuiltPol
     : flight.stopCount ?? 0
 
   const advance = daysAhead(flight.journeys?.[0]?.origin?.dateTime ?? flight.origin?.dateTime, now)
+  const layover = longestLayoverHours(flight)
+  const cancelFee = cancelPenaltyAmount(cancelPenalties, isRefundable, totalFare)
 
   return {
     travelType,
@@ -139,6 +181,8 @@ export function buildPolicyInputsFromFlight(source: PolicyInputSource): BuiltPol
       // not from the search form, whose date format is display-only.
       ...(advance !== null ? { advance_booking_days: advance } : {}),
       ...(hours > 0 ? { max_journey_hours: Math.round(hours * 100) / 100 } : {}),
+      ...(layover !== null ? { max_layover_hours: layover } : {}),
+      ...(cancelFee !== null ? { max_cancel_penalty: cancelFee } : {}),
     },
     booleanValues: {
       // What the fare IS, not an entitlement used: evaluateBooking compares it

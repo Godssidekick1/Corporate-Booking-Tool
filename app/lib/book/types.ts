@@ -44,7 +44,14 @@ export interface StopInfo {
 
 export interface PenaltyLine {
   paxType: string
-  text: string   // free-text as Amadeus sends it, e.g. "INR3000" or "0" — never parsed, just trimmed
+  text: string   // free-text as Amadeus sends it, e.g. "INR3000" or "0"; read as an amount only by the policy check
+}
+
+// What the airline said about a priced fare, held with the quote
+// (price_quotes.fare_conditions): add-passenger judges these, not the browser.
+export interface FareConditions {
+  refundable: boolean
+  cancelPenalties: PenaltyLine[]
 }
 
 // One filed tax, by code. YQ is conventionally the fuel/insurance surcharge and

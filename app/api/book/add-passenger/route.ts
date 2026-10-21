@@ -198,6 +198,11 @@ export const POST = route(async (req: NextRequest) => {
     }, { status: 409 })
   }
 
+  // What the airline said about this fare when it was priced. The request's
+  // own isRefundable only for a quote priced before these were kept.
+  const conditions = quote.fare_conditions
+  const refundable = conditions?.refundable ?? isRefundable
+
   // The traveller's blocked airlines and allowed fare types. A held quote means
   // /api/book/price already passed this; checked again because the policy may
   // have changed since, and nothing reaches the airline that it would refuse.
@@ -283,7 +288,8 @@ export const POST = route(async (req: NextRequest) => {
       // still money leaving the corporate's budget, and a limit that ignored it
       // would approve trips the company never agreed to fund.
       const inputs = buildPolicyInputsFromFlight({
-        flight, totalFare: sellGrandTotal, isRefundable, selectedSeatFees,
+        flight, totalFare: sellGrandTotal, isRefundable: refundable, selectedSeatFees,
+        cancelPenalties: conditions?.cancelPenalties,
       })
       travelTypeForApproval = inputs.travelType
 
@@ -417,7 +423,7 @@ export const POST = route(async (req: NextRequest) => {
         is_ndc: isNdc ?? null,
         itinerary: itinerary ?? null,
         traveler_snapshot: customerInfo,
-        fare_breakdown: { currency, isRefundable, fareType, passengerBreakup, seatFees: seatFees ?? 0 },
+        fare_breakdown: { currency, isRefundable: refundable, fareType, passengerBreakup, seatFees: seatFees ?? 0 },
         policy_status: policyStatus,
         policy_verdict: policyVerdict,
         policy_verdict_detail: policyVerdictDetail,

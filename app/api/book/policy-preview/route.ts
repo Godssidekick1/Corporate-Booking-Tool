@@ -6,7 +6,7 @@ import { NextRequest } from 'next/server'
 import { checkBookingAgainstPolicy } from '@/app/lib/rule-engine/checkBookingAgainstPolicy'
 import { buildPolicyInputsFromFlight } from '@/app/lib/rule-engine/buildPolicyInputs'
 import { buildReason } from '@/app/lib/approval-engine/resolveApprovalTier'
-import type { FlatFlightResult } from '@/app/lib/book/types'
+import type { FlatFlightResult, PenaltyLine } from '@/app/lib/book/types'
 
 // ── POST /api/book/policy-preview ────────────────────────────────────────────
 // Read-only verdict check, called from /book/details/[flightKey] — BEFORE
@@ -26,6 +26,7 @@ interface PreviewBody {
   flight: FlatFlightResult
   totalFare: number
   isRefundable: boolean
+  cancelPenalties?: PenaltyLine[]
   selectedSeatFees?: string[]
 }
 
@@ -39,13 +40,13 @@ export const POST = route(async (req: NextRequest) => {
   const actor = await resolveActor(db, user, body.travellerId)
   if (!actor.ok) return refuse(actor)
   const employee = actor.actor.traveller
-  const { flight, totalFare, isRefundable, selectedSeatFees } = body
+  const { flight, totalFare, isRefundable, selectedSeatFees, cancelPenalties } = body
 
   if (!flight || totalFare === undefined) {
     return Response.json({ error: 'flight and totalFare are required' }, { status: 400 })
   }
 
-  const inputs = buildPolicyInputsFromFlight({ flight, totalFare, isRefundable, selectedSeatFees })
+  const inputs = buildPolicyInputsFromFlight({ flight, totalFare, isRefundable, selectedSeatFees, cancelPenalties })
   const result = await checkBookingAgainstPolicy(db, {
     employeeId: employee.id,
     travelType: inputs.travelType,

@@ -148,6 +148,7 @@ export const POST = route(async (
         totalFare: newSellTotal,
         isRefundable: details.isRefundable ?? false,
         selectedSeatFees: existingSeatFees ? [String(existingSeatFees)] : [],
+        cancelPenalties: details.cancelPenalties,
       })
 
       const ruleResult = await checkBookingAgainstPolicy(db, {

@@ -243,6 +243,7 @@ export default function SelectFarePage() {
         // whether a special-meal request is one the airline will honour.
         mealIncluded: data.mealIncluded ?? fareOption?.mealIncluded,
         passengerBreakup: data.passengerBreakup,
+        cancelPenalties: data.cancelPenalties,
         pricedAt: Date.now(),
         isNdc: fareOption?.isNdc ?? flightResult.isNdc,
         searchKey: searchData.availabilityKey ?? undefined,

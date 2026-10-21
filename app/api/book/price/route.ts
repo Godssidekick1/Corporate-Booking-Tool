@@ -266,6 +266,8 @@ if (!key || !pricingKey || !provider || !resultIndex) {
           airline_components: components,
           commercials: record,
           sell_total: record.sellTotal,
+          // The airline's own answer, judged by add-passenger's policy check.
+          fare_conditions: { refundable: details.isRefundable, cancelPenalties: details.cancelPenalties },
           // Enforced by add-passenger (app/lib/book/quoteHold.ts). An expired
           // quote is refused there and the fare is priced again.
           expires_at: new Date(Date.now() + QUOTE_HOLD_MINUTES * 60 * 1000).toISOString(),

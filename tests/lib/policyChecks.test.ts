@@ -100,6 +100,38 @@ describe('verdict checks', () => {
     expect(keys(judge({ max_journey_hours: 14 }, long))).toEqual([])
   })
 
+  it('max layover: the longest wait at any stop, in any direction', () => {
+    const via = (arrive: string, leave: string) => {
+      const j = journey(1, 'DEL', 'LHR', '2026-11-20T08:00:00', 1)
+      return flight({}, [{ ...j, stops: [{ code: 'DXB', city: 'Dubai', arrivalDateTime: arrive, departureDateTime: leave }] }])
+    }
+    expect(judge({ max_layover_hours: 4 }, via('2026-11-20T11:00:00', '2026-11-20T16:30:00')).breaches[0])
+      .toMatchObject({ limit_key: 'max_layover_hours', actualValue: 5.5, severity: 'red' })
+    expect(keys(judge({ max_layover_hours: 6 }, via('2026-11-20T11:00:00', '2026-11-20T16:30:00')))).toEqual([])
+    // Overnight, across the date.
+    expect(judge({ max_layover_hours: 4 }, via('2026-11-20T22:00:00', '2026-11-21T07:00:00')).breaches[0])
+      .toMatchObject({ actualValue: 9 })
+    // A non-stop flight has no layover to judge.
+    expect(keys(judge({ max_layover_hours: 1 }, flight()))).toEqual([])
+  })
+
+  it('max cancellation fee: the adult fee as the airline writes it; non-refundable loses the whole fare', () => {
+    const fee = (lines: { paxType: string; text: string }[] | undefined, isRefundable = true) =>
+      evaluateBooking(policy({ max_cancel_penalty: 3000 }),
+        buildPolicyInputsFromFlight({ flight: flight(), totalFare: 5000, isRefundable, cancelPenalties: lines, now: NOW }))
+    expect(fee([{ paxType: 'ADT', text: 'INR3500' }, { paxType: 'CHD', text: 'INR1000' }]).breaches[0])
+      .toMatchObject({ limit_key: 'max_cancel_penalty', actualValue: 3500, severity: 'red' })
+    expect(fee([{ paxType: 'ADT', text: 'INR 2500' }]).breaches).toEqual([])
+    expect(fee([{ paxType: 'ADT', text: '0' }]).breaches).toEqual([])
+    // Not read rather than guessed: another currency, words, nothing sent.
+    expect(fee([{ paxType: 'ADT', text: 'USD80' }]).breaches).toEqual([])
+    expect(fee([{ paxType: 'ADT', text: 'NON REFUNDABLE' }]).breaches).toEqual([])
+    expect(fee(undefined).breaches).toEqual([])
+    expect(fee(undefined, false).breaches[0]).toMatchObject({ actualValue: 5000 })
+    expect(breachLine(fee([{ paxType: 'ADT', text: 'INR3500' }]).breaches[0]))
+      .toBe('cancellation fee limit exceeded: ₹3,500 to cancel, the policy allows up to ₹3,000')
+  })
+
   it('reads as one clause each, so several join into one reason', () => {
     const result = judge({ max_stops: 0, advance_booking_days: 7, refundable_fare_required: true, max_journey_hours: 1, carrier_tier: 0 },
       flight({}, [journey(1, 'DEL', 'BOM', '2026-10-21T08:00:00', 1, '05:00')]), false)

@@ -55,6 +55,10 @@ const NUMERIC_LIMIT_KEYS = [
   'max_stops',
   // Hours door to door in the longest direction, layovers included.
   'max_journey_hours',
+  // The longest wait at any one stop, in hours.
+  'max_layover_hours',
+  // What cancelling would cost, in rupees (the whole fare if non-refundable).
+  'max_cancel_penalty',
 ] as const
 
 const BOOLEAN_ENTITLEMENT_KEYS = [

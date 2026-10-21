@@ -41,6 +41,8 @@ export const BREACH_LABELS: Record<string, string> = {
   connecting_flights_allowed: 'connecting flights entitlement',
   max_stops: 'stop limit',
   max_journey_hours: 'journey time limit',
+  max_layover_hours: 'layover limit',
+  max_cancel_penalty: 'cancellation fee limit',
   red_eye_restricted: 'red-eye flight restriction',
   personal_trips_allowed: 'personal trips entitlement',
   cabin_class_short_haul: 'cabin class entitlement (short-haul)',
@@ -70,6 +72,10 @@ export function breachLine(b: BreachLike): string {
         : `${label} exceeded: ${plural(actual, 'stop', 'stops')}, the policy allows at most ${plural(policy, 'stop', 'stops')}`
     case 'max_journey_hours':
       return `${label} exceeded: a ${actual} h journey, the policy allows up to ${policy} h`
+    case 'max_layover_hours':
+      return `${label} exceeded: a ${actual} h layover, the policy allows up to ${policy} h`
+    case 'max_cancel_penalty':
+      return `${label} exceeded: ₹${Math.round(actual).toLocaleString('en-IN')} to cancel, the policy allows up to ₹${Math.round(policy).toLocaleString('en-IN')}`
   }
 
   if (b.kind === 'boolean') return `${label} is not permitted for this employee`

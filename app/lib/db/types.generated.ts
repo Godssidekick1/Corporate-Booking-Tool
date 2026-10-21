@@ -3,7 +3,7 @@
 // Written by scripts/generate-db-types.mjs from the live database schema.
 // Re-run after any schema change:  node scripts/generate-db-types.mjs
 //
-// 54 tables, 0 view(s), 577 columns.
+// 54 tables, 0 view(s), 578 columns.
 
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json }
 
@@ -622,6 +622,7 @@ export interface Tables {
     expires_at: string
     tmc_id: string | null
     priced_by: string
+    fare_conditions: Json | null
   }
   rate_limits: {
     key: string

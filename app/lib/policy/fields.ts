@@ -56,7 +56,8 @@ export const CABIN_CLASS_OPTIONS: TierOption[] = [
 
 // What a booking is checked against (evaluateBooking + buildPolicyInputs):
 // the fare caps (with their grace), both cabins, carrier tier, advance
-// booking, refundable fare, max stops, max journey time and the seat-fee cap.
+// booking, refundable fare, max stops, max journey time, max layover, max
+// cancellation fee and the seat-fee cap.
 // Blocked airlines and allowed fare types are not a verdict at all: those
 // fares are left out of the traveller's search (app/lib/policy/searchFilter.ts).
 // Personal trips and guest bookings are not a verdict either: with the
@@ -102,6 +103,9 @@ export const CATEGORIES: CategoryDef[] = [
       { key: 'refundable_fare_required',    label: 'Refundable fare required',                kind: 'boolean', travelType: 'flight' },
       { key: 'max_stops',                   label: 'Max stops (each way)',                    kind: 'tier',    travelType: 'flight', options: STOP_OPTIONS },
       { key: 'max_journey_hours',           label: 'Max journey time (each way)', unit: 'h',  kind: 'numeric', travelType: 'flight' },
+      { key: 'max_layover_hours',           label: 'Max layover (any stop)',    unit: 'h',    kind: 'numeric', travelType: 'flight' },
+      { key: 'max_cancel_penalty',          label: 'Max cancellation fee',      unit: '₹',    kind: 'numeric', travelType: 'flight',
+        help: 'A non-refundable fare counts as losing the whole fare. A fee the airline gives in another currency, or in words, is not checked.' },
       { key: 'red_eye_restricted',          label: 'Red-eye flights restricted',              kind: 'boolean', travelType: 'flight' },
       { key: 'personal_trips_allowed',      label: 'Personal trips allowed',                  kind: 'boolean', travelType: 'flight' },
       { key: 'guest_bookings_allowed',      label: 'Guest bookings allowed',                  kind: 'boolean', travelType: 'flight', defaultBool: true },
