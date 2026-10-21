@@ -7,10 +7,12 @@ import Tabs, { useUrlTab } from '@/app/components/Tabs'
 import {
   CATEGORIES,
   ALL_FIELDS,
+  formatFieldValue,
   type CategoryDef,
   type FieldDef,
 } from '@/app/lib/policy/fields'
 import ListFields from './ListFields'
+import FieldForm from './FieldForm'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -158,6 +160,44 @@ function gridToRules(grid: Grid): RuleRow[] {
 // denominator here — they're real config, just not counted as "completion"
 // factors, since a correctly-configured "false" isn't meaningfully less done
 // than a correctly-configured "true".
+// What a folded section holds, in a line: its set values, the first few.
+function sectionSummary(grid: Grid, category: CategoryDef): string {
+  const shown = category.fields
+    .filter(f => !f.inlineWith && f.kind !== 'boolean')
+    .filter(f => { const v = grid[f.key]; return v !== null && v !== undefined && !(Array.isArray(v) && v.length === 0) })
+    .map(f => {
+      // A value whose unit is a field of its own (the grace) says it.
+      const unit = category.fields.find(u => u.inlineWith === f.key)
+      const unitText = unit ? ' ' + formatFieldValue(unit, (grid[unit.key] ?? unit.options?.[0]?.value) as number) : ''
+      return `${f.label}: ${formatFieldValue(f, grid[f.key] as number | boolean | string[])}${unitText}`
+    })
+  if (shown.length === 0) return 'Nothing set'
+  return shown.length > 3 ? `${shown.slice(0, 3).join(' · ')} · +${shown.length - 3} more` : shown.join(' · ')
+}
+
+interface ClientOverride { clientId: string; name: string; withinPolicyApproval: 'auto' | 'required' }
+
+// The group's within-policy rule does not reach a company that set its own:
+// named, so whoever edits a shared group knows where it does not apply.
+function OverrideNote({ overrides, groupValue }: { overrides: ClientOverride[]; groupValue: CellVal | undefined }) {
+  if (overrides.length === 0) return null
+  const label = (v: string) => (v === 'required' ? 'sent for approval' : 'approved automatically')
+  const group = groupValue === 1 ? 'required' : groupValue === 0 ? 'auto' : null
+  const disagree = group ? overrides.filter(o => o.withinPolicyApproval !== group) : overrides
+  return (
+    <div style={s.overrideNote}>
+      <strong>Overridden by Corporate Settings</strong> at {overrides.length === 1 ? 'one company' : `${overrides.length} companies`}:{' '}
+      {overrides.map((o, i) => (
+        <span key={o.clientId}>
+          {i > 0 && ', '}
+          <span style={disagree.includes(o) ? s.overrideDiffers : undefined}>{o.name}</span> ({label(o.withinPolicyApproval)})
+        </span>
+      ))}
+      . Their own setting decides within-policy approval there, whatever this group says.
+    </div>
+  )
+}
+
 function countSetFields(grid: Grid, category: CategoryDef): { set: number; total: number } {
   const countableFields = category.fields.filter(f => f.kind !== 'boolean')
   let set = 0
@@ -195,6 +235,9 @@ export default function TmcPolicyPage() {
   const [grid, setGrid] = useState<Grid>({})
   const [version, setVersion] = useState(0)
   const [openCategories, setOpenCategories] = useState<Record<string, boolean>>({ flight: true })
+  // Linked companies whose own Corporate Setting decides within-policy
+  // approval, whatever this group says.
+  const [overrides, setOverrides] = useState<ClientOverride[]>([])
 
   const [selectedClientId, setSelectedClientId] = useState('')
   // Server-searched (the clients endpoint is paged), and only once the tab is open.
@@ -293,6 +336,7 @@ export default function TmcPolicyPage() {
       const d = await fetch(`/api/tmc/policy-rules?groupId=${groupId}`).then(r => r.json())
       if (!d.ok) { setError(d.error || 'Could not load rules.'); return }
       setGrid(rowsToGrid(d.rows))
+      setOverrides(d.clientOverrides ?? [])
       setVersion(d.version)
       setDirty(false)
     } finally { setLoadingRules(false) }
@@ -439,6 +483,11 @@ export default function TmcPolicyPage() {
 
   function toggleCategory(id: string) {
     setOpenCategories(prev => ({ ...prev, [id]: !prev[id] }))
+  }
+
+  const allOpen = CATEGORIES.every(c => openCategories[c.id])
+  function toggleAll() {
+    setOpenCategories(allOpen ? {} : Object.fromEntries(CATEGORIES.map(c => [c.id, true])))
   }
 
   const linkedIds = new Set(links.map(l => l.policyGroupId))
@@ -672,6 +721,11 @@ export default function TmcPolicyPage() {
                 </div>
               ) : (
                 <div style={s.categories}>
+                  <div style={s.expandRow}>
+                    <button type="button" onClick={toggleAll} style={s.expandBtn}>
+                      {allOpen ? 'Collapse all' : 'Expand all'}
+                    </button>
+                  </div>
                   {CATEGORIES.map((cat, ci) => {
                     const open = !!openCategories[cat.id]
                     const { set, total } = countSetFields(grid, cat)
@@ -690,6 +744,7 @@ export default function TmcPolicyPage() {
                               </span>
                             )}
                           </div>
+                          {!open && <span style={{ ...s.categorySummary, color: cat.textColor }}>{sectionSummary(grid, cat)}</span>}
                           <span style={{ ...s.categoryChevron, color: cat.textColor, transform: open ? 'rotate(180deg)' : 'rotate(0deg)' }}>
                             ▾
                           </span>
@@ -705,87 +760,14 @@ export default function TmcPolicyPage() {
                                 onChange={(key, v) => handleCellChange(key, v)}
                               />
                             ) : (
-                            <div style={s.tableWrap}>
-                              <table style={s.table}>
-                                <thead>
-                                  <tr>
-                                    <th style={{ ...s.th, ...s.stickyCol, width: 140 }}>Applies to</th>
-                                    {cat.fields.map(f => (
-                                      <th key={f.key} style={{ ...s.th, minWidth: f.kind === 'tier' ? 160 : f.kind === 'boolean' ? 90 : 120 }}>
-                                        <span style={s.colLabel}>{f.label}</span>
-                                        {f.unit && <span style={s.colUnit}> · {f.unit}</span>}
-                                      </th>
-                                    ))}
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {/* One row. The group's rank set is what it
-                                      applies to, shown here rather than as a
-                                      row per rank — the limits are the group's,
-                                      and every rank it covers gets them. */}
-                                  <tr>
-                                      <td style={{ ...s.td, ...s.stickyCol }}>
-                                        <div style={s.bandCell}>
-                                          <span style={s.bandBadge}>{ranksLabel(ranks)}</span>
-                                        </div>
-                                      </td>
-                                      {cat.fields.map(f => {
-                                        const val = grid[f.key]
-                                        if (f.kind === 'boolean') {
-                                          return (
-                                            <td key={f.key} style={{ ...s.td, textAlign: 'center' as const }}>
-                                              <label style={s.toggleLabel}>
-                                                <input
-                                                  type="checkbox"
-                                                  checked={Boolean(val)}
-                                                  onChange={e => handleCellChange(f.key, e.target.checked)}
-                                                  style={{ display: 'none' }}
-                                                />
-                                                <span style={{ ...s.toggle, background: val ? '#000835' : '#E5E7EB' }}>
-                                                  <span style={{
-                                                    ...s.toggleKnob,
-                                                    transform: val ? 'translateX(14px)' : 'translateX(0)',
-                                                  }} />
-                                                </span>
-                                              </label>
-                                            </td>
-                                          )
-                                        }
-                                        if (f.kind === 'tier') {
-                                          return (
-                                            <td key={f.key} style={s.td}>
-                                              <select
-                                                value={val === null || val === undefined ? '' : String(val)}
-                                                onChange={e => handleCellChange(f.key, e.target.value === '' ? null : Number(e.target.value))}
-                                                style={s.tierSelect}
-                                              >
-                                                <option value="">— not set —</option>
-                                                {f.options!.map(o => (
-                                                  <option key={o.value} value={o.value}>{o.label}</option>
-                                                ))}
-                                              </select>
-                                            </td>
-                                          )
-                                        }
-                                        return (
-                                          <td key={f.key} style={s.td}>
-                                            <input
-                                              type="number"
-                                              value={val === null || val === undefined ? '' : Number(val)}
-                                              onChange={e => handleNumericInputChange(f, e.target.value)}
-                                              placeholder="—"
-                                              min={0}
-                                              step={f.wholeNumber ? 1 : 'any'}
-                                              style={s.numInput}
-                                            />
-                                          </td>
-                                        )
-                                      })}
-                                  </tr>
-                                </tbody>
-                              </table>
-                            </div>
+                              <FieldForm
+                                fields={cat.fields}
+                                values={grid}
+                                onChange={(key, v) => handleCellChange(key, v)}
+                                onNumeric={handleNumericInputChange}
+                              />
                             )}
+                            {cat.id === 'booking_rights' && <OverrideNote overrides={overrides} groupValue={grid['within_policy_approval']} />}
                           </div>
                         )}
                       </div>
@@ -989,6 +971,11 @@ const s: Record<string, React.CSSProperties> = {
   categoryLabel: { fontSize: 13, fontWeight: 600 },
   categoryBadge: { fontSize: 10, fontWeight: 600, border: '1px solid', borderRadius: 4, padding: '2px 7px' },
   categoryChevron: { fontSize: 13, transition: 'transform 0.2s', display: 'block' },
+  expandRow: { display: 'flex', justifyContent: 'flex-end', marginBottom: 8 },
+  expandBtn: { fontSize: 12, fontWeight: 600, color: '#374151', background: '#fff', border: '1px solid #D1D5DB', borderRadius: 6, padding: '5px 12px', cursor: 'pointer' },
+  categorySummary: { flex: 1, minWidth: 0, margin: '0 12px', fontSize: 12, opacity: 0.85, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'right' },
+  overrideNote: { margin: '4px 16px 12px', padding: '10px 12px', fontSize: 12.5, lineHeight: 1.55, color: '#92400E', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8 },
+  overrideDiffers: { fontWeight: 700, textDecoration: 'underline' },
   categoryDesc: { fontSize: 12, color: '#6B7280', margin: '10px 16px 0', lineHeight: 1.5 },
 
   tableInner: { display: 'flex', flexDirection: 'column', gap: 4 },

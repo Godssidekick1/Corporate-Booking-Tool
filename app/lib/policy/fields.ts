@@ -32,7 +32,11 @@ export interface FieldDef {
   wholeNumber?: boolean
   // For 'list' fields: what the codes are, which decides the picker.
   listOf?: 'airlines' | 'fare_types'
+  // One plain line under the label, in the editor.
   help?: string
+  // Shown beside another field's input rather than as its own row (the
+  // grace's unit, next to the grace).
+  inlineWith?: string
   // For 'boolean' fields: the value a group has until someone sets it (the
   // editor shows it, bookingRights enforces it). Absent = No.
   defaultBool?: boolean
@@ -77,6 +81,14 @@ export const GRACE_UNIT_OPTIONS: TierOption[] = [
   { label: '₹ over the cap', value: 1 },
 ]
 
+// Whether a within-policy booking goes for approval, for this group's bands.
+// Not set: the company's Corporate Setting decides, and if that is not set
+// either, approved automatically (app/lib/rule-engine/withinPolicyApproval.ts).
+export const WITHIN_POLICY_OPTIONS: TierOption[] = [
+  { label: 'Approved automatically', value: 0 },
+  { label: 'Sent for approval', value: 1 },
+]
+
 // "Any" is 3: no itinerary we are offered has more, so it never fires.
 export const STOP_OPTIONS: TierOption[] = [
   { label: 'Non-stop only', value: 0 },
@@ -86,31 +98,70 @@ export const STOP_OPTIONS: TierOption[] = [
 ]
 
 export const CATEGORIES: CategoryDef[] = [
+  // Flights, in the order someone filling a policy thinks about them. Five
+  // sections rather than one row of twenty columns; the keys are unchanged.
   {
-    id: 'flight', label: 'Flights', color: '#EEF2FF', textColor: '#3730A3',
+    id: 'flight', label: 'Fares', color: '#EEF2FF', textColor: '#3730A3',
+    description: 'What a flight may cost. Over a cap but within the grace: needs approval. Beyond it: out of policy.',
     fields: [
-      { key: 'max_fare_domestic',           label: 'Max domestic fare',         unit: '₹',    kind: 'numeric', travelType: 'flight' },
-      { key: 'max_fare_intl',               label: 'Max international fare',    unit: '₹',    kind: 'numeric', travelType: 'flight' },
-      { key: 'fare_grace',                  label: 'Grace above the fare cap',                kind: 'numeric', travelType: 'flight',
-        help: 'A fare within the grace always goes for approval; beyond it is out of policy. Empty: no grace.' },
-      { key: 'fare_grace_unit',             label: 'Grace counted as',                        kind: 'tier',    travelType: 'flight', options: GRACE_UNIT_OPTIONS },
-      { key: 'cabin_class_short_haul',      label: 'Cabin class (short haul)',                kind: 'tier',    travelType: 'flight', options: CABIN_CLASS_OPTIONS },
-      { key: 'cabin_class_long_haul',       label: 'Cabin class (long haul >8h)',             kind: 'tier',    travelType: 'flight', options: CABIN_CLASS_OPTIONS },
-      { key: 'max_seat_selection_fee',      label: 'Max seat selection spend',  unit: '₹',    kind: 'numeric', travelType: 'flight' },
+      { key: 'max_fare_domestic',           label: 'Max domestic fare',         unit: '₹',    kind: 'numeric', travelType: 'flight',
+        help: 'The whole booking, as the company pays it. Empty: no cap.' },
+      { key: 'max_fare_intl',               label: 'Max international fare',    unit: '₹',    kind: 'numeric', travelType: 'flight',
+        help: 'The whole booking, as the company pays it. Empty: no cap.' },
+      { key: 'fare_grace',                  label: 'Grace above the cap',                     kind: 'numeric', travelType: 'flight',
+        help: 'A fare within the grace always goes for approval. A share of the cap suits a group with both caps.' },
+      { key: 'fare_grace_unit',             label: 'Grace counted as',                        kind: 'tier',    travelType: 'flight', options: GRACE_UNIT_OPTIONS,
+        inlineWith: 'fare_grace' },
       { key: 'lowest_fare_window_minutes',  label: 'Lowest fare window (±)',    unit: 'min',  kind: 'numeric', travelType: 'flight', wholeNumber: true,
-        help: 'A cheaper fare departing within this many minutes of the chosen one means the booking needs approval. Empty: not checked.' },
-      { key: 'carrier_tier',                label: 'Carrier tier',                            kind: 'tier',    travelType: 'flight', options: CARRIER_OPTIONS },
-      { key: 'advance_booking_days',        label: 'Min. advance booking',      unit: 'days', kind: 'numeric', travelType: 'flight', wholeNumber: true },
-      { key: 'baggage_extra_bags',          label: 'Extra bags allowed',        unit: 'bags', kind: 'numeric', travelType: 'flight', wholeNumber: true },
-      { key: 'refundable_fare_required',    label: 'Refundable fare required',                kind: 'boolean', travelType: 'flight' },
+        help: 'A cheaper flight departing within this many minutes means the booking needs approval. Empty: not checked.' },
+      { key: 'max_seat_selection_fee',      label: 'Max seat selection spend',  unit: '₹',    kind: 'numeric', travelType: 'flight',
+        help: '0: no paid seats. Empty: no cap.' },
+    ],
+  },
+  {
+    id: 'flight_cabin', label: 'Cabin & airline', color: '#EEF2FF', textColor: '#3730A3',
+    fields: [
+      { key: 'cabin_class_short_haul',      label: 'Cabin (up to 8 h)',                       kind: 'tier',    travelType: 'flight', options: CABIN_CLASS_OPTIONS,
+        help: 'The highest cabin allowed. Above it: out of policy.' },
+      { key: 'cabin_class_long_haul',       label: 'Cabin (over 8 h)',                        kind: 'tier',    travelType: 'flight', options: CABIN_CLASS_OPTIONS,
+        help: 'Judged on the longest direction of the trip.' },
+      { key: 'carrier_tier',                label: 'Carrier tier',                            kind: 'tier',    travelType: 'flight', options: CARRIER_OPTIONS,
+        help: 'Budget only: a full-service airline is out of policy.' },
+    ],
+  },
+  {
+    id: 'flight_route', label: 'Routing & timing', color: '#EEF2FF', textColor: '#3730A3',
+    fields: [
       { key: 'max_stops',                   label: 'Max stops (each way)',                    kind: 'tier',    travelType: 'flight', options: STOP_OPTIONS },
-      { key: 'max_journey_hours',           label: 'Max journey time (each way)', unit: 'h',  kind: 'numeric', travelType: 'flight' },
+      { key: 'max_journey_hours',           label: 'Max journey time (each way)', unit: 'h',  kind: 'numeric', travelType: 'flight',
+        help: 'Door to door in one direction, layovers included.' },
       { key: 'max_layover_hours',           label: 'Max layover (any stop)',    unit: 'h',    kind: 'numeric', travelType: 'flight' },
+      { key: 'advance_booking_days',        label: 'Book at least',             unit: 'days', kind: 'numeric', travelType: 'flight', wholeNumber: true,
+        help: 'Days ahead of departure. A later booking is out of policy.' },
+      { key: 'red_eye_restricted',          label: 'Red-eye flights restricted',              kind: 'boolean', travelType: 'flight',
+        help: 'Stored, not yet checked.' },
+    ],
+  },
+  {
+    id: 'flight_conditions', label: 'Fare conditions', color: '#EEF2FF', textColor: '#3730A3',
+    fields: [
+      { key: 'refundable_fare_required',    label: 'Refundable fare required',                kind: 'boolean', travelType: 'flight' },
       { key: 'max_cancel_penalty',          label: 'Max cancellation fee',      unit: '₹',    kind: 'numeric', travelType: 'flight',
-        help: 'A non-refundable fare counts as losing the whole fare. A fee the airline gives in another currency, or in words, is not checked.' },
-      { key: 'red_eye_restricted',          label: 'Red-eye flights restricted',              kind: 'boolean', travelType: 'flight' },
-      { key: 'personal_trips_allowed',      label: 'Personal trips allowed',                  kind: 'boolean', travelType: 'flight' },
-      { key: 'guest_bookings_allowed',      label: 'Guest bookings allowed',                  kind: 'boolean', travelType: 'flight', defaultBool: true },
+        help: 'A non-refundable fare counts as losing the whole fare. A fee given in another currency or in words is not checked.' },
+      { key: 'baggage_extra_bags',          label: 'Extra bags allowed',        unit: 'bags', kind: 'numeric', travelType: 'flight', wholeNumber: true,
+        help: 'Stored, not yet checked (no bags are sold yet).' },
+    ],
+  },
+  {
+    id: 'booking_rights', label: 'Approval & who may book', color: '#F5F3FF', textColor: '#4C1D95',
+    description: "For the bands this group covers. A company's own Corporate Settings, when set, override these.",
+    fields: [
+      { key: 'within_policy_approval',      label: 'Within-policy bookings',                  kind: 'tier',    travelType: 'flight', options: WITHIN_POLICY_OPTIONS,
+        help: 'Not set: approved automatically. Needs-approval and out-of-policy fares always go for approval.' },
+      { key: 'personal_trips_allowed',      label: 'Personal trips allowed',                  kind: 'boolean', travelType: 'flight',
+        help: 'Only where the company allows personal trips at all.' },
+      { key: 'guest_bookings_allowed',      label: 'Guest bookings allowed',                  kind: 'boolean', travelType: 'flight', defaultBool: true,
+        help: 'Only where the company allows guest bookings at all.' },
     ],
   },
   {

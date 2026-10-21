@@ -140,6 +140,18 @@ export async function clientCounts(db: Queryable, groupIds: readonly string[]): 
   return counts
 }
 
+// Linked companies that decide within-policy approval themselves (Corporate
+// Settings), so this group's own rule does not reach them.
+export interface ClientOverride { clientId: string; name: string; withinPolicyApproval: string }
+
+export async function withinPolicyOverrides(db: Queryable, groupId: string): Promise<ClientOverride[]> {
+  return many<ClientOverride>(db, sql`
+    select c.id as "clientId", c.name, c.within_policy_approval as "withinPolicyApproval"
+    from client_policy_groups l join clients c on c.id = l.client_id
+    where l.policy_group_id = ${groupId} and c.within_policy_approval is not null
+    order by c.name, c.id`)
+}
+
 export type ClientLink = Pick<Row<'client_policy_groups'>, 'policy_group_id' | 'assigned_at'>
 
 export async function links(db: Queryable, clientId: string): Promise<ClientLink[]> {

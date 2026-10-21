@@ -125,6 +125,13 @@ exports[`policy > rule-engine test: evaluates for the TMC that owns the travelle
 
 exports[`policy > rules: the latest version of a group 1`] = `
 {
+  "clientOverrides": [
+    {
+      "clientId": "b5005d4e-b813-4f10-ae59-1b0f5257357e",
+      "name": "BCG",
+      "withinPolicyApproval": "required",
+    },
+  ],
   "ok": true,
   "rows": [
     {

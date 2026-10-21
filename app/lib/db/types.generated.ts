@@ -338,7 +338,7 @@ export interface Tables {
     out_of_policy_reason_required: boolean
     out_of_policy_handling: string
     duplicate_booking_check: string
-    within_policy_approval: string
+    within_policy_approval: string | null
     fare_rise_reapproval: number | null
     fare_rise_reapproval_unit: string
     approval_escalation_hours: number | null

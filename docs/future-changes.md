@@ -150,9 +150,8 @@ manager, Personal and Guest tags, and a ticket footer.
 
 ## Operational (one-off)
 
-- Apply the 2026-10-20 migrations to the hosted database (within-policy
-  approval, quote fare conditions, search_fares, re-approval / escalation /
-  ticket footer). Local is up to date.
+- Apply 20261021000000_within_policy_approval_follows_group.sql to the
+  hosted database. Local is up to date; the 2026-10-20 ones are applied.
 
 - Run `npm run migrate` (places, no-manager, airports) and then
   `node scripts/load-cities.mjs` on the hosted database. Local is up to date.

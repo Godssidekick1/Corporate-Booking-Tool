@@ -100,16 +100,20 @@ d('booking controls (Corporate Settings)', () => {
   const setClient = (fields: Record<string, unknown>) =>
     call(clientPatch, { as: a.tmcAdmin, method: 'PATCH', url: `/api/tmc/clients/${clientId}`, params: { id: clientId }, body: fields })
 
-  // One yes/no rule of the colleague's policy group, saved as the editor
-  // does: a new version carrying every other rule unchanged.
-  async function setBandRule(key: string, value: boolean) {
+  // One rule of the colleague's policy group, saved as the editor does: a new
+  // version carrying every other rule unchanged. Null removes it.
+  async function setBandRule(key: string, value: boolean | number | null) {
     const policy = await resolveEffectivePolicy(db, colleague.id, 'flight')
     if (!policy.ok) throw new Error(policy.message)
     const got = await call(rulesGet, { as: a.tmcAdmin, url: `/api/tmc/policy-rules?groupId=${policy.policyGroupId}` })
     const rows = (got.json as { rows: { travel_type: string; limit_key: string }[] }).rows.filter(r => r.limit_key !== key)
     const res = await call(rulesPost, {
       as: a.tmcAdmin, method: 'POST', url: '/api/tmc/policy-rules',
-      body: { policyGroupId: policy.policyGroupId, rules: [...rows, { travel_type: 'flight', limit_key: key, limit_bool: value }] },
+      body: { policyGroupId: policy.policyGroupId, rules: [...rows, ...(value === null ? [] : [
+        typeof value === 'boolean'
+          ? { travel_type: 'flight', limit_key: key, limit_bool: value }
+          : { travel_type: 'flight', limit_key: key, limit_value: value },
+      ])] },
     })
     expect(res.status).toBe(200)
   }
@@ -333,6 +337,36 @@ d('booking controls (Corporate Settings)', () => {
     expect(await bookingFor('W3')).toMatchObject({ status: 'pending_approval' })
     expect(await approvalsOf('W3')).toBe(1)
     expect((await setClient({ within_policy_approval: 'sometimes' })).status).toBe(400)
+  })
+
+  it('within-policy bookings: the company setting wins; unset, the policy group decides; neither, approved', async () => {
+    const statusOf = async (ref: string, day: string) => {
+      await price(ref, day)
+      expect((await addPassenger(ref, day)).status).toBe(200)
+      return (await bookingFor(ref))!.status
+    }
+    const controlsSay = async () =>
+      ((await call(controlsGet, { as: a.corpAdmin, url: `/api/book/controls?travellerId=${colleague.id}` })).json as { withinPolicyApproval: string }).withinPolicyApproval
+    try {
+      // The group sends its bands' within-policy bookings for approval.
+      await setBandRule('within_policy_approval', 1)
+      await setClient({ within_policy_approval: null })
+      expect(await controlsSay()).toBe('required')
+      expect(await statusOf('G-1', '2030-11-01')).toBe('pending_approval')
+
+      // The company's own setting overrides the group.
+      await setClient({ within_policy_approval: 'auto' })
+      expect(await controlsSay()).toBe('auto')
+      expect(await statusOf('G-2', '2030-11-02')).toBe('approved')
+
+      // Neither says: approved automatically.
+      await setBandRule('within_policy_approval', null)
+      await setClient({ within_policy_approval: null })
+      expect(await controlsSay()).toBe('auto')
+      expect(await statusOf('G-3', '2030-11-03')).toBe('approved')
+    } finally {
+      await setClient({ within_policy_approval: 'required' })
+    }
   })
 
   it('something sent for approval reaches the first step even when no step acts on it', async () => {

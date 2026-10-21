@@ -6,6 +6,7 @@ import { resolveActor, refuse } from '@/app/lib/book/bookingActor'
 import { loadClientGates } from '@/app/lib/clients/clientGates'
 import { QUOTE_HOLD_MINUTES } from '@/app/lib/book/quoteHold'
 import { bookingRightsFor } from '@/app/lib/rule-engine/bookingRights'
+import { withinPolicyApprovalFor } from '@/app/lib/rule-engine/withinPolicyApproval'
 import * as clients from '@/app/lib/repositories/clients'
 
 // ── GET /api/book/controls?travellerId= ──────────────────────────────────────
@@ -39,7 +40,9 @@ export const GET = route(async (req: NextRequest) => {
     duplicateCheck: gates.duplicateCheck,
     // Whether a within-policy booking still goes for approval (the screens
     // say so rather than promising "no approval needed").
-    withinPolicyApproval: modes?.within_policy_approval === 'required' ? 'required' : 'auto',
+    withinPolicyApproval: clientId
+      ? await withinPolicyApprovalFor(db, actor.actor.traveller.id, clientId, modes?.within_policy_approval)
+      : 'auto',
     quoteHoldMinutes: QUOTE_HOLD_MINUTES,
   })
 })

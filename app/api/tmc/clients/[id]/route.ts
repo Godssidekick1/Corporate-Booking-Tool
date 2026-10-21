@@ -106,7 +106,8 @@ type UpdateClientBody = {
   trip_approval_mode?: string
   out_of_policy_handling?: string
   duplicate_booking_check?: string
-  within_policy_approval?: string
+  // Null: follow the traveller's policy group.
+  within_policy_approval?: string | null
   // A re-priced fare rising by more than this (% of the approved fare, or ₹)
   // goes back for approval. Null: never.
   fare_rise_reapproval?: number | null
@@ -247,7 +248,7 @@ export const PATCH = route(async (req: NextRequest, { params }: Ctx) => {
 
   if (body.within_policy_approval !== undefined) {
     const value = body.within_policy_approval
-    if (!ALLOWED_WITHIN_POLICY.includes(value as typeof ALLOWED_WITHIN_POLICY[number])) {
+    if (value !== null && !ALLOWED_WITHIN_POLICY.includes(value as typeof ALLOWED_WITHIN_POLICY[number])) {
       return Response.json({ error: `Invalid within_policy_approval: ${value}` }, { status: 400 })
     }
     update.within_policy_approval = value

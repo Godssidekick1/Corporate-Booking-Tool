@@ -9,7 +9,7 @@ import { call } from '../harness/call'
 import { actors, type Actors } from '../harness/actors'
 import { resetDatabase } from '../harness/db'
 import { db } from '@/app/lib/db'
-import { sql, many, one, maybeOne } from '@/app/lib/db/sql'
+import { sql, many, one, maybeOne, exec } from '@/app/lib/db/sql'
 
 // ── Policy: groups, links, rules ─────────────────────────────────────────────
 // The TMC's policy master (groups covering band ranks, versioned rules), the
@@ -140,6 +140,24 @@ d('policy', () => {
     const body = res.json as { version: number; rows: { travel_type: string; limit_key: string }[] }
     expect({ ...body, rows: [...body.rows].sort((x, y) => `${x.travel_type}${x.limit_key}`.localeCompare(`${y.travel_type}${y.limit_key}`)) })
       .toMatchSnapshot()
+  })
+
+  it('rules: names the linked companies whose own setting overrides the group on within-policy approval', async () => {
+    const linked = await one<{ id: string; name: string }>(db, sql`
+      select c.id, c.name from client_policy_groups l join clients c on c.id = l.client_id
+      where l.policy_group_id = ${groupD} order by c.name, c.id limit 1`)
+    const before = await one<{ v: string | null }>(db, sql`select within_policy_approval as v from clients where id = ${linked.id}`)
+    try {
+      await exec(db, sql`update clients set within_policy_approval = 'auto' where id = ${linked.id}`)
+      const res = await call(rulesGet, { as: a.tmcAdmin, url: `/api/tmc/policy-rules?groupId=${groupD}` })
+      expect((res.json as { clientOverrides: unknown[] }).clientOverrides)
+        .toContainEqual({ clientId: linked.id, name: linked.name, withinPolicyApproval: 'auto' })
+      await exec(db, sql`update clients set within_policy_approval = null where id = ${linked.id}`)
+      const after = await call(rulesGet, { as: a.tmcAdmin, url: `/api/tmc/policy-rules?groupId=${groupD}` })
+      expect((after.json as { clientOverrides: { clientId: string }[] }).clientOverrides.map(o => o.clientId)).not.toContain(linked.id)
+    } finally {
+      await exec(db, sql`update clients set within_policy_approval = ${before.v} where id = ${linked.id}`)
+    }
   })
 
   it('rules POST: validation, then a new version', async () => {

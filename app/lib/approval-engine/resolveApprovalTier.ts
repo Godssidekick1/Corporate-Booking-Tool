@@ -13,6 +13,7 @@ import {
 } from './linkedApprovalTemplates'
 import { categoryForTravelType, type ApprovalCategory } from './categories'
 import { breachLine } from '@/app/lib/policy/breachText'
+import { withinPolicyApprovalFor } from '@/app/lib/rule-engine/withinPolicyApproval'
 
 // Every function here takes `db` -- the pool, or a transaction's connection,
 // which is where approval writes belong: a decision, the booking's status and
@@ -492,8 +493,10 @@ export async function startApprovalForBooking(
       return { requiresApproval: false }
     }
     // A within-policy booking (or one not evaluated, routed the same) is sent
-    // only when the company says so. Needs-approval and out-of-policy always are.
-    if (verdict === 'green' && modes?.within_policy_approval !== 'required' && !alwaysSend) {
+    // only when the company, or else the traveller's policy group, says so.
+    // Needs-approval and out-of-policy always are.
+    if (verdict === 'green' && !alwaysSend
+      && (await withinPolicyApprovalFor(db, employeeId, clientId, modes?.within_policy_approval)) !== 'required') {
       return { requiresApproval: false }
     }
   }

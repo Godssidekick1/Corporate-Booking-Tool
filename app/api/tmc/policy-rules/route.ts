@@ -60,9 +60,14 @@ export const GET = route(async (req: NextRequest) => {
   }
 
   const version = await policy.latestVersion(db, groupId)
-  const rows = version > 0 ? await policy.rulesAtVersion(db, groupId, version) : []
+  const [rows, clientOverrides] = await Promise.all([
+    version > 0 ? policy.rulesAtVersion(db, groupId, version) : [],
+    policy.withinPolicyOverrides(db, groupId),
+  ])
 
-  return Response.json({ ok: true, version, rows })
+  // clientOverrides: linked companies whose own Corporate Setting decides
+  // within-policy approval, named in the editor beside this group's rule.
+  return Response.json({ ok: true, version, rows, clientOverrides })
 })
 
 export const POST = route(async (req: NextRequest) => {

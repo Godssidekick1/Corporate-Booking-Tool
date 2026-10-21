@@ -537,14 +537,15 @@ export default function CorporateSettingsPage() {
                 {TRIP_APPROVAL_MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
               </select>
             </Field>
-            <Field label="Within-policy bookings" hint="A fare within every cap and rule. One within a fare cap's grace, or out of policy, always goes for approval.">
+            <Field label="Within-policy bookings" hint="A fare within every cap and rule. Set here, this overrides every policy group linked to the company; left to the group, each band follows its own (approved automatically if the group says nothing). A fare needing approval, or out of policy, always goes for approval.">
               <select
-                value={form.within_policy_approval ?? 'auto'}
-                onChange={e => set('within_policy_approval', e.target.value)}
+                value={form.within_policy_approval ?? ''}
+                onChange={e => set('within_policy_approval', e.target.value === '' ? null : e.target.value)}
                 style={s.input}
               >
-                <option value="auto">Approved automatically</option>
-                <option value="required">Sent for approval</option>
+                <option value="">Follow the policy group</option>
+                <option value="auto">Approved automatically, for everyone</option>
+                <option value="required">Sent for approval, for everyone</option>
               </select>
             </Field>
             <Field label="Out-of-policy fares" hint="Beyond a fare cap's grace, or a rule broken. A fare that only needs approval can always be booked.">
