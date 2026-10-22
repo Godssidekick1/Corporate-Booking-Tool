@@ -42,13 +42,19 @@ export const GET = route(async (
     return Response.json({ error: 'Not authorized to view this booking' }, { status: 403 })
   }
 
-  // No token until a booking is ticketed — there is nothing to show at a gate
-  // before then. The page simply renders no QR rather than an error.
-  if (booking.status !== 'ticketed' || !booking.share_token) {
+  // No QR until a booking is ticketed — there is nothing to show at a gate
+  // before then. The page simply renders none rather than an error.
+  if (booking.status !== 'ticketed') {
     return Response.json({ ok: true, qr: null, url: null })
   }
 
-  const url = `${process.env.NEXT_PUBLIC_APP_URL}/t/${booking.share_token}`
+  // Ticketed some other way than our ticket route, it has no token yet: made
+  // now, once, rather than leaving the ticket without a QR.
+  const token = booking.share_token
+    ?? await bookingsRepo.ensureShareToken(db, bookingId, crypto.randomUUID().replace(/-/g, ''))
+  if (!token) return Response.json({ ok: true, qr: null, url: null })
+
+  const url = `${process.env.NEXT_PUBLIC_APP_URL}/t/${token}`
 
   try {
     const qr = await QRCode.toDataURL(url, {

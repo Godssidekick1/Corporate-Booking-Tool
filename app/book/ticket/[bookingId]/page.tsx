@@ -97,7 +97,9 @@ interface Booking {
   status: string
   pnr: string | null
   ticket_numbers: (string | null)[] | null
-  total_cost: number
+  // What the company paid. The airline's own figure (total_cost) is never
+  // sent to this page: with it the markup would be one subtraction away.
+  sell_total: number | null
   // The company's own words for its tickets (Corporate Settings).
   ticket_footer_text?: string | null
   itinerary: FlightItinerary | null
@@ -135,25 +137,6 @@ function seatsInLegOrder(seats: BookingPassenger['SeatListDetails']) {
   if (!seats) return []
   return [...seats].sort((a, b) => (a.FlightTime || '').localeCompare(b.FlightTime || ''))
 }
-// code), seeded off the PNR so the pattern is stable per booking rather
-// than reshuffling on every render.
-function BarcodeStrip({ seed }: { seed: string }) {
-  const bars: number[] = []
-  let hash = 0
-  for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0
-  for (let i = 0; i < 34; i++) {
-    hash = (hash * 1103515245 + 12345) >>> 0
-    bars.push(1 + (hash % 3))
-  }
-  return (
-    <div style={{ display: 'flex', alignItems: 'stretch', gap: '2px', height: '36px' }}>
-      {bars.map((w, i) => (
-        <div key={i} style={{ width: `${w}px`, background: '#0A0A14', opacity: i % 7 === 0 ? 0.4 : 0.85 }} />
-      ))}
-    </div>
-  )
-}
-
 // Layover between the arrival at a stop and the onward departure. Both times
 // are already on the stop; only the subtraction was missing.
 function layoverBetween(arrival: string | undefined, departure: string | undefined): string | null {
@@ -605,15 +588,15 @@ export default function TicketPage() {
                           What sat here before was BarcodeStrip: a hash-seeded
                           row of divs encoding nothing, unscannable by anything.
                           Looking like a boarding pass is worse than looking like
-                          nothing, because someone eventually tries it.
-                          It stays as the placeholder while the QR loads, and if
-                          generation fails the stub simply carries no code. */}
-                      <div style={s.barcodeWrap}>
-                        {qr.qr
-                          // eslint-disable-next-line @next/next/no-img-element
-                          ? <img src={qr.qr} alt="Scan to open this ticket" style={s.qrImage} />
-                          : <BarcodeStrip seed={(booking.pnr || bookingId) + ticketNumbers[i] + i} />}
-                      </div>
+                          nothing, because someone eventually tries it, so it
+                          is gone: until the QR arrives, or if it cannot be
+                          made, the stub carries no code at all. */}
+                      {qr.qr && (
+                        <div style={s.barcodeWrap}>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={qr.qr} alt="Scan to open this ticket" style={s.qrImage} />
+                        </div>
+                      )}
                       {qr.qr && <p style={s.qrCaption}>Scan to open this ticket</p>}
                       {!isLast && <div style={s.stubDivider} />}
                     </div>
@@ -658,7 +641,7 @@ export default function TicketPage() {
             {/* ── Fare (kept minimal — this is a ticket, not an invoice) ── */}
             <div style={s.fareFooter}>
               <span>Total paid</span>
-              <span style={s.fareFooterValue}>{currency} {booking.total_cost?.toLocaleString('en-IN')}</span>
+              <span style={s.fareFooterValue}>{booking.sell_total != null ? `${currency} ${booking.sell_total.toLocaleString('en-IN')}` : '—'}</span>
             </div>
 
             {booking.ticket_footer_text && <p style={s.companyFooter}>{booking.ticket_footer_text}</p>}

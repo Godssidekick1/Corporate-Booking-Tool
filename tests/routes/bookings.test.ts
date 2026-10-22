@@ -257,6 +257,22 @@ d('traveller bookings and trips', () => {
     expect(body.qr).toMatch(/^data:image\/png;base64,/)
   })
 
+  it('qr: a ticket issued another way, with no share token, gets one once', async () => {
+    await exec(db, sql`update bookings set share_token = null where id = ${ticketed.id}`)
+    try {
+      const first = (await call(qrGet, { as: admin, ...at(ticketed.id, '/qr') })).json as { qr: string | null; url: string | null }
+      expect(first.qr).toMatch(/^data:image\/png;base64,/)
+      const token = (await one<{ share_token: string }>(db, sql`select share_token from bookings where id = ${ticketed.id}`)).share_token
+      // The form the public ticket route accepts.
+      expect(token).toMatch(/^[0-9a-f]{32}$/)
+      expect(first.url).toMatch(new RegExp(`/t/${token}$`))
+      // Once: the same link the next time.
+      expect(((await call(qrGet, { as: admin, ...at(ticketed.id, '/qr') })).json as { url: string }).url).toBe(first.url)
+    } finally {
+      await exec(db, sql`update bookings set share_token = ${ticketed.share_token} where id = ${ticketed.id}`)
+    }
+  })
+
   // ── Trips ──────────────────────────────────────────────────────────────────
 
   it('trips: mine, deleted hidden', async () => {

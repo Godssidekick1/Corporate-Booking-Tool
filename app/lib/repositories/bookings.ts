@@ -263,6 +263,18 @@ export async function byShareToken(db: Queryable, token: string): Promise<Public
     from bookings where share_token = ${token}`)
 }
 
+// A ticketed booking's share token, made now if it has none: ticketed some
+// other way than our ticket route (an import, the demo seed), it never got one,
+// and without it there is no QR. The same form the ticket route mints (32 hex
+// characters, what the public ticket route accepts); set only if still empty,
+// so two requests at once agree on one token.
+export async function ensureShareToken(db: Queryable, bookingId: string, fresh: string): Promise<string | null> {
+  return (await maybeOne<{ share_token: string | null }>(db, sql`
+    update bookings set share_token = coalesce(share_token, ${fresh})
+    where id = ${bookingId} and status = 'ticketed'
+    returning share_token`))?.share_token ?? null
+}
+
 export type ShareInfo = Pick<Row<'bookings'>, 'id' | 'employee_id' | 'status' | 'share_token'>
 
 export async function shareInfo(db: Queryable, bookingId: string): Promise<ShareInfo | null> {
