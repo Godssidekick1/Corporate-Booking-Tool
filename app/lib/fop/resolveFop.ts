@@ -53,6 +53,8 @@ export interface ResolvableFop {
   // unique index rather than trusted from here.
   is_default: boolean
   created_at: string
+  // A traveller card's owner: it pays for that person's bookings only.
+  owner_employee_id?: string | null
 }
 
 export interface ResolvableFopAssignment {
@@ -107,6 +109,10 @@ export interface ResolveFopInput {
   // than a real itinerary.
   legBookingCodes?: (string | null | undefined)[]
   now?: Date
+  // Whose booking this is. Given, a traveller card applies only to its own
+  // person: someone's card must never pay for a colleague's flight. Omitted
+  // ("what could apply" views, not a booking) there is no one to match.
+  travellerId?: string | null
 }
 
 // Explicitness of intent, lowest first — the same ladder as deal codes, with
@@ -200,6 +206,7 @@ export function resolveFop(input: ResolveFopInput): ResolvedFop | null {
     airlineCode = null,
     legBookingCodes = [],
     now = new Date(),
+    travellerId,
   } = input
 
   // An FOP can be assigned more than once (directly and via a bucket, say).
@@ -240,6 +247,9 @@ export function resolveFop(input: ResolveFopInput): ResolvedFop | null {
     // else because it is the bluntest rule here: no amount of branch, airline or
     // class matching makes a disallowed payer applicable.
     if (allowedPayers && !allowedPayers.has(fop.payer)) return false
+
+    // A traveller card pays for its owner's bookings and nobody else's.
+    if (travellerId !== undefined && fop.payer === 'traveller' && fop.owner_employee_id !== travellerId) return false
 
     // A branch-scoped rule only applies at its branch. A TMC-wide one applies
     // anywhere, including when the client has no branch recorded yet.

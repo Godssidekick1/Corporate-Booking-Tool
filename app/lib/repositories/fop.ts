@@ -81,7 +81,7 @@ export async function countForBranch(db: Queryable, branchId: string): Promise<n
 export async function forResolution(db: Queryable, tmcId: string): Promise<ResolvableFop[]> {
   return many<ResolvableFop>(db, sql`
     select id, label, fop_type, payer, card_type, last4, expiry_month, expiry_year, branch_id,
-           airline_code, rbd_spec, active, is_default, created_at
+           airline_code, rbd_spec, active, is_default, created_at, owner_employee_id
     from forms_of_payment where tmc_id = ${tmcId}
     order by created_at, id`)
 }

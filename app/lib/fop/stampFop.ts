@@ -38,9 +38,10 @@ export async function stampFop(
   db: Queryable,
   clientId: string,
   flight: FlatFlightResult | null,
-  // A personal trip is the traveller's to pay: only their own card may be
-  // chosen, whatever the company's order of preference.
-  opts: { travellerPays?: boolean } = {},
+  // travellerId: whose booking it is, so a traveller card pays only for its
+  // owner. travellerPays: a personal trip is the traveller's to pay, so only
+  // their own card may be chosen, whatever the company's order of preference.
+  opts: { travellerId?: string | null; travellerPays?: boolean } = {},
 ): Promise<StampedFop | null> {
   try {
     const client = await clients.stampProfile(db, clientId)
@@ -109,6 +110,7 @@ export async function stampFop(
       branchId: client.branch_id,
       airlineCode,
       legBookingCodes,
+      ...(opts.travellerId !== undefined ? { travellerId: opts.travellerId } : {}),
     })
 
     if (!resolved) return null

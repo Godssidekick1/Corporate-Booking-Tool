@@ -285,14 +285,22 @@ export const POST = route(async (req: NextRequest) => {
       // saved and the booking goes back for approval instead of being booked:
       // the approver signed off a price, not "whatever the airline asks now".
       // Measured on the sell total, the figure the approver saw.
+      // Whatever the outcome, the booking carries the price it is booked at:
+      // the airline's new fare, with commercials and policy worked out again.
       let passengerTotal = String(booking.total_cost)
-      const modes = booking.client_id ? await clientsRepo.approvalModes(db, booking.client_id) : null
-      const details = modes?.fare_rise_reapproval != null ? extractPricingDetails(freshPricing) : null
+      const details = extractPricingDetails(freshPricing)
       const target = details ? await bookingsRepo.refreshTarget(db, bookingId) : null
-      if (modes && details && target && booking.client_id) {
-        const repriced = await priceAgain(db, target, details)
+      if (details && target && booking.client_id) {
+        const [modes, repriced] = await Promise.all([
+          clientsRepo.approvalModes(db, booking.client_id),
+          priceAgain(db, target, details),
+        ])
         const approvedSell = Number(booking.sell_total ?? booking.total_cost)
-        if (fareRoseTooFar(approvedSell, repriced.sellTotal, Number(modes.fare_rise_reapproval), modes.fare_rise_reapproval_unit)) {
+        if (modes?.fare_rise_reapproval == null
+          || !fareRoseTooFar(approvedSell, repriced.sellTotal, Number(modes.fare_rise_reapproval), modes.fare_rise_reapproval_unit)) {
+          await bookingsRepo.applyRefreshedFare(db, bookingId, repriced.fare)
+          passengerTotal = String(repriced.totalCost)
+        } else {
           const inr = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`
           await bookingsRepo.applyRefreshedFare(db, bookingId, repriced.fare)
           await bookingsRepo.setStatus(db, bookingId, 'pending_approval')

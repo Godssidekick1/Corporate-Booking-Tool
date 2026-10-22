@@ -203,6 +203,15 @@ describe('lowest logical fare', () => {
     expect(cheaperNearby([chosen, shown('z', '08:10', 5999.5)], 'a', 'a-f', 60)).toBeNull()
   })
 
+  it('a round trip counts only when the return is within the window too', () => {
+    const rt = (key: string, out: string, back: string, total: number) =>
+      shown(key, out, total, { journeys: 2, returnDeparture: `2030-11-14T${back}:00` })
+    const chosen = rt('a', '08:00', '18:00', 6000)
+    expect(cheaperNearby([chosen, rt('b', '08:15', '18:20', 5000)], 'a', 'a-f', 30)?.label).toBe('B')
+    // Same outbound, but flying back three hours later: not the same trip for less.
+    expect(cheaperNearby([chosen, rt('c', '08:15', '21:00', 4000)], 'a', 'a-f', 30)).toBeNull()
+  })
+
   it('a fare not in what was shown, or no window: not judged', () => {
     const flights = [shown('a', '08:00', 6000), shown('b', '08:10', 5000)]
     expect(cheaperNearby(flights, 'a', 'other-fare', 60)).toBeNull()

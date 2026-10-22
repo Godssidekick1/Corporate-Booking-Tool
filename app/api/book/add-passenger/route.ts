@@ -393,7 +393,7 @@ export const POST = route(async (req: NextRequest) => {
     // in parallel since neither depends on the other.
     const [resolvedDealCodes, resolvedFop] = await Promise.all([
       stampDealCodes(db, clientId, flight ?? null),
-      stampFop(db, clientId, flight ?? null, { travellerPays: personal }),
+      stampFop(db, clientId, flight ?? null, { travellerId: employee.id, travellerPays: personal }),
     ])
 
     // Insert immediately after a successful AddPassenger call — this is the

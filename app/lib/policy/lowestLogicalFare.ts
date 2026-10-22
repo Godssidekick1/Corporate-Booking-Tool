@@ -6,6 +6,11 @@ import type { FlatFlightResult } from '@/app/lib/book/types'
 // That fare needs approval: it is not out of policy, but someone should see
 // that a cheaper, equally convenient one was there.
 //
+// A round trip is compared in both directions: a cheaper one counts only
+// when its return also leaves within the window of the chosen return, so a
+// fare that is cheaper because it flies back at a worse time is not "the
+// same trip for less".
+//
 // Both prices come from the SAME search response, as the traveller saw them
 // (airline fare plus markup), so they are compared on one basis. The quote's
 // sell total also carries discount and fee, which search rows do not.
@@ -16,6 +21,7 @@ import type { FlatFlightResult } from '@/app/lib/book/types'
 export interface ShownFlight {
   flightKey: string
   departure: string        // outbound, local to the origin
+  returnDeparture?: string // the return's, on a round trip
   origin: string
   destination: string
   journeys: number         // one-way 1, round trip 2
@@ -44,7 +50,11 @@ export function shownFlights(results: FlatFlightResult[]): ShownFlight[] {
     if (fares.length === 0) return []
     const leg = r.legs?.[0]
     const label = [leg?.airlineCode ?? r.airline?.code, leg?.flightNumber].filter(Boolean).join(' ')
-    return [{ flightKey: r.flightKey, departure, origin, destination, journeys: r.journeys?.length || 1, label, fares }]
+    const returnDeparture = r.journeys?.[1]?.origin?.dateTime
+    return [{
+      flightKey: r.flightKey, departure, origin, destination, journeys: r.journeys?.length || 1, label, fares,
+      ...(returnDeparture ? { returnDeparture } : {}),
+    }]
   })
 }
 
@@ -62,13 +72,20 @@ export function cheaperNearby(
   if (!chosen || !chosenFare || !(windowMinutes > 0)) return null
   const at = Date.parse(chosen.departure)
   if (!Number.isFinite(at)) return null
+  const window = windowMinutes * 60_000
+  const backAt = chosen.returnDeparture ? Date.parse(chosen.returnDeparture) : NaN
 
   let best: CheaperNearby | null = null
   for (const f of shown) {
     if (f.flightKey === chosen.flightKey) continue
     if (f.origin !== chosen.origin || f.destination !== chosen.destination || f.journeys !== chosen.journeys) continue
     const dep = Date.parse(f.departure)
-    if (!Number.isFinite(dep) || Math.abs(dep - at) > windowMinutes * 60_000) continue
+    if (!Number.isFinite(dep) || Math.abs(dep - at) > window) continue
+    // A round trip: the return within the window too, when both carry one.
+    if (Number.isFinite(backAt)) {
+      const back = f.returnDeparture ? Date.parse(f.returnDeparture) : NaN
+      if (!Number.isFinite(back) || Math.abs(back - backAt) > window) continue
+    }
     const cheapest = Math.min(...f.fares.map(x => x.total))
     // At least a rupee: rounding is not a cheaper fare.
     if (cheapest > chosenFare.total - 1) continue

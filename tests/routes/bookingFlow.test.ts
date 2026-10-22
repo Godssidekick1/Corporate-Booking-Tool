@@ -262,6 +262,8 @@ d('booking flow', () => {
       expire()
       expect((await book(bookingId)).status).toBe(200)
       expect(await row(bookingId)).toMatchObject({ status: 'held', pnr: 'PNR003' })
+      // Booked at the airline's new fare, and the booking says so.
+      expect(await one(db, sql`select total_cost from bookings where id = ${bookingId}`)).toEqual({ total_cost: 10800 })
     } finally {
       await exec(db, sql`update clients set fare_rise_reapproval = null where id = ${clientId}`)
     }

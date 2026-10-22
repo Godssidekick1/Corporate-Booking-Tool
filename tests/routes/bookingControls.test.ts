@@ -6,6 +6,8 @@ import { PATCH as clientPatch } from '@/app/api/tmc/clients/[id]/route'
 import { POST as tripsPost } from '@/app/api/trips/route'
 import { POST as chainPost } from '@/app/api/tmc/approval-chains/direct/route'
 import { GET as bookingGet } from '@/app/api/book/[bookingId]/route'
+import { POST as fopsPost } from '@/app/api/tmc/forms-of-payment/route'
+import { POST as fopMapPost } from '@/app/api/tmc/fop-assignments/route'
 import { GET as rulesGet, POST as rulesPost } from '@/app/api/tmc/policy-rules/route'
 import { resolveEffectivePolicy } from '@/app/lib/rule-engine/resolveEffectivePolicy'
 import { call } from '../harness/call'
@@ -220,6 +222,48 @@ d('booking controls (Corporate Settings)', () => {
     expect((await addPassenger('P2', '2030-01-02', { purpose: 'personal', tripId })).status).toBe(400)
     await setClient({ personal_bookings_allowed: false })
     await setBandRule('personal_trips_allowed', false)
+  })
+
+  it('personal: paid by the traveller\'s own card, never a colleague\'s', async () => {
+    const tmcId = a.tmcAdmin.tmc_id!
+    const cardType = (await one<{ id: string }>(db, sql`
+      select id from fop_payment_types where tmc_id = ${tmcId} and requires_card order by code limit 1`)).id
+    const someoneElse = await one<{ id: string }>(db, sql`
+      select id from employees where client_id = ${clientId} and id not in (${colleague.id}, ${a.corpAdmin.id})
+        and status = 'active' order by id desc limit 1`)
+    const card = async (label: string, owner: string) => {
+      const res = await call(fopsPost, {
+        as: a.tmcAdmin, method: 'POST', url: '/api/tmc/forms-of-payment',
+        body: { label, payer: 'traveller', owner_employee_id: owner, payment_type_id: cardType, card_type: 'VI',
+          last4: '4242', expiry_month: 12, expiry_year: 2035 },
+      })
+      expect(res.status).toBe(200)
+      const id = (res.json as { fop: { id: string } }).fop.id
+      expect((await call(fopMapPost, { as: a.tmcAdmin, method: 'POST', url: '/api/tmc/fop-assignments',
+        body: { fopId: id, targets: [{ kind: 'client', id: clientId }] } })).status).toBe(200)
+      return id
+    }
+    const payerOf = async (ref: string) => (await one<{ fop: string | null; payer: string | null }>(db, sql`
+      select resolved_fop->>'fopId' as fop, resolved_fop->>'payer' as payer from bookings where provider_order_id = ${ref}`))
+
+    await setClient({ personal_bookings_allowed: true })
+    await setBandRule('personal_trips_allowed', true)
+    try {
+      // Only a colleague's card reaches the company: not this traveller's to use.
+      const theirs = await card('Their card', someoneElse.id)
+      await price('PC1', '2030-12-01')
+      expect((await addPassenger('PC1', '2030-12-01', { purpose: 'personal' })).status).toBe(200)
+      expect((await payerOf('PC1')).fop).not.toBe(theirs)
+
+      // Their own card: chosen.
+      const own = await card('Own card', colleague.id)
+      await price('PC2', '2030-12-02')
+      expect((await addPassenger('PC2', '2030-12-02', { purpose: 'personal' })).status).toBe(200)
+      expect(await payerOf('PC2')).toEqual({ fop: own, payer: 'traveller' })
+    } finally {
+      await setClient({ personal_bookings_allowed: false })
+      await setBandRule('personal_trips_allowed', false)
+    }
   })
 
   it('personal: with policy control off, the company switch alone decides', async () => {
