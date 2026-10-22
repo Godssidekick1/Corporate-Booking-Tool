@@ -5,9 +5,9 @@ import SearchableSelect from '@/app/components/SearchableSelect'
 import { toDateInput, fromDateInput, countryForDemonym } from '@/app/lib/places/profileFormat'
 
 // ── Place pickers ────────────────────────────────────────────────────────────
-// Country, state and city pickers over the GeoNames reference data (CC BY 4.0),
-// shared by every screen that records a place: traveller profiles, the
-// employee's own profile, the booking passenger form, and the client, branch
+// Country, state and city pickers over the GeoNames reference data (CC BY 4.0,
+// credited in NOTICE.md rather than under every field), shared by every
+// screen that records a place: traveller profiles, the employee's own profile, the booking passenger form, and the client, branch
 // and GST screens through the CountryDropdown / StateDropdown / CityDropdown
 // wrappers.
 //
@@ -67,7 +67,6 @@ export function findCountry(countries: Country[], value: string): Country | null
 }
 
 const note: React.CSSProperties = { fontSize: 11, color: '#B45309', margin: '4px 0 0' }
-const credit: React.CSSProperties = { fontSize: 10, color: '#9CA3AF', margin: '4px 0 0' }
 
 // ── CountrySelect ────────────────────────────────────────────────────────────
 // `by` picks what is stored: 'code' (ISO 3166, what the airline takes: a
@@ -226,7 +225,6 @@ export function CitySelect({ country, state, value, onChange, disabled, strict =
         allowFreeText={!strict}
       />
       {unknown && <p style={note}>&ldquo;{value}&rdquo; isn&apos;t a place in {state || 'this country'}. Choose one.</p>}
-      <p style={credit}>Place names: GeoNames (CC BY 4.0)</p>
     </div>
   )
 }
