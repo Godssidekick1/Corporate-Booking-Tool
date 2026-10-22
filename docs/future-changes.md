@@ -41,18 +41,6 @@ search, coverage, CSV and the public ticket link; verified database TLS when
 - **Leak sweep covers GET and DELETE only.** POST / PATCH cross-tenant writes
   are covered by the per-route tests, not swept.
 
-## Employee dashboard (redesign)
-
-- **The "Finish setting up TravelDesk" checklist stays after every step is
-  done.** It should disappear once complete (it is shown while the client's
-  `setup_completed` is false, which nothing sets when the four steps are
-  ticked).
-- **The dashboard as a whole should be redesigned** -- the current layout is
-  not liked. Gather what each role needs first (traveller, approver, finance,
-  corporate admin).
-- Small copy issue for the same pass: the empty "Recent bookings" text says
-  "your manager will be notified" even to someone with no manager.
-
 ## Booking on someone's behalf (built 2026-10-13; what is left)
 
 Built: the travel desk (TMC admins; counsellors with "Book for travellers")
@@ -66,12 +54,10 @@ everywhere else the traveller's own chain decides.
   production email exists. Today it shows in their trips and dashboard only.
 - **Named travel arrangers** (an EA who is not an admin) -- a per-person
   "may book for" list instead of the admin role.
-- **A guest booking is judged by the booker's policy.** "A guest" (not an
-  employee) is recorded against whoever books it, as before. Decide whether
-  guests need a policy of their own.
-- **The desk sees the sell price only.** A counsellor could be shown the
-  airline fare and the markup while booking; not built.
-- **Finance approvals for red verdicts** -- possible future approval step.
+- **A guest booking is judged by the booker's policy** (decided 2026-10-22:
+  kept). "A guest" (not an employee) is recorded against whoever books it.
+- **Finance approvals for red verdicts** are possible already: a chain step
+  approved by finance, set to "Out of policy only".
 
 ## Trips and their sign-off (built 2026-10-16; what is left)
 
@@ -91,8 +77,6 @@ plans and submits trips for travellers (/tmc/book, /tmc/trips/[id]).
 - **Tell the approver and the traveller by email** when a trip is submitted
   and decided, once production email exists. Today: the approvals queue and
   the trip page.
-- **Trip-level reports** (spend against budget by cost centre, billable
-  trips) now have the data.
 
 ## Policy and booking controls (built 2026-10-19; what is left)
 
@@ -125,32 +109,32 @@ manager, Personal and Guest tags, and a ticket footer.
   it, no approval escalates.
 - **Booking emails per event** (needs production SMTP), including an
   escalation and a fare sent back for re-approval.
-- **Lowest logical fare compares the outbound departure** of one-way and
-  round trips alike. A round trip whose return is far less convenient can
-  count as "cheaper nearby".
-- **A fare re-priced at booking but still under the threshold** is booked
-  at the airline's new price while the booking keeps the approved totals,
-  as before this change. Recording the new price there too is a small
-  follow-up.
-- **Old approval rules** (auto_approve_under, finance_approval_over) stay in
-  stored policy versions until a group is saved again. They are not read.
 - **A guest is what the booker says.** for_guest is the booker's own choice;
   the server cannot tell a guest's name from an employee's. Good enough while
   it is a company preference rather than a control anyone gains by evading.
 - **Personal trips are paid by the traveller's card** when the resolver can
-  pick one; no demo or template client has a traveller-paid form of payment
-  yet, so that branch is untested against real rows.
+  pick one, and only the traveller's own (tested with a created card); no
+  demo or template client has a traveller-paid form of payment yet.
 
-## Error messages travellers see (raised 2026-10-22; wait for the user's go)
+## Reports (built 2026-10-22; what is left)
 
-- **No raw provider errors on the booking screens.** The search page showed
-  "Amadeus FlightAvailability failed: Result Not Found Request ID: …
-  Provider: Result Not Found". Map each provider failure to a plain message
-  per step (search: "No flights found for these dates" for Result Not Found,
-  a retry message otherwise; price, book and ticket likewise). Keep the
-  request id and the provider's response in the server log only, or show a
-  short support reference. Stop returning `requestId`, `request` and `details`
-  to anyone but TMC staff.
+Built: six company reports (/reports: spend, policy compliance, savings,
+approvals, trips and budgets, travel patterns; admins and finance, sell side
+only) and six TMC reports (/tmc/reports: revenue, client activity, airlines
+and deals, desk productivity, compliance across clients, payments; a
+counsellor sees their portfolio). Every figure is counted from bookings
+already made; each table downloads as CSV (app/lib/reports,
+app/lib/repositories/reports.ts).
+
+- **Hotel and car spend** join the reports when hotels and cars are booked.
+- **Scheduled reports by email** (a monthly spend summary to finance), once
+  production email exists.
+- **Savings counts only what the policy recorded.** Lowest-fare misses exist
+  where a group sets a lowest-fare window, from 2026-10-20 on; earlier
+  bookings show none.
+- **Airline names come from the provider,** which calls Air India Express
+  (IX) "Air India"; reports show the code beside the name. A maintained
+  airline name list would fix it everywhere.
 
 ## Before real users
 
@@ -161,7 +145,8 @@ manager, Personal and Guest tags, and a ticket footer.
 
 ## Operational (one-off)
 
-
+- Run `20261022000000_drop_approval_amount_rules.sql` on the hosted
+  database (`migrate-hosted.mjs`). Local is up to date.
 - Run `npm run migrate` (places, no-manager, airports) and then
   `node scripts/load-cities.mjs` on the hosted database. Local is up to date.
 - Remove leftover Supabase environment variables on Vercel; rotate the
