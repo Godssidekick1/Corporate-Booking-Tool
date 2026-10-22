@@ -1,0 +1,1812 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`reports > every TMC report answers on the template’s bookings, as recorded > activity 1`] = `
+{
+  "chart": {
+    "kind": "series",
+    "points": [
+      {
+        "label": "Aug ’26",
+        "value": 10,
+      },
+      {
+        "label": "Sep ’26",
+        "value": 8,
+      },
+    ],
+    "title": "Bookings by month",
+    "valueKind": "count",
+  },
+  "description": "Which clients booked in the period and which did not.",
+  "headline": [
+    {
+      "hint": "At least one booking",
+      "kind": "count",
+      "label": "Active clients",
+      "value": 2,
+    },
+    {
+      "hint": "No bookings in the period",
+      "kind": "count",
+      "label": "Dormant",
+      "value": 7,
+    },
+    {
+      "kind": "count",
+      "label": "New in the period",
+      "value": 5,
+    },
+  ],
+  "key": "activity",
+  "tables": [
+    {
+      "columns": [
+        {
+          "key": "name",
+          "kind": "text",
+          "label": "Client",
+        },
+        {
+          "key": "group",
+          "kind": "text",
+          "label": "Group",
+        },
+        {
+          "key": "mode",
+          "kind": "text",
+          "label": "Booking mode",
+        },
+        {
+          "key": "status",
+          "kind": "text",
+          "label": "Status",
+        },
+        {
+          "key": "bookings",
+          "kind": "count",
+          "label": "Bookings",
+        },
+        {
+          "key": "travellers",
+          "kind": "count",
+          "label": "Travellers",
+        },
+        {
+          "key": "spend",
+          "kind": "money",
+          "label": "Spend",
+        },
+        {
+          "key": "lastBooking",
+          "kind": "date",
+          "label": "Last booking",
+        },
+        {
+          "key": "joined",
+          "kind": "date",
+          "label": "Joined",
+        },
+      ],
+      "key": "clients",
+      "rows": [
+        {
+          "bookings": 17,
+          "group": "AMEX",
+          "joined": "2026-07-09",
+          "lastBooking": "2026-09-17",
+          "mode": "SBT",
+          "name": "BCG",
+          "spend": 189191.5,
+          "status": "Active",
+          "travellers": 3,
+        },
+        {
+          "bookings": 1,
+          "group": null,
+          "joined": "2026-09-14",
+          "lastBooking": "2026-09-16",
+          "mode": "both",
+          "name": "Arjun K",
+          "spend": 14002,
+          "status": "Active",
+          "travellers": 1,
+        },
+        {
+          "bookings": 0,
+          "group": null,
+          "joined": "2026-08-31",
+          "lastBooking": null,
+          "mode": "SBT",
+          "name": "Arjun K",
+          "spend": 0,
+          "status": "Inactive",
+          "travellers": 0,
+        },
+        {
+          "bookings": 0,
+          "group": null,
+          "joined": "2026-08-31",
+          "lastBooking": null,
+          "mode": "SBT",
+          "name": "ekjd",
+          "spend": 0,
+          "status": "Active",
+          "travellers": 0,
+        },
+        {
+          "bookings": 0,
+          "group": null,
+          "joined": "2026-07-14",
+          "lastBooking": null,
+          "mode": "both",
+          "name": "Flip",
+          "spend": 0,
+          "status": "Active",
+          "travellers": 0,
+        },
+        {
+          "bookings": 0,
+          "group": "AMEX",
+          "joined": "2026-07-10",
+          "lastBooking": null,
+          "mode": "both",
+          "name": "Lenskart",
+          "spend": 0,
+          "status": "Active",
+          "travellers": 0,
+        },
+        {
+          "bookings": 0,
+          "group": "AMEX",
+          "joined": "2026-08-10",
+          "lastBooking": null,
+          "mode": "both",
+          "name": "Micron",
+          "spend": 0,
+          "status": "Active",
+          "travellers": 0,
+        },
+        {
+          "bookings": 0,
+          "group": "Decathalon",
+          "joined": "2026-07-15",
+          "lastBooking": null,
+          "mode": "SBT",
+          "name": "wd",
+          "spend": 0,
+          "status": "Active",
+          "travellers": 0,
+        },
+        {
+          "bookings": 0,
+          "group": "Decathalon",
+          "joined": "2026-08-13",
+          "lastBooking": null,
+          "mode": "both",
+          "name": "X",
+          "spend": 0,
+          "status": "Active",
+          "travellers": 0,
+        },
+      ],
+      "title": "Clients",
+    },
+  ],
+  "title": "Client activity",
+}
+`;
+
+exports[`reports > every TMC report answers on the template’s bookings, as recorded > airlines 1`] = `
+{
+  "chart": {
+    "kind": "list",
+    "points": [
+      {
+        "label": "Air India (AI)",
+        "value": 15,
+      },
+      {
+        "label": "Air India (IX)",
+        "value": 2,
+      },
+      {
+        "label": "Saudi Arabian Air (SV)",
+        "value": 1,
+      },
+    ],
+    "title": "Bookings by airline",
+    "valueKind": "count",
+  },
+  "description": "Which airlines carried the bookings, and how often a negotiated deal code applied.",
+  "headline": [
+    {
+      "kind": "count",
+      "label": "Airlines used",
+      "value": 3,
+    },
+    {
+      "hint": "27.8% of bookings",
+      "kind": "count",
+      "label": "Bookings on a deal code",
+      "value": 5,
+    },
+    {
+      "hint": "AI · 5 bookings",
+      "kind": "text",
+      "label": "Top deal code",
+      "value": "IN456787",
+    },
+  ],
+  "key": "airlines",
+  "tables": [
+    {
+      "columns": [
+        {
+          "key": "code",
+          "kind": "text",
+          "label": "Code",
+        },
+        {
+          "key": "name",
+          "kind": "text",
+          "label": "Airline",
+        },
+        {
+          "key": "bookings",
+          "kind": "count",
+          "label": "Bookings",
+        },
+        {
+          "key": "airline",
+          "kind": "money",
+          "label": "Airline cost",
+        },
+        {
+          "key": "sell",
+          "kind": "money",
+          "label": "Sell",
+        },
+      ],
+      "key": "airlines",
+      "rows": [
+        {
+          "airline": 141397,
+          "bookings": 15,
+          "code": "AI",
+          "name": "Air India",
+          "sell": 142139.5,
+        },
+        {
+          "airline": 29704,
+          "bookings": 2,
+          "code": "IX",
+          "name": "Air India",
+          "sell": 29704,
+        },
+        {
+          "airline": 31350,
+          "bookings": 1,
+          "code": "SV",
+          "name": "Saudi Arabian Air",
+          "sell": 31350,
+        },
+      ],
+      "title": "By airline",
+    },
+    {
+      "columns": [
+        {
+          "key": "code",
+          "kind": "text",
+          "label": "Deal code",
+        },
+        {
+          "key": "airline",
+          "kind": "text",
+          "label": "Airline",
+        },
+        {
+          "key": "type",
+          "kind": "text",
+          "label": "Type",
+        },
+        {
+          "key": "uses",
+          "kind": "count",
+          "label": "Bookings",
+        },
+        {
+          "key": "clients",
+          "kind": "count",
+          "label": "Clients",
+        },
+      ],
+      "key": "deal-codes",
+      "rows": [
+        {
+          "airline": "AI",
+          "clients": 1,
+          "code": "IN456787",
+          "type": "PF",
+          "uses": 5,
+        },
+      ],
+      "title": "Deal codes applied",
+    },
+  ],
+  "title": "Airlines & deals",
+}
+`;
+
+exports[`reports > every TMC report answers on the template’s bookings, as recorded > compliance 1`] = `
+{
+  "chart": {
+    "kind": "list",
+    "points": [
+      {
+        "label": "BCG",
+        "value": 11.1,
+      },
+    ],
+    "title": "Out of policy, by client",
+    "valueKind": "percent",
+  },
+  "description": "How each client’s bookings measured up to its travel policy.",
+  "headline": [
+    {
+      "kind": "percent",
+      "label": "Within policy",
+      "value": 66.7,
+    },
+    {
+      "kind": "percent",
+      "label": "Needs approval",
+      "value": 22.2,
+    },
+    {
+      "hint": "1 booking",
+      "kind": "percent",
+      "label": "Out of policy",
+      "value": 11.1,
+    },
+    {
+      "hint": "11.1% of its bookings",
+      "kind": "text",
+      "label": "Highest out-of-policy rate",
+      "value": "BCG",
+    },
+  ],
+  "key": "compliance",
+  "tables": [
+    {
+      "columns": [
+        {
+          "key": "name",
+          "kind": "text",
+          "label": "Client",
+        },
+        {
+          "key": "bookings",
+          "kind": "count",
+          "label": "Bookings",
+        },
+        {
+          "key": "within",
+          "kind": "count",
+          "label": "Within policy",
+        },
+        {
+          "key": "needs",
+          "kind": "count",
+          "label": "Needs approval",
+        },
+        {
+          "key": "out",
+          "kind": "count",
+          "label": "Out of policy",
+        },
+        {
+          "key": "unchecked",
+          "kind": "count",
+          "label": "Not checked",
+        },
+        {
+          "key": "outShare",
+          "kind": "percent",
+          "label": "Out of policy %",
+        },
+        {
+          "key": "reasons",
+          "kind": "count",
+          "label": "Reasons given",
+        },
+      ],
+      "key": "clients",
+      "rows": [
+        {
+          "bookings": 17,
+          "name": "BCG",
+          "needs": 2,
+          "out": 1,
+          "outShare": 11.1,
+          "reasons": 0,
+          "unchecked": 8,
+          "within": 6,
+        },
+        {
+          "bookings": 1,
+          "name": "Arjun K",
+          "needs": 0,
+          "out": 0,
+          "outShare": null,
+          "reasons": 0,
+          "unchecked": 1,
+          "within": 0,
+        },
+      ],
+      "title": "By client",
+    },
+  ],
+  "title": "Compliance across clients",
+}
+`;
+
+exports[`reports > every TMC report answers on the template’s bookings, as recorded > desk 1`] = `
+{
+  "chart": {
+    "kind": "series",
+    "points": [
+      {
+        "label": "Aug ’26",
+        "value": 0,
+      },
+      {
+        "label": "Sep ’26",
+        "value": 0,
+      },
+    ],
+    "title": "Desk bookings by month",
+    "valueKind": "count",
+  },
+  "description": "Bookings the travel desk made for travellers, and who made them.",
+  "headline": [
+    {
+      "kind": "count",
+      "label": "Desk bookings",
+      "value": 0,
+    },
+    {
+      "hint": "18 bookings in all",
+      "kind": "percent",
+      "label": "Share of all bookings",
+      "value": 0,
+    },
+    {
+      "kind": "text",
+      "label": "By client booking mode",
+      "value": "CBT 0 · SBT 0 · Hybrid 0",
+    },
+  ],
+  "key": "desk",
+  "tables": [
+    {
+      "columns": [
+        {
+          "key": "name",
+          "kind": "text",
+          "label": "Name",
+        },
+        {
+          "key": "role",
+          "kind": "text",
+          "label": "Role",
+        },
+        {
+          "key": "bookings",
+          "kind": "count",
+          "label": "Bookings",
+        },
+        {
+          "key": "clients",
+          "kind": "count",
+          "label": "Clients served",
+        },
+        {
+          "key": "spend",
+          "kind": "money",
+          "label": "Booked value",
+        },
+      ],
+      "key": "counsellors",
+      "rows": [],
+      "title": "By person",
+    },
+  ],
+  "title": "Desk productivity",
+}
+`;
+
+exports[`reports > every TMC report answers on the template’s bookings, as recorded > payments 1`] = `
+{
+  "chart": {
+    "kind": "series",
+    "legend": [
+      "Company",
+      "Agency (TMC)",
+      "Traveller",
+      "Not recorded",
+    ],
+    "points": [
+      {
+        "label": "Aug ’26",
+        "parts": [
+          0,
+          0,
+          0,
+          10,
+        ],
+        "value": 10,
+      },
+      {
+        "label": "Sep ’26",
+        "parts": [
+          0,
+          0,
+          0,
+          8,
+        ],
+        "value": 8,
+      },
+    ],
+    "title": "Bookings by payer, by month",
+    "valueKind": "count",
+  },
+  "description": "Who paid for the bookings: the company, the agency on credit, or the traveller.",
+  "headline": [
+    {
+      "hint": "₹0",
+      "kind": "count",
+      "label": "Paid by the company",
+      "value": 0,
+    },
+    {
+      "hint": "₹0",
+      "kind": "count",
+      "label": "Paid by the agency",
+      "value": 0,
+    },
+    {
+      "hint": "₹0",
+      "kind": "count",
+      "label": "Paid by the traveller",
+      "value": 0,
+    },
+    {
+      "hint": "What the TMC paid and bills on",
+      "kind": "money",
+      "label": "Agency-paid exposure",
+      "value": 0,
+    },
+    {
+      "hint": "Booked before payments were stamped",
+      "kind": "count",
+      "label": "Payer not recorded",
+      "value": 18,
+    },
+  ],
+  "key": "payments",
+  "tables": [
+    {
+      "columns": [
+        {
+          "key": "name",
+          "kind": "text",
+          "label": "Client",
+        },
+        {
+          "key": "payer",
+          "kind": "text",
+          "label": "Payer",
+        },
+        {
+          "key": "bookings",
+          "kind": "count",
+          "label": "Bookings",
+        },
+        {
+          "key": "amount",
+          "kind": "money",
+          "label": "Amount",
+        },
+      ],
+      "key": "clients",
+      "rows": [
+        {
+          "amount": 14002,
+          "bookings": 1,
+          "name": "Arjun K",
+          "payer": "Not recorded",
+        },
+        {
+          "amount": 189191.5,
+          "bookings": 17,
+          "name": "BCG",
+          "payer": "Not recorded",
+        },
+      ],
+      "title": "By client and payer",
+    },
+  ],
+  "title": "Payments",
+}
+`;
+
+exports[`reports > every TMC report answers on the template’s bookings, as recorded > revenue 1`] = `
+{
+  "chart": {
+    "kind": "series",
+    "points": [
+      {
+        "label": "Aug ’26",
+        "value": 0,
+      },
+      {
+        "label": "Sep ’26",
+        "value": -857.5,
+      },
+    ],
+    "title": "Margin by month",
+    "valueKind": "money",
+  },
+  "description": "What clients paid, what the airlines were owed, and the margin between: markup and fee, less discount.",
+  "headline": [
+    {
+      "hint": "18 bookings",
+      "kind": "money",
+      "label": "Sell",
+      "value": 203193.5,
+    },
+    {
+      "kind": "money",
+      "label": "Airline cost",
+      "value": 202451,
+    },
+    {
+      "kind": "money",
+      "label": "Margin",
+      "value": -857.5,
+    },
+    {
+      "hint": "Of sell",
+      "kind": "percent",
+      "label": "Margin %",
+      "value": -0.4,
+    },
+  ],
+  "key": "revenue",
+  "tables": [
+    {
+      "columns": [
+        {
+          "key": "name",
+          "kind": "text",
+          "label": "Client",
+        },
+        {
+          "key": "bookings",
+          "kind": "count",
+          "label": "Bookings",
+        },
+        {
+          "key": "sell",
+          "kind": "money",
+          "label": "Sell",
+        },
+        {
+          "key": "airline",
+          "kind": "money",
+          "label": "Airline cost",
+        },
+        {
+          "key": "markup",
+          "kind": "money",
+          "label": "Markup",
+        },
+        {
+          "key": "discount",
+          "kind": "money",
+          "label": "Discount",
+        },
+        {
+          "key": "fee",
+          "kind": "money",
+          "label": "Fee",
+        },
+        {
+          "key": "margin",
+          "kind": "money",
+          "label": "Margin",
+        },
+        {
+          "key": "marginShare",
+          "kind": "percent",
+          "label": "Margin %",
+        },
+        {
+          "key": "without",
+          "kind": "count",
+          "label": "No commercials recorded",
+        },
+      ],
+      "key": "clients",
+      "rows": [
+        {
+          "airline": 14002,
+          "bookings": 1,
+          "discount": 0,
+          "fee": 0,
+          "margin": 0,
+          "marginShare": 0,
+          "markup": 0,
+          "name": "Arjun K",
+          "sell": 14002,
+          "without": 0,
+        },
+        {
+          "airline": 188449,
+          "bookings": 17,
+          "discount": 857.5,
+          "fee": 0,
+          "margin": -857.5,
+          "marginShare": -0.5,
+          "markup": 0,
+          "name": "BCG",
+          "sell": 189191.5,
+          "without": 0,
+        },
+      ],
+      "title": "By client",
+    },
+  ],
+  "title": "Revenue",
+}
+`;
+
+exports[`reports > every company report answers on the template’s bookings, as recorded > approvals 1`] = `
+{
+  "chart": {
+    "kind": "series",
+    "legend": [
+      "Approved",
+      "Rejected",
+    ],
+    "points": [
+      {
+        "label": "Aug ’26",
+        "parts": [
+          2,
+          2,
+        ],
+        "value": 4,
+      },
+      {
+        "label": "Sep ’26",
+        "parts": [
+          11,
+          0,
+        ],
+        "value": 11,
+      },
+    ],
+    "title": "Decisions by month",
+    "valueKind": "count",
+  },
+  "description": "Approval requests raised in the period, for bookings and trip sign-offs, and how quickly they were decided.",
+  "headline": [
+    {
+      "kind": "count",
+      "label": "Decided",
+      "value": 15,
+    },
+    {
+      "hint": "13 requests",
+      "kind": "percent",
+      "label": "Approved",
+      "value": 86.7,
+    },
+    {
+      "kind": "hours",
+      "label": "Median time to decide",
+      "value": 0,
+    },
+    {
+      "hint": "Nothing waiting",
+      "kind": "count",
+      "label": "Waiting now",
+      "value": 0,
+    },
+    {
+      "hint": "Passed to the approver’s manager",
+      "kind": "count",
+      "label": "Escalated",
+      "value": 0,
+    },
+  ],
+  "key": "approvals",
+  "tables": [
+    {
+      "columns": [
+        {
+          "key": "name",
+          "kind": "text",
+          "label": "Approver",
+        },
+        {
+          "key": "decided",
+          "kind": "count",
+          "label": "Decided",
+        },
+        {
+          "key": "approved",
+          "kind": "count",
+          "label": "Approved",
+        },
+        {
+          "key": "rejected",
+          "kind": "count",
+          "label": "Rejected",
+        },
+        {
+          "key": "waiting",
+          "kind": "count",
+          "label": "Waiting",
+        },
+        {
+          "key": "median",
+          "kind": "hours",
+          "label": "Median time",
+        },
+        {
+          "key": "escalatedTo",
+          "kind": "count",
+          "label": "Escalated to them",
+        },
+      ],
+      "key": "approvers",
+      "rows": [
+        {
+          "approved": 13,
+          "decided": 15,
+          "escalatedTo": 0,
+          "median": 0,
+          "name": "Employee 4ae427",
+          "rejected": 2,
+          "waiting": 0,
+        },
+      ],
+      "title": "By approver",
+    },
+  ],
+  "title": "Approvals",
+}
+`;
+
+exports[`reports > every company report answers on the template’s bookings, as recorded > compliance 1`] = `
+{
+  "chart": {
+    "kind": "series",
+    "legend": [
+      "Within policy",
+      "Needs approval",
+      "Out of policy",
+      "Not checked",
+    ],
+    "points": [
+      {
+        "label": "Aug ’26",
+        "parts": [
+          5,
+          2,
+          1,
+          2,
+        ],
+        "value": 10,
+      },
+      {
+        "label": "Sep ’26",
+        "parts": [
+          1,
+          0,
+          0,
+          6,
+        ],
+        "value": 7,
+      },
+    ],
+    "title": "Outcomes by month",
+    "valueKind": "count",
+  },
+  "description": "How bookings measured up to the travel policy when they were made, and which rules were broken.",
+  "headline": [
+    {
+      "hint": "6 bookings",
+      "kind": "percent",
+      "label": "Within policy",
+      "value": 66.7,
+    },
+    {
+      "hint": "2 bookings",
+      "kind": "percent",
+      "label": "Needs approval",
+      "value": 22.2,
+    },
+    {
+      "hint": "1 booking",
+      "kind": "percent",
+      "label": "Out of policy",
+      "value": 11.1,
+    },
+    {
+      "kind": "money",
+      "label": "Out-of-policy spend",
+      "value": 8814,
+    },
+    {
+      "hint": "Why a booking went ahead outside policy",
+      "kind": "count",
+      "label": "Reasons given",
+      "value": 0,
+    },
+    {
+      "hint": "No band or policy group, or policy control off; not in the percentages",
+      "kind": "count",
+      "label": "Not checked",
+      "value": 8,
+    },
+  ],
+  "key": "compliance",
+  "tables": [
+    {
+      "columns": [
+        {
+          "key": "rule",
+          "kind": "text",
+          "label": "Rule",
+        },
+        {
+          "key": "times",
+          "kind": "count",
+          "label": "Bookings",
+        },
+        {
+          "key": "red",
+          "kind": "count",
+          "label": "Out of policy",
+        },
+        {
+          "key": "spend",
+          "kind": "money",
+          "label": "Spend on them",
+        },
+      ],
+      "key": "rules",
+      "note": "A booking that broke two rules is counted under each.",
+      "rows": [
+        {
+          "red": 1,
+          "rule": "Connecting flights entitlement",
+          "spend": 8814,
+          "times": 1,
+        },
+        {
+          "red": 0,
+          "rule": "Domestic fare limit",
+          "spend": 8891,
+          "times": 1,
+        },
+        {
+          "red": 0,
+          "rule": "Seat selection spend limit",
+          "spend": 7826,
+          "times": 1,
+        },
+      ],
+      "title": "Rules broken",
+    },
+    {
+      "columns": [
+        {
+          "key": "name",
+          "kind": "text",
+          "label": "Department",
+        },
+        {
+          "key": "bookings",
+          "kind": "count",
+          "label": "Bookings",
+        },
+        {
+          "key": "within",
+          "kind": "count",
+          "label": "Within policy",
+        },
+        {
+          "key": "needs",
+          "kind": "count",
+          "label": "Needs approval",
+        },
+        {
+          "key": "out",
+          "kind": "count",
+          "label": "Out of policy",
+        },
+        {
+          "key": "unchecked",
+          "kind": "count",
+          "label": "Not checked",
+        },
+        {
+          "key": "outShare",
+          "kind": "percent",
+          "label": "Out of policy %",
+        },
+        {
+          "key": "reasons",
+          "kind": "count",
+          "label": "Reasons given",
+        },
+      ],
+      "key": "departments",
+      "rows": [
+        {
+          "bookings": 10,
+          "name": "IT",
+          "needs": 0,
+          "out": 0,
+          "outShare": 0,
+          "reasons": 0,
+          "unchecked": 8,
+          "within": 2,
+        },
+        {
+          "bookings": 7,
+          "name": "No department",
+          "needs": 2,
+          "out": 1,
+          "outShare": 14.3,
+          "reasons": 0,
+          "unchecked": 0,
+          "within": 4,
+        },
+      ],
+      "title": "By department",
+    },
+    {
+      "columns": [
+        {
+          "key": "reason",
+          "kind": "text",
+          "label": "Reason",
+        },
+        {
+          "key": "times",
+          "kind": "count",
+          "label": "Bookings",
+        },
+      ],
+      "key": "reasons",
+      "rows": [],
+      "title": "Reasons given",
+    },
+  ],
+  "title": "Policy compliance",
+}
+`;
+
+exports[`reports > every company report answers on the template’s bookings, as recorded > patterns 1`] = `
+{
+  "chart": {
+    "kind": "series",
+    "points": [
+      {
+        "label": "0–2 days",
+        "value": 11,
+      },
+      {
+        "label": "3–6 days",
+        "value": 0,
+      },
+      {
+        "label": "7–13 days",
+        "value": 2,
+      },
+      {
+        "label": "14+ days",
+        "value": 4,
+      },
+    ],
+    "title": "How far ahead flights were booked",
+    "valueKind": "count",
+  },
+  "description": "Where people fly, with whom, and how far ahead they book.",
+  "headline": [
+    {
+      "hint": "5 bookings",
+      "kind": "text",
+      "label": "Top route",
+      "value": "DEL – GOX",
+    },
+    {
+      "hint": "15 bookings",
+      "kind": "text",
+      "label": "Top airline",
+      "value": "Air India (AI)",
+    },
+    {
+      "kind": "days",
+      "label": "Booked ahead, on average",
+      "value": 11.4,
+    },
+    {
+      "kind": "count",
+      "label": "Personal trips",
+      "value": 0,
+    },
+    {
+      "kind": "count",
+      "label": "Guest bookings",
+      "value": 0,
+    },
+  ],
+  "key": "patterns",
+  "tables": [
+    {
+      "columns": [
+        {
+          "key": "name",
+          "kind": "text",
+          "label": "Route",
+        },
+        {
+          "key": "bookings",
+          "kind": "count",
+          "label": "Bookings",
+        },
+        {
+          "key": "spend",
+          "kind": "money",
+          "label": "Spend",
+        },
+      ],
+      "key": "routes",
+      "rows": [
+        {
+          "bookings": 5,
+          "name": "DEL – GOX",
+          "spend": 39068,
+        },
+        {
+          "bookings": 3,
+          "name": "DEL – BOM",
+          "spend": 27594.5,
+        },
+        {
+          "bookings": 2,
+          "name": "DEL – BLR",
+          "spend": 20141,
+        },
+        {
+          "bookings": 1,
+          "name": "DEL – FCO",
+          "spend": 31350,
+        },
+        {
+          "bookings": 1,
+          "name": "DEL – BKK",
+          "spend": 19918,
+        },
+        {
+          "bookings": 1,
+          "name": "DEL – NMI",
+          "spend": 15702,
+        },
+        {
+          "bookings": 1,
+          "name": "DEL – GOI",
+          "spend": 11728,
+        },
+        {
+          "bookings": 1,
+          "name": "AMD – BLR",
+          "spend": 8328,
+        },
+        {
+          "bookings": 1,
+          "name": "GOI – BOM",
+          "spend": 7886,
+        },
+        {
+          "bookings": 1,
+          "name": "GOX – DEL",
+          "spend": 7476,
+        },
+      ],
+      "title": "Top routes",
+    },
+    {
+      "columns": [
+        {
+          "key": "name",
+          "kind": "text",
+          "label": "Airline",
+        },
+        {
+          "key": "bookings",
+          "kind": "count",
+          "label": "Bookings",
+        },
+        {
+          "key": "spend",
+          "kind": "money",
+          "label": "Spend",
+        },
+      ],
+      "key": "airlines",
+      "rows": [
+        {
+          "bookings": 15,
+          "name": "Air India (AI)",
+          "spend": 142139.5,
+        },
+        {
+          "bookings": 1,
+          "name": "Saudi Arabian Air (SV)",
+          "spend": 31350,
+        },
+        {
+          "bookings": 1,
+          "name": "Air India (IX)",
+          "spend": 15702,
+        },
+      ],
+      "title": "Top airlines",
+    },
+    {
+      "columns": [
+        {
+          "key": "name",
+          "kind": "text",
+          "label": "Traveller",
+        },
+        {
+          "key": "bookings",
+          "kind": "count",
+          "label": "Bookings",
+        },
+        {
+          "key": "spend",
+          "kind": "money",
+          "label": "Spend",
+        },
+      ],
+      "key": "travellers",
+      "rows": [
+        {
+          "bookings": 9,
+          "name": "Employee 4ae427",
+          "spend": 122028.5,
+        },
+        {
+          "bookings": 7,
+          "name": "Employee 1c5a5b",
+          "spend": 55435,
+        },
+        {
+          "bookings": 1,
+          "name": "Employee 8bebd3",
+          "spend": 11728,
+        },
+      ],
+      "title": "Top travellers",
+    },
+  ],
+  "title": "Travel patterns",
+}
+`;
+
+exports[`reports > every company report answers on the template’s bookings, as recorded > savings 1`] = `
+{
+  "chart": {
+    "kind": "series",
+    "points": [
+      {
+        "label": "Aug ’26",
+        "value": 0,
+      },
+      {
+        "label": "Sep ’26",
+        "value": 0,
+      },
+    ],
+    "title": "Extra paid on lowest-fare misses, by month",
+    "valueKind": "money",
+  },
+  "description": "Money left on the table: cheaper flights at nearly the same time that were not taken, and fares paid above their cap within the grace. Counted where the policy group sets a lowest-fare window or a grace.",
+  "headline": [
+    {
+      "hint": "A cheaper flight left within the window",
+      "kind": "count",
+      "label": "Lowest-fare misses",
+      "value": 0,
+    },
+    {
+      "kind": "money",
+      "label": "Extra paid on them",
+      "value": 0,
+    },
+    {
+      "hint": "Over the fare cap, within the grace",
+      "kind": "count",
+      "label": "Fares within grace",
+      "value": 1,
+    },
+    {
+      "kind": "money",
+      "label": "Paid above the caps",
+      "value": 891,
+    },
+  ],
+  "key": "savings",
+  "tables": [
+    {
+      "columns": [
+        {
+          "key": "date",
+          "kind": "date",
+          "label": "Booked",
+        },
+        {
+          "key": "traveller",
+          "kind": "text",
+          "label": "Traveller",
+        },
+        {
+          "key": "route",
+          "kind": "text",
+          "label": "Route",
+        },
+        {
+          "key": "chosenFlight",
+          "kind": "text",
+          "label": "Flight taken",
+        },
+        {
+          "key": "chosen",
+          "kind": "money",
+          "label": "Its fare",
+        },
+        {
+          "key": "cheaperFlight",
+          "kind": "text",
+          "label": "Cheaper flight",
+        },
+        {
+          "key": "cheaper",
+          "kind": "money",
+          "label": "Its fare",
+        },
+        {
+          "key": "difference",
+          "kind": "money",
+          "label": "Difference",
+        },
+      ],
+      "key": "misses",
+      "note": "Fares as the traveller saw them on search.",
+      "rows": [],
+      "title": "Lowest-fare misses",
+    },
+  ],
+  "title": "Savings",
+}
+`;
+
+exports[`reports > every company report answers on the template’s bookings, as recorded > spend 1`] = `
+{
+  "chart": {
+    "kind": "series",
+    "points": [
+      {
+        "label": "Aug ’26",
+        "value": 95409,
+      },
+      {
+        "label": "Sep ’26",
+        "value": 93782.5,
+      },
+    ],
+    "title": "Spend by month",
+    "valueKind": "money",
+  },
+  "description": "What the company paid for flights booked in the period, by who travelled.",
+  "headline": [
+    {
+      "kind": "money",
+      "label": "Total spend",
+      "value": 189191.5,
+    },
+    {
+      "kind": "count",
+      "label": "Bookings",
+      "value": 17,
+    },
+    {
+      "kind": "money",
+      "label": "Average fare",
+      "value": 11128.91,
+    },
+    {
+      "hint": "2 international bookings",
+      "kind": "percent",
+      "label": "Domestic",
+      "value": 88.2,
+    },
+  ],
+  "key": "spend",
+  "tables": [
+    {
+      "columns": [
+        {
+          "key": "name",
+          "kind": "text",
+          "label": "Department",
+        },
+        {
+          "key": "bookings",
+          "kind": "count",
+          "label": "Bookings",
+        },
+        {
+          "key": "spend",
+          "kind": "money",
+          "label": "Spend",
+        },
+        {
+          "key": "average",
+          "kind": "money",
+          "label": "Average fare",
+        },
+        {
+          "key": "share",
+          "kind": "percent",
+          "label": "Share of spend",
+        },
+      ],
+      "key": "departments",
+      "rows": [
+        {
+          "average": 13375.65,
+          "bookings": 10,
+          "name": "IT",
+          "share": 70.7,
+          "spend": 133756.5,
+        },
+        {
+          "average": 7919.29,
+          "bookings": 7,
+          "name": "No department",
+          "share": 29.3,
+          "spend": 55435,
+        },
+      ],
+      "title": "By department",
+    },
+    {
+      "columns": [
+        {
+          "key": "name",
+          "kind": "text",
+          "label": "Cost centre",
+        },
+        {
+          "key": "bookings",
+          "kind": "count",
+          "label": "Bookings",
+        },
+        {
+          "key": "spend",
+          "kind": "money",
+          "label": "Spend",
+        },
+        {
+          "key": "average",
+          "kind": "money",
+          "label": "Average fare",
+        },
+        {
+          "key": "share",
+          "kind": "percent",
+          "label": "Share of spend",
+        },
+      ],
+      "key": "cost-centres",
+      "rows": [
+        {
+          "average": 11128.91,
+          "bookings": 17,
+          "name": "Info Tech Amadeus (IT101G)",
+          "share": 100,
+          "spend": 189191.5,
+        },
+      ],
+      "title": "By cost centre",
+    },
+    {
+      "columns": [
+        {
+          "key": "name",
+          "kind": "text",
+          "label": "Band",
+        },
+        {
+          "key": "bookings",
+          "kind": "count",
+          "label": "Bookings",
+        },
+        {
+          "key": "spend",
+          "kind": "money",
+          "label": "Spend",
+        },
+        {
+          "key": "average",
+          "kind": "money",
+          "label": "Average fare",
+        },
+        {
+          "key": "share",
+          "kind": "percent",
+          "label": "Share of spend",
+        },
+      ],
+      "key": "bands",
+      "rows": [
+        {
+          "average": 13558.72,
+          "bookings": 9,
+          "name": "Director (L5)",
+          "share": 64.5,
+          "spend": 122028.5,
+        },
+        {
+          "average": 7919.29,
+          "bookings": 7,
+          "name": "Senior (L3)",
+          "share": 29.3,
+          "spend": 55435,
+        },
+        {
+          "average": 11728,
+          "bookings": 1,
+          "name": "Junior (L1)",
+          "share": 6.2,
+          "spend": 11728,
+        },
+      ],
+      "title": "By band",
+    },
+  ],
+  "title": "Spend",
+}
+`;
+
+exports[`reports > every company report answers on the template’s bookings, as recorded > trips 1`] = `
+{
+  "chart": {
+    "kind": "list",
+    "points": [
+      {
+        "label": "No cost centre",
+        "value": 146343.5,
+      },
+    ],
+    "title": "Spent by cost centre",
+    "valueKind": "money",
+  },
+  "description": "Trips set up in the period: what each has spent on booked flights against its budget.",
+  "headline": [
+    {
+      "kind": "count",
+      "label": "Trips",
+      "value": 7,
+    },
+    {
+      "kind": "percent",
+      "label": "Billable",
+      "value": 0,
+    },
+    {
+      "kind": "count",
+      "label": "With a budget",
+      "value": 0,
+    },
+    {
+      "hint": "INR budgets only",
+      "kind": "count",
+      "label": "Over budget",
+      "value": 0,
+    },
+  ],
+  "key": "trips",
+  "tables": [
+    {
+      "columns": [
+        {
+          "key": "name",
+          "kind": "text",
+          "label": "Trip",
+        },
+        {
+          "key": "traveller",
+          "kind": "text",
+          "label": "Traveller",
+        },
+        {
+          "key": "costCentre",
+          "kind": "text",
+          "label": "Cost centre",
+        },
+        {
+          "key": "project",
+          "kind": "text",
+          "label": "Project",
+        },
+        {
+          "key": "billable",
+          "kind": "text",
+          "label": "Billable",
+        },
+        {
+          "key": "bookings",
+          "kind": "count",
+          "label": "Flights",
+        },
+        {
+          "key": "budget",
+          "kind": "money",
+          "label": "Budget",
+        },
+        {
+          "key": "spent",
+          "kind": "money",
+          "label": "Spent",
+        },
+        {
+          "key": "difference",
+          "kind": "money",
+          "label": "Left",
+        },
+        {
+          "key": "status",
+          "kind": "text",
+          "label": "Status",
+        },
+        {
+          "key": "signOff",
+          "kind": "text",
+          "label": "Sign-off",
+        },
+        {
+          "key": "created",
+          "kind": "date",
+          "label": "Set up",
+        },
+      ],
+      "key": "trips",
+      "note": "Spent: booked flights at what the company pays.",
+      "rows": [
+        {
+          "billable": "No",
+          "bookings": 0,
+          "budget": null,
+          "costCentre": null,
+          "created": "2026-09-20",
+          "difference": null,
+          "name": "king kashyap's kooky and kinky kegger",
+          "project": null,
+          "signOff": "Not needed",
+          "spent": 0,
+          "status": "Planning",
+          "traveller": "Employee 4ae427",
+        },
+        {
+          "billable": "No",
+          "bookings": 4,
+          "budget": null,
+          "costCentre": null,
+          "created": "2026-09-01",
+          "difference": null,
+          "name": "Sunburn",
+          "project": null,
+          "signOff": "Not needed",
+          "spent": 39013,
+          "status": "Completed",
+          "traveller": "Employee 4ae427",
+        },
+        {
+          "billable": "No",
+          "bookings": 3,
+          "budget": null,
+          "costCentre": null,
+          "created": "2026-08-27",
+          "difference": null,
+          "name": "km",
+          "project": null,
+          "signOff": "Not needed",
+          "spent": 54769.5,
+          "status": "Planning",
+          "traveller": "Employee 4ae427",
+        },
+        {
+          "billable": "No",
+          "bookings": 1,
+          "budget": null,
+          "costCentre": null,
+          "created": "2026-08-26",
+          "difference": null,
+          "name": "del to goa trip",
+          "project": null,
+          "signOff": "Not needed",
+          "spent": 11728,
+          "status": "Planning",
+          "traveller": "Employee 8bebd3",
+        },
+        {
+          "billable": "No",
+          "bookings": 0,
+          "budget": null,
+          "costCentre": null,
+          "created": "2026-08-19",
+          "difference": null,
+          "name": "hi",
+          "project": null,
+          "signOff": "Not needed",
+          "spent": 0,
+          "status": "Planning",
+          "traveller": "Employee 1c5a5b",
+        },
+        {
+          "billable": "No",
+          "bookings": 3,
+          "budget": null,
+          "costCentre": null,
+          "created": "2026-08-19",
+          "difference": null,
+          "name": "ayush goa trip",
+          "project": null,
+          "signOff": "Not needed",
+          "spent": 25531,
+          "status": "Completed",
+          "traveller": "Employee 1c5a5b",
+        },
+        {
+          "billable": "No",
+          "bookings": 2,
+          "budget": null,
+          "costCentre": null,
+          "created": "2026-08-19",
+          "difference": null,
+          "name": "yoyo",
+          "project": null,
+          "signOff": "Not needed",
+          "spent": 15302,
+          "status": "Completed",
+          "traveller": "Employee 1c5a5b",
+        },
+      ],
+      "title": "Trips",
+    },
+  ],
+  "title": "Trips & budgets",
+}
+`;

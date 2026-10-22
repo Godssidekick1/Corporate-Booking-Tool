@@ -1,12 +1,13 @@
-import ComingSoonStub from '@/app/components/ComingSoonStub'
+import ReportsScreen from '@/app/components/reports/ReportsScreen'
+import { CORPORATE_CATALOG } from '@/app/lib/reports/catalog'
 
 export default function ReportsPage() {
   return (
-    <div className="page-frame">
-      <ComingSoonStub
+    <ReportsScreen
+      base="/api/reports"
+      catalog={CORPORATE_CATALOG}
       title="Reports"
-      description="Spend, compliance, and route reporting will show up here once bookings start flowing through the system."
-      />
-    </div>
+      intro="Your company’s travel from bookings already made: spend, policy compliance, savings, approvals, trips and patterns. Amounts are what the company pays."
+    />
   )
 }

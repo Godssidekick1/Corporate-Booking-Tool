@@ -113,7 +113,7 @@ const s: Record<string, React.CSSProperties> = {
     // by side make React warn when the active tab moves.
     padding: '9px 16px', background: 'transparent', borderTop: 'none', borderLeft: 'none', borderRight: 'none',
     borderBottom: '2px solid transparent', fontSize: 13, color: '#6B7280',
-    cursor: 'pointer', marginBottom: -1,
+    cursor: 'pointer', marginBottom: -1, whiteSpace: 'nowrap', flexShrink: 0,
   },
   tabActive: { color: '#000835', fontWeight: 600, borderBottom: '2px solid #000835' },
   tabCount: { marginLeft: 6, fontSize: 11, color: '#6B7280', background: '#F3F4F6', borderRadius: 10, padding: '1px 7px' },
