@@ -1,6 +1,7 @@
 import { requireUser } from '@/app/lib/auth/session'
 import { actingTraveller } from '@/app/lib/book/bookingActor'
-import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic } from '@/app/lib/amadeus/client'
+import { amadeus, AmadeusError } from '@/app/lib/amadeus/client'
+import { providerFailure } from '@/app/lib/book/providerErrors'
 import * as employees from '@/app/lib/repositories/employees'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
 import { route } from '@/app/lib/http/handler'
@@ -198,21 +199,7 @@ export const POST = route(async (req: NextRequest) => {
       status: 'ticketed',
     })
   } catch (err) {
-    if (err instanceof AmadeusError) {
-      console.error('Ticket error', {
-        requestId: err.requestId,
-        code: err.code,
-        category: err.category,
-        request: sanitizeAmadeusDiagnostic(err.requestBody),
-        raw: sanitizeAmadeusDiagnostic(err.raw),
-      })
-
-      return Response.json({
-        error: err.message,
-        requestId: err.requestId,
-        details: sanitizeAmadeusDiagnostic(err.raw),
-      }, { status: 502 })
-    }
+    if (err instanceof AmadeusError) return providerFailure(err, 'ticket', user)
 
     console.error('Ticket error:', err)
     return Response.json({ error: 'Could not issue ticket' }, { status: 500 })

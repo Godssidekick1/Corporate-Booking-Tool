@@ -381,10 +381,10 @@ export default function BookFlightsSearchPage() {
       })
       const data = await res.json()
       if (!res.ok) {
-        const diagnostic = data.requestId
-          ? ` Request ID: ${data.requestId}.${data.details?.Error?.Description ? ` Provider: ${data.details.Error.Description}` : ''}`
-          : ''
-        setError(`${data.error || 'Search failed.'}${diagnostic}`)
+        // The airline's own wording comes back to the travel desk only
+        // (app/lib/book/providerErrors.ts); everyone else gets the plain line.
+        const forDesk = data.provider?.message ? ` Airline system: ${data.provider.message}` : ''
+        setError(`${data.error || 'Search failed.'}${forDesk}`)
         return
       }
 

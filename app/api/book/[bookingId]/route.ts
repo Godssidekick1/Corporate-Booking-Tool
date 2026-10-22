@@ -1,6 +1,7 @@
 import { requireUser } from '@/app/lib/auth/session'
 import { actingTraveller } from '@/app/lib/book/bookingActor'
-import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic, CustomerInfo } from '@/app/lib/amadeus/client'
+import { amadeus, AmadeusError, CustomerInfo } from '@/app/lib/amadeus/client'
+import { providerFailure } from '@/app/lib/book/providerErrors'
 import { db } from '@/app/lib/db'
 import * as employees from '@/app/lib/repositories/employees'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
@@ -296,20 +297,7 @@ export const PATCH = route(async (
 
     return Response.json({ ok: true })
   } catch (err) {
-    if (err instanceof AmadeusError) {
-      console.error('AddPassenger (edit) error', {
-        requestId: err.requestId,
-        code: err.code,
-        category: err.category,
-        request: sanitizeAmadeusDiagnostic(err.requestBody),
-        raw: sanitizeAmadeusDiagnostic(err.raw),
-      })
-      return Response.json({
-        error: err.message,
-        requestId: err.requestId,
-        details: sanitizeAmadeusDiagnostic(err.raw),
-      }, { status: 502 })
-    }
+    if (err instanceof AmadeusError) return providerFailure(err, 'passenger_edit', user)
 
     console.error('AddPassenger (edit) error:', err)
     return Response.json({ error: 'Could not save passenger details' }, { status: 500 })

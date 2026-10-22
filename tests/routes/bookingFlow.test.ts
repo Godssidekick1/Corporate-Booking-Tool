@@ -284,7 +284,11 @@ d('booking flow', () => {
     fake.booking.mockRejectedValue(new AmadeusError('Amadeus Booking failed: Fare no longer available', 'F1'))
     const res = await book(bookingId)
     expect(res.status).toBe(502)
-    expect((res.json as { error: string }).error).toBe('Amadeus Booking failed: Fare no longer available')
+    // In plain words: the provider's text stays in the server log.
+    expect(res.json).toEqual({
+      error: 'This fare is no longer available. Go back to the results and choose another flight.',
+      code: 'FARE_UNAVAILABLE', reference: null,
+    })
     expect((await row(bookingId))?.status).toBe('failed')
   })
 

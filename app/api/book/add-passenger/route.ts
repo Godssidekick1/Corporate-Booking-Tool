@@ -6,7 +6,8 @@ import { db } from '@/app/lib/db'
 import * as trips from '@/app/lib/repositories/trips'
 import * as bookings from '@/app/lib/repositories/bookings'
 import { route } from '@/app/lib/http/handler'
-import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic, CustomerInfo } from '@/app/lib/amadeus/client'
+import { amadeus, AmadeusError, CustomerInfo } from '@/app/lib/amadeus/client'
+import { providerFailure } from '@/app/lib/book/providerErrors'
 import { NextRequest } from 'next/server'
 import { checkBookingAgainstPolicy, type RuleEngineResult } from '@/app/lib/rule-engine/checkBookingAgainstPolicy'
 import { buildPolicyInputsFromFlight } from '@/app/lib/rule-engine/buildPolicyInputs'
@@ -521,20 +522,7 @@ export const POST = route(async (req: NextRequest) => {
       policyVerdictDetail,
     })
   } catch (err) {
-    if (err instanceof AmadeusError) {
-      console.error('AddPassenger error', {
-        requestId: err.requestId,
-        code: err.code,
-        category: err.category,
-        request: sanitizeAmadeusDiagnostic(err.requestBody),
-        raw: sanitizeAmadeusDiagnostic(err.raw),
-      })
-      return Response.json({
-        error: err.message,
-        requestId: err.requestId,
-        details: sanitizeAmadeusDiagnostic(err.raw),
-      }, { status: 502 })
-    }
+    if (err instanceof AmadeusError) return providerFailure(err, 'passenger', user)
 
     console.error('AddPassenger error:', err)
     return Response.json({ error: 'Could not add passenger details' }, { status: 500 })

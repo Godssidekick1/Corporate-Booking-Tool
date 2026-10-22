@@ -145,7 +145,6 @@ export const POST = route(async (req: NextRequest) => {
         ok: true,
         available: false,
         legSeatMap: null,
-        reason: err.message,
       })
     }
 

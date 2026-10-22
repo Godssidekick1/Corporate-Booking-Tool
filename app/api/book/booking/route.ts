@@ -1,12 +1,12 @@
 import { requireUser } from '@/app/lib/auth/session'
-import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic, CustomerInfo } from '@/app/lib/amadeus/client'
+import { amadeus, AmadeusError, CustomerInfo } from '@/app/lib/amadeus/client'
+import { providerFailure } from '@/app/lib/book/providerErrors'
 import * as employees from '@/app/lib/repositories/employees'
 import { actingTraveller } from '@/app/lib/book/bookingActor'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
 import { route } from '@/app/lib/http/handler'
 import { loadClientGates, SELF_BOOKING_OFF } from '@/app/lib/clients/clientGates'
 import { NextRequest } from 'next/server'
-import util from 'util'
 import { db } from '@/app/lib/db'
 import * as clientsRepo from '@/app/lib/repositories/clients'
 import { extractPricingDetails } from '@/app/api/book/price/route'
@@ -346,31 +346,13 @@ export const POST = route(async (req: NextRequest) => {
     }
   } catch (err) {
     if (err instanceof AmadeusError) {
-      console.error('Booking error', {
-        requestId: err.requestId,
-        code: err.code,
-        category: err.category,
-        request: sanitizeAmadeusDiagnostic(err.requestBody),
-        raw: sanitizeAmadeusDiagnostic(err.raw),
-      })
-      // Node's console.error truncates nested objects past depth 2 (that's
-      // the "[ [Object] ]" you see for AirBookingResponse above) — this
-      // prints the same raw payload with no depth limit so the actual
-      // failure reason inside AirBookingResponse[0] is visible.
-      console.error('Booking error (full, untruncated raw):', util.inspect(sanitizeAmadeusDiagnostic(err.raw), { depth: null, colors: false }))
-
-      // Recording the failure must not replace the airline's error with ours.
+      // Recording the failure must not replace the airline's answer with ours.
       try {
         await bookingsRepo.markFailed(db, bookingId)
       } catch (failError) {
         console.error('Failed to mark booking as failed after an airline error', failError, { bookingId })
       }
-
-      return Response.json({
-        error: err.message,
-        requestId: err.requestId,
-        details: sanitizeAmadeusDiagnostic(err.raw),
-      }, { status: 502 })
+      return providerFailure(err, 'booking', user)
     }
 
     console.error('Booking error:', err)

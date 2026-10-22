@@ -7,6 +7,7 @@ import { db } from '@/app/lib/db'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
 import { route } from '@/app/lib/http/handler'
 import { amadeus, AmadeusError, type PricingResponse } from '@/app/lib/amadeus/client'
+import { providerFailure, failureKind } from '@/app/lib/book/providerErrors'
 import { stampCommercials } from '@/app/lib/commercials/stampCommercials'
 import { emptyCommercials, type CommercialsRecord } from '@/app/lib/commercials/composeSellPrice'
 import { round2, type FareComponents } from '@/app/lib/commercials/fareComponents'
@@ -333,29 +334,22 @@ if (!key || !pricingKey || !provider || !resultIndex) {
       ...(actor.actor.via === 'tmc' ? { desk: deskView(record) } : {}),
     })
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Pricing failed'
-
-    // "Fare Not Found" is a known, expected outcome — the fare shown in
-    // search results is no longer priceable. This is a normal user-facing
-    // state (ask them to pick another flight or search again), not a
-    // server error — return 200 with ok:false rather than 500, so the
-    // frontend can show a clean message instead of a generic failure.
-    const isFareNotFound = message.toLowerCase().includes('fare not found')
-
-    if (isFareNotFound) {
-      return Response.json({
-        ok: false,
-        reason: 'fare_not_found',
-        error: 'This fare is no longer available. Please search again or select a different flight.',
-      }, { status: 200 })
-    }
-
-    // The provider's message is passed on as it always was. Anything else --
-    // a database failure, now that repositories throw -- is logged, not
-    // echoed: its text names tables and constraints.
     if (err instanceof AmadeusError) {
-      return Response.json({ ok: false, error: message }, { status: 500 })
+      // A fare that is no longer priceable is a normal outcome (pick another
+      // flight), not a server error: 200 with ok:false, so the page shows a
+      // clean message.
+      if (failureKind(err) === 'fare_gone') {
+        console.info('[price] fare no longer available', { requestId: err.requestId })
+        return Response.json({
+          ok: false,
+          reason: 'fare_not_found',
+          error: 'This fare is no longer available. Please search again or select a different flight.',
+        }, { status: 200 })
+      }
+      return providerFailure(err, 'price', user, { ok: false })
     }
+    // Anything else -- a database failure, now that repositories throw -- is
+    // logged, not echoed: its text names tables and constraints.
     console.error('[price] failed', err)
     return Response.json({ ok: false, error: 'Pricing failed' }, { status: 500 })
   }

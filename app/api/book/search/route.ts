@@ -3,7 +3,8 @@ import { db } from '@/app/lib/db'
 import { resolveActor, refuse } from '@/app/lib/book/bookingActor'
 import { route } from '@/app/lib/http/handler'
 import { rateLimited } from '@/app/lib/http/rateLimit'
-import { amadeus, AmadeusError, sanitizeAmadeusDiagnostic } from '@/app/lib/amadeus/client'
+import { amadeus, AmadeusError } from '@/app/lib/amadeus/client'
+import { providerFailure, failureKind } from '@/app/lib/book/providerErrors'
 import { harvestAirlines } from '@/app/lib/reference/harvestAirlines'
 import {
   loadCommercialContext, priceWithContext, type CommercialContext,
@@ -559,19 +560,13 @@ export const POST = route(async (req: NextRequest) => {
 
   } catch (err) {
     if (err instanceof AmadeusError) {
-      console.error('Flight search error', {
-        requestId: err.requestId,
-        code: err.code,
-        category: err.category,
-        request: sanitizeAmadeusDiagnostic(err.requestBody),
-        raw: sanitizeAmadeusDiagnostic(err.raw),
-      })
-      return Response.json({
-        error: err.message,
-        requestId: err.requestId,
-        request: sanitizeAmadeusDiagnostic(err.requestBody),
-        details: sanitizeAmadeusDiagnostic(err.raw),
-      }, { status: 502 })
+      // The airline system's "Result Not Found" means no flights on that
+      // route and date: the page's own "No flights found", not an error.
+      if (failureKind(err) === 'no_results') {
+        console.info('[search] no flights', { requestId: err.requestId })
+        return Response.json({ ok: true, results: [], availabilityKey: null })
+      }
+      return providerFailure(err, 'search', user)
     }
 
     console.error('Flight search error:', err)
