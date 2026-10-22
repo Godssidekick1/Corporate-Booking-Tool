@@ -13,6 +13,7 @@ import { round2, type FareComponents } from '@/app/lib/commercials/fareComponent
 import { visibleLines, ADJUSTMENT_LABELS } from '@/app/lib/commercials/adjustment'
 import type { ResolvedCommercials } from '@/app/lib/commercials/resolveCommercials'
 import { cabinLetter } from '@/app/lib/book/cabin'
+import { deskView } from '@/app/lib/commercials/deskView'
 import type { FlatFlightResult } from '@/app/lib/book/types'
 import { NextRequest } from 'next/server'
 
@@ -327,6 +328,9 @@ if (!key || !pricingKey || !provider || !resultIndex) {
       })),
       // What they pay, before seat fees.
       sellTotal: record.sellTotal,
+      // The travel desk only (TMC staff booking for someone): how the price
+      // is made. Absent for everyone else, not hidden.
+      ...(actor.actor.via === 'tmc' ? { desk: deskView(record) } : {}),
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Pricing failed'

@@ -187,6 +187,24 @@ d('book on behalf', () => {
     expect(await view(bystander)).toEqual({ status: 403, json: { error: 'Not authorized to view this booking' } })
   })
 
+  it('only the travel desk is shown how the price is made; the traveller and a corporate admin never are', async () => {
+    type Desk = { airlineTotal: number; markup: number; discount: number; fee: number; sellTotal: number; margin: number }
+    const desk = (await price(a.tmcAdmin, 'V1', colleague.id)).json as { sellTotal: number; desk?: Desk }
+    expect(desk.desk).toBeDefined()
+    expect(desk.desk!.sellTotal).toBe(desk.sellTotal)
+    // The pieces reconcile: what the client pays is the airline fare plus the margin.
+    expect(Math.round(desk.desk!.airlineTotal + desk.desk!.margin)).toBe(Math.round(desk.desk!.sellTotal))
+
+    expect((await price(admin, 'V2', colleague.id)).json).not.toHaveProperty('desk')
+    expect((await price(colleague, 'V3')).json).not.toHaveProperty('desk')
+
+    const view = async (as: { id: string }) =>
+      ((await call(bookingGet, { as, url: `/api/book/${bookingId}`, params: { bookingId } })).json as { booking: Record<string, unknown> }).booking
+    expect((await view(a.tmcAdmin)).desk).toMatchObject({ airlineTotal: expect.any(Number), margin: expect.any(Number) })
+    expect(await view(colleague)).not.toHaveProperty('desk')
+    expect(await view(admin)).not.toHaveProperty('desk')
+  })
+
   it('once approved, the booker or the traveller may confirm it; it records who did', async () => {
     const book = (as: { id: string }, id: string) =>
       call(bookPost, { as, method: 'POST', url: '/api/book/booking', body: { bookingId: id } })

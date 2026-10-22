@@ -11,6 +11,8 @@ import { JUST_BOOKED_KEY } from '@/app/lib/book/flowStorage'
 import { ButtonBusy, BusyOverlay } from '@/app/components/FlowLoader'
 import { breachLine } from '@/app/lib/policy/breachText'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
+import DeskFareStrip from '@/app/components/book/DeskFareStrip'
+import type { DeskView } from '@/app/lib/commercials/deskView'
 
 // Tax codes a traveller might reasonably want named. Anything not in here shows
 // its raw code, which is the honest fallback — inventing a description for a
@@ -53,6 +55,8 @@ interface Booking {
   // Discount and processing fee only — the server never sends a markup, so
   // there is nothing here to accidentally render.
   commercial_lines?: { source: string; label: string; sign: -1 | 1; amount: number }[]
+  // The travel desk only: how the price was made (never sent to anyone else).
+  desk?: DeskView | null
   // The sell-side fare: base with the markup already inside it, the tax total,
   // and the airline's own tax codes. Absent on pre-commercial-rules bookings.
   fare?: {
@@ -565,6 +569,8 @@ export default function ConfirmBookingPage() {
             <span style={s.fareTotalLabel}>Total</span>
             <span style={s.fareTotalValue}>{currency} {sellTotal.toLocaleString('en-IN')}</span>
           </div>
+
+          <DeskFareStrip desk={booking.desk} currency={currency} />
 
           {/* The parts are supposed to sum to the total. If they do not, say so
               rather than printing a total that quietly disagrees with the

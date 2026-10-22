@@ -9,6 +9,7 @@ import { route } from '@/app/lib/http/handler'
 import { visibleLines, ADJUSTMENT_LABELS } from '@/app/lib/commercials/adjustment'
 import { round2 } from '@/app/lib/commercials/fareComponents'
 import type { CommercialsRecord } from '@/app/lib/commercials/composeSellPrice'
+import { deskView } from '@/app/lib/commercials/deskView'
 import { travellerItinerary, travellerFareBreakdown } from '@/app/lib/book/travellerView'
 import { NextRequest } from 'next/server'
 
@@ -72,7 +73,7 @@ export const GET = route(async (
   }
 
   // The traveller, or someone who may book for them (app/lib/book/bookingActor.ts).
-  const { traveller: employee } = await actingTraveller(db, user, me, booking)
+  const { traveller: employee, onBehalf } = await actingTraveller(db, user, me, booking)
   if (booking.employee_id !== employee.id) {
     return Response.json({ error: 'Not authorized to view this booking' }, { status: 403 })
   }
@@ -198,6 +199,10 @@ export const GET = route(async (
       // bookings, which have no frozen airline components to derive them from.
       fare,
       seat_fees: seatFees,
+      // The travel desk only: TMC staff acting for the traveller see how the
+      // price was made. Absent for everyone else.
+      ...(onBehalf && (user.employee?.role === 'tmc_admin' || user.employee?.role === 'tc')
+        ? { desk: deskView(commercials) } : {}),
       // Discount and processing fee only. visibleLines() is what keeps the
       // embedded markup out — the filter lives there rather than here so the
       // rule is written once.

@@ -17,6 +17,7 @@ import { ButtonBusy, BusyOverlay } from '@/app/components/FlowLoader'
 import { classifyTrip } from '@/app/lib/rule-engine/classifyTrip'
 import { breachLine } from '@/app/lib/policy/breachText'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
+import DeskFareStrip from '@/app/components/book/DeskFareStrip'
 
 // ── /book/details/[flightKey] ─────────────────────────────────────────────────
 // Merges what used to be two separate steps (/book/seats then
@@ -1017,6 +1018,7 @@ export default function BookingDetailsPage() {
           </div>
           <div style={s.summaryFare}>{priced.currency} {priced.totalFare.toLocaleString('en-IN')}</div>
         </div>
+        <DeskFareStrip desk={priced.desk} currency={priced.currency} />
 
         {/* ── Live policy verdict ──────────────────────────────────── */}
         {verdict?.ok && verdict.verdict && (

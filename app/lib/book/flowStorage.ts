@@ -91,6 +91,8 @@ export interface PricedFare {
   brandedServices?: string[]
   // The airline's cancellation fees for this fare, for the policy preview.
   cancelPenalties?: { paxType: string; text: string }[]
+  // The travel desk only: how the price is made, as the price route sent it.
+  desk?: { airlineTotal: number; markup: number; discount: number; fee: number; sellTotal: number; margin: number }
   // When this fare was priced (ms since epoch): the passenger page counts the
   // quote hold down from it (app/lib/book/quoteHold.ts).
   pricedAt?: number

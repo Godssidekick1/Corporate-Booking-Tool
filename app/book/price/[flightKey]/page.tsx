@@ -7,6 +7,8 @@ import { flowStorage } from '@/app/lib/book/flowStorage'
 import { ButtonBusy } from '@/app/components/FlowLoader'
 import { breachLine } from '@/app/lib/policy/breachText'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
+import DeskFareStrip from '@/app/components/book/DeskFareStrip'
+import type { DeskView } from '@/app/lib/commercials/deskView'
 import {
   FlatFlightResult, FareOption, formatTime, formatDayLabel, journeysOf, journeyLabel,
   baggageLabel,
@@ -64,6 +66,8 @@ interface PriceApiResult {
   lines?: { source: string; label: string; sign: -1 | 1; amount: number }[]
   // totalFare plus those lines. What they actually pay, before seat fees.
   sellTotal?: number
+  // The travel desk only: how the price is made (never sent to anyone else).
+  desk?: DeskView | null
 }
 
 interface PolicyPreview {
@@ -244,6 +248,7 @@ export default function SelectFarePage() {
         mealIncluded: data.mealIncluded ?? fareOption?.mealIncluded,
         passengerBreakup: data.passengerBreakup,
         cancelPenalties: data.cancelPenalties,
+        desk: data.desk ?? undefined,
         pricedAt: Date.now(),
         isNdc: fareOption?.isNdc ?? flightResult.isNdc,
         searchKey: searchData.availabilityKey ?? undefined,
@@ -645,6 +650,8 @@ export default function SelectFarePage() {
                   {pricing.currency} {(pricing.sellTotal ?? pricing.totalFare)?.toLocaleString('en-IN')}
                 </span>
               </div>
+
+              <DeskFareStrip desk={pricing.desk} currency={pricing.currency} />
 
               {pricing.passengerBreakup && pricing.passengerBreakup.length > 1 && (
                 <div style={s.paxBreakup}>
