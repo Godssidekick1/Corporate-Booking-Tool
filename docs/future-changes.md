@@ -141,6 +141,17 @@ manager, Personal and Guest tags, and a ticket footer.
   pick one; no demo or template client has a traveller-paid form of payment
   yet, so that branch is untested against real rows.
 
+## Error messages travellers see (raised 2026-10-22; wait for the user's go)
+
+- **No raw provider errors on the booking screens.** The search page showed
+  "Amadeus FlightAvailability failed: Result Not Found Request ID: …
+  Provider: Result Not Found". Map each provider failure to a plain message
+  per step (search: "No flights found for these dates" for Result Not Found,
+  a retry message otherwise; price, book and ticket likewise). Keep the
+  request id and the provider's response in the server log only, or show a
+  short support reference. Stop returning `requestId`, `request` and `details`
+  to anyone but TMC staff.
+
 ## Before real users
 
 - Production email (SMTP: `SMTP_URL`, `MAIL_FROM`). Until then Vercel needs
