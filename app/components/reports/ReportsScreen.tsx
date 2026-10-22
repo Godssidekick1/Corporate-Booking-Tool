@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Tabs, { useUrlTab } from '@/app/components/Tabs'
 import SearchableSelect from '@/app/components/SearchableSelect'
+import Pagination from '@/app/components/Pagination'
 import { SkeletonTiles, SkeletonTable } from '@/app/components/Skeleton'
 import { BarSeries, BarList, StackedSeries } from '@/app/components/charts/Bars'
 import { useLookup, clientOption } from '@/app/hooks/useLookup'
@@ -292,16 +293,21 @@ export function ReportBody({ report, csvBase, dimmed }: { report: Report; csvBas
         </section>
       )}
 
-      {report.tables.map(t => <TableCard key={t.key} table={t} csvHref={`${csvBase}&format=csv&table=${t.key}`} />)}
+      {/* Keyed by the query too, so a new period or filter starts on page 1. */}
+      {report.tables.map(t => (
+        <TableCard key={`${t.key}|${csvBase}`} table={t} csvHref={`${csvBase}&format=csv&table=${t.key}`} />
+      ))}
     </div>
   )
 }
 
-const SHOWN = 25
+// Rows per page. Paged in the browser: the report already holds every row
+// (the CSV is all of them), so turning a page costs no request.
+const PAGE_SIZE = 25
 
 function TableCard({ table, csvHref }: { table: ReportTable; csvHref: string }) {
-  const [all, setAll] = useState(false)
-  const rows = all ? table.rows : table.rows.slice(0, SHOWN)
+  const [page, setPage] = useState(1)
+  const rows = table.rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
   const numeric = (k: ValueKind) => k !== 'text' && k !== 'date'
   return (
     <section style={s.card}>
@@ -333,16 +339,8 @@ function TableCard({ table, csvHref }: { table: ReportTable; csvHref: string }) 
           </table>
         </div>
       )}
-      {(table.note || table.rows.length > SHOWN) && (
-        <div style={s.tableFoot}>
-          {table.note && <span>{table.note}</span>}
-          {table.rows.length > SHOWN && (
-            <button type="button" style={s.linkBtn} onClick={() => setAll(v => !v)}>
-              {all ? `Show the first ${SHOWN}` : `Show all ${table.rows.length.toLocaleString('en-IN')} rows`}
-            </button>
-          )}
-        </div>
-      )}
+      <Pagination page={page} pageSize={PAGE_SIZE} total={table.rows.length} onPageChange={setPage} noun="rows" />
+      {table.note && <p style={s.tableFoot}>{table.note}</p>}
     </section>
   )
 }
@@ -389,8 +387,7 @@ const s: Record<string, React.CSSProperties> = {
   td: { padding: '9px 10px', borderBottom: '1px solid #F3F4F6', color: '#374151', whiteSpace: 'nowrap' },
   tdFirst: { color: '#111827', fontWeight: 500 },
   negative: { color: '#B91C1C' },
-  tableFoot: { display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', fontSize: 11.5, color: '#9CA3AF', marginTop: 10 },
-  linkBtn: { background: 'none', border: 'none', padding: 0, fontSize: 12, fontWeight: 600, color: '#000835', cursor: 'pointer' },
+  tableFoot: { fontSize: 11.5, color: '#9CA3AF', margin: '10px 0 0' },
   errorBox: {
     fontSize: 13, color: '#991B1B', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8,
     padding: '10px 12px', margin: '0 0 16px',
