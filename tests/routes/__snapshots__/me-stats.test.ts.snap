@@ -1,6 +1,6 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`GET /api/me > a corporate admin: profile, client and onboarding progress 1`] = `
+exports[`GET /api/me > a corporate admin: profile and client 1`] = `
 {
   "canSelfBook": true,
   "client": {
@@ -34,10 +34,7 @@ exports[`GET /api/me > a corporate admin: profile, client and onboarding progres
     "status": "active",
     "tmc_id": null,
   },
-  "employeeCount": 4,
-  "hasBookings": true,
   "hasDirectReports": true,
-  "hasPolicy": true,
   "isApprover": true,
   "ok": true,
   "permissions": [],
@@ -51,8 +48,6 @@ exports[`GET /api/me > a platform admin with no employees row is answered, not r
   "client": null,
   "clientAccess": [],
   "employee": null,
-  "employeeCount": 0,
-  "hasBookings": false,
   "hasDirectReports": false,
   "isApprover": false,
   "ok": true,
@@ -83,10 +78,7 @@ exports[`GET /api/me > a tc: permissions and client access for the restricted vi
     "status": "active",
     "tmc_id": "426e0538-f739-4563-872f-f01b3d327c7c",
   },
-  "employeeCount": 0,
-  "hasBookings": false,
   "hasDirectReports": false,
-  "hasPolicy": false,
   "isApprover": false,
   "ok": true,
   "permissions": [
@@ -101,7 +93,7 @@ exports[`GET /api/me > a tc: permissions and client access for the restricted vi
 }
 `;
 
-exports[`GET /api/me > a tmc_admin: no client, no counts 1`] = `
+exports[`GET /api/me > a tmc_admin: no client 1`] = `
 {
   "canSelfBook": false,
   "client": null,
@@ -121,10 +113,7 @@ exports[`GET /api/me > a tmc_admin: no client, no counts 1`] = `
     "status": "active",
     "tmc_id": "426e0538-f739-4563-872f-f01b3d327c7c",
   },
-  "employeeCount": 0,
-  "hasBookings": false,
   "hasDirectReports": false,
-  "hasPolicy": false,
   "isApprover": false,
   "ok": true,
   "permissions": [],

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { BarSeries } from '@/app/components/charts/Bars'
 
 interface Employee {
   id: string
@@ -19,20 +20,12 @@ interface Client {
   id: string
   name: string
   status: string
-  setup_completed: boolean
 }
 
 interface MeResponse {
   ok: boolean
   employee: Employee
   client: Client | null
-  employeeCount: number
-  hasBookings: boolean
-  // Whether any policy group is linked to this client. Replaces a read of
-  // `client.settings.approvalModel` — a jsonb key nothing has ever written, so
-  // the "Confirm your travel policy" step below was permanently unticked no
-  // matter how much policy a client actually had.
-  hasPolicy: boolean
   // False for a CBT-only client, whose travel desk books for them. They still
   // see their trips and approvals here; booking links are hidden because the
   // server refuses them (clientGates.selfBooking).
@@ -65,6 +58,37 @@ interface ActionableBooking {
     destination?: { code: string; city: string }
   } | null
   updatedAt: string
+}
+
+// ── The figures (GET /api/dashboard) ─────────────────────────────────────
+// Every number on the page comes from here or from the lists above; nothing
+// is written into the page. Sell side only.
+interface DashboardFigures {
+  mine: {
+    bookedThisYear: number
+    spendThisYear: number
+    awaitingApproval: number
+    next: { id: string; origin: string | null; destination: string | null; departure: string } | null
+  }
+  approver: { decided30d: number; medianHours: number | null } | null
+  company: {
+    thisMonth: { bookings: number; spend: number }
+    lastMonth: { bookings: number; spend: number }
+    outcomes: { within: number; needsApproval: number; outOfPolicy: number; notEvaluated: number }
+    outOfPolicySpend: number
+    topDepartment: { name: string; spend: number } | null
+    months: { month: string; bookings: number; spend: number }[]
+  } | null
+}
+
+const inr = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`
+const inrShort = (n: number) => n >= 1e7 ? `₹${(n / 1e7).toFixed(1)}Cr` : n >= 1e5 ? `₹${(n / 1e5).toFixed(1)}L` : n >= 1e3 ? `₹${(n / 1e3).toFixed(0)}k` : inr(n)
+
+// "+12% on last month", or nothing when there is no last month to compare.
+function change(now: number, before: number): string {
+  if (before === 0) return now === 0 ? 'Nothing last month either' : 'Nothing last month'
+  const pct = Math.round(((now - before) / before) * 100)
+  return `${pct >= 0 ? '+' : ''}${pct}% on last month`
 }
 
 interface RecentBooking {
@@ -102,51 +126,6 @@ const ACTIONABLE_META: Record<string, { label: string; cta: string }> = {
   approval_misconfigured: { label: 'Needs admin attention', cta: 'View →' },
 }
 
-function getChecklist(
-  client: Client | null,
-  employeeCount: number,
-  hasBookings: boolean,
-  hasPolicy: boolean,
-  canSelfBook: boolean
-) {
-  const items = [
-    {
-      id: 'client',
-      label: 'Company created',
-      desc: 'Your account is active.',
-      done: true,
-      href: '/setup',
-      cta: 'View',
-    },
-    {
-      id: 'policy',
-      label: 'Confirm your travel policy',
-      desc: 'Review and adjust band limits before your team starts booking.',
-      done: hasPolicy,
-      href: '/setup/policy',
-      cta: 'Review policy',
-    },
-    {
-      id: 'employees',
-      label: 'Add your first employee',
-      desc: 'Invite team members and assign bands.',
-      done: employeeCount > 1,
-      href: '/setup/invite',
-      cta: 'Add employees',
-    },
-    {
-      id: 'booking',
-      label: 'Make your first booking',
-      desc: 'Search for a flight, hotel, or car rental.',
-      done: hasBookings,
-      href: '/book',
-      cta: 'Start booking',
-    },
-  ]
-  return canSelfBook ? items : items.filter(i => i.id !== 'booking')
-}
-
-
 export default function DashboardPage() {
   const router = useRouter()
   const [me, setMe] = useState<MeResponse | null>(null)
@@ -154,6 +133,7 @@ export default function DashboardPage() {
   const [approvalSummary, setApprovalSummary] = useState<ApprovalSummary | null>(null)
   const [actionableBookings, setActionableBookings] = useState<ActionableBooking[]>([])
   const [recentBookings, setRecentBookings] = useState<RecentBooking[]>([])
+  const [figures, setFigures] = useState<DashboardFigures | null>(null)
 
   // Split out from the mount effect so it can also be called on refocus —
   // approving/rejecting/booking happens on other pages (/approvals,
@@ -188,6 +168,11 @@ export default function DashboardPage() {
       fetch('/api/bookings/recent?limit=5')
         .then(res => res.json())
         .then(d => { if (d.ok) setRecentBookings(d.bookings) })
+        .catch(() => {})
+
+      fetch('/api/dashboard')
+        .then(res => res.json())
+        .then(d => { if (d.ok) setFigures(d) })
         .catch(() => {})
     } catch {
       router.replace('/login')
@@ -225,26 +210,42 @@ export default function DashboardPage() {
 
   if (loading || !me || !me.employee) return <LoadingScreen />
 
-  const { employee, client } = me
+  const { employee } = me
   const { role, full_name, band_code } = employee
   const canSelfBook = me.canSelfBook !== false
   const firstName = full_name?.split(' ')[0] ?? 'there'
-  const checklist = getChecklist(client, me.employeeCount ?? 0, me.hasBookings ?? false, me.hasPolicy ?? false, canSelfBook)
-  const completedCount = checklist.filter(i => i.done).length
-  const showChecklist = role === 'admin' && !(client?.setup_completed ?? false)
   const isApproverRole = me.isApprover === true
 
-  const stats = isApproverRole
+  // Tiles, by what this person is. A figure not loaded yet shows "…"; a
+  // real zero says so in words.
+  const mine = figures?.mine
+  const company = figures?.company
+  const outcomes = company?.outcomes
+  const judged = outcomes ? outcomes.within + outcomes.needsApproval + outcomes.outOfPolicy : 0
+  const waiting = '…'
+  const nextTrip = mine?.next
+  const stats = company
     ? [
-        { label: 'Bookings this month', value: '0', sub: 'No bookings yet' },
-        { label: 'Pending approvals',   value: String(approvalSummary?.pendingCount ?? 0), sub: approvalSummary?.pendingCount ? 'Needs your action' : 'Nothing to action' },
-        { label: 'Policy compliance',   value: '—', sub: 'Starts once bookings are made' },
-        { label: 'Total spend (MTD)',    value: '—', sub: 'No spend recorded' },
+        { label: 'Bookings this month', value: String(company.thisMonth.bookings), sub: change(company.thisMonth.bookings, company.lastMonth.bookings) },
+        { label: 'Spend this month', value: inrShort(company.thisMonth.spend), sub: change(company.thisMonth.spend, company.lastMonth.spend) },
+        {
+          label: 'Within policy',
+          value: judged ? `${Math.round((outcomes!.within / judged) * 100)}%` : '—',
+          sub: judged
+            ? `${outcomes!.needsApproval} needed approval · ${outcomes!.outOfPolicy} out of policy`
+            : outcomes?.notEvaluated ? `${outcomes.notEvaluated} not checked against policy` : 'No bookings this month',
+        },
+        isApproverRole
+          ? { label: 'Waiting for you', value: String(approvalSummary?.pendingCount ?? 0), sub: approvalSummary?.pendingCount ? 'Needs your decision' : 'Nothing to decide' }
+          : { label: 'Out-of-policy spend', value: inrShort(company.outOfPolicySpend), sub: 'This month' },
       ]
     : [
-        { label: 'My trips this year', value: '0', sub: 'No trips yet' },
-        { label: 'Pending approval',   value: String(actionableBookings.filter(b => b.status === 'pending_approval').length), sub: 'Awaiting your approver' },
-        { label: 'Total spend (YTD)',  value: '—', sub: 'No spend recorded' },
+        { label: 'Flights booked this year', value: mine ? String(mine.bookedThisYear) : waiting, sub: mine?.bookedThisYear ? 'Held or ticketed' : 'None yet this year' },
+        { label: 'Spend this year', value: mine ? inrShort(mine.spendThisYear) : waiting, sub: 'What your company paid' },
+        { label: 'Awaiting approval', value: mine ? String(mine.awaitingApproval) : waiting, sub: mine?.awaitingApproval ? 'With your approver' : 'Nothing waiting' },
+        ...(isApproverRole
+          ? [{ label: 'Waiting for you', value: String(approvalSummary?.pendingCount ?? 0), sub: approvalSummary?.pendingCount ? 'Needs your decision' : 'Nothing to decide' }]
+          : []),
       ]
 
   return (
@@ -261,42 +262,6 @@ export default function DashboardPage() {
           </div>
           {canSelfBook && <a href="/book" style={s.bookBtn}>+ New booking</a>}
         </div>
-
-        {showChecklist && (
-          <div style={s.checklistCard}>
-            <div style={s.checklistHeader}>
-              <h2 style={s.checklistTitle}>Finish setting up TravelDesk</h2>
-              <p style={s.checklistSub}>Complete these steps before your team starts booking.</p>
-            </div>
-            <div style={s.progressTrack}>
-              <div style={{ ...s.progressFill, width: `${(completedCount / checklist.length) * 100}%` }} />
-            </div>
-            <div style={s.checklistItems}>
-              {checklist.map(item => (
-                <div key={item.id} style={{ ...s.checklistItem, opacity: item.done ? 0.5 : 1 }}>
-                  <div style={{
-                    ...s.checkDot,
-                    background: item.done ? '#22C55E' : '#fff',
-                    border: `2px solid ${item.done ? '#22C55E' : '#D1D5DB'}`,
-                  }}>
-                    {item.done && <span style={s.checkMark}>✓</span>}
-                  </div>
-                  <div style={s.checkContent}>
-                    <p style={{
-                      ...s.checkLabel,
-                      textDecoration: item.done ? 'line-through' : 'none',
-                      color: item.done ? '#9CA3AF' : '#111827',
-                    }}>{item.label}</p>
-                    {!item.done && <p style={s.checkDesc}>{item.desc}</p>}
-                  </div>
-                  {!item.done && (
-                    <a href={item.href} style={s.checkCta}>{item.cta} →</a>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
 
         {/* ── "Your booking needs you" banner — any role, since even an   */}
         {/* admin/manager can be a traveler on their own bookings ────── */}
@@ -331,9 +296,10 @@ export default function DashboardPage() {
         {role === 'employee' && (
           <div style={s.infoBanner}>
             <span style={s.infoBannerText}>
-              Your travel entitlements are set by your client policy for band{' '}
-              <strong>{band_code ?? '—'}</strong>.
-              Out-of-policy bookings will be routed to your manager for approval.
+              {band_code
+                ? <>Your travel policy is set for band <strong>{band_code}</strong>. </>
+                : <>You have no band yet, so bookings are not checked against a travel policy. </>}
+              Bookings that need approval go to your approver first.
             </span>
           </div>
         )}
@@ -356,6 +322,41 @@ export default function DashboardPage() {
             </div>
           ))}
         </div>
+
+        {nextTrip && (
+          <a href={`/book/ticket/${nextTrip.id}`} style={s.nextTrip}>
+            <span style={s.nextLabel}>Your next flight</span>
+            <span style={s.nextRoute}>{nextTrip.origin ?? '—'} → {nextTrip.destination ?? '—'}</span>
+            <span style={s.nextWhen}>
+              {new Date(nextTrip.departure).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
+              {' · '}{nextTrip.departure.slice(11, 16)}
+            </span>
+          </a>
+        )}
+
+        {company && (
+          <Section title="Company spend, last six months" linkLabel="Reports" linkHref="/reports">
+            <BarSeries
+              points={company.months.map(m => ({
+                label: new Date(m.month).toLocaleDateString('en-GB', { month: 'short' }),
+                value: m.spend,
+              }))}
+              format={inrShort}
+            />
+            {company.topDepartment && (
+              <p style={s.chartNote}>
+                Most this month: <strong>{company.topDepartment.name}</strong>, {inr(company.topDepartment.spend)}.
+              </p>
+            )}
+          </Section>
+        )}
+
+        {figures?.approver && (
+          <p style={s.approverNote}>
+            You decided {figures.approver.decided30d} request{figures.approver.decided30d === 1 ? '' : 's'} in the last 30 days
+            {figures.approver.medianHours !== null ? `, typically within ${figures.approver.medianHours} h` : ''}.
+          </p>
+        )}
 
         <Section title="Recent bookings" linkLabel="View all" linkHref="/bookings">
           {recentBookings.length > 0 ? (
@@ -397,7 +398,7 @@ export default function DashboardPage() {
                 !canSelfBook
                   ? 'Your travel desk books trips for you. They will appear here once booked.'
                   : role === 'employee'
-                    ? 'Start a trip request and your manager will be notified for approval.'
+                    ? 'Bookings you make, or that are made for you, appear here. If one needs approval it goes to your approver first.'
                     : 'When your team starts booking, their trips will appear here.'
               }
               cta={canSelfBook ? 'Make your first booking →' : undefined}
@@ -427,7 +428,7 @@ export default function DashboardPage() {
               <EmptyState
                 icon="✔"
                 title="No pending approvals"
-                desc="Out-of-policy booking requests will show up here for you to action."
+                desc="Bookings sent to you for approval will show up here."
               />
             )}
           </Section>
@@ -496,21 +497,6 @@ const s: Record<string, React.CSSProperties> = {
   pageTitle: { fontSize: '20px', fontWeight: 600, color: '#0A0A14', margin: '0 0 3px', letterSpacing: '-0.3px' },
   pageDate: { fontSize: '12px', color: '#9CA3AF', margin: 0 },
   bookBtn: { display: 'inline-block', height: '34px', lineHeight: '34px', padding: '0 14px', background: '#000835', color: '#fff', fontSize: '12px', fontWeight: 600, borderRadius: '7px', textDecoration: 'none', flexShrink: 0 },
-  checklistCard: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '10px', padding: '20px', marginBottom: '20px' },
-  checklistHeader: { marginBottom: '12px' },
-  checklistTitle: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: '0 0 3px' },
-  checklistSub: { fontSize: '12px', color: '#6B7280', margin: 0 },
-  progressTrack: { height: '3px', background: '#F3F4F6', borderRadius: '2px', marginBottom: '16px', overflow: 'hidden' },
-  progressFill: { height: '100%', background: '#22C55E', borderRadius: '2px' },
-  checklistItems: { display: 'flex', flexDirection: 'column', gap: '10px' },
-  checklistItem: { display: 'flex', alignItems: 'flex-start', gap: '10px' },
-  checkDot: { width: '18px', height: '18px', borderRadius: '50%', border: '2px solid', flexShrink: 0, marginTop: '1px', display: 'flex', alignItems: 'center', justifyContent: 'center' },
-  checkMark: { fontSize: '10px', color: '#fff', fontWeight: 700 },
-  checkContent: { flex: 1 },
-  checkLabel: { fontSize: '12px', fontWeight: 500, margin: '0 0 1px' },
-  checkDesc: { fontSize: '11px', color: '#6B7280', margin: 0 },
-  checkCta: { fontSize: '11px', fontWeight: 600, color: '#000835', textDecoration: 'none', flexShrink: 0, marginTop: '1px' },
-
   actionBanner: { background: '#EEF2FF', border: '1px solid #C7D2FE', borderRadius: '10px', padding: '16px 18px', marginBottom: '20px' },
   actionBannerHeader: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' },
   actionBannerIcon: { fontSize: '15px' },
@@ -531,6 +517,15 @@ const s: Record<string, React.CSSProperties> = {
   statLabel: { fontSize: '10px', fontWeight: 600, color: '#9CA3AF', margin: '0 0 6px', textTransform: 'uppercase' as const, letterSpacing: '0.4px' },
   statValue: { fontSize: '24px', fontWeight: 700, color: '#111827', margin: '0 0 3px' },
   statSub: { fontSize: '10px', color: '#9CA3AF', margin: 0 },
+  nextTrip: {
+    display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', background: '#fff', border: '1px solid #E5E7EB',
+    borderRadius: 9, padding: '14px 18px', marginBottom: 16, textDecoration: 'none',
+  },
+  nextLabel: { fontSize: 10, fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.4px' },
+  nextRoute: { fontSize: 15, fontWeight: 700, color: '#111827' },
+  nextWhen: { fontSize: 12, color: '#6B7280' },
+  chartNote: { fontSize: 12, color: '#6B7280', margin: '12px 0 0' },
+  approverNote: { fontSize: 12, color: '#6B7280', margin: '-4px 0 16px' },
   section: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '9px', padding: '18px', marginBottom: '16px' },
   sectionHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' },
   sectionTitle: { fontSize: '13px', fontWeight: 600, color: '#111827', margin: 0 },

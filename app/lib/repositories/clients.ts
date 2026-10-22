@@ -50,27 +50,6 @@ export async function summary(db: Queryable, clientId: string): Promise<ClientSu
     from clients where id = ${clientId}`)
 }
 
-export interface OnboardingCounts {
-  employees: number
-  bookings: number
-  policyGroups: number
-}
-
-// The setup checklist's inputs, in ONE round trip where there used to be three.
-// Client-wide rather than personal: "has anyone at this client booked yet".
-//
-// Policy is counted from client_policy_groups -- where policy actually lives --
-// and not from the settings.approvalModel jsonb key the dashboard once read,
-// which nothing had ever written.
-export async function onboardingCounts(db: Queryable, clientId: string): Promise<OnboardingCounts> {
-  const row = await maybeOne<OnboardingCounts>(db, sql`
-    select
-      (select count(*)::int from employees where client_id = ${clientId}) as employees,
-      (select count(*)::int from bookings where client_id = ${clientId}) as bookings,
-      (select count(*)::int from client_policy_groups where client_id = ${clientId}) as "policyGroups"`)
-  return row ?? { employees: 0, bookings: 0, policyGroups: 0 }
-}
-
 // ═══ Portfolio ══════════════════════════════════════════════════════════════
 
 // The TMC dashboard's numbers, counted in the database. It used to fetch every

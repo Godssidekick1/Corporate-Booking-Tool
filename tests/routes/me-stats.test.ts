@@ -39,13 +39,13 @@ d('GET /api/me', () => {
     expect((await call(me, { url: '/api/me' })).status).toBe(401)
   })
 
-  it('a corporate admin: profile, client and onboarding progress', async () => {
+  it('a corporate admin: profile and client', async () => {
     const res = await call(me, { as: a.corpAdmin, url: '/api/me' })
     expect(res.status).toBe(200)
     expect(res.json).toMatchSnapshot()
   })
 
-  it('a tmc_admin: no client, no counts', async () => {
+  it('a tmc_admin: no client', async () => {
     const res = await call(me, { as: a.tmcAdmin, url: '/api/me' })
     expect(res.status).toBe(200)
     expect(res.json).toMatchSnapshot()

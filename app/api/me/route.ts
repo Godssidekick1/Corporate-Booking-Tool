@@ -7,7 +7,7 @@ import { route } from '@/app/lib/http/handler'
 
 // ── GET /api/me ──────────────────────────────────────────────────────────────
 // Who the signed-in person is, and enough about their company for the login
-// page to route them and the dashboard to show setup progress.
+// page to route them and the screens to show what applies to them.
 //
 // THE ROUTE THAT BROKE ON VERCEL. It used to read `if (employeeError ||
 // !employee)` -- a database failure and a missing row, treated identically --
@@ -44,8 +44,6 @@ export const GET = route(async () => {
         employee: null,
         platformAdmin: true,
         client: null,
-        employeeCount: 0,
-        hasBookings: false,
         canSelfBook: false,
         hasDirectReports: false,
         isApprover: false,
@@ -59,15 +57,13 @@ export const GET = route(async () => {
 
   const isTmcSide = employee.role === 'tmc_admin' || employee.role === 'tc'
 
-  // Corporate side only: the company, and the setup checklist's counts. The
-  // policy count comes from client_policy_groups, where policy actually lives.
-  const [client, counts, hasDirectReports] = !isTmcSide && employee.client_id
+  // Corporate side only: the company, and whether anyone reports to them.
+  const [client, hasDirectReports] = !isTmcSide && employee.client_id
     ? await Promise.all([
         clients.summary(db, employee.client_id),
-        clients.onboardingCounts(db, employee.client_id),
         employees.hasDirectReports(db, employee.id),
       ])
-    : [null, { employees: 0, bookings: 0, policyGroups: 0 }, false]
+    : [null, false]
 
   // For TCs, their granted permissions and client access, so the frontend can
   // render a restricted view of the TMC dashboard and settings. tmc_admin has
@@ -84,9 +80,6 @@ export const GET = route(async () => {
     employee,
     platformAdmin: !!platformAdmin,
     client: client ?? null,
-    employeeCount: counts.employees,
-    hasBookings: counts.bookings > 0,
-    hasPolicy: counts.policyGroups > 0,
     // The rule clientGates.selfBooking enforces on every booking route, so the
     // screens hide what the server would refuse. A CBT-only client's people
     // sign in for their trips and approvals; the travel desk books for them.
