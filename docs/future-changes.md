@@ -3,43 +3,36 @@
 A running list of agreed work that is not done yet. Newest decisions are
 recorded with the item; remove an item once it ships.
 
-## Hardening and scale: what is left (pass of 2026-10-08)
+## Hardening and scale: what is left (passes of 2026-10-08 and 2026-11-02)
 
-Done in that pass: `npm run scale` harness and results (docs/scale-results.md);
+Done in the first pass: `npm run scale` harness and results (docs/scale-results.md);
 booking-time lookups fetch only what reaches the client; coverage reports
 indexed (21 s -> 0.9 s at 10k clients); reach indexes; restricted `cbt_app`
 role, with the test suite running as it (docs/database-roles.md); automated
 cross-tenant leak sweep over every route (tests/security); rate limits on
 search, coverage, CSV and the public ticket link; verified database TLS when
-`DATABASE_CA_CERT` is set.
+`DATABASE_CA_CERT` is set. Then (2026-11-02): dependencies with known
+advisories updated (next 16.4.3, nodemailer, sharp); security headers on
+every response; the sign-in tables answer to the system scope only; every
+foreign key indexed (and a test that keeps it so); escalation runs on the
+server's own timer, nothing to schedule.
 
+- **A script policy (CSP) with nonces.** The headers set now (next.config.ts)
+  forbid framing, plugins and foreign form posts; restricting scripts needs
+  a per-request nonce, so every page rendered dynamically. Next.js documents
+  it (content-security-policy guide).
 - **Switch each environment to the restricted login** and set
   `DATABASE_CA_CERT` (steps in docs/database-roles.md). Until then the code is
   ready but the app still connects as the owner.
-- **Sign-in tables are allow-all to the app role** (accounts, sessions,
-  tokens). Reached only by `app/lib/auth`, but a policy limiting them to the
-  system scope would remove the last tables a tenant request could read
-  across tenants. Needs the account-creation paths (which run in a tenant's
-  request) to write through the system scope.
 - **Coverage rebuild grows with the TMC.** Reads are SQL (16-30 ms at 10k
   clients), but the first read after a change rebuilds the whole TMC's report
   (2.4 s at 10k; the scale budget is 5 s). Past ~20k clients, rebuild only the
   clients a change reaches.
-- **38 foreign-key columns have no index** (created_by / updated_by /
-  assigned_by / granted_by, approvals.approver_id, bookings.requested_for,
-  trips.created_by, price_quotes.employee_id, the assignments' client_id...).
-  Deleting a client or an employee checks each of them by scanning the whole
-  table; removing the 2,000-client demo that way took 100 s. Index the ones a
-  real delete path uses.
 - **TMC dashboard stats ~0.5 s at 10k clients as the app login** (budget
   300 ms; 130 ms on the same data measured alone). The query filters
   `tmc_id = $1` and the policy adds `tmc_id = app_tmc()`; the planner treats
   them as independent and expects 101 clients for 10,009. A maintained
   per-client counts table (like coverage) would make it constant.
-- **Set the login's timeouts** (`statement_timeout`, idle-in-transaction) when
-  creating `cbt_app_login` (docs/database-roles.md).
-- **Leak sweep covers GET and DELETE only.** POST / PATCH cross-tenant writes
-  are covered by the per-route tests, not swept.
 
 ## Booking on someone's behalf (built 2026-10-13; what is left)
 
@@ -103,10 +96,6 @@ step. Phase 2 too: max layover, max cancellation fee, lowest logical fare,
 re-approval when a re-priced fare rises, escalation to the approver's
 manager, Personal and Guest tags, and a ticket footer.
 
-- **Schedule the escalation sweep.** `npm run escalate` (or POST
-  /api/internal/escalate with `x-internal-secret`) every 15 minutes, from
-  Windows Task Scheduler, cron or a Vercel cron job. Until something runs
-  it, no approval escalates.
 - **Booking emails per event** (needs production SMTP), including an
   escalation and a fare sent back for re-approval.
 - **A guest is what the booker says.** for_guest is the booker's own choice;
@@ -145,6 +134,8 @@ app/lib/repositories/reports.ts).
 
 ## Operational (one-off)
 
+- Escalation on Vercel (the test site): no long-lived process there, and the
+  free plan's cron runs once a day. Escalation does not run on Vercel.
 - Run `20261022000000_drop_approval_amount_rules.sql` on the hosted
   database (`migrate-hosted.mjs`). Local is up to date.
 - Run `npm run migrate` (places, no-manager, airports) and then

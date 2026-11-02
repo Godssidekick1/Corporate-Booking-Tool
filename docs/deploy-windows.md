@@ -66,18 +66,27 @@ a Windows service (for example with NSSM, or pm2 with pm2-windows-service).
 
 `GET /api/health` answers when the app and its database are up.
 
-## 5. Scheduled job
+## 5. Nothing to schedule
 
-Approval escalation runs only when something calls it. Every 15 minutes
-(Task Scheduler), from this folder:
+Approval escalation (a step that waited too long passes to the approver's
+manager) runs inside the server: every 5 minutes while it is up, and once
+30 seconds after it starts, which catches up on anything that fell due while
+it was down. Several servers side by side are safe; each approval is claimed
+once.
 
-```powershell
-npm run escalate
-```
+| Variable | What |
+|---|---|
+| `ESCALATION_SWEEP_MINUTES` | how often, default 5 |
+| `ESCALATION_SWEEP=off` | switch it off, for example when an external scheduler calls `npm run escalate` instead |
 
-It reads `NEXT_PUBLIC_APP_URL` and `INTERNAL_API_SECRET`.
+## 6. Security headers
 
-## 6. Who can sign in
+Every response carries framing, sniffing, referrer and permissions rules,
+and in production `Strict-Transport-Security` for this host (not its
+subdomains). Once a browser has seen that header it refuses plain HTTP to
+the host for a year, so turn HTTPS on before the first production visit.
+
+## 7. Who can sign in
 
 Real users keep their passwords. The dump also holds the **Demo Scale TMC**
 (2,000 fake clients for trying the product at size); its sign-ins and
