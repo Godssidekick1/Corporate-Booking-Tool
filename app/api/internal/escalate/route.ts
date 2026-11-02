@@ -6,13 +6,14 @@ import { createHash, timingSafeEqual } from 'node:crypto'
 
 // ── POST /api/internal/escalate ──────────────────────────────────────────────
 // Passes every approval that has waited past its company's limit to the
-// approver's manager (app/lib/approval-engine/escalate.ts). Meant for a
-// scheduler, every 15 minutes or so; running it more often only finds nothing.
+// approver's manager (app/lib/approval-engine/escalate.ts). The server sweeps
+// on its own timer (escalationTimer.ts, started by instrumentation.ts); this
+// is for a manual run, or for a host that schedules it instead
+// (ESCALATION_SWEEP=off). Running it more often only finds nothing.
 //
 //   Header: x-internal-secret: <INTERNAL_API_SECRET>
 //
-// `npm run escalate` calls it (scripts/escalate.mjs). Scheduling is the
-// host's: Windows Task Scheduler, cron, or a Vercel cron job.
+// `npm run escalate` calls it (scripts/escalate.mjs).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const POST = route(async (req: NextRequest) => {

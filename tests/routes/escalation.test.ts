@@ -1,14 +1,15 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { POST as chainPost } from '@/app/api/tmc/approval-chains/direct/route'
 import { GET as approvalsGet } from '@/app/api/approvals/route'
 import { PATCH as decide } from '@/app/api/approvals/[approvalId]/route'
 import { POST as escalatePost } from '@/app/api/internal/escalate/route'
 import { startApprovalForBooking } from '@/app/lib/approval-engine/resolveApprovalTier'
 import { escalateDueApprovals } from '@/app/lib/approval-engine/escalate'
+import { startEscalationTimer } from '@/app/lib/approval-engine/escalationTimer'
 import { call } from '../harness/call'
 import { actors, type Actors } from '../harness/actors'
 import { resetDatabase } from '../harness/db'
-import { db } from '@/app/lib/db'
+import { db, setOutsideContext } from '@/app/lib/db'
 import { sql, many, one, maybeOne, exec } from '@/app/lib/db/sql'
 
 // ── Approval escalation ──────────────────────────────────────────────────────
@@ -128,6 +129,28 @@ d('approval escalation', () => {
       expect((await rows(bookingId))[0].escalates_at).toBeNull()
     } finally {
       await exec(db, sql`update clients set approval_escalation_hours = 2 where id = ${clientId}`)
+    }
+  })
+
+  // Nobody calls anything: the server's own timer finds the overdue step. No
+  // scope is set around it (as at boot), so the timer must establish the
+  // system scope itself.
+  it('the server\'s own timer escalates an overdue step, with no request', async () => {
+    const bookingId = await newBooking()
+    await raise(bookingId)
+    await exec(db, sql`update approvals set escalates_at = now() - interval '1 minute' where booking_id = ${bookingId}`)
+    setOutsideContext('none')
+    const timer = startEscalationTimer({ firstAfterMs: 0 })
+    try {
+      await vi.waitFor(async () => {
+        setOutsideContext('system')
+        const now = await rows(bookingId)
+        setOutsideContext('none')
+        expect(now.map(r => [r.approver_id, r.status])).toEqual([[approver.id, 'escalated'], [manager.id, 'pending']])
+      }, { timeout: 10_000, interval: 100 })
+    } finally {
+      timer.stop()
+      setOutsideContext('system')
     }
   })
 
