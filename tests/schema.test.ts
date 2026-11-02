@@ -91,6 +91,22 @@ d('schema', () => {
     }
   })
 
+  // 20261102000100_foreign_key_indexes: a delete checks every table that
+  // refers to the row; without an index on the referring columns, it reads
+  // that table whole.
+  it('every foreign key has an index on its columns', async () => {
+    const bare = await rows<{ fk: string }>(`
+      select c.conrelid::regclass::text || ' (' || c.conname || ')' as fk
+        from pg_constraint c
+       where c.contype = 'f' and c.connamespace = 'public'::regnamespace
+         and not exists (
+           select 1 from pg_index i
+            where i.indrelid = c.conrelid
+              and (i.indkey::int2[])[0:array_length(c.conkey, 1) - 1] @> c.conkey
+              and (i.indkey::int2[])[0:array_length(c.conkey, 1) - 1] <@ c.conkey)
+       order by 1`)
+    expect(bare.map(r => r.fk)).toEqual([])
+  })
 
   // The stored coverage reports go stale unless every table they are computed
   // from bumps their counter (app/lib/coverage reads exactly these). A builder
