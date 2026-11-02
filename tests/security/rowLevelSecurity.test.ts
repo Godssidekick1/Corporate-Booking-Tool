@@ -155,6 +155,50 @@ d('row-level security', () => {
     expect(Number(n.rows[0].n)).toBe(await count('select count(*) n from clients where tmc_id = $1', [tmcB]))
   })
 
+  // 20261102000000_sign_in_tables_system_only: password hashes and live
+  // sessions are invisible to every tenant query, however it is written.
+  const SIGN_IN = ['accounts', 'sessions', 'auth_tokens', 'auth_attempts', 'platform_admins', 'rate_limits']
+
+  it('the sign-in tables answer to the system only; no tenant query sees them', async () => {
+    expect(await count('select count(*) n from accounts')).toBeGreaterThan(0)
+    for (const t of SIGN_IN) {
+      for (const ctx of [{ ...tenantA, tmcId: tmcA }, { scope: 'tenant', tmcId: corp.tmc, clientId: corp.client } as DbContext,
+        { scope: 'none', tmcId: null, clientId: null } as DbContext]) {
+        expect(await as(ctx, () => count(`select count(*) n from ${t}`)), `${t} as ${ctx.scope}`).toBe(0)
+      }
+    }
+    // Nor written: a tenant cannot plant a session or an account.
+    await expect(as({ ...tenantA, tmcId: tmcA }, () =>
+      db.query(`insert into auth_attempts (key) values ('rls-test')`))).rejects.toThrow(/row-level security/)
+  })
+
+  it('the sign-in repositories still work from a tenant request, inside its transaction too', async () => {
+    const accounts = await import('@/app/lib/repositories/accounts')
+    const someone = a.corpAdmin.id
+    const ctx: DbContext = { scope: 'tenant', tmcId: corp.tmc, clientId: corp.client }
+    expect((await as(ctx, () => accounts.byId(db, someone)))?.id).toBe(someone)
+    await as(ctx, () => transaction(async tx => {
+      await accounts.recordAttempt(tx, 'rls-test-in-tx')
+      // Back to the tenant's own scope for the rest of the transaction.
+      expect(Number((await tx.query('select count(*) n from accounts')).rows[0].n)).toBe(0)
+      expect(Number((await tx.query('select count(*) n from clients')).rows[0].n)).toBe(1)
+    }))
+    expect(await count(`select count(*) n from auth_attempts where key = 'rls-test-in-tx'`)).toBe(1)
+    // The people list's one question, answered without the table: the same
+    // yes or no the table itself gives, for an account with a password and
+    // one without. The anonymised template keeps no passwords, so one is set.
+    await db.query(`update accounts set password_hash = 'x' where id = $1`, [someone])
+    const truth = (await db.query(`
+      (select id, true as ok from accounts where password_hash is not null order by id limit 1)
+      union all
+      (select id, false from accounts where password_hash is null order by id limit 1)`)).rows as { id: string; ok: boolean }[]
+    expect(truth.map(t => t.ok)).toEqual([true, false])
+    for (const t of truth) {
+      const can = await as(ctx, () => db.query('select public.account_can_sign_in($1) as ok', [t.id]))
+      expect(can.rows[0].ok).toBe(t.ok)
+    }
+  })
+
   it('behind a transaction pooler, the same isolation holds', async () => {
     process.env.DB_POOL_MODE = 'transaction'
     expect(await as({ ...tenantA, tmcId: tmcA }, () => rowsOf('bookings', tmcB, clientsB))).toBe(0)

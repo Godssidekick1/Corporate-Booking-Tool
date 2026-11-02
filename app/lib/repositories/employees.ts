@@ -698,7 +698,7 @@ export async function travellerRoster(
     db,
     sql`id, full_name, email, role, status, band_code, band_rank, department, cost_centre,
         designation, manager_id, top_of_hierarchy, traveler_profile, first_login_completed,
-        exists (select 1 from accounts a where a.id = employees.id and a.password_hash is not null) as can_sign_in`,
+        public.account_can_sign_in(id) as can_sign_in`,
     sql`client_id = ${clientId}`,
     scope,
     [sql`full_name`, sql`email`, sql`department`, sql`designation`, sql`cost_centre`]

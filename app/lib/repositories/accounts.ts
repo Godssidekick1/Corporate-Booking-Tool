@@ -1,8 +1,12 @@
 import { sql, many, maybeOne, one, exec, type Queryable } from '@/app/lib/db/sql'
 import type { Row } from '@/app/lib/db/types.generated'
+import { onSystem } from '@/app/lib/db/systemScope'
 
 // ── Identity ─────────────────────────────────────────────────────────────────
 // Owns: accounts, sessions, auth_tokens, auth_attempts.
+//
+// Every statement runs as the system (onSystem, app/lib/db/systemScope.ts):
+// these tables answer to no tenant, even when a tenant's request writes them.
 //
 // Data only. What a session or a token MEANS -- how long it lives, who may be
 // refused -- is decided in app/lib/auth. Tokens arrive here already hashed:
@@ -17,13 +21,13 @@ export type Account = Pick<Row<'accounts'>,
 export type AccountCredentials = Account & Pick<Row<'accounts'>, 'password_hash'>
 
 export async function byEmail(db: Queryable, email: string): Promise<AccountCredentials | null> {
-  return maybeOne<AccountCredentials>(db, sql`
+  return maybeOne<AccountCredentials>(onSystem(db), sql`
     select id, email, password_hash, must_change_password, email_verified_at, last_sign_in_at
     from accounts where email = ${email}`)
 }
 
 export async function byId(db: Queryable, id: string): Promise<AccountCredentials | null> {
-  return maybeOne<AccountCredentials>(db, sql`
+  return maybeOne<AccountCredentials>(onSystem(db), sql`
     select id, email, password_hash, must_change_password, email_verified_at, last_sign_in_at
     from accounts where id = ${id}`)
 }
@@ -39,7 +43,7 @@ export interface NewAccount {
 }
 
 export async function insert(db: Queryable, account: NewAccount): Promise<{ id: string }> {
-  return one<{ id: string }>(db, sql`
+  return one<{ id: string }>(onSystem(db), sql`
     insert into accounts (id, email, password_hash, must_change_password, email_verified_at, password_changed_at)
     values (
       ${account.id}, ${account.email}, ${account.passwordHash}, ${account.mustChangePassword},
@@ -56,7 +60,7 @@ export async function setPassword(
   passwordHash: string,
   mustChangePassword: boolean
 ): Promise<void> {
-  await exec(db, sql`
+  await exec(onSystem(db), sql`
     update accounts set
       password_hash = ${passwordHash},
       must_change_password = ${mustChangePassword},
@@ -69,21 +73,21 @@ export async function setPassword(
 // upgraded at sign-in). Not a password change: sessions and
 // password_changed_at are left alone.
 export async function rehash(db: Queryable, id: string, passwordHash: string): Promise<void> {
-  await exec(db, sql`update accounts set password_hash = ${passwordHash}, updated_at = now() where id = ${id}`)
+  await exec(onSystem(db), sql`update accounts set password_hash = ${passwordHash}, updated_at = now() where id = ${id}`)
 }
 
 export async function markVerified(db: Queryable, id: string): Promise<void> {
-  await exec(db, sql`
+  await exec(onSystem(db), sql`
     update accounts set email_verified_at = coalesce(email_verified_at, now()), updated_at = now()
     where id = ${id}`)
 }
 
 export async function recordSignIn(db: Queryable, id: string): Promise<void> {
-  await exec(db, sql`update accounts set last_sign_in_at = now() where id = ${id}`)
+  await exec(onSystem(db), sql`update accounts set last_sign_in_at = now() where id = ${id}`)
 }
 
 export async function remove(db: Queryable, id: string): Promise<void> {
-  await exec(db, sql`delete from accounts where id = ${id}`)
+  await exec(onSystem(db), sql`delete from accounts where id = ${id}`)
 }
 
 // ═══ sessions ═══════════════════════════════════════════════════════════════
@@ -98,7 +102,7 @@ export interface NewSession {
 }
 
 export async function insertSession(db: Queryable, s: NewSession): Promise<{ absolute_expires_at: string }> {
-  return one<{ absolute_expires_at: string }>(db, sql`
+  return one<{ absolute_expires_at: string }>(onSystem(db), sql`
     insert into sessions (id, account_id, idle_expires_at, absolute_expires_at, ip, user_agent)
     values (
       ${s.id}, ${s.accountId},
@@ -154,7 +158,7 @@ const STANDING_JOINS = sql`
   left join tmcs t on t.id = e.tmc_id`
 
 export async function principalBySession(db: Queryable, sessionId: string): Promise<SessionPrincipalRow | null> {
-  return maybeOne<SessionPrincipalRow>(db, sql`
+  return maybeOne<SessionPrincipalRow>(onSystem(db), sql`
     select s.id as session_id, s.last_seen_at, ${STANDING}
     from sessions s
     join accounts a on a.id = s.account_id
@@ -168,7 +172,7 @@ export async function principalBySession(db: Queryable, sessionId: string): Prom
 // The same standing, before any session exists: sign-in and link completion
 // refuse a deactivated person before creating one.
 export async function standingByAccount(db: Queryable, accountId: string): Promise<AccountStanding | null> {
-  return maybeOne<AccountStanding>(db, sql`
+  return maybeOne<AccountStanding>(onSystem(db), sql`
     select ${STANDING} from accounts a ${STANDING_JOINS} where a.id = ${accountId}`)
 }
 
@@ -181,7 +185,7 @@ export async function touchSession(
   idleSeconds: number,
   everySeconds: number
 ): Promise<void> {
-  await exec(db, sql`
+  await exec(onSystem(db), sql`
     update sessions set
       last_seen_at = now(),
       idle_expires_at = least(now() + make_interval(secs => ${idleSeconds}), absolute_expires_at)
@@ -191,7 +195,7 @@ export async function touchSession(
 }
 
 export async function revokeSession(db: Queryable, sessionId: string, reason: string): Promise<void> {
-  await exec(db, sql`
+  await exec(onSystem(db), sql`
     update sessions set revoked_at = now(), revoked_reason = ${reason}
     where id = ${sessionId} and revoked_at is null`)
 }
@@ -204,7 +208,7 @@ export async function revokeAllSessions(
   reason: string,
   exceptSessionId: string | null = null
 ): Promise<number> {
-  return exec(db, sql`
+  return exec(onSystem(db), sql`
     update sessions set revoked_at = now(), revoked_reason = ${reason}
     where account_id = ${accountId}
       and revoked_at is null
@@ -219,14 +223,14 @@ export async function insertToken(
   db: Queryable,
   t: { id: string; accountId: string; purpose: TokenPurpose; ttlSeconds: number; createdBy: string | null }
 ): Promise<void> {
-  await exec(db, sql`
+  await exec(onSystem(db), sql`
     insert into auth_tokens (id, account_id, purpose, expires_at, created_by)
     values (${t.id}, ${t.accountId}, ${t.purpose}, now() + make_interval(secs => ${t.ttlSeconds}), ${t.createdBy})`)
 }
 
 // Only the newest link works: issuing one retires every earlier open one.
 export async function retireOpenTokens(db: Queryable, accountId: string): Promise<void> {
-  await exec(db, sql`
+  await exec(onSystem(db), sql`
     update auth_tokens set consumed_at = now()
     where account_id = ${accountId} and consumed_at is null`)
 }
@@ -240,7 +244,7 @@ export interface OpenToken {
 // Reads a token without spending it: the confirm page shows whose account a
 // link is for before anything is committed.
 export async function openToken(db: Queryable, tokenId: string): Promise<OpenToken | null> {
-  return maybeOne<OpenToken>(db, sql`
+  return maybeOne<OpenToken>(onSystem(db), sql`
     select t.account_id, t.purpose, a.email
     from auth_tokens t join accounts a on a.id = t.account_id
     where t.id = ${tokenId} and t.consumed_at is null and t.expires_at > now()`)
@@ -249,7 +253,7 @@ export async function openToken(db: Queryable, tokenId: string): Promise<OpenTok
 // Spends a token. Atomic: of two concurrent requests with the same token,
 // exactly one gets a row back.
 export async function consumeToken(db: Queryable, tokenId: string): Promise<OpenToken | null> {
-  return maybeOne<OpenToken>(db, sql`
+  return maybeOne<OpenToken>(onSystem(db), sql`
     update auth_tokens t set consumed_at = now()
     from accounts a
     where a.id = t.account_id
@@ -260,11 +264,11 @@ export async function consumeToken(db: Queryable, tokenId: string): Promise<Open
 // ═══ auth_attempts ══════════════════════════════════════════════════════════
 
 export async function recordAttempt(db: Queryable, key: string): Promise<void> {
-  await exec(db, sql`insert into auth_attempts (key) values (${key})`)
+  await exec(onSystem(db), sql`insert into auth_attempts (key) values (${key})`)
 }
 
 export async function countAttempts(db: Queryable, keys: readonly string[], windowSeconds: number): Promise<Record<string, number>> {
-  const rows = await many<{ key: string; n: number }>(db, sql`
+  const rows = await many<{ key: string; n: number }>(onSystem(db), sql`
     select key, count(*)::int as n from auth_attempts
     where key = any(${keys}) and at > now() - make_interval(secs => ${windowSeconds})
     group by key`)
@@ -272,9 +276,9 @@ export async function countAttempts(db: Queryable, keys: readonly string[], wind
 }
 
 export async function clearAttempts(db: Queryable, key: string): Promise<void> {
-  await exec(db, sql`delete from auth_attempts where key = ${key}`)
+  await exec(onSystem(db), sql`delete from auth_attempts where key = ${key}`)
 }
 
 export async function pruneAttempts(db: Queryable, olderThanSeconds: number): Promise<void> {
-  await exec(db, sql`delete from auth_attempts where at < now() - make_interval(secs => ${olderThanSeconds})`)
+  await exec(onSystem(db), sql`delete from auth_attempts where at < now() - make_interval(secs => ${olderThanSeconds})`)
 }

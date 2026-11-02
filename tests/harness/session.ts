@@ -1,4 +1,4 @@
-import { db } from '@/app/lib/db'
+import { db, asSystem } from '@/app/lib/db'
 import { sql, exec, maybeOne } from '@/app/lib/db/sql'
 import * as accounts from '@/app/lib/repositories/accounts'
 import { newToken } from '@/app/lib/auth/tokens'
@@ -33,7 +33,14 @@ export function resetAuth(): void {
   current = null
 }
 
-async function ensureAccount(user: TestUser): Promise<void> {
+// Run as the system, as the real sign-in path is: it is called from inside a
+// route's request, and the sign-in tables answer to no request
+// (20261102000000_sign_in_tables_system_only).
+function ensureAccount(user: TestUser): Promise<void> {
+  return asSystem(() => createIfMissing(user))
+}
+
+async function createIfMissing(user: TestUser): Promise<void> {
   if (await maybeOne(db, sql`select 1 from accounts where id = ${user.id}`)) return
   const email = user.email?.trim().toLowerCase()
   const taken = email ? await maybeOne(db, sql`select 1 from accounts where email = ${email}`) : null

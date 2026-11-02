@@ -1,4 +1,5 @@
 import { sql, empty, many, maybeOne, one, exec, type Queryable } from '@/app/lib/db/sql'
+import { onSystem } from '@/app/lib/db/systemScope'
 import { searchAcross, page, assignments, insertColumns } from '@/app/lib/db/fragments'
 import type { Row } from '@/app/lib/db/types.generated'
 import type { PageParams } from '@/app/lib/pagination'
@@ -14,11 +15,12 @@ import type { PageParams } from '@/app/lib/pagination'
 // ═══ platform_admins ════════════════════════════════════════════════════════
 // Amadeus staff. They have no employees row, deliberately -- they are not a
 // member of any tenant -- so this is the only table that can say who they are.
+// Read as the system (onSystem): the table answers to no tenant.
 
 export type PlatformAdminRow = Pick<Row<'platform_admins'>, 'user_id' | 'email'>
 
 export async function platformAdmin(db: Queryable, userId: string): Promise<PlatformAdminRow | null> {
-  return maybeOne<PlatformAdminRow>(db, sql`
+  return maybeOne<PlatformAdminRow>(onSystem(db), sql`
     select user_id, email from platform_admins where user_id = ${userId}`)
 }
 

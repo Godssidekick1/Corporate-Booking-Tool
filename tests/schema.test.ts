@@ -62,9 +62,9 @@ d('schema', () => {
   })
 
   // Tenant isolation is enforced by the database (20261012000000_tenant_policies).
-  // Only these tables -- reference data and the sign-in tables, which hold no
-  // tenant's rows -- may admit every row; every other table's policy must be
-  // tenant-scoped. A new table arrives with RLS on and no policy (the test
+  // Only these tables -- reference data, which holds no tenant's rows -- may
+  // admit every row; the sign-in tables admit the system scope only (below),
+  // and every other table's policy must be tenant-scoped. A new table arrives with RLS on and no policy (the test
   // above fails until it has one); this one fails if that policy is `true`.
   it('only the shared tables admit every row; every tenant table is scoped', async () => {
     const open = await rows<{ table: string }>(`
@@ -72,10 +72,25 @@ d('schema', () => {
        where schemaname = 'public' and policyname = 'app_access' and qual = 'true'
        order by 1`)
     expect(open.map(r => r.table)).toEqual([
-      'accounts', 'airlines', 'airports', 'amadeus_session', 'auth_attempts', 'auth_tokens', 'cities',
-      'countries', 'platform_admins', 'rate_limits', 'regions', 'schema_migrations', 'sessions',
+      'airlines', 'airports', 'amadeus_session', 'cities', 'countries', 'regions', 'schema_migrations',
     ])
   })
+
+  // 20261102000000_sign_in_tables_system_only: password hashes, sessions and
+  // links are the system's alone (app/lib/db/systemScope.ts).
+  it('the sign-in tables admit the system scope only', async () => {
+    const policies = await rows<{ table: string; qual: string; check: string }>(`
+      select tablename as table, qual, with_check as check from pg_policies
+       where schemaname = 'public' and policyname = 'app_access'
+         and tablename in ('accounts', 'sessions', 'auth_tokens', 'auth_attempts', 'platform_admins', 'rate_limits')
+       order by 1`)
+    expect(policies.map(p => p.table)).toEqual(['accounts', 'auth_attempts', 'auth_tokens', 'platform_admins', 'rate_limits', 'sessions'])
+    for (const p of policies) {
+      expect(p.qual, p.table).toBe(`(app_scope() = 'system'::text)`)
+      expect(p.check, p.table).toBe(`(app_scope() = 'system'::text)`)
+    }
+  })
+
 
   // The stored coverage reports go stale unless every table they are computed
   // from bumps their counter (app/lib/coverage reads exactly these). A builder
