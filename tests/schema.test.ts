@@ -30,6 +30,12 @@ d('schema', () => {
     expect(found.map(r => r.what)).toEqual([])
   })
 
+  // 20261103000000_drop_auth_stub: sign-in lives in public (accounts,
+  // sessions); no second, outside one.
+  it('there is no auth schema', async () => {
+    expect(await rows(`select nspname from pg_namespace where nspname = 'auth'`)).toEqual([])
+  })
+
   it('no foreign key reaches into the auth schema', async () => {
     // A local restore never had these (auth.users does not exist there); this
     // is what stops one coming back.
