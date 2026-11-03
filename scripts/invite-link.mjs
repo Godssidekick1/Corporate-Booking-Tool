@@ -17,6 +17,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import pg from 'pg'
+import { sslFor } from './migrate.mjs'
 
 function envValue(name) {
   if (process.env[name]) return process.env[name]
@@ -37,9 +38,8 @@ if (!email || !url) {
 }
 const appUrl = (envValue('NEXT_PUBLIC_APP_URL') ?? 'http://localhost:3000').replace(/\/+$/, '')
 
-let host
 try {
-  host = new URL(url).hostname
+  new URL(url)
 } catch {
   console.error('DATABASE_URL is not a valid URL (special characters in the password must be percent-encoded).')
   process.exit(1)
@@ -47,7 +47,7 @@ try {
 
 const client = new pg.Client({
   connectionString: url,
-  ssl: host === 'localhost' || host === '127.0.0.1' ? undefined : { rejectUnauthorized: false },
+  ssl: sslFor(url),
 })
 await client.connect()
 try {

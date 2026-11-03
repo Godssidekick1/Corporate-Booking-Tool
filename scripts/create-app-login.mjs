@@ -18,6 +18,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import pg from 'pg'
+import { sslFor } from './migrate.mjs'
 import { randomBytes } from 'node:crypto'
 import { readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -63,7 +64,7 @@ if (owner.username === LOGIN) {
 
 const password = randomBytes(24).toString('base64url')
 
-const admin = new pg.Client({ connectionString: ownerUrl })
+const admin = new pg.Client({ connectionString: ownerUrl, ssl: sslFor(ownerUrl) })
 await admin.connect()
 try {
   const role = await admin.query(`select 1 from pg_roles where rolname = 'cbt_app'`)
@@ -92,7 +93,7 @@ appUrl.password = password
 
 // Check before touching .env.local: the new login connects, is restricted,
 // and cannot change the schema.
-const check = new pg.Client({ connectionString: appUrl.toString() })
+const check = new pg.Client({ connectionString: appUrl.toString(), ssl: sslFor(appUrl.toString()) })
 await check.connect()
 try {
   const me = (await check.query('select current_user as u, current_setting(\'statement_timeout\') as t')).rows[0]

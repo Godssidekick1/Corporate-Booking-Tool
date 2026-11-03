@@ -46,9 +46,14 @@ function envUrl() {
   throw new Error('DATABASE_URL not set. Pass a connection string or add it to .env.local.')
 }
 
-// Same rule as app/lib/db/pool.ts: plaintext on loopback, TLS elsewhere.
-function sslFor(url) {
-  return url.includes('localhost') || url.includes('127.0.0.1') ? undefined : { rejectUnauthorized: false }
+// Same rule as app/lib/db/pool.ts: plaintext on loopback or with
+// ?sslmode=disable in the URL, TLS elsewhere.
+export function sslFor(url) {
+  let u
+  try { u = new URL(url) } catch { return undefined }
+  if (['localhost', '127.0.0.1', '::1', '[::1]'].includes(u.hostname)) return undefined
+  if (u.searchParams.get('sslmode') === 'disable') return false
+  return { rejectUnauthorized: false }
 }
 
 function files() {

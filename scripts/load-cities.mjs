@@ -16,6 +16,7 @@ import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { inflateRawSync } from 'node:zlib'
 import pg from 'pg'
+import { sslFor } from './migrate.mjs'
 
 const SOURCE = 'https://download.geonames.org/export/dump/cities500.zip'
 // Not places a traveller lives in: sections of a city, and abandoned,
@@ -74,7 +75,7 @@ try {
 // address or an unmigrated database fails in a second, not after a minute.
 const client = new pg.Client({
   connectionString: url,
-  ssl: host === 'localhost' || host === '127.0.0.1' ? undefined : { rejectUnauthorized: false },
+  ssl: sslFor(url),
 })
 try {
   await client.connect()

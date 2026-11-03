@@ -23,4 +23,12 @@ describe('database TLS', () => {
     expect(tlsOptions('db.example.com')).toEqual({ rejectUnauthorized: false })
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('NOT verifying'))
   })
+
+  it('sslmode=disable turns TLS off for that URL only, and says so', () => {
+    vi.stubEnv('DATABASE_CA_CERT', '')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(tlsOptions('10.0.0.5', 'disable')).toBe(false)
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('NOT encrypted'))
+    expect(tlsOptions('10.0.0.5', 'require')).toEqual({ rejectUnauthorized: false })
+  })
 })

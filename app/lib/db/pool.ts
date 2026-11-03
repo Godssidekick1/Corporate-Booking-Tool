@@ -27,11 +27,17 @@ let pool: Pool | null = null
 //   DATABASE_CA_CERT  the CA certificate itself (PEM text; \n escapes allowed,
 //                     for hosts whose env vars are single-line)
 // Without it the connection is encrypted but the server is not authenticated,
-// so someone able to intercept the network could pose as the database. That
-// is still how the Supabase-hosted test database is reached; it is announced
-// once in the log rather than refused, so it cannot pass unnoticed.
-export function tlsOptions(hostname: string): { ca?: string; rejectUnauthorized: boolean } | undefined {
+// so someone able to intercept the network could pose as the database. It is
+// announced once in the log rather than refused, so it cannot pass unnoticed.
+//
+// `?sslmode=disable` on the URL turns TLS off, for a server on a private
+// network that has none: chosen per URL, never a silent fallback, and logged.
+export function tlsOptions(hostname: string, sslmode?: string | null): { ca?: string; rejectUnauthorized: boolean } | false | undefined {
   if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') return undefined
+  if (sslmode === 'disable') {
+    console.warn(`[db] connection to ${hostname} is NOT encrypted (sslmode=disable in the URL).`)
+    return false
+  }
   const ca = process.env.DATABASE_CA_CERT?.replace(/\\n/g, '\n').trim()
   if (ca) return { ca, rejectUnauthorized: true }
   console.warn(`[db] TLS to ${hostname} is NOT verifying the server certificate. Set DATABASE_CA_CERT to the database's CA certificate.`)
@@ -94,7 +100,7 @@ export function getPool(): Pool {
     // Fail fast rather than hanging a request forever on an unreachable
     // database -- a 500 with a clear message beats a spinner that never stops.
     connectionTimeoutMillis: 10_000,
-    ssl: tlsOptions(target.hostname),
+    ssl: tlsOptions(target.hostname, target.searchParams.get('sslmode')),
   })
 
   // An idle client erroring (a network blip, a server restart) otherwise
