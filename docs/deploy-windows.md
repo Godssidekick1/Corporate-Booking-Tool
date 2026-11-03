@@ -28,6 +28,12 @@ pg_restore -U postgres -d cbt --no-owner --exit-on-error cbt-database-YYYY-MM-DD
 partial copy. To skip the role entirely, use `--no-privileges` instead (the
 app then has to connect as the owner).
 
+**An empty database instead of a dump:** with `MIGRATE_DATABASE_URL` naming
+the owner and a database that does not exist yet, `npm run db:create` builds
+it from `schema/baseline.sql` (the schema, plus countries, regions, airports
+and airlines), creates `cbt_app` if needed, and applies any newer migration.
+No clients, people or bookings: those come only from a dump.
+
 ## 3. Configuration
 
 Create `.env.local` in this folder (or set the same as system environment

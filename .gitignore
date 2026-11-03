@@ -44,11 +44,10 @@ next-env.d.ts
 .env*
 
 # ── Database dumps ───────────────────────────────────────────────────────────
-# schema/baseline.sql IS committed — it is the
-# only complete description of 14 tables that have no CREATE TABLE in
-# db/migrations/archive, so losing it loses the schema.
+# schema/baseline.sql IS committed: the schema plus reference rows only, written
+# by `npm run db:baseline` (scripts/capture-baseline.mjs).
 #
-# Everything holding ROWS is excluded. seed.sql carries live passenger detail:
+# Everything holding tenant ROWS is excluded. seed.sql carries live passenger detail:
 # bookings.traveler_snapshot freezes full CustomerInfo including passport
 # numbers, and that must not reach a git history that outlives any retention
 # policy we later write.

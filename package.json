@@ -13,6 +13,8 @@
     "test:watch": "vitest",
     "scale": "vitest run -c vitest.scale.config.mts",
     "db:app-login": "node scripts/create-app-login.mjs",
+    "db:create": "node scripts/create-database.mjs",
+    "db:baseline": "node scripts/capture-baseline.mjs",
     "demo:seed": "node scripts/demo-tmc.mjs seed",
     "demo:remove": "node scripts/demo-tmc.mjs remove"
   },
