@@ -30,6 +30,7 @@ const TEMPLATE = 'cbt_template'
 function baseUrl() {
   // The owner's URL when the app itself runs as a restricted login
   // (MIGRATE_DATABASE_URL, docs/database-roles.md); otherwise DATABASE_URL.
+  // TEST_OWNER_DATABASE_URL first: the template is for the local test suite.
   const fromFile = {}
   const envPath = join(process.cwd(), '.env.local')
   if (existsSync(envPath)) {
@@ -38,7 +39,7 @@ function baseUrl() {
       if (m) fromFile[m[1]] = m[2].replace(/^["']|["']$/g, '')
     }
   }
-  const url = ['MIGRATE_DATABASE_URL', 'DATABASE_URL'].map(n => process.env[n] ?? fromFile[n]).find(Boolean)
+  const url = ['TEST_OWNER_DATABASE_URL', 'MIGRATE_DATABASE_URL', 'DATABASE_URL'].map(n => process.env[n] ?? fromFile[n]).find(Boolean)
   if (!url) throw new Error('DATABASE_URL not set')
   return new URL(url)
 }

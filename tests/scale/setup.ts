@@ -14,7 +14,7 @@ export default async function setup(): Promise<void> {
   await migrate(templateUrl(), { log: line => console.info(`[scale] cbt_template: ${line}`) })
   // Global setup runs outside the test workers, before the config's `env`
   // applies: DATABASE_URL here is still the developer's, from .env.local.
-  const url = new URL(process.env.MIGRATE_DATABASE_URL ?? process.env.DATABASE_URL!)
+  const url = new URL(process.env.TEST_OWNER_DATABASE_URL ?? process.env.MIGRATE_DATABASE_URL ?? process.env.DATABASE_URL!)
   url.pathname = '/postgres'
   const admin = new pg.Client({ connectionString: url.toString() })
   await admin.connect()

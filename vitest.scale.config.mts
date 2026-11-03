@@ -28,9 +28,17 @@ function withDatabase(url: string, database: string): string {
 }
 
 // The owner (it creates cbt_scale and seeds it): MIGRATE_DATABASE_URL once the
-// app itself runs as a restricted login.
-const devUrl = process.env.MIGRATE_DATABASE_URL ?? process.env.DATABASE_URL
+// app itself runs as a restricted login, or TEST_OWNER_DATABASE_URL when that
+// is set (vitest.config.mts). Local only, as there.
+const devUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.MIGRATE_DATABASE_URL ?? process.env.DATABASE_URL
 if (!devUrl) throw new Error('npm run scale needs DATABASE_URL (in .env.local)')
+if (!process.env.ALLOW_REMOTE_TEST_DATABASE) {
+  let host = ''
+  try { host = new URL(devUrl).hostname } catch { /* reported by the pool */ }
+  if (host && !['localhost', '127.0.0.1', '::1', '[::1]'].includes(host)) {
+    throw new Error(`[scale] refusing to create cbt_scale on ${host}. Set TEST_OWNER_DATABASE_URL to a local owner.`)
+  }
+}
 
 // Measured AS THE APP RUNS: through the restricted login, so every timing
 // includes the row-level-security policies (tests/setup/database.ts does the

@@ -38,8 +38,22 @@ function withDatabase(url: string, database: string): string {
 }
 
 // The owner: it creates the test databases and the test login. Once the app
-// itself runs as a restricted login, that is MIGRATE_DATABASE_URL.
-const devUrl = process.env.MIGRATE_DATABASE_URL ?? process.env.DATABASE_URL
+// itself runs as a restricted login, that is MIGRATE_DATABASE_URL --
+// unless TEST_OWNER_DATABASE_URL names a separate (local) server for tests,
+// for when MIGRATE_DATABASE_URL points at a shared one.
+const devUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.MIGRATE_DATABASE_URL ?? process.env.DATABASE_URL
+// The suite drops and recreates databases on that server. Only on this
+// machine, unless asked for explicitly. The URL is not printed: it holds a
+// password.
+if (devUrl && !process.env.ALLOW_REMOTE_TEST_DATABASE) {
+  let host = ''
+  try { host = new URL(devUrl).hostname } catch { /* reported by the pool */ }
+  if (host && !['localhost', '127.0.0.1', '::1', '[::1]'].includes(host)) {
+    throw new Error(`[tests] refusing to create test databases on ${host}. ` +
+      'Set TEST_OWNER_DATABASE_URL in .env.local to the owner of a local PostgreSQL ' +
+      '(or ALLOW_REMOTE_TEST_DATABASE=1 if that server is meant for tests).')
+  }
+}
 const adminUrl = devUrl ? withDatabase(devUrl, 'postgres') : undefined
 
 // THE TESTS RUN AS THE RESTRICTED APP ROLE, not as the owner: a login in role
