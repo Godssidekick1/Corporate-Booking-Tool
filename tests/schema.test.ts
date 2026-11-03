@@ -4,8 +4,8 @@ import { closePool } from '@/app/lib/db/pool'
 
 // ── The schema, as a test ────────────────────────────────────────────────────
 // Runs against cbt_test, which globalSetup has brought up to date with
-// db/migrations. Keeps the schema free of Supabase auth, and keeps the tables
-// closed to every role but the owner.
+// db/migrations. Keeps the schema free of any outside auth schema, and keeps
+// the tables closed to every role but the owner.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const HAS_DB = Boolean(process.env.DATABASE_URL)
@@ -155,15 +155,6 @@ d('schema', () => {
        where table_schema = 'public' and table_name = 'schema_migrations' and grantee = 'cbt_app'
        order by 1`)
     expect(writes.map(r => r.p)).toEqual(['SELECT'])
-  })
-
-  it("Supabase's API roles hold no privilege on public", async () => {
-    const granted = await rows<{ g: string }>(`
-      select grantee || ' ' || privilege_type || ' ' || table_name as g
-        from information_schema.role_table_grants
-       where table_schema = 'public' and grantee in ('anon', 'authenticated', 'service_role')
-       order by 1`)
-    expect(granted.map(r => r.g)).toEqual([])
   })
 
   // 20261013000000_book_on_behalf: employee_id is the traveller, booked_by the

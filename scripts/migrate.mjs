@@ -18,9 +18,6 @@
 //     file stops the run. Write a new migration instead.
 //   - A session advisory lock stops two runs (two deploys, or a deploy and a
 //     person) applying the same file at once.
-//
-// db/migrations/archive holds the Supabase-era files. They are already in every
-// database and in schema/baseline.sql, and are never run.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { createHash } from 'node:crypto'
@@ -82,8 +79,8 @@ export async function migrate(url, { status = false, log = console.log } = {}) {
         sha256     text not null,
         applied_at timestamptz not null default now()
       )`)
-    // Not for any API: this schema is also reachable through Supabase's Data
-    // API while Supabase hosts it. See 20260925000000.
+    // Like every other table: closed to every role but the owner unless a
+    // policy opens it (cbt_app may read it; tests/schema.test.ts).
     await client.query('alter table public.schema_migrations enable row level security')
 
     const { rows } = await client.query('select filename, sha256 from public.schema_migrations')

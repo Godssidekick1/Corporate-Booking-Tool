@@ -101,9 +101,9 @@ export async function signIn(rawEmail: unknown, password: unknown, meta: Request
   const account = await accounts.byEmail(db, email)
   const verified = account?.password_hash
     ? await verifyPassword(account.password_hash, password)
-    : (await burnVerifyTime(password), { ok: false, rehash: false })
+    : (await burnVerifyTime(password), false)
 
-  if (!account || !verified.ok) {
+  if (!account || !verified) {
     await throttle.note(emailKey, ipKey)
     if (account) await record(db, 'auth.signin_failed', account.id, null, meta)
     return fail(401, MESSAGES.badCredentials)
@@ -116,12 +116,10 @@ export async function signIn(rawEmail: unknown, password: unknown, meta: Request
     return fail(403, MESSAGES.inactive)
   }
 
-  const rehashed = verified.rehash ? await hashPassword(password) : null
   const session = await transaction(async tx => {
-    if (rehashed) await accounts.rehash(tx, account.id, rehashed)
     await accounts.recordSignIn(tx, account.id)
     const s = await startSession(tx, account.id, meta)
-    await record(tx, 'auth.signin', account.id, account.id, meta, rehashed ? { upgraded_hash: true } : {})
+    await record(tx, 'auth.signin', account.id, account.id, meta)
     return s
   })
   await throttle.clear(emailKey)
@@ -331,8 +329,8 @@ export async function changePassword(
   const account = await accounts.byId(db, me.id)
   const verified = account?.password_hash
     ? await verifyPassword(account.password_hash, current)
-    : { ok: false, rehash: false }
-  if (!account || !verified.ok) {
+    : false
+  if (!account || !verified) {
     await throttle.note(key)
     await record(db, 'auth.password_change_failed', me.id, me.id, meta)
     return fail(403, MESSAGES.wrongCurrent)

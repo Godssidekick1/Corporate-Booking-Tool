@@ -127,9 +127,7 @@ const PERMISSIVE: ClientGates = {
 }
 
 // The columns come from clients.gateSettings(), whose return type is generated
-// from the schema. The hand-declared row interface that used to sit here
-// existed only because supabase-js could not infer a type from a concatenated
-// select string.
+// from the schema.
 
 export async function loadClientGates(
   db: Queryable,

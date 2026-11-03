@@ -130,18 +130,14 @@ app/lib/repositories/reports.ts).
 - Production email (SMTP: `SMTP_URL`, `MAIL_FROM`). Until then Vercel needs
   `MAIL_TRANSPORT=log` or invites and resets fail there.
 - Independent security review of the sign-in and session layer (agreed gate).
-- Move database hosting off Supabase (deferred by the mentor).
 
 ## Operational (one-off)
 
 - Escalation on Vercel (the test site): no long-lived process there, and the
   free plan's cron runs once a day. Escalation does not run on Vercel.
-- Run `20261022000000_drop_approval_amount_rules.sql` on the hosted
-  database (`migrate-hosted.mjs`). Local is up to date.
-- Run `npm run migrate` (places, no-manager, airports) and then
-  `node scripts/load-cities.mjs` on the hosted database. Local is up to date.
-- Remove leftover Supabase environment variables on Vercel; rotate the
-  database password.
+- On the new PostgreSQL server: `npm run migrate`, then `npm run db:app-login`
+  so the app connects as the restricted login (docs/database-roles.md).
+- `node scripts/load-cities.mjs` on any database whose city list is empty.
 
 ## PS-II
 

@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
-import bcrypt from 'bcryptjs'
 import { db } from '@/app/lib/db'
 import { sql, one, many, exec, maybeOne } from '@/app/lib/db/sql'
 import { transaction } from '@/app/lib/db/transaction'
@@ -108,12 +107,12 @@ d('auth flows', () => {
     expect(await flows.signIn(person.email, PASSWORD, meta)).toMatchObject({ ok: true })
   })
 
-  it('an imported Supabase bcrypt hash signs in, and is replaced with argon2id', async () => {
-    await exec(db, sql`update accounts set password_hash = ${bcrypt.hashSync(PASSWORD, 4)} where id = ${person.id}`)
-    expect(await flows.signIn(person.email, 'not it', meta)).toMatchObject({ ok: false, status: 401 })
-    expect(await flows.signIn(person.email, PASSWORD, meta)).toMatchObject({ ok: true })
+  it('a stored hash in any scheme but argon2id never signs in', async () => {
     const { password_hash } = await one<{ password_hash: string }>(db, sql`select password_hash from accounts where id = ${person.id}`)
-    expect(password_hash.startsWith('$argon2id$')).toBe(true)
+    // bcrypt-shaped: the format of the hashes accounts were once imported with.
+    await exec(db, sql`update accounts set password_hash = ${'$2b$04$' + 'a'.repeat(53)} where id = ${person.id}`)
+    expect(await flows.signIn(person.email, PASSWORD, meta)).toMatchObject({ ok: false, status: 401 })
+    await exec(db, sql`update accounts set password_hash = ${password_hash} where id = ${person.id}`)
     expect(await flows.signIn(person.email, PASSWORD, meta)).toMatchObject({ ok: true })
   })
 

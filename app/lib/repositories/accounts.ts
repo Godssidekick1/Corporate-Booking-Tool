@@ -69,13 +69,6 @@ export async function setPassword(
     where id = ${id}`)
 }
 
-// The same password, stored under a stronger hash (an imported bcrypt hash,
-// upgraded at sign-in). Not a password change: sessions and
-// password_changed_at are left alone.
-export async function rehash(db: Queryable, id: string, passwordHash: string): Promise<void> {
-  await exec(onSystem(db), sql`update accounts set password_hash = ${passwordHash}, updated_at = now() where id = ${id}`)
-}
-
 export async function markVerified(db: Queryable, id: string): Promise<void> {
   await exec(onSystem(db), sql`
     update accounts set email_verified_at = coalesce(email_verified_at, now()), updated_at = now()

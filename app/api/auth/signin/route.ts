@@ -9,8 +9,7 @@ import { requestMeta } from '@/app/lib/auth/request'
 //   - throttled per email and per IP (429);
 //   - a wrong password and an unknown address get the same 401;
 //   - a person whose employee record, client or (for TMC staff) TMC is
-//     deactivated is refused with 403, before any session exists;
-//   - an imported Supabase password hash is upgraded to argon2id.
+//     deactivated is refused with 403, before any session exists.
 // On success the session cookie is set on this response.
 // ─────────────────────────────────────────────────────────────────────────────
 

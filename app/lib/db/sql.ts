@@ -121,8 +121,7 @@ export function compile(query: Sql): { text: string; values: unknown[] } {
 //   exec       -> number     a write with no RETURNING; returns rows affected
 //
 // All four THROW on failure. None of them can turn an error into an empty
-// result -- the property the shim, faithfully copying supabase-js, could not
-// offer.
+// result.
 
 async function run(db: Queryable, query: Sql): Promise<QueryResult<QueryResultRow>> {
   const { text, values } = compile(query)

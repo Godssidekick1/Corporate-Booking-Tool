@@ -1,15 +1,11 @@
 import { hash, verify } from '@node-rs/argon2'
-import bcrypt from 'bcryptjs'
 import { COMMON_PASSWORDS } from './commonPasswords'
 
 // ── Passwords ────────────────────────────────────────────────────────────────
 // argon2id, at OWASP's recommended minimum (19 MiB, 2 passes, 1 lane). About
 // 30 ms per hash here. That is the point: it makes a stolen hash expensive to
-// guess at, and it is invisible at sign-in.
-//
-// bcrypt is VERIFY-ONLY. Passwords imported from Supabase are bcrypt hashes;
-// the first successful sign-in replaces one with argon2id (`rehash` below), so
-// the bcrypt path empties itself over time.
+// guess at, and it is invisible at sign-in. A stored hash in any other scheme
+// never matches.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // algorithm 2 is Algorithm.Argon2id. The package exports it as a const enum,
@@ -25,26 +21,15 @@ export async function hashPassword(password: string): Promise<string> {
   return hash(password, ARGON2)
 }
 
-export interface Verified {
-  ok: boolean
-  // True when the password was right but is stored under a weaker scheme.
-  rehash: boolean
-}
-
-export async function verifyPassword(stored: string, password: string): Promise<Verified> {
-  if (password.length > MAX_PASSWORD_LENGTH) return { ok: false, rehash: false }
+export async function verifyPassword(stored: string, password: string): Promise<boolean> {
+  if (password.length > MAX_PASSWORD_LENGTH) return false
+  if (!stored.startsWith('$argon2')) return false
   try {
-    if (stored.startsWith('$argon2')) {
-      return { ok: await verify(stored, password), rehash: false }
-    }
-    if (/^\$2[aby]\$/.test(stored)) {
-      const ok = await bcrypt.compare(password, stored)
-      return { ok, rehash: ok }
-    }
+    return await verify(stored, password)
   } catch {
     // A malformed hash is a wrong password, not a server error.
+    return false
   }
-  return { ok: false, rehash: false }
 }
 
 // For a sign-in with an email that has no account (or no password): do the

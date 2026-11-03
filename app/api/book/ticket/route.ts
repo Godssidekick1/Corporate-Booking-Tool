@@ -44,7 +44,7 @@ export const POST = route(async (req: NextRequest) => {
   // the other on the booking — and ran back to back for no reason other than the
   // order they were written in.
   //
-  // MEASURED: ~200ms per Supabase round trip from here. This route made four of
+  // MEASURED: ~200ms per round trip to the remote database then. This route made four of
   // them in a row before the provider was contacted at all, which is close to a
   // second of a ticketing wait spent waiting on our own database.
   const { bookingId }: TicketBody = await req.json()

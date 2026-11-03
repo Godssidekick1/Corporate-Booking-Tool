@@ -1,9 +1,8 @@
 import type { Mail } from './index'
 
 // ── Email templates ──────────────────────────────────────────────────────────
-// In the repository, reviewed like code. They used to live in the Supabase
-// dashboard, where a wrong edit broke every invite with no diff to show for
-// it (see the history of app/auth/callback).
+// In the repository, reviewed like code: a wrong edit shows up as a diff
+// rather than silently breaking every invite.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PRODUCT = 'TravelDesk by Amadeus'

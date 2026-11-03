@@ -97,8 +97,8 @@ export const POST = route(async (req: NextRequest) => {
   const user = await requireUser()
 
   // Body first, so the booking id is available to overlap its read with the
-  // employee lookup. The two are independent and cost ~200ms each against this
-  // Supabase project; running them back to back simply added the two together.
+  // employee lookup. The two are independent and each costs a round trip to a
+  // remote database; running them back to back simply added the two together.
   const { bookingId }: BookBody = await req.json()
 
   if (!bookingId) {

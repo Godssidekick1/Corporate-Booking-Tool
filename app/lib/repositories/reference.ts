@@ -110,11 +110,9 @@ export async function currentAmadeusSession(db: Queryable): Promise<AmadeusSessi
 
 // Stores the session, replacing any existing one.
 //
-// The ON CONFLICT … DO UPDATE is the fix for a defect in the shim: it
-// translated supabase-js's `upsert(row)` -- which PostgREST performs as a merge
-// on the primary key -- into ON CONFLICT DO NOTHING. So once a row existed,
-// every new session was silently discarded, and a cold process read the stale
-// one back.
+// ON CONFLICT … DO UPDATE, not DO NOTHING: with DO NOTHING, once a row
+// existed every new session was silently discarded, and a cold process read
+// the stale one back.
 export async function saveAmadeusSession(db: Queryable, sessionId: string, expiresAt: string): Promise<void> {
   await exec(db, sql`
     insert into amadeus_session (id, session_id, expires_at, updated_at)
