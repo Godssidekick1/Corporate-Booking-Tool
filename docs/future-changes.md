@@ -3,6 +3,9 @@
 A running list of agreed work that is not done yet. Newest decisions are
 recorded with the item; remove an item once it ships.
 
+The path to production (cancellation, refunds, what we need from others,
+the testing phase) is in `go-live-checklist.md`.
+
 ## Hardening and scale: what is left (passes of 2026-10-08 and 2026-11-02)
 
 Done in the first pass: `npm run scale` harness and results (docs/scale-results.md);
