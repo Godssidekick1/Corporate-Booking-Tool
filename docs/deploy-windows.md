@@ -9,6 +9,10 @@ dump; everyone signs in once. Passwords carry over.
 ## 1. Install
 
 - **Node.js 24 LTS** (Next.js 16 needs 20.9 or later; built and tested on 24).
+  npm comes with it; nothing else is installed globally (Next.js is one of
+  the project's packages). `npm ci` downloads the packages, so the server
+  needs to reach `registry.npmjs.org` or an npm proxy
+  (`npm config set proxy http://…`).
 - **PostgreSQL 18**, or at least its client tools: a dump made by
   `pg_dump` 18 restores only with `pg_restore` 18 or later. The server itself
   may be 15 or later.
@@ -43,23 +47,32 @@ variables). Never commit it.
 |---|---|
 | `DATABASE_URL` | `postgresql://user:password@host:5432/cbt` — what the app connects as |
 | `MIGRATE_DATABASE_URL` | the owner's URL, for `npm run migrate` and scripts (optional if the same) |
-| `DATABASE_CA_CERT` | path to the database's CA certificate, when the database is on another machine (verified TLS) |
+| `DATABASE_CA_CERT` | the database's CA certificate itself (PEM text, on one line with `\n` for the line breaks), when the database is on another machine: the server is then verified. A server with no TLS at all: end both database URLs with `?sslmode=disable` instead |
 | `NEXT_PUBLIC_APP_URL` | the site's address, e.g. `https://cbt.example.amadeus.com` (links in emails) |
 | `AMADEUS_API_BASE_URL`, `AMADEUS_USERNAME`, `AMADEUS_PASSWORD`, `AMADEUS_CLIENT_CODE` | the flight API account |
 | `INTERNAL_API_SECRET` | a long random string; protects `/api/internal/*` (approval escalation) |
 | `MAIL_TRANSPORT`, `SMTP_URL`, `MAIL_FROM` | email. `smtp` with `SMTP_URL=smtp://user:pass@host:587` and `MAIL_FROM`; or `log` until SMTP exists (invite and reset links are then printed to the server log) |
 
-The restricted login for the app is created by `npm run db:app-login`
-(docs/database-roles.md).
+Start with `MIGRATE_DATABASE_URL` (the owner) and no `DATABASE_URL`:
+`npm run db:app-login` (step 4) creates the app's restricted login and writes
+`DATABASE_URL` itself (docs/database-roles.md). Special characters in a
+password (`? # / @ : %` and spaces) must be percent-encoded in the URL: `?` is
+`%3F`.
 
 ## 4. Build and run
 
 ```powershell
 npm ci
-npm run migrate      # applies anything newer than the dump; normally "nothing pending"
+npm run migrate        # applies anything newer than the dump
+npm run db:app-login   # once per database: the app's own login, written into DATABASE_URL
 npm run build
 npm run start -- -p 3000
 ```
+
+`npm run db:app-login` sets a new password each time it runs. When more than
+one machine runs the app against the same database, run it on one and copy
+the resulting `DATABASE_URL` to the others; running it again elsewhere locks
+out the first.
 
 **Serve it over HTTPS.** The sign-in cookie is `Secure` (the `__Host-`
 prefix requires it), so on plain HTTP sign-in works only on `localhost`. Put
