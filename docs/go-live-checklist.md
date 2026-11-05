@@ -28,8 +28,10 @@ GetBookingDetails, FareRule.
 - [ ] **Confirm with the provider** (the documentation only shows a held
       booking cancelled at once):
   - [ ] the exact path (we call `Flight/CancelBooking`)
-  - [ ] a sample answer for a TICKETED booking: does it come back
-        "cancelled" at once, or with a change request settled later?
+  - [x] a sample answer for a TICKETED booking: tried on the test system
+        2026-11-05 (PNR 8PP6M3): "cancelled" at once, no change request,
+        refund 0 and charges 0. Still to ask: does production report the
+        real refund and charges here, or only later?
   - [ ] every value of `cancelStatus` and `changeRequestStatus`
   - [ ] when the refund settles later: how we learn it (GetBookingDetails?)
   - [ ] cancelling one passenger of several (`ticketIndex`)?
