@@ -183,7 +183,9 @@ d('approvals', () => {
     const res = await call(addPassenger, {
       as: traveller, method: 'POST', url: '/api/book/add-passenger',
       body: { key: 'NOPE', pricingKey: 'PK', provider: 'test', referenceNo: 'NOPE', totalFare: 1,
-        customerInfo: { PassengerDetails: [{ FirstName: 'X' }] } },
+        // A whole, valid name: a missing last name is refused first, as it
+        // should be (app/lib/book/passengerNames.ts).
+        customerInfo: { PassengerDetails: [{ FirstName: 'Ravi', LastName: 'Kumar' }] } },
     })
     expect(res).toMatchObject({ status: 409, json: { code: 'QUOTE_EXPIRED' } })
   })

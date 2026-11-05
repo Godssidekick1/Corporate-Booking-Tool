@@ -105,6 +105,30 @@ export class AmadeusError extends Error {
   }
 }
 
+// A failure the provider gave no reason for (Status "Failure", Error null --
+// how Booking answers a passenger name the airline refuses). What the
+// response does say is put into words, so the log and the travel desk read
+// "booking Failed; passenger ADMIN DEMO 00003: Failed" rather than
+// "Unknown error".
+export function silentFailure(json: AmadeusEnvelope): string {
+  const parts: string[] = []
+  const air = Array.isArray(json.AirBookingResponse) ? json.AirBookingResponse[0] as Record<string, unknown> | undefined : undefined
+  if (air) {
+    if (typeof air.BookingStatus === 'string' && air.BookingStatus) parts.push(`booking ${air.BookingStatus}`)
+    const provider = air.ProviderDetails as { Status?: string; Info?: string } | null | undefined
+    if (provider?.Info) parts.push(`provider: ${provider.Info}`)
+    else if (provider?.Status) parts.push(`provider status ${provider.Status}`)
+    const pax = ((air.CustomerInfo as { PassengerDetails?: unknown[] } | null)?.PassengerDetails ?? []) as
+      { FirstName?: string; MiddleName?: string; LastName?: string; Status?: string }[]
+    for (const p of pax) {
+      if (!p.Status) continue
+      const name = [p.FirstName, p.MiddleName, p.LastName].filter(Boolean).join(' ').toUpperCase()
+      parts.push(`passenger ${name || '?'}: ${p.Status}`)
+    }
+  }
+  return parts.length ? `no reason given by the provider (${parts.join('; ')})` : 'no reason given by the provider'
+}
+
 function assertSuccess(
   json: AmadeusEnvelope,
   context: string,
@@ -115,7 +139,7 @@ function assertSuccess(
     // Older endpoints nest the error under Error; CancelBooking also reports
     // it flat, as ErrorMessage / ErrorCode.
     const flat = (k: string) => (typeof json[k] === 'string' && json[k] ? json[k] as string : undefined)
-    const desc = json.Error?.Description ?? flat('ErrorMessage') ?? 'Unknown error'
+    const desc = json.Error?.Description ?? flat('ErrorMessage') ?? silentFailure(json)
     const code = json.Error?.ErrorCode ?? flat('ErrorCode') ?? ''
     const category = json.Error?.Category ?? ''
     throw new AmadeusError(`Amadeus ${context} failed: ${desc}`, code, category, json, requestId, requestBody)

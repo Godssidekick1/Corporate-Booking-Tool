@@ -18,6 +18,7 @@ import { classifyTrip } from '@/app/lib/rule-engine/classifyTrip'
 import { breachLine } from '@/app/lib/policy/breachText'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
 import DeskFareStrip from '@/app/components/book/DeskFareStrip'
+import { passengerNameProblems } from '@/app/lib/book/passengerNames'
 
 // ── /book/details/[flightKey] ─────────────────────────────────────────────────
 // Merges what used to be two separate steps (/book/seats then
@@ -736,6 +737,15 @@ export default function BookingDetailsPage() {
     passengers.forEach((p, i) => {
       const ageError = validateAge(p.paxType, p.dateOfBirth)
       if (ageError) errors[`passenger-${i}-dob`] = ageError
+      // A name the airline would refuse fails the booking at the very last
+      // step with no reason given, so it is caught here (app/lib/book/passengerNames.ts).
+      // The self-booker's own name is locked to their profile: say who can fix it.
+      const nameProblems = passengerNameProblems(p)
+      for (const [field, problem] of Object.entries(nameProblems)) {
+        errors[`passenger-${i}-${field}`] = i === 0 && isSelfBooking
+          ? `${problem} Your name comes from your profile: ask your company admin to correct it.`
+          : problem
+      }
     })
 
     const emailError = validateEmail(email)
@@ -1171,18 +1181,25 @@ export default function BookingDetailsPage() {
               </div>
 
               <div style={s.grid3}>
-                <div style={s.field}>
-                  <label style={s.label}>First name</label>
-                  <input type="text" required disabled={locked} value={passenger.firstName} onChange={e => updatePassenger(i, 'firstName', e.target.value)} style={{ ...s.input, ...(locked ? s.inputLocked : {}) }} placeholder="As on ID" />
-                </div>
-                <div style={s.field}>
-                  <label style={s.label}>Middle name</label>
-                  <input type="text" disabled={locked} value={passenger.middleName} onChange={e => updatePassenger(i, 'middleName', e.target.value)} style={{ ...s.input, ...(locked ? s.inputLocked : {}) }} />
-                </div>
-                <div style={s.field}>
-                  <label style={s.label}>Last name</label>
-                  <input type="text" required disabled={locked} value={passenger.lastName} onChange={e => updatePassenger(i, 'lastName', e.target.value)} style={{ ...s.input, ...(locked ? s.inputLocked : {}) }} placeholder="As on ID" />
-                </div>
+                {([
+                  ['firstName', 'First name', true],
+                  ['middleName', 'Middle name', false],
+                  ['lastName', 'Last name', true],
+                ] as const).map(([field, label, required]) => {
+                  const problem = fieldErrors[`passenger-${i}-${field}`]
+                  return (
+                    <div key={field} style={s.field}>
+                      <label style={s.label}>{label}</label>
+                      <input
+                        type="text" required={required} disabled={locked} value={passenger[field]}
+                        onChange={e => updatePassenger(i, field, e.target.value)}
+                        style={{ ...s.input, ...(locked ? s.inputLocked : {}), ...(problem ? s.inputError : {}) }}
+                        placeholder={required ? 'As on ID' : undefined}
+                      />
+                      {problem && <p style={s.fieldError}>{problem}</p>}
+                    </div>
+                  )
+                })}
               </div>
 
               {tripType === 'international' && (
