@@ -7,6 +7,9 @@
 //   npm run demo:seed -- --size full     10,000 clients
 //   npm run demo:seed -- --logins        new demo password + demo-logins.txt only
 //   npm run demo:remove                  deletes the demo TMC and everything in it
+//   node scripts/demo-tmc.mjs names      renames demo people whose name has a
+//                                        number in it (seeded before 2026-11-05):
+//                                        airlines refuse such a passenger name
 //
 // EVERYTHING IS GENERATED HERE. Nothing is copied from existing rows:
 // cbt_local is a restore of production (real names, emails, passport numbers),
@@ -45,6 +48,16 @@ const SIZES = {
   full:   { clients: 10_000, peoplePerClient: 5, bookings: 60_000, trips: 15_000, groups: 200, buckets: 500, deals: 5_000, dealAssign: 50_000, fops: 1_000, fopAssign: 10_000, rules: 2_000, ruleAssign: 20_000 },
 }
 const TC_COUNT = 20
+
+// Surnames for demo people whose name would otherwise carry a number: an
+// airline refuses a passenger name with a digit in it.
+const SURNAMES = [
+  'Sharma', 'Verma', 'Iyer', 'Nair', 'Reddy', 'Gupta', 'Mehta', 'Kapoor', 'Rao', 'Joshi',
+  'Patel', 'Singh', 'Das', 'Bose', 'Menon', 'Pillai', 'Chopra', 'Malhotra', 'Kulkarni', 'Desai',
+  'Agarwal', 'Bhat', 'Chatterjee', 'Dutta', 'Ghosh', 'Hegde', 'Jain', 'Khanna', 'Mishra', 'Naidu',
+  'Pandey', 'Saxena', 'Sethi', 'Shetty', 'Sinha', 'Tiwari', 'Trivedi', 'Varma', 'Yadav', 'Zaidi',
+]
+const SURNAMES_SQL = `array[${SURNAMES.map(s => `'${s}'`).join(',')}]`
 
 // The six clients built to look different on the dashboards.
 const SHOWCASE = [
@@ -103,7 +116,8 @@ try {
   if (command === 'seed' && flag('logins')) await writeLogins(await demoTmc())
   else if (command === 'seed') await seed(option('size') ?? 'medium')
   else if (command === 'remove') await remove()
-  else console.error('usage: node scripts/demo-tmc.mjs seed [--size small|medium|full] [--logins] | remove')
+  else if (command === 'names') await renamePeople()
+  else console.error('usage: node scripts/demo-tmc.mjs seed [--size small|medium|full] [--logins] | remove | names')
 } finally {
   await c.end()
 }
@@ -377,7 +391,14 @@ async function seed(size) {
       insert into employees (client_id, full_name, email, role, status, onboarding_method, first_login_completed,
                              band_id, band_code, band_rank, department, cost_centre, designation, top_of_hierarchy)
       select z.client_id,
-             case p when 1 then 'Admin ' when 2 then 'Finance ' when 3 then 'Manager ' else 'Traveller ' || (p - 3) || ' ' end || z.name,
+             -- Letters only: an airline refuses a passenger name with a digit
+             -- (app/lib/book/passengerNames.ts). "Admin Demo Large Corp" as
+             -- before; numbered clients and travellers get a surname instead
+             -- of the number ("Admin Demo Client Sharma").
+             case p when 1 then 'Admin ' when 2 then 'Finance ' when 3 then 'Manager ' else 'Traveller ' end
+               || regexp_replace(z.name, '\\s*[0-9]+', '', 'g')
+               || case when z.name ~ '[0-9]' or p > 3
+                       then ' ' || (${SURNAMES_SQL})[1 + (z.rn * 7 + p) % ${SURNAMES.length}] else '' end,
              case p when 1 then 'admin' when 2 then 'finance' when 3 then 'manager' else 'traveller' || (p - 3) end
                || '@' || coalesce(z.slug, 'client' || z.rn) || '.demo.example.test',
              case p when 1 then 'admin' when 2 then 'finance' else 'employee' end,
@@ -586,6 +607,28 @@ async function report() {
     select 'deal code assignments', count(*) from deal_code_assignments where tmc_id = $1 union all
     select 'commercial rule assignments', count(*) from commercial_rule_assignments where tmc_id = $1`, [tmc])
   console.info('[demo] built: ' + rows.map(r => `${r.t} ${Number(r.n).toLocaleString('en-IN')}`).join(' · '))
+}
+
+// ── Names ────────────────────────────────────────────────────────────────────
+// Demo people seeded before 2026-11-05 were named after a numbered client or
+// with a number ("Admin Demo Client 00003", "Traveller 10 Demo Large Corp"),
+// and bookings for them failed at the airline. The number goes and a surname
+// comes in, as the seed now does: "Admin Demo Client Sharma". Only names
+// with a digit, only the demo TMC's clients; nothing else changes. Safe to
+// run again (it then finds nothing to rename).
+
+async function renamePeople() {
+  const tmc = await demoTmc()
+  if (!tmc) { console.error(`[demo] "${TMC_NAME}" not found; nothing to rename.`); process.exitCode = 1; return }
+  await stage('renaming demo people with a number in their name', async () => {
+    const { rowCount } = await c.query(`
+      update employees e
+         set full_name = regexp_replace(e.full_name, '\\s*[0-9]+', '', 'g')
+                         || ' ' || (${SURNAMES_SQL})[1 + abs(hashtext(e.id::text)) % ${SURNAMES.length}]
+        from clients k
+       where k.id = e.client_id and k.tmc_id = $1 and e.full_name ~ '[0-9]'`, [tmc])
+    console.info(`[demo] ${rowCount} people renamed`)
+  })
 }
 
 // ── Remove ───────────────────────────────────────────────────────────────────
