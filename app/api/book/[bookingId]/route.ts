@@ -1,7 +1,8 @@
 import { requireUser } from '@/app/lib/auth/session'
 import { actingTraveller } from '@/app/lib/book/bookingActor'
 import { amadeus, AmadeusError, CustomerInfo } from '@/app/lib/amadeus/client'
-import { providerFailure } from '@/app/lib/book/providerErrors'
+import { providerFailure, isDeskStaff } from '@/app/lib/book/providerErrors'
+import { cancellationView } from '@/app/lib/book/cancellation'
 import { db } from '@/app/lib/db'
 import * as employees from '@/app/lib/repositories/employees'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
@@ -114,7 +115,17 @@ export const GET = route(async (
   // enough.
   // total_cost comes out with commercials. It is the airline's own grand total
   // and it is the other half of the subtraction that reveals the markup.
-  const { commercials: storedCommercials, total_cost, ...safeBooking } = booking
+  // cancellation is the provider's raw answer, the airline's refund included:
+  // it is replaced below by what this caller may see (app/lib/book/cancellation.ts).
+  const {
+    commercials: storedCommercials, total_cost,
+    cancellation: storedCancellation, cancelled_at, cancellation_reason, cancelled_by_name,
+    ...safeBooking
+  } = booking
+  const cancellation = cancellationView(
+    { cancelled_at, cancellation_reason, cancelled_by_name, cancellation: storedCancellation },
+    onBehalf && isDeskStaff(user),
+  )
   const commercials = storedCommercials as unknown as CommercialsRecord | null
 
   const sellTotal = booking.sell_total ?? total_cost ?? 0
@@ -200,6 +211,9 @@ export const GET = route(async (
       // bookings, which have no frozen airline components to derive them from.
       fare,
       seat_fees: seatFees,
+      // Who cancelled, when, why, and the charges; the provider's full answer
+      // for the travel desk only. Absent while the booking stands.
+      ...(cancellation ? { cancellation } : {}),
       // The travel desk only: TMC staff acting for the traveller see how the
       // price was made. Absent for everyone else.
       ...(onBehalf && (user.employee?.role === 'tmc_admin' || user.employee?.role === 'tc')

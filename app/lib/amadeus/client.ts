@@ -112,8 +112,11 @@ function assertSuccess(
   requestBody?: unknown
 ): void {
   if (json.Status !== 'Success') {
-    const desc = json.Error?.Description ?? 'Unknown error'
-    const code = json.Error?.ErrorCode ?? ''
+    // Older endpoints nest the error under Error; CancelBooking also reports
+    // it flat, as ErrorMessage / ErrorCode.
+    const flat = (k: string) => (typeof json[k] === 'string' && json[k] ? json[k] as string : undefined)
+    const desc = json.Error?.Description ?? flat('ErrorMessage') ?? 'Unknown error'
+    const code = json.Error?.ErrorCode ?? flat('ErrorCode') ?? ''
     const category = json.Error?.Category ?? ''
     throw new AmadeusError(`Amadeus ${context} failed: ${desc}`, code, category, json, requestId, requestBody)
   }
@@ -473,18 +476,26 @@ export interface BookingDetailsResponse {
   Error: AmadeusError_ | null
 }
 
-// CancellationRequest
+// CancellationRequest -- as documented (2026-11-05). A held booking came back
+// "cancelled" at once with no money; ChangeRequestId/ChangeRequestStatus are
+// how the provider tracks a cancellation it settles later.
 export interface CancellationResponse {
   Status: string
   Key: string
+  ClientCode: string
   ReferenceNo: string
-  CancelStatus: string
-  Remarks: string
-  RefundedAmount: number
-  CancellationCharge: number
-  ServiceTaxOnRAF: number
-  TransactionID: string
-  TrackIds: string
+  ChangeRequestId: string | null
+  CancelStatus: string | null
+  Remarks: string | null
+  ErrorCode: string | null
+  ErrorMessage: string | null
+  RefundedAmount: number | null
+  CancellationCharge: number | null
+  ServiceTaxOnRAF: number | null
+  ChangeRequestStatus: string | null
+  TrackIds: string | null
+  TicketIndex: unknown
+  TransactionID: string | null
   Error: AmadeusError_ | null
 }
 
@@ -892,10 +903,10 @@ export const amadeus = {
   },
 
   // ── 7. Cancellation request ────────────────────────────────────────────────
+  // referenceNo: the booking's ReferenceNo ("ARRF#####", bookings.provider_order_id).
+  // The documented request is these four fields only.
   async cancelBooking(
-    resultKey: string,
     referenceNo: string,
-    provider: string,
     remarks: string = ''
   ): Promise<CancellationResponse> {
     const json = await withSession<AmadeusEnvelope & CancellationResponse>(
@@ -903,9 +914,7 @@ export const amadeus = {
       (sessionId) => ({
         ClientCode: CLIENT_CODE,
         SessionID: sessionId,
-        Key: resultKey,
         ReferenceNo: referenceNo,
-        Provider: provider,
         CancellationRemarks: remarks,
       }),
       'CancellationRequest'

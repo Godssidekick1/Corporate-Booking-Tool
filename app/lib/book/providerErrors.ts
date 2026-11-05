@@ -14,7 +14,7 @@ import type { Principal } from '@/app/lib/auth/session'
 // and the full id in the response (`provider`).
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type BookingStep = 'search' | 'price' | 'passenger' | 'passenger_edit' | 'booking' | 'ticket'
+export type BookingStep = 'search' | 'price' | 'passenger' | 'passenger_edit' | 'booking' | 'ticket' | 'cancel'
 
 const GENERIC: Record<BookingStep, string> = {
   search: 'We couldn’t get flights from the airline just now. Please try again in a moment.',
@@ -23,6 +23,7 @@ const GENERIC: Record<BookingStep, string> = {
   passenger_edit: 'We couldn’t save the corrected details with the airline just now. Please try again.',
   booking: 'The airline did not confirm this booking. Please try again. If it happens again, contact your travel desk.',
   ticket: 'The ticket could not be issued just now. Please try again. If it happens again, contact your travel desk.',
+  cancel: 'The airline did not confirm the cancellation. Your booking is unchanged. Please try again, or contact your travel desk.',
 }
 
 const FARE_GONE = 'This fare is no longer available. Go back to the results and choose another flight.'
@@ -42,7 +43,7 @@ export function failureKind(err: AmadeusError): FailureKind {
 
 export function plainMessage(err: AmadeusError, step: BookingStep): string {
   const kind = failureKind(err)
-  if (kind === 'fare_gone' && step !== 'search' && step !== 'passenger_edit' && step !== 'ticket') return FARE_GONE
+  if (kind === 'fare_gone' && step !== 'search' && step !== 'passenger_edit' && step !== 'ticket' && step !== 'cancel') return FARE_GONE
   if (kind === 'expired' && (step === 'price' || step === 'passenger')) return EXPIRED
   return GENERIC[step]
 }

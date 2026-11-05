@@ -233,8 +233,8 @@ export type BookingDetail = Pick<Row<'bookings'>,
   | 'id' | 'status' | 'booking_type' | 'provider' | 'provider_order_id' | 'pnr' | 'ticket_numbers'
   | 'sell_total' | 'total_cost' | 'commercials' | 'itinerary' | 'traveler_snapshot' | 'fare_breakdown'
   | 'policy_status' | 'policy_verdict' | 'policy_verdict_detail' | 'employee_id' | 'trip_id' | 'is_ndc'
-  | 'created_at' | 'updated_at'
-> & BookedByName & TicketFooter
+  | 'created_at' | 'updated_at' | 'cancelled_at' | 'cancellation_reason' | 'cancellation'
+> & BookedByName & TicketFooter & { cancelled_by_name: string | null }
 
 // The company's own words at the foot of its e-tickets (Corporate Settings).
 type TicketFooter = { ticket_footer_text: string | null }
@@ -245,6 +245,8 @@ export async function detail(db: Queryable, bookingId: string): Promise<BookingD
     select id, status, booking_type, provider, provider_order_id, pnr, ticket_numbers, sell_total,
            total_cost, commercials, itinerary, traveler_snapshot, fare_breakdown, policy_status,
            policy_verdict, policy_verdict_detail, employee_id, trip_id, is_ndc, created_at, updated_at,
+           cancelled_at, cancellation_reason, cancellation,
+           (select k.full_name from employees k where k.id = cancelled_by) as cancelled_by_name,
            ${BOOKED_BY_NAME}, ${TICKET_FOOTER}
     from bookings where id = ${bookingId}`)
 }
@@ -532,6 +534,56 @@ export async function ticketTarget(db: Queryable, bookingId: string): Promise<Ti
     select id, employee_id, booked_by, status, provider, provider_order_id, amadeus_key, pricing_key, pnr,
            itinerary, share_token
     from bookings where id = ${bookingId}`)
+}
+
+// ── Cancellation (app/lib/book/cancellation.ts) ──────────────────────────────
+
+export type CancelTarget = Pick<Row<'bookings'>,
+  'id' | 'employee_id' | 'booked_by' | 'client_id' | 'tmc_id' | 'status' | 'provider_order_id'>
+
+export async function cancelTarget(db: Queryable, bookingId: string): Promise<CancelTarget | null> {
+  return maybeOne<CancelTarget>(db, sql`
+    select id, employee_id, booked_by, client_id, tmc_id, status, provider_order_id
+    from bookings where id = ${bookingId}`)
+}
+
+// Marks a cancellation as under way with the provider. False when the booking
+// is no longer in one of `statuses`, or another cancellation is already under
+// way (one started over two minutes ago counts as abandoned).
+export async function claimCancellation(db: Queryable, bookingId: string, statuses: readonly string[]): Promise<boolean> {
+  return (await exec(db, sql`
+    update bookings set cancel_started_at = now()
+    where id = ${bookingId} and status = any(${[...statuses]})
+      and (cancel_started_at is null or cancel_started_at < now() - interval '2 minutes')`)) === 1
+}
+
+export async function releaseCancellation(db: Queryable, bookingId: string): Promise<void> {
+  await exec(db, sql`update bookings set cancel_started_at = null where id = ${bookingId}`)
+}
+
+// Cancelled before the airline had it: false when the status moved on first.
+export async function withdraw(
+  db: Queryable,
+  bookingId: string,
+  c: { by: string; reason: string | null; statuses: readonly string[] }
+): Promise<boolean> {
+  return (await exec(db, sql`
+    update bookings set status = 'cancelled', cancelled_at = now(), cancelled_by = ${c.by},
+      cancellation_reason = ${c.reason}, updated_at = now()
+    where id = ${bookingId} and status = any(${[...c.statuses]})`)) === 1
+}
+
+// What the provider answered, once it has accepted the cancellation.
+export async function recordCancellation(
+  db: Queryable,
+  bookingId: string,
+  c: { status: 'cancelled' | 'cancel_requested'; by: string; reason: string | null; record: unknown }
+): Promise<void> {
+  await exec(db, sql`
+    update bookings set status = ${c.status}, cancelled_at = now(), cancelled_by = ${c.by},
+      cancellation_reason = ${c.reason}, cancellation = ${json(c.record)}, cancel_started_at = null,
+      updated_at = now()
+    where id = ${bookingId}`)
 }
 
 export async function markTicketed(

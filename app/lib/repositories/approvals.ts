@@ -388,6 +388,13 @@ export type ApprovalStep = Pick<Row<'approvals'>, 'id' | 'tier' | 'status' | 're
 
 // The step a traveller cares about: the highest tier -- the one pending now,
 // or the one decided last.
+// The booking was cancelled while it waited: its open steps close.
+export async function withdrawPending(db: Queryable, bookingId: string): Promise<number> {
+  return exec(db, sql`
+    update approvals set status = 'withdrawn', actioned_at = now()
+    where booking_id = ${bookingId} and status = 'pending'`)
+}
+
 export async function latestForBooking(db: Queryable, bookingId: string): Promise<ApprovalStep | null> {
   return maybeOne<ApprovalStep>(db, sql`
     select id, tier, status, reason, decision_note, approver_id from approvals
