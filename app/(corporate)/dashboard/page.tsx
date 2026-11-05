@@ -116,6 +116,7 @@ const RECENT_STATUS_META: Record<string, { label: string; color: string; bg: str
   rejected:               { label: 'Rejected',        color: '#991B1B', bg: '#FEE2E2' },
   approval_misconfigured: { label: 'Needs attention',  color: '#991B1B', bg: '#FEE2E2' },
   failed:                 { label: 'Failed',          color: '#991B1B', bg: '#FEE2E2' },
+  cancel_requested:       { label: 'Cancellation requested', color: '#92400E', bg: '#FEF3C7' },
   cancelled:              { label: 'Cancelled',       color: '#6B7280', bg: '#F3F4F6' },
 }
 

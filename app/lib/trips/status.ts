@@ -34,6 +34,7 @@ const BOOKING: Record<string, StatusMeta> = {
   approval_misconfigured:{ label: 'Approval not set up', color: '#991B1B', bg: '#FEE2E2' },
   rejected:              { label: 'Rejected',         color: '#991B1B', bg: '#FEE2E2' },
   failed:                { label: 'Failed',           color: '#991B1B', bg: '#FEE2E2' },
+  cancel_requested:      { label: 'Cancellation requested', color: '#92400E', bg: '#FEF3C7' },
   cancelled:             { label: 'Cancelled',        color: '#6B7280', bg: '#F3F4F6' },
 }
 

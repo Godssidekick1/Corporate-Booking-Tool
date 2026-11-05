@@ -8,6 +8,7 @@ import { flowStorage } from '@/app/lib/book/flowStorage'
 import { formatTime, formatDayLabel, journeyLabel, baggageLabel } from '@/app/lib/book/types'
 import { mealLabel } from '@/app/lib/book/mealCodes'
 import { JUST_BOOKED_KEY } from '@/app/lib/book/flowStorage'
+import { CancelBookingButton } from '@/app/components/book/CancelBooking'
 
 // ── /book/ticket/[bookingId] ──────────────────────────────────────────────────
 // Displayed once a ticket is issued. Styled as an e-ticket / boarding-pass
@@ -260,13 +261,16 @@ export default function TicketPage() {
         await (earlyTicket ?? issueTicket())
       } else if (data.booking.status === 'ticketed') {
         // Already done — nothing to do, page renders normally below.
-      } else if (data.booking.status === 'pending_approval' || data.booking.status === 'approved') {
+      } else if (
+        data.booking.status === 'pending_approval' || data.booking.status === 'approved' ||
+        // The confirm page says when, by whom and what it cost.
+        data.booking.status === 'cancelled' || data.booking.status === 'cancel_requested'
+      ) {
         router.replace(`/book/confirm/${bookingId}`)
       } else if (
         data.booking.status === 'rejected' ||
         data.booking.status === 'approval_misconfigured' ||
         data.booking.status === 'failed' ||
-        data.booking.status === 'cancelled' ||
         data.booking.status === 'passenger_added' // dead status, kept for safety
       ) {
         // Nothing left to do on this booking — send to the dashboard rather
@@ -675,6 +679,14 @@ export default function TicketPage() {
               <Link href={exits.trips.href} style={s.doneLink}>{exits.trips.label === 'My trips' ? 'View my tickets' : exits.trips.label} →</Link>
               <Link href={exits.home.href} style={s.doneLinkSecondary}>← Back to {exits.home.label.toLowerCase()}</Link>
             </div>
+
+            <div className="no-print">
+              <CancelBookingButton
+                bookingId={booking.id}
+                ticketed
+                onCancelled={() => router.replace(`/book/confirm/${bookingId}`)}
+              />
+            </div>
           </>
         )}
 
@@ -694,6 +706,13 @@ export default function TicketPage() {
               <Link href={exits.trips.href} style={s.doneLinkSecondary}>{exits.trips.label} →</Link>
               <Link href={exits.home.href} style={s.doneLinkSecondary}>← Back to {exits.home.label.toLowerCase()}</Link>
             </div>
+            {booking.status === 'held' && (
+              <CancelBookingButton
+                bookingId={booking.id}
+                ticketed={false}
+                onCancelled={() => router.replace(`/book/confirm/${bookingId}`)}
+              />
+            )}
           </div>
         )}
       </div>

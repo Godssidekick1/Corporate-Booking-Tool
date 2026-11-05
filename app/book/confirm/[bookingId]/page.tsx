@@ -12,6 +12,7 @@ import { ButtonBusy, BusyOverlay } from '@/app/components/FlowLoader'
 import { breachLine } from '@/app/lib/policy/breachText'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
 import DeskFareStrip from '@/app/components/book/DeskFareStrip'
+import { CancellationNotice, CancelBookingButton, type CancellationInfo } from '@/app/components/book/CancelBooking'
 import type { DeskView } from '@/app/lib/commercials/deskView'
 
 // Tax codes a traveller might reasonably want named. Anything not in here shows
@@ -57,6 +58,9 @@ interface Booking {
   commercial_lines?: { source: string; label: string; sign: -1 | 1; amount: number }[]
   // The travel desk only: how the price was made (never sent to anyone else).
   desk?: DeskView | null
+  // Set once cancelled: who, when, why, the charges (and, for the desk, the
+  // provider's figures). Null while the booking stands.
+  cancellation?: CancellationInfo | null
   // The sell-side fare: base with the markup already inside it, the tax total,
   // and the airline's own tax codes. Absent on pre-commercial-rules bookings.
   fare?: {
@@ -629,6 +633,20 @@ export default function ConfirmBookingPage() {
             >
               Go back to {exits.home.label.toLowerCase()}
             </button>
+            <CancelBookingButton bookingId={booking.id} ticketed={false} onCancelled={() => loadBooking()} />
+          </>
+        )}
+
+        {(booking.status === 'cancelled' || booking.status === 'cancel_requested') && (
+          <>
+            {booking.cancellation
+              ? <CancellationNotice cancellation={booking.cancellation} status={booking.status} currency={booking.fare_breakdown?.currency ?? 'INR'} />
+              : (
+                <div style={s.rejectedCard}>
+                  <p style={s.rejectedTitle}>This booking is cancelled</p>
+                </div>
+              )}
+            <TerminalExits />
           </>
         )}
 
@@ -659,6 +677,7 @@ export default function ConfirmBookingPage() {
               This booking needs approval but we couldn't find who should approve it (e.g. no manager is assigned to you yet). Contact your TMC or corporate admin.
             </p>
             <TerminalExits />
+            <CancelBookingButton bookingId={booking.id} ticketed={false} onCancelled={() => loadBooking()} />
           </div>
         )}
 
@@ -696,6 +715,9 @@ export default function ConfirmBookingPage() {
             >
               {confirming ? <ButtonBusy label="Booking…" /> : 'Confirm booking →'}
             </button>
+            {!confirming && (
+              <CancelBookingButton bookingId={booking.id} ticketed={false} onCancelled={() => loadBooking()} />
+            )}
           </>
         )}
       </div>
