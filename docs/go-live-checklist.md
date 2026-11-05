@@ -7,31 +7,49 @@ land. Longer-term ideas stay in `future-changes.md`.
 
 ## 1. Build: the rest of the flight workflow
 
-Waiting on the **updated provider API documentation** (see section 2).
 Already in `app/lib/amadeus/client.ts` but used by no screen yet:
-GetBookingDetails, CancelBooking, FareRule.
+GetBookingDetails, FareRule.
 
-### Cancellation
-- [ ] Cancel before ticketing: release the PNR (CancelBooking), and the
-      booking becomes cancelled
-- [ ] Cancel after ticketing: through void or refund (below), never just
-      dropping the PNR
-- [ ] Who may cancel: the traveller (own bookings), the person who booked
-      it, the TMC desk, the corporate admin. Decide whether a cancellation
-      needs approval
-- [ ] Penalty shown before confirming, from the fare rules
-- [ ] "Cancel" on My trips, on the booking page and for the desk; the
-      traveller is told
-- [ ] Audit entry for every cancellation (who, when, why)
-- [ ] Tests: each role allowed and refused; airline failure; airline
-      success but our save fails (the cancellation must not be lost)
+### Cancellation (built 2026-11-05: `POST /api/book/[bookingId]/cancel`)
+- [x] Before the airline has it (pending approval, approved): withdrawn
+      here, open approval steps close as "withdrawn"; no provider call
+- [x] Held or ticketed: CancelBooking with the booking's ReferenceNo, as
+      documented; the answer is recorded on the booking
+- [x] Who may cancel: anyone who may act on the booking (traveller,
+      booker, desk, corporate admin at a self-booking client). No approval
+      (decided 2026-11-05)
+- [x] One booking is cancelled once: a double click gets "already in
+      progress", never a second provider call
+- [x] Audit entry for every cancellation (who, why, from which status)
+- [x] "Cancel booking" on the confirm and ticket pages; a cancelled booking
+      says when, by whom, why and the charges
+- [x] Tests: each case above, each role refused, the provider refusing, and
+      the provider cancelling while our save fails (still reported)
+- [ ] **Confirm with the provider** (the documentation only shows a held
+      booking cancelled at once):
+  - [ ] the exact path (we call `Flight/CancelBooking`)
+  - [ ] a sample answer for a TICKETED booking: does it come back
+        "cancelled" at once, or with a change request settled later?
+  - [ ] every value of `cancelStatus` and `changeRequestStatus`
+  - [ ] when the refund settles later: how we learn it (GetBookingDetails?)
+  - [ ] cancelling one passenger of several (`ticketIndex`)?
+- [ ] Penalty shown before confirming the cancellation, from the fare rules
+- [ ] "Cancel" from My trips lists and the desk's booking table (today: on
+      the booking's own page)
+- [ ] Traveller told by email (needs production email)
 
 ### Refunds
-- [ ] Refund API (from the documentation): what the airline refunds and
-      how it is reported
-- [ ] Refund amount: the airline's refund minus the penalty; decide whether
-      the TMC charges a cancellation fee (a commercial rule?)
-- [ ] Recorded on the booking: refund status, amount, date, reference
+The provider's cancel answer already carries the money: `refundedAmount`,
+`cancellationCharge`, `serviceTaxOnRAF`. Stored on the booking; a traveller
+and the corporate client see the charges and "refund being processed", the
+desk sees everything (decided 2026-11-05).
+- [ ] A separate refund API? Only if the provider settles ticketed refunds
+      apart from the cancel call (see the questions above)
+- [ ] **Business decision:** how much goes back to the company. The
+      airline's refund only (the TMC keeps its markup and fee), or the sell
+      price minus the airline's charges (the TMC returns its markup)? And
+      does the TMC charge its own cancellation fee (a commercial rule)?
+- [x] Recorded on the booking: provider status, refund, charges, references
 - [ ] Money back to the payer (corporate card, agency, traveller's card):
       depends on how payment works (section 2, payment gateway)
 - [ ] Reports: refunds and penalties in spend and in TMC revenue/margin
@@ -50,7 +68,7 @@ GetBookingDetails, CancelBooking, FareRule.
 
 | Need | From | Status |
 |---|---|---|
-| Updated API documentation: cancel, refund, void (and reissue, if offered), with sample requests and responses | Mentor / provider | asked |
+| Updated API documentation: cancel, refund, void (and reissue, if offered), with sample requests and responses | Mentor / provider | cancel received (held booking only); questions in section 1 |
 | **Production API credentials** and the provider's go-live approval (any certification tests they require) | Provider | |
 | **Production email (SMTP)**: server, account, sender address, and SPF/DKIM on the sending domain | Amadeus IT | |
 | Firewall: TCP 5432 from our network to the database server | Mentor | waiting |
