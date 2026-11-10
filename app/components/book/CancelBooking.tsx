@@ -25,6 +25,10 @@ const amount = (n: number, currency: string) =>
 const when = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
 
+// A date with no time (refunds.refund_date, "YYYY-MM-DD"), read as local.
+const day = (d: string | null) =>
+  d ? new Date(`${d}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : ''
+
 export function CancellationNotice({
   cancellation, status, currency = 'INR',
 }: { cancellation: CancellationInfo; status: string; currency?: string }) {
@@ -47,12 +51,27 @@ export function CancellationNotice({
         <div style={s.fact}>
           <dt style={s.factLabel}>Refund</dt>
           <dd style={s.factValue}>
-            {cancellation.refund === 'processing'
-              ? 'Being processed by the airline'
-              : 'None due: nothing was paid to the airline yet'}
+            {cancellation.refund === 'refunded' && cancellation.refunded
+              ? `${amount(cancellation.refunded.amount, currency)} on ${day(cancellation.refunded.date)}`
+              : cancellation.refund === 'declined'
+                ? 'Declined'
+                : cancellation.refund === 'processing'
+                  ? cancellation.refunded
+                    ? `${amount(cancellation.refunded.amount, currency)} so far; the rest is being processed`
+                    : 'Being processed'
+                  : 'None due: nothing was paid to the airline yet'}
           </dd>
         </div>
+        {cancellation.refunded && cancellation.refunded.creditNotes.length > 0 && (
+          <div style={s.fact}>
+            <dt style={s.factLabel}>Credit note{cancellation.refunded.creditNotes.length > 1 ? 's' : ''}</dt>
+            <dd style={s.factValue}>{cancellation.refunded.creditNotes.join(', ')}</dd>
+          </div>
+        )}
       </dl>
+      {cancellation.declinedReason && (
+        <p style={s.noticeReason}>Refund declined: “{cancellation.declinedReason}”</p>
+      )}
       {provider && (
         <div style={s.desk}>
           <p style={s.deskTitle}>Desk view: what the provider reported</p>

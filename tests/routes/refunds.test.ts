@@ -8,6 +8,7 @@ import { POST as markCancelledPost } from '@/app/api/tmc/queues/cancellations/[b
 import { POST as attachPost } from '@/app/api/tmc/queues/refunds/[id]/attachments/route'
 import { GET as fileGet, DELETE as fileDelete } from '@/app/api/tmc/queues/refunds/[id]/attachments/[aid]/route'
 import { PATCH as clientPatch } from '@/app/api/tmc/clients/[id]/route'
+import { GET as bookingGet } from '@/app/api/book/[bookingId]/route'
 import { financialYear } from '@/app/lib/repositories/refunds'
 import { call } from '../harness/call'
 import { actAs } from '../harness/session'
@@ -358,5 +359,48 @@ d('the refund rule', () => {
       on conflict do nothing`)
     expect((await patch(tc, { gst_rate: 12 })).status).toBe(200)
     expect((await patch(tc, { gst_rate: 18, name: 'Renamed by a counsellor' })).status).toBe(403)
+  })
+})
+
+// ── What the traveller and the company see ───────────────────────────────────
+
+d('the refund outcome on the booking', () => {
+  let a: Actors
+
+  beforeAll(async () => { a = await actors() })
+
+  it('refunded: the amount, the date and the credit note; never what the TMC keeps or the airline’s figures', async () => {
+    const r = await one<{ booking_id: string; refund_amount: number; credit_note_no: string; tmc_retained: number; airline_refund: number }>(db, sql`
+      select r.booking_id, r.refund_amount, r.credit_note_no, r.tmc_retained, r.airline_refund
+      from refunds r join bookings b on b.id = r.booking_id
+      where r.status = 'processed' and b.employee_id = ${a.corpAdmin.id} and r.credit_note_no like 'CN/%/%'
+      order by r.processed_at desc limit 1`)
+    const res = await call(bookingGet, { as: { id: a.corpAdmin.id }, url: `/api/book/${r.booking_id}`, params: { bookingId: r.booking_id } })
+    expect(res.status).toBe(200)
+    const view = (res.json as { booking: { cancellation: Record<string, unknown> } }).booking.cancellation
+    expect(view).toMatchObject({
+      refund: 'refunded',
+      refunded: { amount: Number(r.refund_amount), creditNotes: [r.credit_note_no] },
+      declinedReason: null,
+    })
+    expect(JSON.stringify(view)).not.toMatch(/tmcRetained|airlineRefund|tmc_retained|airline_refund|provider/)
+  })
+
+  it('declined: the reason, and nothing refunded', async () => {
+    const { id } = await one<{ id: string }>(db, sql`
+      select b.id from bookings b where b.employee_id = ${a.corpAdmin.id} and b.status in ('ticketed', 'held')
+      order by b.created_at, b.id limit 1`)
+    await exec(db, sql`
+      update bookings set status = 'cancelled', cancelled_at = now(),
+        cancellation = '{"wasTicketed": true, "cancellationCharge": 0, "serviceTaxOnRaf": 0}'::jsonb
+      where id = ${id}`)
+    await exec(db, sql`delete from refunds where booking_id = ${id}`)
+    await exec(db, sql`
+      insert into refunds (client_id, booking_id, passenger_index, status, rejected_reason)
+      select client_id, id, 0, 'rejected', 'Non-refundable fare' from bookings where id = ${id}`)
+    const res = await call(bookingGet, { as: { id: a.corpAdmin.id }, url: `/api/book/${id}`, params: { bookingId: id } })
+    expect((res.json as { booking: { cancellation: unknown } }).booking.cancellation).toMatchObject({
+      refund: 'declined', refunded: null, declinedReason: 'Non-refundable fare',
+    })
   })
 })

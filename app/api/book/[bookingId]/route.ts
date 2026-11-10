@@ -8,6 +8,7 @@ import { db } from '@/app/lib/db'
 import * as employees from '@/app/lib/repositories/employees'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
 import * as approvals from '@/app/lib/repositories/approvals'
+import * as refunds from '@/app/lib/repositories/refunds'
 import { route } from '@/app/lib/http/handler'
 import { visibleLines, ADJUSTMENT_LABELS } from '@/app/lib/commercials/adjustment'
 import { round2 } from '@/app/lib/commercials/fareComponents'
@@ -126,6 +127,8 @@ export const GET = route(async (
   const cancellation = cancellationView(
     { cancelled_at, cancellation_reason, cancelled_by_name, cancellation: storedCancellation },
     onBehalf && isDeskStaff(user),
+    // How its tickets' refunds turned out: amounts and credit notes only.
+    cancelled_at ? await refunds.outcomeForBooking(db, booking.id) : [],
   )
   const commercials = storedCommercials as unknown as CommercialsRecord | null
 

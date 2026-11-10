@@ -354,3 +354,14 @@ export async function refundRules(
   ])
   return { rows, total: count.n }
 }
+
+// A booking's ticket refunds as its traveller and company may see them: the
+// outcome only, never what the TMC keeps or the airline's figures.
+export async function outcomeForBooking(db: Queryable, bookingId: string): Promise<{
+  status: 'pending' | 'processed' | 'rejected'; refund_amount: number | null; refund_date: string | null
+  credit_note_no: string | null; rejected_reason: string | null
+}[]> {
+  return many(db, sql`
+    select status, refund_amount, refund_date, credit_note_no, rejected_reason
+    from refunds where booking_id = ${bookingId} order by passenger_index`)
+}

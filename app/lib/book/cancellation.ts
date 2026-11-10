@@ -98,9 +98,25 @@ export interface CancellationView {
   // The airline's charges for cancelling (charge + tax on it); 0 for a
   // booking cancelled before ticketing.
   charges: number
-  // none: nothing was paid to the airline yet. processing: a refund may be
-  // due and is being settled.
-  refund: 'none' | 'processing'
+  // none: nothing was paid to the airline yet. processing: being settled by
+  // the TMC. refunded: every ticket settled, at least one with money back.
+  // declined: every ticket's refund was rejected.
+  refund: 'none' | 'processing' | 'refunded' | 'declined'
+  // What has been credited so far, across the booking's tickets, with the
+  // credit note numbers. Null until a ticket's refund is processed. Never the
+  // TMC's retained amount or the airline's figures.
+  refunded: { amount: number; date: string | null; creditNotes: string[] } | null
+  // Why a refund was rejected, when one was.
+  declinedReason: string | null
+}
+
+// The booking's ticket refunds, as the company may see them (refunds table).
+export interface RefundOutcome {
+  status: 'pending' | 'processed' | 'rejected'
+  refund_amount: number | null
+  refund_date: string | null
+  credit_note_no: string | null
+  rejected_reason: string | null
 }
 
 // The travel desk's: everything the provider said.
@@ -110,16 +126,30 @@ export interface DeskCancellationView extends CancellationView {
 
 export function cancellationView(
   b: { cancelled_at: string | null; cancellation_reason: string | null; cancellation: unknown; cancelled_by_name?: string | null },
-  desk: boolean
+  desk: boolean,
+  refunds: RefundOutcome[] = [],
 ): CancellationView | DeskCancellationView | null {
   if (!b.cancelled_at) return null
   const record = (b.cancellation ?? null) as CancellationRecord | null
+  const processed = refunds.filter(r => r.status === 'processed')
+  const rejected = refunds.filter(r => r.status === 'rejected')
+  const settled = refunds.length > 0 && processed.length + rejected.length === refunds.length
   const view: CancellationView = {
     cancelledAt: b.cancelled_at,
     cancelledByName: b.cancelled_by_name ?? null,
     reason: b.cancellation_reason,
     charges: record ? Math.round((record.cancellationCharge + record.serviceTaxOnRaf) * 100) / 100 : 0,
-    refund: record?.wasTicketed ? 'processing' : 'none',
+    refund: !record?.wasTicketed ? 'none'
+      : !settled ? 'processing'
+      : processed.length ? 'refunded' : 'declined',
+    refunded: processed.length
+      ? {
+          amount: Math.round(processed.reduce((sum, r) => sum + Number(r.refund_amount ?? 0), 0) * 100) / 100,
+          date: processed.map(r => r.refund_date).filter((d): d is string => !!d).sort().at(-1) ?? null,
+          creditNotes: processed.map(r => r.credit_note_no).filter((n): n is string => !!n),
+        }
+      : null,
+    declinedReason: rejected[0]?.rejected_reason ?? null,
   }
   return desk ? { ...view, provider: record } : view
 }
