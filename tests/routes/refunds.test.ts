@@ -90,7 +90,7 @@ d('cancellation queue and refunds', () => {
     const requested = (await queue(admin, '?state=cancel_requested')).json as QueueJson
     expect(requested.items.map(i => i.ticket_number)).toContain('TKT-0003')
     expect(requested.items.every(i => i.state === 'cancel_requested')).toBe(true)
-    const found = (await queue(admin, '?q=TKT-0002')).json as QueueJson
+    const found = (await queue(admin, '?search=TKT-0002')).json as QueueJson
     expect(found.items.map(i => i.ticket_number)).toEqual(['TKT-0002'])
   })
 

@@ -323,3 +323,34 @@ export async function creditNoteParties(db: Queryable, clientId: string): Promis
     recipient: { name: row.client_name ?? '', gstin: row.gstin, gst_holder: row.gst_holder, address: row.address, city: row.city, state: row.state, zip: row.zip },
   }
 }
+
+// ── Refund rules, for the Cancellation queues' "Refund rules" tab ────────────
+// Read here; written through PATCH /api/tmc/clients/[id] (the same columns as
+// Corporate Settings), so there is one way to change them.
+
+export type RefundRuleRow = Pick<Row<'clients'>,
+  'id' | 'name' | 'client_code' | 'status' | 'refund_markup' | 'refund_processing_fee'
+  | 'tmc_cancellation_fee' | 'tmc_cancellation_fee_unit' | 'gst_rate'> & { group_name: string | null; pending: number }
+
+export async function refundRules(
+  db: Queryable,
+  f: { tmcId: string; clientIds: string[] | null; search?: string | null },
+  params: PageParams,
+): Promise<{ rows: RefundRuleRow[]; total: number }> {
+  const filter = sql`
+    where k.tmc_id = ${f.tmcId}
+    ${f.clientIds ? sql`and k.id = any(${f.clientIds})` : empty}
+    ${searchAcross([sql`k.name`, sql`k.client_code`], f.search)}`
+  const [rows, count] = await Promise.all([
+    many<RefundRuleRow>(db, sql`
+      select k.id, k.name, k.client_code, k.status, k.refund_markup, k.refund_processing_fee,
+             k.tmc_cancellation_fee, k.tmc_cancellation_fee_unit, k.gst_rate,
+             (select g.name from client_groups g where g.id = k.client_group_id) as group_name,
+             (select count(*)::int from refunds r where r.client_id = k.id and r.status = 'pending') as pending
+      from clients k ${filter}
+      order by k.name, k.id
+      ${page(params)}`),
+    one<{ n: number }>(db, sql`select count(*)::int as n from clients k ${filter}`),
+  ])
+  return { rows, total: count.n }
+}

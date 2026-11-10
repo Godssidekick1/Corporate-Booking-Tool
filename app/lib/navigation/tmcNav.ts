@@ -95,6 +95,14 @@ export const CONFIG_GROUPS: NavGroup[] = [
     ],
   },
   {
+    // Work waiting on the desk. Cancelled tickets and their refunds today;
+    // later queues (ticketing failures, schedule changes) join this group.
+    label: 'Queues',
+    items: [
+      { label: 'Cancellation queues', href: '/tmc/configurations/cancellation-queues', permission: 'process_refunds' },
+    ],
+  },
+  {
     label: 'System',
     items: [
       { label: 'Integrations',     href: '/tmc/configurations/integrations',     },

@@ -11,7 +11,7 @@ import { isUuid } from '@/app/lib/book/bookingActor'
 // The cancellation queue: one row per cancelled ticket, awaiting confirmation
 // first, then pending, then the settled ones (app/lib/repositories/refunds.ts).
 //
-//   ?q=          booking ref, PNR, airline PNR, ticket no, transaction id,
+//   ?search=     booking ref, PNR, airline PNR, ticket no, transaction id,
 //                credit note no, or passenger name
 //   ?state=      cancel_requested | pending | processed | rejected
 //   ?clientId= &groupId= &airline= &source=self|desk|colleague
@@ -36,7 +36,7 @@ export const GET = route(async (req: NextRequest) => {
   const { rows, total } = await refunds.queue(db, {
     tmcId: caller.tmcId,
     clientIds: caller.clientIds,
-    search: q.get('q'),
+    search: q.get('search'),
     state: oneOf(q.get('state'), refunds.QUEUE_STATES),
     clientId: isUuid(q.get('clientId')) ? q.get('clientId') : null,
     groupId: isUuid(q.get('groupId')) ? q.get('groupId') : null,
