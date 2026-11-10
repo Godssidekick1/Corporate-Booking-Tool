@@ -41,22 +41,49 @@ GetBookingDetails, FareRule.
 - [ ] Traveller told by email (needs production email)
 
 ### Refunds
-The provider's cancel answer already carries the money: `refundedAmount`,
-`cancellationCharge`, `serviceTaxOnRAF`. Stored on the booking; a traveller
-and the corporate client see the charges and "refund being processed", the
-desk sees everything (decided 2026-11-05).
+Built 2026-11-10: **Configurations → Queues → Cancellation queues**. Every
+cancelled ticket appears there on its own, one refund per passenger.
+- [x] The queue: tickets awaiting the airline's confirmation ("Mark
+      cancelled") first, then refunds pending, then settled ones; filters
+      for status, client, dates, airline and who booked it
+- [x] The refund panel:
+  - the fare paid (read-only);
+  - deductions, prefilled from the airline's cancellation and the client's
+    refund rule, editable line by line;
+  - a summary: the refund to the company, what is expected from the
+    airline, and what the TMC keeps
+- [x] The refund rule per client: refund the markup or not, refund the
+      processing fee or not, a TMC cancellation fee (₹ or %), and the GST
+      rate. Set in Corporate Settings → Refunds and in the queue's Refund
+      rules tab
+- [x] GST on the TMC cancellation fee: CGST + SGST when the branch and the
+      client are in the same state, IGST across states
+- [x] Processing issues a credit note number (`CN/2026-27/00001`, per TMC
+      and financial year, never twice), freezes the lines, and is audited.
+      The credit note prints from the panel
+- [x] Attachments: PDF / JPG / PNG, checked by their own bytes, at most 5 MB
+- [x] The traveller and the company see "Refunded ₹X on <date>" and the
+      credit note number, or the reason it was declined. Never what the
+      TMC keeps
+- [x] Reports:
+  - TMC revenue: refunded, and kept on cancellations;
+  - corporate spend: cancellation charges
+- [x] Tests:
+  - the queue, filters and access;
+  - processing, refusing to process twice;
+  - credit-note numbers with no gaps, even when processed at the same moment;
+  - rejecting;
+  - attachments;
+  - the company's view;
+  - reports
+- [ ] **For the TMC's finance team:** confirm the GST treatment
+      (`app/lib/refunds/compute.ts` header) before go-live
 - [ ] A separate refund API? Only if the provider settles ticketed refunds
       apart from the cancel call (see the questions above)
-- [ ] **Business decision:** how much goes back to the company. The
-      airline's refund only (the TMC keeps its markup and fee), or the sell
-      price minus the airline's charges (the TMC returns its markup)? And
-      does the TMC charge its own cancellation fee (a commercial rule)?
-- [x] Recorded on the booking: provider status, refund, charges, references
-- [ ] Money back to the payer (corporate card, agency, traveller's card):
-      depends on how payment works (section 2, payment gateway)
-- [ ] Reports: refunds and penalties in spend and in TMC revenue/margin
-- [ ] Tests: full, partial and no refund; the airline refuses; repeating a
-      request does not refund twice
+- [ ] Money actually going back to the payer (card or account) happens
+      outside the app; it depends on how payment works (section 2, payment
+      gateway)
+- [ ] Invoice numbers at ticketing, so a credit note can name its invoice
 
 ### Smaller pieces
 - [ ] Void (cancel a ticket the same day, usually free): if the provider

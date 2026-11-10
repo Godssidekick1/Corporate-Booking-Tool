@@ -74,6 +74,14 @@ one machine runs the app against the same database, run it on one and copy
 the resulting `DATABASE_URL` to the others; running it again elsewhere locks
 out the first.
 
+**Once, after the first start:**
+- The dump includes the demo TMC. Its people seeded before 2026-11-05 have
+  numbers in their names, which airlines refuse. Run
+  `node scripts/demo-tmc.mjs names` once to give them letters-only names.
+- Refunds for cancelled tickets are processed under Configurations → Queues
+  → Cancellation queues. TMC admins can do it already; give a travel
+  counsellor the **Process refunds** permission under Users (TCs).
+
 **Serve it over HTTPS.** The sign-in cookie is `Secure` (the `__Host-`
 prefix requires it), so on plain HTTP sign-in works only on `localhost`. Put
 IIS (URL Rewrite + Application Request Routing) or another reverse proxy in
