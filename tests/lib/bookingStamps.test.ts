@@ -30,8 +30,11 @@ const d = HAS_DB ? describe : describe.skip
 const conn = db
 
 function flight(airline: string, legs: { rbd: string; number: string }[], opts: { lcc?: boolean } = {}): FlatFlightResult {
-  const origin = { code: 'DEL', name: 'Delhi', city: 'Delhi', dateTime: '2026-11-10T08:00:00' }
-  const destination = { code: 'BOM', name: 'Mumbai', city: 'Mumbai', dateTime: '2026-11-10T10:10:00' }
+  // A departure in the future (it was 2026-11-10, which the calendar reached:
+  // booking 0 days ahead then broke the advance-purchase rule) and inside
+  // every template deal code's travel window (the earliest ends 2028-05-30).
+  const origin = { code: 'DEL', name: 'Delhi', city: 'Delhi', dateTime: '2028-03-10T08:00:00' }
+  const destination = { code: 'BOM', name: 'Mumbai', city: 'Mumbai', dateTime: '2028-03-10T10:10:00' }
   const flightLegs = legs.map(l => ({ airlineCode: airline, flightNumber: l.number, bookingCode: l.rbd, cabin: 'Economy' }))
   return {
     flightKey: `${airline}-test`,
