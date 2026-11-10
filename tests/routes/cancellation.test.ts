@@ -126,6 +126,18 @@ d('booking cancellation', () => {
     expect((await row(ids[1])).status).toBe('cancel_requested')
   })
 
+  it('a ticketed cancellation queues one refund per passenger; a held one queues none', async () => {
+    const queued = (id: string) => many<{ passenger_index: number; status: string }>(db, sql`
+      select passenger_index, status from refunds where booking_id = ${id} order by passenger_index`)
+    const passengers = await one<{ n: number }>(db, sql`
+      select greatest(1, jsonb_array_length(coalesce(traveler_snapshot -> 'PassengerDetails', '[]'::jsonb)))::int as n
+      from bookings where id = ${ids[1]}`)
+    const rows = await queued(ids[1])
+    expect(rows).toHaveLength(passengers.n)
+    expect(rows.every(r => r.status === 'pending')).toBe(true)
+    expect(await queued(ids[0])).toEqual([])
+  })
+
   it('the travel desk sees everything the provider said', async () => {
     const page = await view({ id: a.tmcAdmin.id }, ids[1])
     expect(page.status).toBe(200)

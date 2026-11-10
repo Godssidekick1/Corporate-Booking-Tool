@@ -20,6 +20,7 @@ export const PERMISSION_KEYS = [
   'manage_commercials',
   'view_reports',
   'book_on_behalf',
+  'process_refunds',
 ] as const
 
 export type PermissionKey = typeof PERMISSION_KEYS[number]
@@ -97,6 +98,13 @@ export const PERMISSIONS: PermissionDef[] = [
     // Enforced by app/lib/book/bookingActor.ts, within the counsellor's own
     // client access. TMC admins book for any client of the TMC without it.
     desc: 'Search, price and book travel for anyone at the clients this TC can access',
+  },
+  {
+    key: 'process_refunds',
+    label: 'Process refunds',
+    // Money going back to a client, and a credit note in the TMC's name:
+    // its own permission, not part of booking or commercials.
+    desc: 'Cancellation queues: process or reject refunds for cancelled tickets, and set each client’s refund rule',
   },
 ]
 

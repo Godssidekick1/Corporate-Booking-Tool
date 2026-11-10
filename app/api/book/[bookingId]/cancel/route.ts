@@ -11,6 +11,7 @@ import * as employees from '@/app/lib/repositories/employees'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
 import * as approvals from '@/app/lib/repositories/approvals'
 import * as audit from '@/app/lib/repositories/audit'
+import * as refunds from '@/app/lib/repositories/refunds'
 import { route } from '@/app/lib/http/handler'
 
 // ── POST /api/book/[bookingId]/cancel ────────────────────────────────────────
@@ -128,6 +129,9 @@ export const POST = route(async (
   try {
     await transaction(async tx => {
       await bookingsRepo.recordCancellation(tx, booking.id, { status, by: me.id, reason, record })
+      // A ticket was paid for: its refund goes to the TMC's cancellation
+      // queue, one per passenger (app/lib/repositories/refunds.ts).
+      if (record.wasTicketed) await refunds.createForBooking(tx, booking.id)
       await audit.append(tx, auditEntry(status, {
         change_request_id: record.changeRequestId, provider_status: record.cancelStatus,
       }))

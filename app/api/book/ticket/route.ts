@@ -2,6 +2,7 @@ import { requireUser } from '@/app/lib/auth/session'
 import { actingTraveller } from '@/app/lib/book/bookingActor'
 import { amadeus, AmadeusError } from '@/app/lib/amadeus/client'
 import { providerFailure } from '@/app/lib/book/providerErrors'
+import { airlinePnrFrom } from '@/app/lib/book/airlinePnr'
 import * as employees from '@/app/lib/repositories/employees'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
 import { route } from '@/app/lib/http/handler'
@@ -157,6 +158,8 @@ export const POST = route(async (req: NextRequest) => {
     // pages zip this against traveler_snapshot.PassengerDetails by index,
     // so a missing TicketNo for one passenger must not shift the ones after it.
     const ticketNumbers = (flightResult?.CustomerInfo?.PassengerDetails ?? []).map(p => p.TicketNo ?? null)
+    // The airline's own locator, beside the GDS PNR (app/lib/book/airlinePnr.ts).
+    const airlinePnr = airlinePnrFrom(flightResult?.FlightDetails)
 
     // The secret behind the public e-ticket at /t/[token].
     //
@@ -174,7 +177,7 @@ export const POST = route(async (req: NextRequest) => {
     // own answer, carrying the ticket numbers -- not the generic error path.
     let updateError: unknown = null
     try {
-      await bookingsRepo.markTicketed(db, bookingId, { pnr, ticketNumbers, shareToken })
+      await bookingsRepo.markTicketed(db, bookingId, { pnr, ticketNumbers, shareToken, airlinePnr })
     } catch (err) {
       updateError = err
     }

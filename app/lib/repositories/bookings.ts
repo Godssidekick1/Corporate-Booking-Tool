@@ -589,10 +589,10 @@ export async function recordCancellation(
 export async function markTicketed(
   db: Queryable,
   bookingId: string,
-  t: { pnr: string | null; ticketNumbers: (string | null)[]; shareToken: string }
+  t: { pnr: string | null; ticketNumbers: (string | null)[]; shareToken: string; airlinePnr?: string | null }
 ): Promise<void> {
   await exec(db, sql`
     update bookings set status = 'ticketed', pnr = ${t.pnr}, ticket_numbers = ${t.ticketNumbers},
-      share_token = ${t.shareToken}, updated_at = now()
+      share_token = ${t.shareToken}, airline_pnr = coalesce(${t.airlinePnr ?? null}, airline_pnr), updated_at = now()
     where id = ${bookingId}`)
 }

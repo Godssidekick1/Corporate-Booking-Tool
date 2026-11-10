@@ -121,12 +121,19 @@ d('value contract', () => {
     expect(await roundTrip('c', 'char(3)', 'IN')).toBe('IN ')
   })
 
+  it('bytea comes back as the same bytes, in a Buffer', async () => {
+    const bytes = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x00, 0xff, 0x0a])
+    const back = await roundTrip<Buffer>('f', 'bytea', bytes)
+    expect(Buffer.isBuffer(back)).toBe(true)
+    expect(back.equals(bytes)).toBe(true)
+  })
+
   // Every type the schema uses must have a case above. A new column type is a
   // decision for typeParsers.ts and the type generator -- this makes it fail
   // here rather than arrive as the next untested value bug. (Ported from the
   // shim's roundTrip test, which read the shim's generated column map.)
   const COVERED = new Set(['numeric', 'int2', 'int4', 'int8', 'timestamptz', 'date', 'jsonb', '_text',
-    'text', 'bpchar', 'bool', 'uuid'])
+    'text', 'bpchar', 'bool', 'uuid', 'bytea'])
 
   it('every column type in the schema has a round trip here', async () => {
     const { rows } = await transaction(tx => tx.query(`

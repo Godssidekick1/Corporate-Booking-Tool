@@ -84,4 +84,7 @@ export function applyTypeParsers(): void {
   // Deliberately NOT routed through Date: a date has no time and no zone, so
   // constructing one invents both and can land on the previous day.
   pgTypes.setTypeParser(DATE, (value: string) => value)
+
+  // bytea (refund_attachments.bytes) is left to pg's own parser, which gives
+  // a Buffer: the file's bytes as written. Nothing to normalise.
 }

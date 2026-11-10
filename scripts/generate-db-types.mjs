@@ -52,6 +52,8 @@ const SCALARS = {
   bool: 'boolean',
   timestamptz: 'string', timestamp: 'string', date: 'string', time: 'string', timetz: 'string', interval: 'string',
   json: 'Json', jsonb: 'Json',
+  // pg's own parser: a Buffer (app/lib/db/typeParsers.ts).
+  bytea: 'Buffer',
 }
 
 function tsType(udt) {

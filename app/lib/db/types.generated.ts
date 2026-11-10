@@ -3,7 +3,7 @@
 // Written by scripts/generate-db-types.mjs from the live database schema.
 // Re-run after any schema change:  node scripts/generate-db-types.mjs
 //
-// 55 tables, 0 view(s), 595 columns.
+// 58 tables, 0 view(s), 634 columns.
 
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json }
 
@@ -171,6 +171,7 @@ export interface Tables {
     cancellation_reason: string | null
     cancellation: Json | null
     cancel_started_at: string | null
+    airline_pnr: string | null
   }
   branches: {
     id: string
@@ -348,6 +349,11 @@ export interface Tables {
     fare_rise_reapproval_unit: string
     approval_escalation_hours: number | null
     ticket_footer_text: string | null
+    refund_markup: boolean
+    refund_processing_fee: boolean
+    tmc_cancellation_fee: number
+    tmc_cancellation_fee_unit: string
+    gst_rate: number
   }
   commercial_coverage: {
     tmc_id: string
@@ -422,6 +428,11 @@ export interface Tables {
     commercials_changes: number
     commercials_built_from: number | null
     commercials_built_on: string | null
+  }
+  credit_note_counters: {
+    tmc_id: string
+    financial_year: string
+    last_no: number
   }
   deal_code_assignments: {
     id: string
@@ -638,6 +649,40 @@ export interface Tables {
     key: string
     window_start: string
     n: number
+  }
+  refund_attachments: {
+    id: string
+    refund_id: string
+    client_id: string
+    tmc_id: string | null
+    filename: string
+    content_type: string
+    size: number
+    bytes: Buffer
+    uploaded_by: string | null
+    uploaded_at: string
+  }
+  refunds: {
+    id: string
+    client_id: string
+    tmc_id: string | null
+    booking_id: string
+    passenger_index: number
+    ticket_number: string | null
+    status: string
+    lines: Json | null
+    refund_amount: number | null
+    airline_refund: number | null
+    tmc_retained: number | null
+    credit_note_no: string | null
+    refund_date: string | null
+    mode: string | null
+    remark: string | null
+    processed_by: string | null
+    processed_at: string | null
+    rejected_reason: string | null
+    created_at: string
+    updated_at: string
   }
   regions: {
     country_code: string
