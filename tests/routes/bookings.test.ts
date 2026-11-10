@@ -331,7 +331,7 @@ d('traveller bookings and trips', () => {
 
   it('policy preview: validation, and a verdict for a covered traveller', async () => {
     const preview = (body: unknown) => call(policyPreview, { as: traveller, method: 'POST', url: '/api/book/policy-preview', body })
-    expect(await preview({})).toEqual({ status: 400, json: { error: 'flight and totalFare are required' } })
+    expect(await preview({})).toEqual({ status: 400, json: { error: 'flight and sellTotal (the price the company pays) are required' } })
 
     const leg = { airlineCode: 'AI', flightNumber: '101', bookingCode: 'Y', cabin: 'Economy' }
     const origin = { code: 'DEL', name: 'Delhi', city: 'Delhi', dateTime: '2030-01-10T08:00:00' }
@@ -341,7 +341,7 @@ d('traveller bookings and trips', () => {
       journeys: [{ journeyNo: 1, origin, destination, stops: [], stopCount: 0, legs: [leg] }],
       origin, destination, airline: { code: 'AI', name: 'AI' }, stopCount: 0, stops: [], fareOptions: [],
     } as unknown as FlatFlightResult
-    const res = await preview({ flight, totalFare: 6000, isRefundable: true })
+    const res = await preview({ flight, sellTotal: 6000, isRefundable: true })
     expect(res.status).toBe(200)
     expect(res.json).toMatchSnapshot()
   })

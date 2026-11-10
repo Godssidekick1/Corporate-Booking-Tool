@@ -126,9 +126,13 @@ function applyMarkup(
   result: FlatFlightResult,
   pax: number
 ): FlatFlightResult {
-  function markupFor(option: { baseFare?: number; totalFare?: number; tax?: number; taxLines?: { code: string; amount: number }[]; fuelSurcharge?: number }): number {
-    if (context.rules.length === 0) return 0
-    if (option.totalFare === undefined || option.baseFare === undefined) return 0
+  // The markup (embedded in the fare) and what the company would pay in all:
+  // the marked-up fare less discount plus processing fee, composed exactly as
+  // /api/book/price does, so the card's "You pay" and the policy preview agree
+  // with the priced fare and add-passenger. Null when the fare has no figures.
+  function priceFor(option: { baseFare?: number; totalFare?: number; tax?: number; taxLines?: { code: string; amount: number }[]; fuelSurcharge?: number }): { markup: number; sell: number } | null {
+    if (option.totalFare === undefined || option.baseFare === undefined) return null
+    if (context.rules.length === 0) return { markup: 0, sell: option.totalFare }
 
     const { record } = priceWithContext(context, {
       flight: result,
@@ -142,18 +146,23 @@ function applyMarkup(
       pax,
     })
 
-    // Only the embedded adjustment. Discount and fee are resolved by the same
-    // call — they have to be, since markup is calculated on the discounted
-    // amount — but neither is applied to a search row.
-    return record.adjustments.find(a => a.source === 'markup')?.amount ?? 0
+    // The fare row carries only the embedded markup. Discount and fee are not
+    // folded into it (they are their own lines once priced); they reach the
+    // row only through the sell estimate.
+    return {
+      markup: record.adjustments.find(a => a.source === 'markup')?.amount ?? 0,
+      sell: record.sellTotal,
+    }
   }
 
   const fareOptions = result.fareOptions.map(option => {
-    const markup = markupFor(option)
+    const price = priceFor(option)
+    const markup = price?.markup ?? 0
     return {
       ...option,
       baseFare: option.baseFare !== undefined ? round2(option.baseFare + markup) : undefined,
       totalFare: option.totalFare !== undefined ? round2(option.totalFare + markup) : undefined,
+      sellEstimate: price ? round2(price.sell) : undefined,
       taxLines: undefined,
       fuelSurcharge: undefined,
     }
@@ -167,6 +176,7 @@ function applyMarkup(
     fareOptions,
     baseFare: primary?.baseFare,
     totalFare: primary?.totalFare,
+    sellEstimate: primary?.sellEstimate,
   }
 }
 
@@ -527,9 +537,10 @@ export const POST = route(async (req: NextRequest) => {
     // would be four queries plus a category lookup times thirty results, on the
     // most latency-sensitive request in the product.
     //
-    // Discount and processing fee are deliberately NOT applied here. Both depend
-    // on passenger and sector counts that belong to a priced itinerary, not to a
-    // search row — they appear at /api/book/price, as their own visible lines.
+    // Discount and processing fee are NOT folded into the fare: at
+    // /api/book/price they appear as their own visible lines. They do reach
+    // each fare's sellEstimate (the passenger and sector counts are known here),
+    // which is the price cards show and the policy preview judges.
     // applyMarkup runs even when no rule exists, because it also STRIPS the
     // airline tax detail on the way out. Conditioning it on rules would leak
     // taxLines and fuelSurcharge to any client that happens to have no markup —

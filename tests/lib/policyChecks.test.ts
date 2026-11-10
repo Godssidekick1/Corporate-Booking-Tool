@@ -176,6 +176,40 @@ describe('fare caps and grace', () => {
     expect(r.verdict).toBe('red')
   })
 
+  // 2026-11-10: a round trip priced together was held to a one-way cap, so two
+  // flights each within it read as out of policy.
+  it('a fare covering two flights is held to the cap for each, grace included', () => {
+    const twoFlights = (limits: Record<string, number | boolean>, amount: number) =>
+      evaluateBooking(policy(limits), { totalCost: amount, fareFlights: 2, numericValues: { max_fare_domestic: amount }, booleanValues: {} })
+
+    expect(twoFlights({ max_fare_domestic: 8000 }, 16000)).toEqual({ verdict: 'green', breaches: [] })
+    expect(twoFlights({ max_fare_domestic: 8000 }, 16001)).toMatchObject({
+      verdict: 'red', breaches: [{ policyValue: 16000, actualValue: 16001, flights: 2, perFlightCap: 8000 }],
+    })
+    // 10% grace on each: up to 17,600 for the pair needs approval.
+    const g = { max_fare_domestic: 8000, fare_grace: 10 }
+    expect(twoFlights(g, 17600)).toMatchObject({ verdict: 'amber', breaches: [{ graceLimit: 17600 }] })
+    expect(twoFlights(g, 17601).verdict).toBe('red')
+    // One flight: as before, no per-flight fields.
+    expect(fareOf({ max_fare_domestic: 8000 }, 8001).breaches[0]).not.toHaveProperty('flights')
+  })
+
+  it('the flights a fare covers come from its directions', () => {
+    const round = flight({}, [journey(1, 'DEL', 'BOM', '2026-11-20T08:00:00'), journey(2, 'BOM', 'DEL', '2026-11-22T18:00:00')])
+    expect(buildPolicyInputsFromFlight({ flight: round, totalFare: 9000, isRefundable: true, now: NOW }).fareFlights).toBe(2)
+    expect(buildPolicyInputsFromFlight({ flight: flight(), totalFare: 9000, isRefundable: true, now: NOW }).fareFlights).toBe(1)
+    // No journeys (an older saved result): one flight.
+    expect(buildPolicyInputsFromFlight({ flight: flight({ journeys: [] }), totalFare: 9000, isRefundable: true, now: NOW }).fareFlights).toBe(1)
+  })
+
+  it('a two-flight breach says so, per flight', () => {
+    const base = { limit_key: 'max_fare_domestic', kind: 'numeric', policyValue: 16000, flights: 2, perFlightCap: 8000 }
+    expect(breachLine({ ...base, actualValue: 18000 }))
+      .toBe('domestic fare limit exceeded: ₹18,000 for 2 flights against ₹16,000 (₹8,000 per flight)')
+    expect(breachLine({ ...base, actualValue: 17000, graceLimit: 17600 }))
+      .toBe('domestic fare limit exceeded: ₹17,000 for 2 flights against ₹16,000 (₹8,000 per flight), within the ₹1,600 grace')
+  })
+
   it('the old approval amounts are not read', () => {
     expect(fareOf({ max_fare_domestic: 8000, auto_approve_under: 1000, finance_approval_over: 2000 }, 5000))
       .toEqual({ verdict: 'green', breaches: [] })

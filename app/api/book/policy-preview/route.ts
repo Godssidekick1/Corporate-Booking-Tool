@@ -25,10 +25,13 @@ import type { FlatFlightResult, PenaltyLine } from '@/app/lib/book/types'
 interface PreviewBody {
   travellerId?: string // booking for someone else: THEIR policy is previewed
   flight: FlatFlightResult
-  totalFare: number
-  // The price the company pays (with markup, discount and fee), which is what
-  // add-passenger judges. Older pages sent only totalFare, the airline's.
-  sellTotal?: number
+  // The price the company pays (fare with markup, less discount, plus fee):
+  // what add-passenger judges, so the only figure judged here. The price page
+  // sends each fare's search-time sellEstimate (and the priced figure once
+  // known); the details page sends the priced sellTotal. Judging the fare
+  // before discount and fee here once made a discounted fare read "out of
+  // policy" on one page and "within" on the next.
+  sellTotal: number
   isRefundable: boolean
   cancelPenalties?: PenaltyLine[]
   selectedSeatFees?: string[]
@@ -47,20 +50,21 @@ export const POST = route(async (req: NextRequest) => {
   const actor = await resolveActor(db, user, body.travellerId)
   if (!actor.ok) return refuse(actor)
   const employee = actor.actor.traveller
-  const { flight, totalFare, sellTotal, isRefundable, selectedSeatFees, cancelPenalties, searchKey, pricingKey } = body
+  const { flight, sellTotal, isRefundable, selectedSeatFees, cancelPenalties, searchKey, pricingKey } = body
 
-  if (!flight || totalFare === undefined) {
-    return Response.json({ error: 'flight and totalFare are required' }, { status: 400 })
+  if (!flight || typeof sellTotal !== 'number' || !Number.isFinite(sellTotal)) {
+    return Response.json({ error: 'flight and sellTotal (the price the company pays) are required' }, { status: 400 })
   }
 
   const inputs = buildPolicyInputsFromFlight({
-    flight, totalFare: sellTotal ?? totalFare, isRefundable, selectedSeatFees, cancelPenalties,
+    flight, totalFare: sellTotal, isRefundable, selectedSeatFees, cancelPenalties,
   })
   const shown = searchKey && pricingKey ? await bookings.searchFares(db, searchKey, employee.id) : null
   const result = await checkBookingAgainstPolicy(db, {
     employeeId: employee.id,
     travelType: inputs.travelType,
     totalCost: inputs.totalCost,
+    fareFlights: inputs.fareFlights,
     numericValues: inputs.numericValues,
     booleanValues: inputs.booleanValues,
     tierValues: inputs.tierValues,

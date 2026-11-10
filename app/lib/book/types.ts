@@ -76,6 +76,11 @@ export interface FareOption {
   pricingKey: string
   currency?: string
   totalFare?: number
+  // What the company would pay for this fare: the fare above (markup included)
+  // less any discount plus any processing fee, as /api/book/price composes it.
+  // Set by search; the figure cards show and the policy preview judges. An
+  // estimate until priced: the airline may move the fare.
+  sellEstimate?: number
   baseFare?: number
   // The aggregate, from Total.OtherTax. NOT guaranteed to equal
   // totalFare - baseFare: Total.FuelSurcharge is a SIBLING field, so YQ may or
@@ -267,6 +272,7 @@ export interface FlatFlightResult {
   pricingKey?: string
   currency?: string
   totalFare?: number
+  sellEstimate?: number
   baseFare?: number
   isNdc?: boolean
   refundable?: boolean

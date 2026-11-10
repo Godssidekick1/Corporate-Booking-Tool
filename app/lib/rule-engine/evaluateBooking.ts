@@ -23,6 +23,11 @@ export interface VerdictBreach {
   // A fare cap with grace: the most the fare may be and still need approval
   // rather than be out of policy.
   graceLimit?: number
+  // A fare cap judged for a fare covering several flights (a round trip priced
+  // together): policyValue and graceLimit are then for all of them, and this
+  // says how many and what the cap is for one.
+  flights?: number
+  perFlightCap?: number
   // Lowest logical fare: the cheaper flight the traveller was also shown.
   alternative?: { total: number; departure: string; label: string }
 }
@@ -91,6 +96,9 @@ interface BookingInput {
   // The booking's total. Not judged by itself: what a trip costs overall is
   // expense management's question, not the flight policy's.
   totalCost: number
+  // Flights the fare pays for (2 for a round trip priced together). A fare cap
+  // is set per flight, so it is multiplied by this. Absent: 1.
+  fareFlights?: number
   numericValues: Partial<Record<string, number>>
   booleanValues: Partial<Record<string, boolean>>
   tierValues?: Partial<Record<string, number>>
@@ -111,23 +119,31 @@ export function evaluateBooking(policy: ResolvedPolicy, booking: BookingInput): 
     const policyValue = Number(rawPolicyValue)
     if (key === 'max_stops' && policyValue >= 3) continue
 
+    // A fare cap is per flight. A round trip priced as one fare pays for two,
+    // so it is held to twice the cap (and twice the grace): two flights each
+    // within the cap are within policy together.
+    if (FARE_CAP_KEYS.has(key)) {
+      const flights = Math.max(1, Math.floor(booking.fareFlights ?? 1))
+      const cap = policyValue * flights
+      if (actualValue > cap) {
+        const graceLimit = Math.round(graceLimitFor(policyValue, policy.limits) * flights * 100) / 100
+        breaches.push({
+          limit_key: key, kind: 'numeric', policyValue: cap, actualValue,
+          severity: actualValue <= graceLimit ? 'amber' : 'red',
+          ...(graceLimit > cap ? { graceLimit } : {}),
+          ...(flights > 1 ? { flights, perFlightCap: policyValue } : {}),
+        })
+      }
+      continue
+    }
+
     const isViolation = key === 'advance_booking_days'
       ? actualValue < policyValue
       : actualValue > policyValue
 
+    // Over any other limit is out of policy: only the fare caps have grace.
     if (isViolation) {
-      // A fare within the group's grace needs approval; beyond it, or over
-      // any other limit, is out of policy.
-      if (FARE_CAP_KEYS.has(key)) {
-        const graceLimit = graceLimitFor(policyValue, policy.limits)
-        breaches.push({
-          limit_key: key, kind: 'numeric', policyValue, actualValue,
-          severity: actualValue <= graceLimit ? 'amber' : 'red',
-          ...(graceLimit > policyValue ? { graceLimit } : {}),
-        })
-      } else {
-        breaches.push({ limit_key: key, kind: 'numeric', policyValue, actualValue, severity: 'red' })
-      }
+      breaches.push({ limit_key: key, kind: 'numeric', policyValue, actualValue, severity: 'red' })
     }
   }
 

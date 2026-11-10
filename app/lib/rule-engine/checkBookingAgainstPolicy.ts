@@ -9,6 +9,9 @@ export interface BookingCheckInput {
   employeeId: string
   travelType: string
   totalCost: number
+  // Flights the fare covers (2 for a round trip priced together); the fare
+  // cap is per flight. Absent: 1.
+  fareFlights?: number
   numericValues: Partial<Record<string, number>>
   booleanValues: Partial<Record<string, boolean>>
   tierValues?: Partial<Record<string, number>>
@@ -57,6 +60,7 @@ export async function checkBookingAgainstPolicy(
 
   const result = evaluateBooking(policy, {
     totalCost: input.totalCost,
+    fareFlights: input.fareFlights,
     numericValues: input.numericValues,
     booleanValues: input.booleanValues,
     tierValues: input.tierValues,

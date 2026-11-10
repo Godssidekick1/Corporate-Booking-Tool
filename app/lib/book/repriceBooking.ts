@@ -75,6 +75,7 @@ export async function priceAgain(
       employeeId: booking.employee_id,
       travelType: inputs.travelType,
       totalCost: inputs.totalCost,
+      fareFlights: inputs.fareFlights,
       numericValues: inputs.numericValues,
       booleanValues: inputs.booleanValues,
       tierValues: inputs.tierValues,

@@ -561,7 +561,6 @@ export default function BookingDetailsPage() {
           // Booking for someone else: whose (bookingActor); absent = oneself.
           travellerId: flowStorage.travellerId(),
           flight,
-          totalFare: priced.totalFare,
           sellTotal: priced.sellTotal,
           isRefundable: priced.isRefundable,
           cancelPenalties: priced.cancelPenalties,

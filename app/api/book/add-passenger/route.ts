@@ -314,6 +314,7 @@ export const POST = route(async (req: NextRequest) => {
           employeeId: employee.id,
           travelType: inputs.travelType,
           totalCost: inputs.totalCost,
+          fareFlights: inputs.fareFlights,
           numericValues: inputs.numericValues,
           booleanValues: inputs.booleanValues,
           tierValues: inputs.tierValues,

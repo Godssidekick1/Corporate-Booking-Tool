@@ -20,6 +20,8 @@ export interface BreachLike {
   policyValue: unknown
   actualValue: unknown
   graceLimit?: number
+  flights?: number
+  perFlightCap?: number
   alternative?: { total: number; departure: string; label: string }
 }
 
@@ -96,6 +98,17 @@ export function breachLine(b: BreachLike): string {
     const time = /T(\d{2}:\d{2})/.exec(b.alternative.departure)?.[1] ?? b.alternative.departure
     const flight = b.alternative.label ? `${b.alternative.label} at ${time}` : `a flight at ${time}`
     return `${label} not taken: ${flight} was ${inr(b.alternative.total)}, within ${policy} minutes, against ${inr(actual)} for this fare`
+  }
+
+  // A fare covering several flights (a round trip priced together) is held to
+  // the cap for each, and says so: "₹30,000 for 2 flights against ₹24,000
+  // (₹12,000 per flight)".
+  if (typeof b.flights === 'number' && b.flights > 1 && typeof b.perFlightCap === 'number') {
+    const inr = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`
+    const head = `${label} exceeded: ${inr(actual)} for ${b.flights} flights against ${inr(policy)} (${inr(b.perFlightCap)} per flight)`
+    if (typeof b.graceLimit !== 'number') return head
+    const grace = inr(b.graceLimit - policy)
+    return actual <= b.graceLimit ? `${head}, within the ${grace} grace` : `${head}, beyond the ${grace} grace`
   }
 
   // A fare cap with grace says which side of it the fare landed.

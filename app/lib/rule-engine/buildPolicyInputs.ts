@@ -109,6 +109,9 @@ function cancelPenaltyAmount(lines: PenaltyLine[] | undefined, isRefundable: boo
 export interface BuiltPolicyInputs {
   travelType: 'flight_domestic' | 'flight_international'
   totalCost: number
+  // How many flights (directions) the fare pays for: 2 for a round trip priced
+  // together. A fare cap is per flight, so it is judged against cap x this.
+  fareFlights: number
   numericValues: Partial<Record<string, number>>
   booleanValues: Partial<Record<string, boolean>>
   tierValues: Partial<Record<string, number>>
@@ -173,6 +176,7 @@ export function buildPolicyInputsFromFlight(source: PolicyInputSource): BuiltPol
   return {
     travelType,
     totalCost: totalFare,
+    fareFlights: Math.max(1, flight.journeys?.length ?? 1),
     numericValues: {
       [classification === 'domestic' ? 'max_fare_domestic' : 'max_fare_intl']: totalFare,
       max_seat_selection_fee: seatFeeTotal,

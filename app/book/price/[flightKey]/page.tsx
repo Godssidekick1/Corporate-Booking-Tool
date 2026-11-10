@@ -146,38 +146,48 @@ export default function SelectFarePage() {
   }, [flightKey])
 
   // ── Policy preview, per fare option ─────────────────────────────────────
-  // Uses each fare option's own search-time totalFare/refundable — NOT the
-  // live-priced value — so this can run once for every card up front
-  // without an extra real Amadeus Pricing call per option (runPricing only
-  // prices the selected fare, on purpose, to avoid hammering the airline
-  // for cards the traveler may never pick). This is a preview, same caveat
-  // as everywhere else it's used: the authoritative verdict is recomputed
-  // at add-passenger, against the actually-priced fare, right before a
-  // bookings row is created.
+  // Judges each fare by what the company would pay for it (its search-time
+  // sellEstimate: fare less discount plus fee), the same figure the details
+  // page and add-passenger judge. It once sent the fare before discount and
+  // fee, so a well-discounted fare read "out of policy" here and "within" one
+  // step later. This runs once for every card up front without a real Pricing
+  // call per option (runPricing prices only the selected fare, so the airline
+  // is not hammered for cards the traveller may never pick); once the
+  // selected fare is priced, its card is judged again on the priced figure
+  // (judgeFare below). The authoritative verdict is still add-passenger's.
+  async function judgeFare(flightResult: FlatFlightResult, fare: FareOption | undefined, sellTotal: number | undefined): Promise<PolicyPreview> {
+    if (typeof sellTotal !== 'number') return { ok: false }
+    try {
+      const res = await fetch('/api/book/policy-preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          travellerId: flowStorage.travellerId(),
+          flight: flightResult,
+          sellTotal,
+          isRefundable: fare?.refundable ?? flightResult.refundable ?? false,
+          cancelPenalties: fare?.cancelPenalties,
+          // The search it came from, for the lowest logical fare: the same
+          // check the next pages run.
+          searchKey: flowStorage.getSearchResults()?.availabilityKey ?? undefined,
+          pricingKey: fare?.pricingKey ?? flightResult.pricingKey,
+        }),
+      })
+      return await res.json()
+    } catch {
+      // Same as elsewhere: a preview failing shouldn't block the page.
+      // That fare's card just won't show a border/banner.
+      return { ok: false }
+    }
+  }
+
   async function loadAllFareVerdicts(flightResult: FlatFlightResult) {
     const results = await Promise.all(
-      flightResult.fareOptions.map(async (fare, i) => {
-        try {
-          const res = await fetch('/api/book/policy-preview', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              travellerId: flowStorage.travellerId(),
-              flight: flightResult,
-              totalFare: fare.totalFare ?? flightResult.totalFare ?? 0,
-              isRefundable: fare.refundable ?? flightResult.refundable ?? false,
-            }),
-          })
-          const data: PolicyPreview = await res.json()
-          return [i, data] as const
-        } catch {
-          // Same as elsewhere: a preview failing shouldn't block the page.
-          // That fare's card just won't show a border/banner.
-          return [i, { ok: false }] as const
-        }
-      })
+      flightResult.fareOptions.map(async (fare, i) =>
+        [i, await judgeFare(flightResult, fare, fare.sellEstimate ?? fare.totalFare ?? flightResult.totalFare)] as const)
     )
-    setVerdicts(Object.fromEntries(results))
+    // Merged, not replaced: a priced fare's verdict may already have arrived.
+    setVerdicts(prev => ({ ...Object.fromEntries(results), ...prev }))
   }
 
   async function runPricing(flightResult: FlatFlightResult, fareIndex: number) {
@@ -222,6 +232,13 @@ export default function SelectFarePage() {
       }
 
       setPricing(data)
+
+      // The selected card judged on the priced figure: the airline may have
+      // moved the fare since search, and this is what the next page judges.
+      const pricedSell = data.sellTotal ?? data.totalFare
+      judgeFare(flightResult, fareOption, pricedSell).then(v => {
+        if (v.ok) setVerdicts(prev => ({ ...prev, [fareIndex]: v }))
+      })
 
       // Save the priced fare — the next step needs referenceNo, totalFare,
       // etc. and shouldn't have to re-price to get them.
@@ -533,8 +550,10 @@ export default function SelectFarePage() {
                   </div>
 
                   <div style={s.fareCardPriceRow}>
-                    <span style={s.fareCardPrice}>{fare.currency} {fare.totalFare?.toLocaleString('en-IN')}</span>
-                    <span style={s.fareCardPriceSub}>per adult</span>
+                    {/* What the company pays (fare less discount plus fee),
+                        the figure the policy chip judges. */}
+                    <span style={s.fareCardPrice}>{fare.currency} {(fare.sellEstimate ?? fare.totalFare)?.toLocaleString('en-IN')}</span>
+                    <span style={s.fareCardPriceSub}>you pay</span>
                   </div>
 
                   <div style={s.fareCardTagRow}>

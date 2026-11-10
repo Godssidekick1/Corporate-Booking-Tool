@@ -44,9 +44,12 @@ export function shownFlights(results: FlatFlightResult[]): ShownFlight[] {
     const origin = out?.origin?.code ?? r.origin?.code
     const destination = out?.destination?.code ?? r.destination?.code
     if (!departure || !origin || !destination) return []
+    // What the company would pay for each (the sell estimate), so "cheaper"
+    // means cheaper to the company: a fare with a bigger discount can be the
+    // cheaper one at the same airline price.
     const fares = r.fareOptions
-      .filter(f => typeof f.totalFare === 'number' && f.pricingKey)
-      .map(f => ({ pricingKey: f.pricingKey, total: f.totalFare as number }))
+      .map(f => ({ pricingKey: f.pricingKey, total: f.sellEstimate ?? f.totalFare }))
+      .filter((f): f is { pricingKey: string; total: number } => typeof f.total === 'number' && Boolean(f.pricingKey))
     if (fares.length === 0) return []
     const leg = r.legs?.[0]
     const label = [leg?.airlineCode ?? r.airline?.code, leg?.flightNumber].filter(Boolean).join(' ')

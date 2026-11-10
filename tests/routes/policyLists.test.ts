@@ -231,7 +231,7 @@ d('policy lists: blocked airlines and allowed fare types', () => {
 
     const preview = () => call(previewPost, {
       as: a.corpAdmin, method: 'POST', url: '/api/book/policy-preview',
-      body: { travellerId: colleague.id, flight: { ...ITINERARY, flightKey: 'ai-0800' }, totalFare: 6000, isRefundable: true,
+      body: { travellerId: colleague.id, flight: { ...ITINERARY, flightKey: 'ai-0800' }, sellTotal: 6000, isRefundable: true,
         searchKey: 'LLF-KEY', pricingKey: 'c-0800' },
     }).then(r => r.json as { verdict: string; breaches: { limit_key: string; severity: string; alternative?: unknown }[]; reason: string })
 
@@ -243,7 +243,9 @@ d('policy lists: blocked airlines and allowed fare types', () => {
     await setWindow(45)
     const within = await preview()
     expect(lowest(within)).toEqual([expect.objectContaining({ severity: 'amber' })])
-    expect(within.reason).toContain('UK 101 at 08:40 was ₹5,200')
+    // In what the company pays (2026-11-10): the UK fare of 5,200 less this
+    // client's 10% discount. "Cheaper" means cheaper to the company.
+    expect(within.reason).toContain('UK 101 at 08:40 was ₹4,680')
 
     // 30 minutes: nothing cheaper close enough.
     await setWindow(30)

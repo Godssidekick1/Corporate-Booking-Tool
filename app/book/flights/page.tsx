@@ -22,6 +22,16 @@ function toDisplayDate(input: string) {
   return d.toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short' })
 }
 
+// What the company pays for the cheapest fare on this flight: each fare's sell
+// estimate (fare less discount plus fee, as priced on the next page and judged
+// by policy), falling back to the fare for results saved before it existed.
+function youPay(flight: FlatFlightResult): number | undefined {
+  const amounts = flight.fareOptions
+    .map(f => f.sellEstimate ?? f.totalFare)
+    .filter((n): n is number => typeof n === 'number')
+  return amounts.length ? Math.min(...amounts) : flight.sellEstimate ?? flight.totalFare
+}
+
 function durationMinutes(duration: string | undefined): number {
   if (!duration) return Infinity
   const [h, m] = duration.split(':').map(Number)
@@ -457,7 +467,7 @@ export default function BookFlightsSearchPage() {
   const hasNdcMix = results.some(f => f.isNdc) && results.some(f => !f.isNdc)
 
   const sortedResults = [...filteredResults].sort((a, b) => {
-    if (sortBy === 'price') return (a.totalFare ?? Infinity) - (b.totalFare ?? Infinity)
+    if (sortBy === 'price') return (youPay(a) ?? Infinity) - (youPay(b) ?? Infinity)
     if (sortBy === 'duration') return durationMinutes(a.duration) - durationMinutes(b.duration)
     return (a.origin?.dateTime ?? '').localeCompare(b.origin?.dateTime ?? '')
   })
@@ -882,7 +892,7 @@ export default function BookFlightsSearchPage() {
                         </div>
 
                         <div style={s.fareBlock}>
-                          <span style={s.fareAmount}>₹{flight.totalFare?.toLocaleString('en-IN') ?? '—'}</span>
+                          <span style={s.fareAmount}>₹{youPay(flight)?.toLocaleString('en-IN') ?? '—'}</span>
                           <span style={{ ...s.refundBadge, color: flight.refundable ? '#065F46' : '#9CA3AF', background: flight.refundable ? '#ECFDF5' : '#F3F4F6' }}>
                             {flight.refundable ? 'Refundable' : 'Non-refundable'}
                           </span>
