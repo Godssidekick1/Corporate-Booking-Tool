@@ -70,6 +70,12 @@ export interface Client {
   fare_rise_reapproval_unit: string
   approval_escalation_hours: number | null
   ticket_footer_text: string | null
+  // The refund rule for this client's cancelled tickets (app/lib/refunds).
+  refund_markup: boolean
+  refund_processing_fee: boolean
+  tmc_cancellation_fee: number
+  tmc_cancellation_fee_unit: string
+  gst_rate: number
 }
 
 // The generic setter every tab uses. Declared once so a tab cannot accidentally

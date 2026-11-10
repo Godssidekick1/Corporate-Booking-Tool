@@ -364,7 +364,8 @@ export type ClientSettings = Pick<Row<'clients'>,
   | 'processing_fee_active' | 'air_approval_mode' | 'hotel_approval_mode' | 'trip_approval_mode'
   | 'guest_bookings_allowed' | 'out_of_policy_reason_required' | 'out_of_policy_handling' | 'duplicate_booking_check'
   | 'within_policy_approval' | 'fare_rise_reapproval' | 'fare_rise_reapproval_unit' | 'approval_escalation_hours'
-  | 'ticket_footer_text'
+  | 'ticket_footer_text' | 'refund_markup' | 'refund_processing_fee' | 'tmc_cancellation_fee'
+  | 'tmc_cancellation_fee_unit' | 'gst_rate'
 >
 
 const SETTINGS = sql`
@@ -378,7 +379,8 @@ const SETTINGS = sql`
   air_approval_mode, hotel_approval_mode, trip_approval_mode,
   guest_bookings_allowed, out_of_policy_reason_required, out_of_policy_handling, duplicate_booking_check,
   within_policy_approval, fare_rise_reapproval, fare_rise_reapproval_unit, approval_escalation_hours,
-  ticket_footer_text`
+  ticket_footer_text, refund_markup, refund_processing_fee, tmc_cancellation_fee, tmc_cancellation_fee_unit,
+  gst_rate`
 
 // Everything on the record except its identity, its TMC, its creation time and
 // setup_completed (derived onboarding progress, not a setting).
@@ -411,6 +413,11 @@ const SETTINGS_EDITABLE: Record<EditableSetting, Sql> = {
   trip_approval_mode: sql`trip_approval_mode`, within_policy_approval: sql`within_policy_approval`,
   fare_rise_reapproval: sql`fare_rise_reapproval`, fare_rise_reapproval_unit: sql`fare_rise_reapproval_unit`,
   approval_escalation_hours: sql`approval_escalation_hours`, ticket_footer_text: sql`ticket_footer_text`,
+  // The refund rule (20261110000000_refunds): edited from Corporate Settings
+  // and from Configurations → Queues → Cancellation queues, both through here.
+  refund_markup: sql`refund_markup`, refund_processing_fee: sql`refund_processing_fee`,
+  tmc_cancellation_fee: sql`tmc_cancellation_fee`, tmc_cancellation_fee_unit: sql`tmc_cancellation_fee_unit`,
+  gst_rate: sql`gst_rate`,
 }
 
 export async function settings(db: Queryable, clientId: string, tmcId: string): Promise<ClientSettings | null> {

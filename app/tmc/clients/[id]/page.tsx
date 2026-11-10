@@ -56,7 +56,7 @@ const TRIP_APPROVAL_MODES = [
   { value: 'on_submit', label: 'Required when the trip is submitted' },
 ]
 
-const TAB_IDS = ['identity', 'gst', 'contacts', 'controls', 'allocations', 'policy'] as const
+const TAB_IDS = ['identity', 'gst', 'contacts', 'controls', 'allocations', 'policy', 'refunds'] as const
 type TabId = typeof TAB_IDS[number]
 
 export default function CorporateSettingsPage() {
@@ -227,6 +227,7 @@ export default function CorporateSettingsPage() {
           { id: 'controls', label: 'Controls', count: offCount || undefined, hint: 'What this client’s people can actually do. Each switch says what it stops.' },
           { id: 'allocations', label: 'Allocations', hint: 'Buckets, deal codes, payment methods and who pays — everything handed to this client.' },
           { id: 'policy', label: 'Policy & approvals', hint: 'Which policy governs them and whether bookings need approval. Edited on the masters.' },
+          { id: 'refunds', label: 'Refunds', hint: 'What this client gets back when a ticket is cancelled: the starting point of every refund, which the desk can still change per refund.' },
         ]}
       />
 
@@ -665,6 +666,59 @@ export default function CorporateSettingsPage() {
             <Link href={`/tmc/configurations/approvals?clientId=${clientId}`} style={s.inlineLink}>
               Assign chains →
             </Link>
+          </p>
+        </>
+      )}
+
+      {/* ── Refunds ──────────────────────────────────────────────────────── */}
+      {/* The same rule as Configurations → Queues → Cancellation queues →
+          Refund rules: one set of columns, edited from either place. */}
+      {tab === 'refunds' && (
+        <>
+          <div style={{ display: 'grid', gap: 10, marginBottom: 16 }}>
+            <Toggle
+              label="Refund the markup" checked={form.refund_markup === true}
+              onChange={v => set('refund_markup', v)}
+              effect="Off: the markup on a cancelled ticket is kept by the TMC and not paid back."
+            />
+            <Toggle
+              label="Refund the processing fee" checked={form.refund_processing_fee === true}
+              onChange={v => set('refund_processing_fee', v)}
+              effect="Off: the processing fee is kept by the TMC and not paid back."
+            />
+          </div>
+          <div style={s.grid}>
+            <Field label="TMC cancellation fee" hint="Charged by the TMC on every cancelled ticket, on top of the airline's own charges. 0: none.">
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  type="number" min={0} step="any" placeholder="0"
+                  value={form.tmc_cancellation_fee ?? 0}
+                  onChange={e => set('tmc_cancellation_fee', e.target.value === '' ? 0 : Number(e.target.value))}
+                  style={{ ...s.input, flex: 1 }}
+                />
+                <select
+                  value={form.tmc_cancellation_fee_unit ?? 'amount'}
+                  onChange={e => set('tmc_cancellation_fee_unit', e.target.value)}
+                  style={{ ...s.input, width: 170 }}
+                >
+                  <option value="amount">₹ per ticket</option>
+                  <option value="percent">% of what was paid</option>
+                </select>
+              </div>
+            </Field>
+            <Field label="GST rate on TMC charges" hint="Applied to the TMC cancellation fee: CGST + SGST within the same state, IGST across states.">
+              <input
+                type="number" min={0} max={100} step="any"
+                value={form.gst_rate ?? 18}
+                onChange={e => set('gst_rate', e.target.value === '' ? 0 : Number(e.target.value))}
+                style={s.input}
+              />
+            </Field>
+          </div>
+          <p style={s.hint}>
+            The airline&apos;s own cancellation charges always come off the refund. Every refund can still be
+            adjusted line by line before it is processed.{' '}
+            <Link href="/tmc/configurations/cancellation-queues" style={s.inlineLink}>Cancellation queues →</Link>
           </p>
         </>
       )}

@@ -83,6 +83,8 @@ const BOOLEAN_FIELDS = [
   'markup_active', 'discount_active', 'processing_fee_active',
 ] as const
 
+const REFUND_RULE_FIELDS = ['refund_markup', 'refund_processing_fee', 'tmc_cancellation_fee', 'tmc_cancellation_fee_unit', 'gst_rate'] as const
+
 type UpdateClientBody = {
   name?: string
   timezone?: string
@@ -115,6 +117,12 @@ type UpdateClientBody = {
   // A waiting approval passes to the approver's manager after this. Null: never.
   approval_escalation_hours?: number | null
   ticket_footer_text?: string | null
+  // The refund rule for this client's cancelled tickets (app/lib/refunds).
+  refund_markup?: boolean
+  refund_processing_fee?: boolean
+  tmc_cancellation_fee?: number
+  tmc_cancellation_fee_unit?: string
+  gst_rate?: number
 } & Partial<Record<typeof TEXT_FIELDS[number], string | null>>
   & Partial<Record<typeof BOOLEAN_FIELDS[number], boolean>>
 
@@ -147,7 +155,16 @@ export const PATCH = route(async (req: NextRequest, { params }: Ctx) => {
   const { id } = await params
   const user = await requireUser()
 
-  const auth = await requireTmcPermission(db, user.id, 'manage_clients', id)
+  const parsed: unknown = await req.json().catch(() => null)
+  const isObject = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+  const body = (isObject ? parsed : {}) as UpdateClientBody
+
+  // The refund rule alone may also be set by whoever processes refunds: it is
+  // edited from the Cancellation queues as well as from Corporate Settings.
+  // Anything else needs manage_clients.
+  const refundRuleOnly = Object.keys(body).length > 0 && Object.keys(body).every(k => (REFUND_RULE_FIELDS as readonly string[]).includes(k))
+  let auth = await requireTmcPermission(db, user.id, 'manage_clients', id)
+  if (!auth.authorized && refundRuleOnly) auth = await requireTmcPermission(db, user.id, 'process_refunds', id)
   if (!auth.authorized) {
     return Response.json({ error: auth.error }, { status: auth.status ?? 403 })
   }
@@ -156,8 +173,8 @@ export const PATCH = route(async (req: NextRequest, { params }: Ctx) => {
   if (!(await clients.statusInTmc(db, id, tmcId))) {
     return Response.json({ error: 'Client not found' }, { status: 404 })
   }
+  if (!isObject) return Response.json({ error: 'The request body must be a JSON object.' }, { status: 400 })
 
-  const body: UpdateClientBody = await req.json()
   const { name, timezone, currency, country, booking_mode, client_group_id } = body
 
   const update: clients.ClientSettingsEdit = {}
@@ -280,6 +297,37 @@ export const PATCH = route(async (req: NextRequest, { params }: Ctx) => {
       return Response.json({ error: 'The ticket footer can be at most 500 characters' }, { status: 400 })
     }
     update.ticket_footer_text = text || null
+  }
+
+  // ── The refund rule ──────────────────────────────────────────────────────
+  for (const field of ['refund_markup', 'refund_processing_fee'] as const) {
+    if (body[field] === undefined) continue
+    if (typeof body[field] !== 'boolean') return Response.json({ error: `${field} must be true or false` }, { status: 400 })
+    update[field] = body[field]
+  }
+  if (body.tmc_cancellation_fee_unit !== undefined) {
+    if (body.tmc_cancellation_fee_unit !== 'amount' && body.tmc_cancellation_fee_unit !== 'percent') {
+      return Response.json({ error: 'tmc_cancellation_fee_unit must be amount or percent' }, { status: 400 })
+    }
+    update.tmc_cancellation_fee_unit = body.tmc_cancellation_fee_unit
+  }
+  if (body.tmc_cancellation_fee !== undefined || body.tmc_cancellation_fee_unit !== undefined) {
+    const current = await clients.settings(db, id, tmcId)
+    const fee = body.tmc_cancellation_fee ?? Number(current?.tmc_cancellation_fee ?? 0)
+    const unit = body.tmc_cancellation_fee_unit ?? current?.tmc_cancellation_fee_unit ?? 'amount'
+    if (typeof fee !== 'number' || !Number.isFinite(fee) || fee < 0 || fee > (unit === 'percent' ? 100 : 1_000_000)) {
+      return Response.json({
+        error: unit === 'percent' ? 'The TMC cancellation fee must be a percentage from 0 to 100.' : 'The TMC cancellation fee must be an amount from 0 to 10,00,000.',
+      }, { status: 400 })
+    }
+    if (body.tmc_cancellation_fee !== undefined) update.tmc_cancellation_fee = Math.round(fee * 100) / 100
+  }
+  if (body.gst_rate !== undefined) {
+    const v = body.gst_rate
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > 100) {
+      return Response.json({ error: 'The GST rate must be a percentage from 0 to 100.' }, { status: 400 })
+    }
+    update.gst_rate = v
   }
 
   if (body.size !== undefined) {

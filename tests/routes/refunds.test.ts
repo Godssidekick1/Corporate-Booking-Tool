@@ -7,6 +7,7 @@ import { POST as rejectPost } from '@/app/api/tmc/queues/refunds/[id]/reject/rou
 import { POST as markCancelledPost } from '@/app/api/tmc/queues/cancellations/[bookingId]/mark-cancelled/route'
 import { POST as attachPost } from '@/app/api/tmc/queues/refunds/[id]/attachments/route'
 import { GET as fileGet, DELETE as fileDelete } from '@/app/api/tmc/queues/refunds/[id]/attachments/[aid]/route'
+import { PATCH as clientPatch } from '@/app/api/tmc/clients/[id]/route'
 import { financialYear } from '@/app/lib/repositories/refunds'
 import { call } from '../harness/call'
 import { actAs } from '../harness/session'
@@ -292,5 +293,70 @@ d('refund attachments', () => {
     actAs(admin)
     const settled = await fileDelete(new NextRequest(new URL('/x', 'http://localhost'), { method: 'DELETE' }), { params: Promise.resolve({ id: refundId, aid: keep }) })
     expect(settled.status).toBe(409)
+  })
+})
+
+// ── The refund rule (Corporate Settings, and the Cancellation queues) ────────
+
+
+d('the refund rule', () => {
+  let a: Actors
+  const patch = (as: { id: string }, body: unknown) => call(clientPatch, {
+    as, method: 'PATCH', url: `/api/tmc/clients/${a.corpAdmin.client_id}`, params: { id: a.corpAdmin.client_id! }, body,
+  })
+
+  let pendingId: string
+
+  beforeAll(async () => {
+    a = await actors()
+    // A pending refund of its own, whatever ran before.
+    const { id } = await one<{ id: string }>(db, sql`
+      select b.id from bookings b where b.employee_id = ${a.corpAdmin.id} order by b.created_at desc, b.id limit 1`)
+    await exec(db, sql`
+      update bookings set status = 'cancelled', cancelled_at = now(), ticket_numbers = ${['TKT-RULE']},
+        cancellation = '{"wasTicketed": true, "cancellationCharge": 500, "serviceTaxOnRaf": 90}'::jsonb
+      where id = ${id}`)
+    await exec(db, sql`delete from refunds where booking_id = ${id}`)
+    pendingId = (await one<{ id: string }>(db, sql`
+      insert into refunds (client_id, booking_id, passenger_index, ticket_number)
+      select client_id, id, 0, 'TKT-RULE' from bookings where id = ${id} returning id`)).id
+  })
+
+  it('the TMC sets it; the refund panel starts from it at once', async () => {
+    const res = await patch({ id: a.tmcAdmin.id }, {
+      refund_markup: true, refund_processing_fee: false, tmc_cancellation_fee: 2, tmc_cancellation_fee_unit: 'percent', gst_rate: 18,
+    })
+    expect(res.status).toBe(200)
+    expect((res.json as { client: Record<string, unknown> }).client).toMatchObject({
+      refund_markup: true, refund_processing_fee: false, tmc_cancellation_fee: 2, tmc_cancellation_fee_unit: 'percent', gst_rate: 18,
+    })
+    const panel = (await call(detailGet, { as: { id: a.tmcAdmin.id }, url: `/api/tmc/queues/refunds/${pendingId}`, params: { id: pendingId } })).json as {
+      rule: Record<string, unknown>; computation: { deductions: { key: string; amount: number }[]; charged: { totalPaid: number } }
+    }
+    expect(panel.rule).toMatchObject({ refundMarkup: true, tmcCancellationFee: 2, tmcCancellationFeeUnit: 'percent' })
+    const fee = panel.computation.deductions.find(x => x.key === 'tmc_cancellation_fee')!.amount
+    expect(fee).toBe(Math.round(panel.computation.charged.totalPaid * 0.02 * 100) / 100)
+    expect(panel.computation.deductions.find(x => x.key === 'markup_kept')!.amount).toBe(0)
+  })
+
+  it('out of range is refused, with what is allowed', async () => {
+    expect(await patch({ id: a.tmcAdmin.id }, { tmc_cancellation_fee: 150, tmc_cancellation_fee_unit: 'percent' })).toMatchObject({
+      status: 400, json: { error: 'The TMC cancellation fee must be a percentage from 0 to 100.' },
+    })
+    expect(await patch({ id: a.tmcAdmin.id }, { gst_rate: 120 })).toMatchObject({ status: 400 })
+    expect(await patch({ id: a.tmcAdmin.id }, { tmc_cancellation_fee_unit: 'rupees' })).toMatchObject({ status: 400 })
+    expect(await patch({ id: a.tmcAdmin.id }, { refund_markup: 'yes' })).toMatchObject({ status: 400 })
+  })
+
+  it('a counsellor with process_refunds (and not manage_clients) may set the rule, and nothing else', async () => {
+    if (!a.tc) return
+    const tc = { id: a.tc.id }
+    await exec(db, sql`delete from employee_permissions where employee_id = ${a.tc.id} and permission_key in ('manage_clients', 'process_refunds')`)
+    await exec(db, sql`insert into employee_permissions (employee_id, permission_key) values (${a.tc.id}, 'process_refunds')`)
+    await exec(db, sql`
+      insert into employee_client_access (employee_id, client_id) values (${a.tc.id}, ${a.corpAdmin.client_id})
+      on conflict do nothing`)
+    expect((await patch(tc, { gst_rate: 12 })).status).toBe(200)
+    expect((await patch(tc, { gst_rate: 18, name: 'Renamed by a counsellor' })).status).toBe(403)
   })
 })
