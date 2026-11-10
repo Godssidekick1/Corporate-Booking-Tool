@@ -9,6 +9,8 @@ import { POST as attachPost } from '@/app/api/tmc/queues/refunds/[id]/attachment
 import { GET as fileGet, DELETE as fileDelete } from '@/app/api/tmc/queues/refunds/[id]/attachments/[aid]/route'
 import { PATCH as clientPatch } from '@/app/api/tmc/clients/[id]/route'
 import { GET as bookingGet } from '@/app/api/book/[bookingId]/route'
+import { GET as tmcReport } from '@/app/api/tmc/reports/[report]/route'
+import { GET as corporateReport } from '@/app/api/reports/[report]/route'
 import { financialYear } from '@/app/lib/repositories/refunds'
 import { call } from '../harness/call'
 import { actAs } from '../harness/session'
@@ -402,5 +404,48 @@ d('the refund outcome on the booking', () => {
     expect((res.json as { booking: { cancellation: unknown } }).booking.cancellation).toMatchObject({
       refund: 'declined', refunded: null, declinedReason: 'Non-refundable fare',
     })
+  })
+})
+
+// ── Reports, once refunds are processed ──────────────────────────────────────
+
+d('refunds in the reports', () => {
+  let a: Actors
+  // Yesterday to tomorrow: reports count days in Indian time, the test's clock may not.
+  const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10)
+  const range = `from=${day(-1)}&to=${day(1)}`
+
+  beforeAll(async () => {
+    a = await actors()
+    // A processed refund of its own, whatever ran before: 5,000 paid, 3,800 back, 200 kept by the TMC.
+    const { id } = await one<{ id: string }>(db, sql`
+      select b.id from bookings b where b.employee_id = ${a.corpAdmin.id} order by b.created_at, b.id offset 5 limit 1`)
+    await exec(db, sql`update bookings set status = 'cancelled', cancelled_at = now() where id = ${id}`)
+    await exec(db, sql`delete from refunds where booking_id = ${id}`)
+    await exec(db, sql`
+      insert into refunds (client_id, booking_id, passenger_index, status, lines, refund_amount, airline_refund, tmc_retained,
+                           credit_note_no, refund_date, mode, processed_at)
+      select client_id, id, 0, 'processed', '{"computation": {"charged": {"totalPaid": 5000}}}'::jsonb, 3800, 4000, 200,
+             'CN/TEST/R1', current_date, 'agency_credit', now()
+      from bookings where id = ${id}`)
+  })
+
+  interface ReportJson { headline: { label: string; value: number }[]; tables: { key: string; columns: { key: string }[] }[] }
+
+  it('TMC revenue: refunded and kept on cancellations, and a table by client', async () => {
+    const res = await call(tmcReport, { as: { id: a.tmcAdmin.id }, url: `/api/tmc/reports/revenue?${range}`, params: { report: 'revenue' } })
+    expect(res.status).toBe(200)
+    const r = res.json as { report: ReportJson }
+    const labels = r.report.headline.map(h => h.label)
+    expect(labels).toEqual(expect.arrayContaining(['Refunded', 'Kept on cancellations']))
+    expect(r.report.tables.map(t => t.key)).toContain('cancellations')
+  })
+
+  it('corporate spend: the cancellation charges, and never what the TMC kept', async () => {
+    const res = await call(corporateReport, { as: { id: a.corpAdmin.id }, url: `/api/reports/spend?${range}`, params: { report: 'spend' } })
+    expect(res.status).toBe(200)
+    const r = res.json as { report: ReportJson }
+    expect(r.report.headline.map(h => h.label)).toContain('Cancellation charges')
+    expect(JSON.stringify(r)).not.toMatch(/Kept by the TMC|tmcKept|tmc_kept|Kept on cancellations/)
   })
 })

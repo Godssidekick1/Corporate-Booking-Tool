@@ -402,6 +402,41 @@ export async function revenue(db: Queryable, scope: Scope, f: ReportFilters): Pr
   return { totals, months, clients }
 }
 
+// ── Cancelled tickets, once refunded ─────────────────────────────────────────
+// Cancelled bookings leave the counts above, but a refund rarely returns all
+// that was paid: what is kept (the airline's charges, the TMC's fee, any
+// markup not refunded) is still money the company spent and, the TMC's part,
+// income. Refunds processed in the range, by processing date, within the same
+// scope and filters. `paid` is the ticket's total as frozen on the refund.
+
+const REFUND_PAID = sql`coalesce((r.lines -> 'computation' -> 'charged' ->> 'totalPaid')::numeric, 0)`
+const CANCELLATION_SUMS = sql`
+  count(*)::int as tickets,
+  coalesce(sum(${REFUND_PAID}), 0)::float8 as paid,
+  coalesce(sum(r.refund_amount), 0)::float8 as refunded,
+  coalesce(sum(${REFUND_PAID} - r.refund_amount), 0)::float8 as kept,
+  coalesce(sum(r.tmc_retained), 0)::float8 as tmc_kept`
+
+export interface CancellationSums { tickets: number; paid: number; refunded: number; kept: number; tmc_kept: number }
+
+export async function cancellations(db: Queryable, scope: Scope, f: ReportFilters): Promise<{
+  totals: CancellationSums
+  clients: (CancellationSums & { name: string })[]
+}> {
+  const where = sql`${bookingScope(scope)} and r.status = 'processed' and ${inRange(sql`r.processed_at`, f)} ${filtersOn(f)}`
+  const from = sql`refunds r join bookings b on b.id = r.booking_id join employees e on e.id = b.employee_id`
+  const [totals, clients] = await Promise.all([
+    one<CancellationSums>(db, sql`select ${CANCELLATION_SUMS} from ${from} where ${where}`),
+    scope.side === 'tmc'
+      ? many<CancellationSums & { name: string }>(db, sql`
+          select c.name, ${CANCELLATION_SUMS}
+          from ${from} join clients c on c.id = b.client_id
+          where ${where} group by c.id, c.name order by 6 desc, 1`)
+      : Promise.resolve([]),
+  ])
+  return { totals, clients }
+}
+
 // ── TMC: client activity ─────────────────────────────────────────────────────
 
 export interface ClientActivity {

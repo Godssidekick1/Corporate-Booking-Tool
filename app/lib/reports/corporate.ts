@@ -3,7 +3,7 @@ import * as reports from '@/app/lib/repositories/reports'
 import type { Scope, SpendGroup, OutcomeCounts } from '@/app/lib/repositories/reports'
 import { BREACH_LABELS } from '@/app/lib/policy/breachText'
 import { POLICY_REASONS } from '@/app/lib/book/policyReasons'
-import { tripStatus, signOffStatus } from '@/app/lib/trips/status'
+import { tripStatus, signOffStatus, money } from '@/app/lib/trips/status'
 import type { Report, ReportFilters, ReportTable } from './types'
 import { pct, round2, series, stacked, num, col, sentence, plural } from './shape'
 
@@ -28,8 +28,9 @@ function spendTable(key: string, title: string, label: string, rows: SpendGroup[
 }
 
 export async function spend(db: Queryable, scope: Scope, f: ReportFilters): Promise<Report> {
-  const r = await reports.spend(db, scope, f)
+  const [r, cancelled] = await Promise.all([reports.spend(db, scope, f), reports.cancellations(db, scope, f)])
   const { bookings, spend: total, domestic } = r.totals
+  const c = cancelled.totals
   return {
     key: 'spend', title: 'Spend',
     description: 'What the company paid for flights booked in the period, by who travelled.',
@@ -39,6 +40,12 @@ export async function spend(db: Queryable, scope: Scope, f: ReportFilters): Prom
       { label: 'Average fare', value: bookings ? round2(total / bookings) : null, kind: 'money' },
       { label: 'Domestic', value: pct(domestic, bookings), kind: 'percent',
         hint: bookings ? `${plural(bookings - domestic, 'international booking', 'international bookings')}` : 'No bookings in this period' },
+      // Only when tickets were cancelled and refunded in the period: what the
+      // refunds did not give back. Not in Total spend, which counts flights flown.
+      ...(c.tickets ? [{
+        label: 'Cancellation charges', value: round2(c.kept), kind: 'money' as const,
+        hint: `${plural(c.tickets, 'cancelled ticket', 'cancelled tickets')}; ${money(c.refunded)} refunded`,
+      }] : []),
     ],
     chart: { title: 'Spend by month', kind: 'series', valueKind: 'money', points: series(r.months, m => num(m.spend)) },
     tables: [

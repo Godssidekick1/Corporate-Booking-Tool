@@ -16,8 +16,9 @@ type TmcScope = Extract<Scope, { side: 'tmc' }>
 const MODE_LABEL: Record<string, string> = { cbt: 'CBT', sbt: 'SBT', hybrid: 'Hybrid' }
 
 export async function revenue(db: Queryable, scope: TmcScope, f: ReportFilters): Promise<Report> {
-  const r = await reports.revenue(db, scope, f)
+  const [r, cancelled] = await Promise.all([reports.revenue(db, scope, f), reports.cancellations(db, scope, f)])
   const t = r.totals
+  const c = cancelled.totals
   return {
     key: 'revenue', title: 'Revenue',
     description: 'What clients paid, what the airlines were owed, and the margin between: markup and fee, less discount.',
@@ -27,6 +28,12 @@ export async function revenue(db: Queryable, scope: TmcScope, f: ReportFilters):
       { label: 'Margin', value: round2(t.margin), kind: 'money',
         hint: t.without ? `${plural(t.without, 'booking has', 'bookings have')} no commercials recorded (margin 0)` : undefined },
       { label: 'Margin %', value: pct(t.margin, t.sell), kind: 'percent', hint: 'Of sell' },
+      // Only when refunds were processed in the period. Cancelled bookings are
+      // out of Sell and Margin; what the TMC kept on them is shown here.
+      ...(c.tickets ? [
+        { label: 'Refunded', value: round2(c.refunded), kind: 'money' as const, hint: plural(c.tickets, 'cancelled ticket', 'cancelled tickets') },
+        { label: 'Kept on cancellations', value: round2(c.tmc_kept), kind: 'money' as const, hint: 'The TMC’s share of what was not refunded' },
+      ] : []),
     ],
     chart: { title: 'Margin by month', kind: 'series', valueKind: 'money', points: series(r.months, m => num(m.margin)) },
     tables: [{
@@ -40,7 +47,15 @@ export async function revenue(db: Queryable, scope: TmcScope, f: ReportFilters):
         discount: round2(c.discount), fee: round2(c.fee), margin: round2(c.margin), marginShare: pct(c.margin, c.sell),
         without: c.without,
       })),
-    }],
+    }, ...(cancelled.clients.length ? [{
+      key: 'cancellations', title: 'Cancelled tickets, by client',
+      columns: [col('name', 'Client', 'text'), col('tickets', 'Tickets', 'count'), col('paid', 'Paid', 'money'),
+        col('refunded', 'Refunded', 'money'), col('kept', 'Not refunded', 'money'), col('tmcKept', 'Kept by the TMC', 'money')],
+      rows: cancelled.clients.map(x => ({
+        name: x.name, tickets: x.tickets, paid: round2(x.paid), refunded: round2(x.refunded),
+        kept: round2(x.kept), tmcKept: round2(x.tmc_kept),
+      })),
+    }] : [])],
   }
 }
 
