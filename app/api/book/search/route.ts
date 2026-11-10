@@ -18,6 +18,7 @@ import { cabinLetter, CABIN_LABELS } from '@/app/lib/book/cabin'
 import { policyListsFor } from '@/app/lib/rule-engine/policyLists'
 import { filterResults } from '@/app/lib/policy/searchFilter'
 import { shownFlights } from '@/app/lib/policy/lowestLogicalFare'
+import { judgeSearchResults } from '@/app/lib/policy/searchVerdicts'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
 import { NextRequest, after } from 'next/server'
 
@@ -548,15 +549,20 @@ export const POST = route(async (req: NextRequest) => {
     const context = await contextPromise
     // Filtered before markup: nothing the policy hides is priced or sent.
     const allowed = filterResults(results, await listsPromise)
-    const priced = allowed.map(result => applyMarkup(context, result, adult + child))
+    const marked = allowed.map(result => applyMarkup(context, result, adult + child))
 
-    // What the traveller was shown, kept for the lowest-logical-fare check at
-    // booking. Not fatal: without it that check is skipped, never guessed.
+    // What the traveller was shown: kept for the lowest-logical-fare check at
+    // booking, and used now to judge each fare against the policy (the chip on
+    // its card), so the chip and the later checks see the same alternatives.
+    const shown = shownFlights(marked)
+    const priced = await judgeSearchResults(db, employee, marked, shown)
+
+    // Not fatal: without it the booking's lowest-fare check is skipped, never guessed.
     if (employee.client_id) {
       try {
         await bookingsRepo.saveSearchFares(db, {
           search_key: availability.Key, client_id: employee.client_id, traveller_id: employee.id,
-          flights: shownFlights(priced),
+          flights: shown,
         })
       } catch (err) {
         console.error('Could not keep the search for the lowest-fare check', err)

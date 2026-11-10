@@ -1,0 +1,132 @@
+/* The results page (app/components/book/FlightResults.tsx): filters in a left
+   column, results on the right; the column folds behind a button on narrow
+   screens. Colours are the app's own (app/globals.css tokens). */
+
+.body { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 18px; align-items: start; }
+.results { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
+/* Filters */
+.filters { background: var(--color-surface); border: 1px solid var(--color-line); border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 16px; position: sticky; top: 16px; }
+.filtersHead { display: flex; justify-content: space-between; align-items: center; }
+.filtersHead b { font-size: 13px; color: var(--color-ink); }
+.linkBtn { background: none; border: 0; padding: 0; color: var(--color-info-fg); font-size: 12px; font-weight: 600; cursor: pointer; }
+.group { display: flex; flex-direction: column; gap: 8px; }
+.group h4 { margin: 0; font-size: 10.5px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: var(--color-muted); }
+.airlineOpt { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; font-size: 12.5px; cursor: pointer; color: var(--color-body); }
+.airlineOpt input { margin: 0; accent-color: var(--color-rail); }
+.airlineName { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.airlineName span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.airlineOpt small { color: var(--color-muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { border: 1px solid var(--color-line); background: var(--color-surface); border-radius: 8px; padding: 5px 9px; font-size: 12px; color: var(--color-body); cursor: pointer; }
+.chip[aria-pressed="true"] { background: var(--color-rail); border-color: var(--color-rail); color: #fff; font-weight: 600; }
+.chip:disabled { color: var(--color-line-strong); background: var(--color-canvas); cursor: not-allowed; }
+.chip small { opacity: 0.65; margin-left: 3px; }
+.tod { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.tod button { border: 1px solid var(--color-line); background: var(--color-surface); border-radius: 9px; padding: 7px 2px 6px; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 10.5px; color: var(--color-secondary); cursor: pointer; }
+.tod button svg { width: 16px; height: 16px; }
+.tod button[aria-pressed="true"] { background: var(--color-rail); border-color: var(--color-rail); color: #fff; }
+.tod button:disabled { opacity: 0.4; cursor: not-allowed; }
+.range { display: flex; flex-direction: column; gap: 4px; }
+.range input { width: 100%; accent-color: var(--color-rail); }
+.rangeEnds { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--color-secondary); font-variant-numeric: tabular-nums; }
+.toggle { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 12.5px; cursor: pointer; color: var(--color-body); }
+.toggle input { accent-color: var(--color-rail); width: 15px; height: 15px; margin: 0; }
+.toggle small { color: var(--color-muted); }
+.hiddenNote { font-size: 11.5px; color: var(--color-secondary); background: var(--color-canvas); border-radius: 8px; padding: 8px 10px; line-height: 1.45; }
+
+/* Lowest price by airline */
+.strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+.strip button { flex: 0 0 auto; min-width: 118px; text-align: left; background: var(--color-surface); border: 1px solid var(--color-line); border-radius: 12px; padding: 9px 11px; display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; align-items: center; cursor: pointer; }
+.strip button > :first-child { grid-row: span 2; }
+.strip button b { font-size: 13.5px; color: var(--color-ink); font-variant-numeric: tabular-nums; }
+.strip button small { font-size: 11px; color: var(--color-secondary); white-space: nowrap; }
+.strip button[aria-pressed="true"] { border-color: var(--color-rail); box-shadow: inset 0 0 0 1px var(--color-rail); }
+.strip .all { grid-template-columns: 1fr; }
+.strip .all > :first-child { grid-row: auto; }
+
+.toolbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.count { font-size: 13px; color: var(--color-secondary); }
+.count b { color: var(--color-ink); }
+.toolbarRight { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.seg { display: inline-flex; background: #f3f4f6; border-radius: 10px; padding: 3px; gap: 2px; }
+.seg button { border: 0; background: transparent; border-radius: 8px; padding: 6px 11px; font-size: 12.5px; color: var(--color-secondary); white-space: nowrap; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--color-surface); color: var(--color-ink); font-weight: 600; box-shadow: 0 1px 2px rgba(10, 10, 20, 0.08); }
+.seg button small { display: block; font-size: 10.5px; font-weight: 500; color: var(--color-muted); font-variant-numeric: tabular-nums; }
+.filtersToggle { display: none; background: var(--color-surface); border: 1px solid var(--color-line-strong); border-radius: 9px; padding: 7px 12px; font-size: 12.5px; font-weight: 600; color: var(--color-ink); cursor: pointer; }
+
+/* Card */
+.card { background: var(--color-surface); border: 1px solid var(--color-line); border-radius: 14px; transition: border-color 0.15s; }
+.card:hover { border-color: var(--color-line-strong); }
+.cardOpen { border-color: var(--color-rail); }
+.cardOpen:hover { border-color: var(--color-rail); }
+.cardMain { display: grid; grid-template-columns: 180px minmax(0, 1fr) 150px; gap: 16px; align-items: center; padding: 16px 18px 12px; }
+.carrier { display: flex; gap: 10px; align-items: center; min-width: 0; }
+.carrier div { display: flex; flex-direction: column; min-width: 0; }
+.carrier b { font-size: 13.5px; color: var(--color-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.carrier span { font-size: 11.5px; color: var(--color-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.star { color: #b45309; margin-left: 4px; font-size: 12px; }
+.legs { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.dirLabel { font-size: 10px; font-weight: 700; color: var(--color-muted); letter-spacing: 0.4px; text-transform: uppercase; margin-bottom: -6px; }
+.leg { display: grid; grid-template-columns: 64px minmax(0, 1fr) 64px; gap: 10px; align-items: center; }
+.pt b { display: block; font-size: 17px; color: var(--color-ink); letter-spacing: -0.3px; font-variant-numeric: tabular-nums; }
+.pt span { font-size: 11.5px; color: var(--color-secondary); font-weight: 600; }
+.pt sup { font-size: 10px; color: var(--color-danger-fg); font-weight: 700; margin-left: 2px; }
+.ptEnd { text-align: right; }
+.track { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 11px; color: var(--color-muted); min-width: 0; }
+.bar { position: relative; width: 100%; height: 2px; background: var(--color-line-strong); border-radius: 2px; }
+.bar::before, .bar::after { content: ''; position: absolute; top: -2px; width: 6px; height: 6px; border-radius: 50%; background: var(--color-line-strong); }
+.bar::before { left: 0; }
+.bar::after { right: 0; }
+.stopDot { position: absolute; top: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--color-surface); border: 2px solid #b45309; transform: translateX(-50%); }
+.stops { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.nonStop { color: var(--color-success-fg); font-weight: 600; }
+.price { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; text-align: right; }
+.price small { font-size: 10.5px; color: var(--color-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
+.price b { font-size: 20px; color: var(--color-ink); letter-spacing: -0.4px; font-variant-numeric: tabular-nums; }
+.priceSub { font-size: 11px; color: var(--color-secondary); }
+.faresBtn { margin-top: 4px; background: var(--color-surface); border: 1px solid var(--color-line-strong); border-radius: 9px; padding: 6px 10px; font-size: 12px; font-weight: 600; color: var(--color-ink); display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.cardOpen .faresBtn { background: var(--color-rail); color: #fff; border-color: var(--color-rail); }
+.faresBtn svg { width: 12px; height: 12px; transition: transform 0.15s; }
+.cardOpen .faresBtn svg { transform: rotate(180deg); }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 18px 14px; }
+.pill { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 6px; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; border: 1px solid transparent; }
+.pill i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+/* Fare options, inside the card */
+.fareGrid { border-top: 1px solid var(--color-line); background: var(--color-canvas); padding: 14px 18px 16px; border-radius: 0 0 14px 14px; display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+.fare { background: var(--color-surface); border: 1px solid var(--color-line); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.fareTop { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.fareTop b { font-size: 12.5px; color: var(--color-ink); text-transform: uppercase; letter-spacing: 0.3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fareTop span { font-size: 16px; font-weight: 700; color: var(--color-ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fare ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; font-size: 12px; color: var(--color-body); }
+.fare li::before { content: '·'; color: var(--color-muted); margin-right: 6px; }
+.fareNo { color: var(--color-muted); }
+.chooseBtn { margin-top: auto; background: var(--color-rail); border: 1px solid var(--color-rail); color: #fff; border-radius: 10px; padding: 8px 12px; font-weight: 600; font-size: 12.5px; cursor: pointer; }
+.chooseBtn:disabled { opacity: 0.6; cursor: wait; }
+
+.empty { background: var(--color-surface); border: 1px dashed var(--color-line-strong); border-radius: 14px; padding: 36px 16px; text-align: center; color: var(--color-secondary); font-size: 13px; }
+.empty b { display: block; color: var(--color-ink); margin-bottom: 4px; }
+
+button:focus-visible, input:focus-visible { outline: 2px solid var(--color-rail); outline-offset: 2px; }
+
+@media (max-width: 900px) {
+  .body { grid-template-columns: 1fr; }
+  .filters { position: static; display: none; }
+  .filtersShown { display: flex; }
+  .filtersToggle { display: inline-flex; }
+  .cardMain { grid-template-columns: minmax(0, 1fr) auto; }
+  .carrier { grid-column: 1 / -1; }
+}
+@media (max-width: 600px) {
+  .cardMain { grid-template-columns: 1fr; gap: 12px; padding: 14px 14px 10px; }
+  .price { flex-direction: row; align-items: center; justify-content: space-between; text-align: left; border-top: 1px solid #f3f4f6; padding-top: 10px; flex-wrap: wrap; }
+  .price small { display: none; }
+  .faresBtn { margin-top: 0; }
+  .tags { padding: 0 14px 12px; }
+  .fareGrid { padding: 12px; grid-template-columns: 1fr; }
+  .leg { grid-template-columns: 56px minmax(0, 1fr) 56px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .card, .faresBtn svg { transition: none; }
+}

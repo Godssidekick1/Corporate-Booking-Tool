@@ -81,6 +81,10 @@ export interface FareOption {
   // Set by search; the figure cards show and the policy preview judges. An
   // estimate until priced: the airline may move the fare.
   sellEstimate?: number
+  // The traveller's policy verdict for this fare, judged by search on the sell
+  // estimate (app/lib/policy/searchVerdicts.ts). Absent when policy control is
+  // off or the traveller has no policy. Guidance: add-passenger decides.
+  policy?: 'green' | 'amber' | 'red'
   baseFare?: number
   // The aggregate, from Total.OtherTax. NOT guaranteed to equal
   // totalFare - baseFare: Total.FuelSurcharge is a SIBLING field, so YQ may or

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
+import AirlineMark from '@/app/components/AirlineMark'
 import Link from 'next/link'
 import { flowStorage } from '@/app/lib/book/flowStorage'
 import { ButtonBusy } from '@/app/components/FlowLoader'
@@ -139,8 +140,14 @@ export default function SelectFarePage() {
       return
     }
 
+    // The fare chosen on the results card (?fare=<pricingKey>), else the first.
+    // Read once from the URL here rather than through useSearchParams: only
+    // the first render needs it, and a refresh keeps it.
+    const wanted = new URLSearchParams(window.location.search).get('fare')
+    const startIndex = Math.max(0, stored.fareOptions.findIndex(f => f.pricingKey === wanted))
     setFlight(stored)
-    runPricing(stored, 0)
+    setSelectedFareIndex(startIndex)
+    runPricing(stored, startIndex)
     loadAllFareVerdicts(stored)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flightKey])
@@ -436,7 +443,7 @@ export default function SelectFarePage() {
         <div style={s.card}>
           <div style={s.cardHeader}>
             <div style={s.airlineBlock}>
-              <div style={s.airlineAvatar}>{flight.airline?.name?.[0] ?? '✈'}</div>
+              <AirlineMark code={flight.airline?.code ?? flight.legs?.[0]?.airlineCode} name={flight.airline?.name} />
               <div>
                 <div style={s.airlineName}>{flight.airline?.name ?? 'Unknown airline'}</div>
                 <div style={s.airlineMeta}>
