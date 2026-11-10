@@ -31,6 +31,11 @@ export const GET = route(async (_req: NextRequest, { params }: { params: Promise
 
   const frozen = d.status === 'processed' ? (d.lines as unknown as FrozenLines | null) : null
   const sameState = sameGstState(d.client.branch_gst_state, d.client.gst_state ?? d.client.state)
+  const [attachments, parties] = await Promise.all([
+    refunds.attachments(db, d.id),
+    // Who issues the credit note to whom, for the printable copy.
+    d.status === 'processed' ? refunds.creditNoteParties(db, d.client_id) : null,
+  ])
   return Response.json({
     ok: true,
     refund: {
@@ -58,5 +63,7 @@ export const GET = route(async (_req: NextRequest, { params }: { params: Promise
     inputs: refundInputs(d),
     rule: refundRule(d.client),
     sameState,
+    attachments,
+    parties,
   })
 })

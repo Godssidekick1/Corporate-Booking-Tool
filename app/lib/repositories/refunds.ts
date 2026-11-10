@@ -258,3 +258,68 @@ export async function confirmCancelled(
       ${scope.clientIds ? sql`and client_id = any(${scope.clientIds})` : empty}
     returning client_id`)
 }
+
+// ── Attachments ──────────────────────────────────────────────────────────────
+
+export const MAX_ATTACHMENTS = 10
+export type AttachmentMeta = { id: string; filename: string; content_type: string; size: number; uploaded_at: string; uploaded_by_name: string | null }
+
+export async function attachments(db: Queryable, refundId: string): Promise<AttachmentMeta[]> {
+  return many<AttachmentMeta>(db, sql`
+    select a.id, a.filename, a.content_type, a.size, a.uploaded_at,
+           (select e.full_name from employees e where e.id = a.uploaded_by) as uploaded_by_name
+    from refund_attachments a where a.refund_id = ${refundId} order by a.uploaded_at, a.id`)
+}
+
+export async function addAttachment(
+  db: Queryable,
+  refund: { id: string; client_id: string },
+  f: { filename: string; contentType: string; bytes: Buffer; by: string },
+): Promise<AttachmentMeta> {
+  return one<AttachmentMeta>(db, sql`
+    insert into refund_attachments (refund_id, client_id, filename, content_type, size, bytes, uploaded_by)
+    values (${refund.id}, ${refund.client_id}, ${f.filename}, ${f.contentType}, ${f.bytes.length}, ${f.bytes}, ${f.by})
+    returning id, filename, content_type, size, uploaded_at,
+              (select e.full_name from employees e where e.id = uploaded_by) as uploaded_by_name`)
+}
+
+export async function attachmentFile(db: Queryable, refundId: string, attachmentId: string): Promise<{ filename: string; content_type: string; bytes: Buffer } | null> {
+  return maybeOne(db, sql`
+    select filename, content_type, bytes from refund_attachments where id = ${attachmentId} and refund_id = ${refundId}`)
+}
+
+export async function removeAttachment(db: Queryable, refundId: string, attachmentId: string): Promise<boolean> {
+  return (await exec(db, sql`delete from refund_attachments where id = ${attachmentId} and refund_id = ${refundId}`)) === 1
+}
+
+// ── The credit note's parties ────────────────────────────────────────────────
+// Issuer: the TMC, as registered at the client's branch (else its head
+// office). Recipient: the client, with its primary GST registration.
+
+export interface CreditNoteParties {
+  issuer: { name: string; branch: string | null; gstin: string | null; gst_name: string | null; city: string | null; state: string | null; zip: string | null }
+  recipient: { name: string; gstin: string | null; gst_holder: string | null; address: string | null; city: string | null; state: string | null; zip: string | null }
+}
+
+export async function creditNoteParties(db: Queryable, clientId: string): Promise<CreditNoteParties> {
+  const row = await one<Record<string, string | null>>(db, sql`
+    select t.name as tmc_name,
+           br.name as branch, br.gst_number, br.gst_name, br.gst_city, br.gst_state, br.gst_zip,
+           k.name as client_name, g.gstin, g.gst_holder,
+           nullif(concat_ws(', ', nullif(g.address_1, ''), nullif(g.address_2, '')), '') as address,
+           coalesce(nullif(g.city, ''), k.city) as city, coalesce(nullif(g.state, ''), k.state) as state,
+           coalesce(nullif(g.zip, ''), k.pincode) as zip
+    from clients k
+    join tmcs t on t.id = k.tmc_id
+    left join lateral (
+      select * from branches b where b.tmc_id = k.tmc_id and (b.id = k.branch_id or b.is_head_office)
+      order by (b.id = k.branch_id) desc limit 1) br on true
+    left join lateral (
+      select * from client_gst_registrations r where r.client_id = k.id
+      order by r.is_primary desc, r.created_at limit 1) g on true
+    where k.id = ${clientId}`)
+  return {
+    issuer: { name: row.tmc_name ?? '', branch: row.branch, gstin: row.gst_number, gst_name: row.gst_name, city: row.gst_city, state: row.gst_state, zip: row.gst_zip },
+    recipient: { name: row.client_name ?? '', gstin: row.gstin, gst_holder: row.gst_holder, address: row.address, city: row.city, state: row.state, zip: row.zip },
+  }
+}

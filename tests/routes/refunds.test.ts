@@ -1,11 +1,15 @@
 import { describe, it, expect, beforeAll } from 'vitest'
+import { NextRequest } from 'next/server'
 import { GET as queueGet } from '@/app/api/tmc/queues/refunds/route'
 import { GET as detailGet } from '@/app/api/tmc/queues/refunds/[id]/route'
 import { POST as processPost } from '@/app/api/tmc/queues/refunds/[id]/process/route'
 import { POST as rejectPost } from '@/app/api/tmc/queues/refunds/[id]/reject/route'
 import { POST as markCancelledPost } from '@/app/api/tmc/queues/cancellations/[bookingId]/mark-cancelled/route'
+import { POST as attachPost } from '@/app/api/tmc/queues/refunds/[id]/attachments/route'
+import { GET as fileGet, DELETE as fileDelete } from '@/app/api/tmc/queues/refunds/[id]/attachments/[aid]/route'
 import { financialYear } from '@/app/lib/repositories/refunds'
 import { call } from '../harness/call'
+import { actAs } from '../harness/session'
 import { actors, type Actors } from '../harness/actors'
 import { resetDatabase } from '../harness/db'
 import { db } from '@/app/lib/db'
@@ -214,5 +218,79 @@ d('cancellation queue and refunds', () => {
     expect(financialYear(new Date('2026-03-31T18:00:00Z'))).toBe('2025-26')   // 31 Mar, 23:30 IST
     expect(financialYear(new Date('2026-03-31T18:31:00Z'))).toBe('2026-27')   // 1 Apr, 00:01 IST
     expect(financialYear(new Date('2027-01-15T00:00:00Z'))).toBe('2026-27')
+  })
+})
+
+// ── Attachments ──────────────────────────────────────────────────────────────
+
+
+const PDF = Buffer.concat([Buffer.from('%PDF-1.7\n'), Buffer.alloc(64, 0x20), Buffer.from('%%EOF')])
+
+async function upload(as: { id: string }, id: string, bytes: Buffer, name: string, type: string) {
+  actAs(as)
+  const form = new FormData()
+  form.append('file', new Blob([new Uint8Array(bytes)], { type }), name)
+  const req = new NextRequest(new URL(`/api/tmc/queues/refunds/${id}/attachments`, 'http://localhost'), { method: 'POST', body: form })
+  const res = await attachPost(req, { params: Promise.resolve({ id }) })
+  return { status: res.status, json: await res.json() as { attachment?: { id: string; filename: string; size: number }; error?: string } }
+}
+
+d('refund attachments', () => {
+  let a: Actors
+  let admin: { id: string }
+  let refundId: string
+
+  beforeAll(async () => {
+    a = await actors()
+    admin = { id: a.tmcAdmin.id }
+    refundId = (await one<{ id: string }>(db, sql`
+      select r.id from refunds r join bookings b on b.id = r.booking_id
+      where r.status = 'pending' and b.status = 'cancelled' and r.tmc_id = ${a.tmcAdmin.tmc_id}
+      order by r.created_at limit 1`)).id
+  })
+
+  it('a PDF is stored, listed on the panel and downloaded byte for byte, always as a download', async () => {
+    const up = await upload(admin, refundId, PDF, '../airline note.pdf', 'application/pdf')
+    expect(up.status).toBe(200)
+    expect(up.json.attachment).toMatchObject({ filename: 'airline note.pdf', size: PDF.length })
+
+    const panel = (await call(detailGet, { as: admin, url: `/api/tmc/queues/refunds/${refundId}`, params: { id: refundId } })).json as { attachments: { id: string }[] }
+    expect(panel.attachments.map(x => x.id)).toContain(up.json.attachment!.id)
+
+    actAs(admin)
+    const aid = up.json.attachment!.id
+    const res = await fileGet(new NextRequest(new URL(`/api/tmc/queues/refunds/${refundId}/attachments/${aid}`, 'http://localhost')),
+      { params: Promise.resolve({ id: refundId, aid }) })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toBe('application/pdf')
+    expect(res.headers.get('content-disposition')).toMatch(/^attachment; filename="airline note.pdf"/)
+    expect(Buffer.from(await res.arrayBuffer()).equals(PDF)).toBe(true)
+  })
+
+  it('a file is judged by its own bytes: HTML named .pdf is refused, and so is anything over 5 MB', async () => {
+    const html = await upload(admin, refundId, Buffer.from('<html><script>alert(1)</script></html>'), 'refund.pdf', 'application/pdf')
+    expect(html).toMatchObject({ status: 415, json: { error: 'Only PDF, JPG and PNG files can be attached.' } })
+    const big = await upload(admin, refundId, Buffer.concat([PDF, Buffer.alloc(5 * 1024 * 1024)]), 'big.pdf', 'application/pdf')
+    expect(big.status).toBe(413)
+  })
+
+  it('another TMC can neither upload nor download; a pending refund’s document can be removed, a settled one’s cannot', async () => {
+    const up = await upload(admin, refundId, PDF, 'note.pdf', 'application/pdf')
+    const aid = up.json.attachment!.id
+    if (a.otherTmcAdmin) {
+      expect((await upload({ id: a.otherTmcAdmin.id }, refundId, PDF, 'x.pdf', 'application/pdf')).status).toBe(404)
+      actAs({ id: a.otherTmcAdmin.id })
+      const res = await fileGet(new NextRequest(new URL('/x', 'http://localhost')), { params: Promise.resolve({ id: refundId, aid }) })
+      expect(res.status).toBe(404)
+    }
+    actAs(admin)
+    const del = await fileDelete(new NextRequest(new URL('/x', 'http://localhost'), { method: 'DELETE' }), { params: Promise.resolve({ id: refundId, aid }) })
+    expect(del.status).toBe(200)
+
+    const keep = (await upload(admin, refundId, PDF, 'keep.pdf', 'application/pdf')).json.attachment!.id
+    await exec(db, sql`update refunds set status = 'processed', credit_note_no = 'CN/TEST/1', refund_amount = 0, lines = '{}'::jsonb where id = ${refundId}`)
+    actAs(admin)
+    const settled = await fileDelete(new NextRequest(new URL('/x', 'http://localhost'), { method: 'DELETE' }), { params: Promise.resolve({ id: refundId, aid: keep }) })
+    expect(settled.status).toBe(409)
   })
 })
