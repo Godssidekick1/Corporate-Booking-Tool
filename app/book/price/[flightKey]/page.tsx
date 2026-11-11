@@ -176,7 +176,7 @@ export default function SelectFarePage() {
           cancelPenalties: fare?.cancelPenalties,
           // The search it came from, for the lowest logical fare: the same
           // check the next pages run.
-          searchKey: flowStorage.getSearchResults()?.availabilityKey ?? undefined,
+          searchKey: flowStorage.availabilityKeyFor(flightResult.flightKey) ?? undefined,
           pricingKey: fare?.pricingKey ?? flightResult.pricingKey,
         }),
       })
@@ -201,11 +201,13 @@ export default function SelectFarePage() {
     setPricingLoading(true)
     setError('')
 
-    const searchData = flowStorage.getSearchResults()
+    // The key of the search this flight came from (a round trip's columns are
+    // separate searches, each with its own).
+    const availabilityKey = flowStorage.availabilityKeyFor(flightResult.flightKey)
     const fareOption = flightResult.fareOptions[fareIndex] as FareOption | undefined
     const pricingKey = fareOption?.pricingKey ?? flightResult.pricingKey
 
-    if (!searchData?.availabilityKey || !pricingKey) {
+    if (!availabilityKey || !pricingKey) {
       setError('Missing pricing details for this flight — please search again.')
       setPricingLoading(false)
       return
@@ -218,7 +220,7 @@ export default function SelectFarePage() {
         body: JSON.stringify({
           // Booking for someone else: whose (bookingActor); absent = oneself.
           travellerId: flowStorage.travellerId(),
-          key: searchData.availabilityKey,
+          key: availabilityKey,
           pricingKey,
           provider: flightResult.provider,
           resultIndex: flightResult.itemNo,
@@ -275,7 +277,7 @@ export default function SelectFarePage() {
         desk: data.desk ?? undefined,
         pricedAt: Date.now(),
         isNdc: fareOption?.isNdc ?? flightResult.isNdc,
-        searchKey: searchData.availabilityKey ?? undefined,
+        searchKey: availabilityKey ?? undefined,
       })
     } catch {
       setError('Something went wrong confirming this fare. Please try again.')

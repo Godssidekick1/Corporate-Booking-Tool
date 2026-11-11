@@ -317,7 +317,7 @@ export const POST = route(async (req: NextRequest) => {
     // verdicts, and what was shown kept for the lowest-logical-fare check. Run
     // once for a one-way or a combined round trip, three times at once for a
     // domestic round trip (below). "No flights" is an empty list, not an error.
-    async function searchOnce(segments: FlightSearchParams['segments'], rtf: boolean): Promise<Found> {
+    async function searchOnce(segments: FlightSearchParams['segments'], rtf: boolean, tag = ''): Promise<Found> {
     let availability: Awaited<ReturnType<typeof amadeus.searchFlights>>
     try {
     availability = await amadeus.searchFlights({
@@ -580,7 +580,11 @@ export const POST = route(async (req: NextRequest) => {
     // Filtered before markup: nothing the policy hides is priced or sent.
     const lists = await listsPromise
     const allowed = filterResults(results, lists)
+    // A domestic round trip's three lists are tagged (on: / ret: / rtf:) so a
+    // flight key names one flight across all of them; the kept search below
+    // uses the same keys, so the lowest-fare check still finds the chosen one.
     const marked = allowed.map(result => applyMarkup(context, result, adult + child))
+      .map(r => tag ? { ...r, flightKey: tag + r.flightKey } : r)
 
     // What the traveller was shown: kept for the lowest-logical-fare check at
     // booking, and used now to judge each fare against the policy (the chip on
@@ -627,9 +631,9 @@ export const POST = route(async (req: NextRequest) => {
     // needs it) and its own kept search (the lowest-logical-fare check judges a
     // one-way against its own column). One failing does not hide the others.
     const [onward, ret, special] = await Promise.allSettled([
-      searchOnce([outbound], false),
-      searchOnce([back], false),
-      searchOnce([outbound, back], true),
+      searchOnce([outbound], false, 'on:'),
+      searchOnce([back], false, 'ret:'),
+      searchOnce([outbound, back], true, 'rtf:'),
     ])
     const settled = { onward, return: ret, special }
     const failures = Object.entries(settled).filter(([, r]) => r.status === 'rejected')

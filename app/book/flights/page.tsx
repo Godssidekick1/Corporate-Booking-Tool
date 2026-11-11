@@ -10,6 +10,8 @@ import TripPicker, { resolveTrip, type TripChoice } from '@/app/components/TripP
 import { searchPreferences } from '@/app/lib/book/searchPreferences'
 import type { FareOption, FlatFlightResult } from '@/app/lib/book/types'
 import FlightResults from '@/app/components/book/FlightResults'
+import RoundTripPicker from '@/app/components/book/RoundTripPicker'
+import type { RoundTripPair, SplitResults } from '@/app/lib/book/flowStorage'
 
 function toApiDate(input: string) {
   const [y, m, d] = input.split('-')
@@ -195,6 +197,8 @@ export default function BookFlightsSearchPage() {
   const [searching, setSearching] = useState(false)
   const [hasSearched, setHasSearched] = useState(false)
   const [results, setResults] = useState<FlatFlightResult[]>([])
+  // A domestic round trip: two columns and the special return fares.
+  const [split, setSplit] = useState<SplitResults | null>(null)
   const [error, setError] = useState('')
   const [navigatingKey, setNavigatingKey] = useState<string | null>(null)
 
@@ -243,6 +247,13 @@ export default function BookFlightsSearchPage() {
     setNavigatingKey(flight.flightKey)
     const query = fare.pricingKey ? `?fare=${encodeURIComponent(fare.pricingKey)}` : ''
     router.push(`/book/price/${encodeURIComponent(flight.flightKey)}${query}`)
+  }
+
+  // A domestic round trip's two picks: both are priced together on the next page.
+  function handleContinuePair(pair: RoundTripPair) {
+    flowStorage.savePair(pair)
+    setNavigatingKey(pair.onward.flightKey)
+    router.push('/book/price/round-trip')
   }
 
   async function handleSearch(e: React.FormEvent) {
@@ -300,7 +311,11 @@ export default function BookFlightsSearchPage() {
       }
 
       const foundResults: FlatFlightResult[] = data.results ?? []
+      const foundSplit: SplitResults | null = data.kind === 'split'
+        ? { onward: data.onward ?? null, return: data.return ?? null, specialReturn: data.specialReturn ?? null, notes: data.notes ?? [] }
+        : null
       setResults(foundResults)
+      setSplit(foundSplit)
       setHiddenByPolicy(data.hiddenByPolicy ?? [])
       setSearchSeq(n => n + 1)
       setHasSearched(true)
@@ -325,6 +340,7 @@ export default function BookFlightsSearchPage() {
     adult, child, infant,
   },
   data.availabilityKey ?? null,
+  foundSplit ?? undefined,
 )
     } catch {
       setError('Something went wrong. Please try again.')
@@ -597,7 +613,24 @@ export default function BookFlightsSearchPage() {
           </div>
         )}
 
-        {hasSearched && !searching && (
+        {hasSearched && !searching && split && (
+          !split.onward?.results.length && !split.return?.results.length && !split.specialReturn?.results.length ? (
+            <div style={s.emptyState}>
+              <p style={s.emptyTitle}>No flights found</p>
+              <p style={s.emptyDesc}>{split.notes[0] ?? 'Try different dates or another route.'}</p>
+            </div>
+          ) : (
+            <RoundTripPicker
+              key={searchSeq}
+              split={split}
+              navigatingKey={navigatingKey}
+              onChooseSpecial={handleChooseFare}
+              onContinue={handleContinuePair}
+            />
+          )
+        )}
+
+        {hasSearched && !searching && !split && (
           results.length === 0 ? (
             <div style={s.emptyState}>
               <p style={s.emptyTitle}>No flights found</p>

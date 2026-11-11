@@ -21,6 +21,36 @@ const PURPOSE_KEY = 'cbt:book:purpose'
 const ON_BEHALF_KEY = 'cbt:book:onBehalf'
 // Who this tab's flow belongs to: the signed-in employee, set by claim().
 const OWNER_KEY = 'cbt:book:owner'
+// A domestic round trip's two picks (flight key and fare), booked as a pair.
+const PAIR_KEY = 'cbt:book:pair'
+
+// A domestic round trip's results: the two one-way columns and the airlines'
+// special return fares, each with the availability key its pricing needs.
+interface SplitList {
+  results: FlatFlightResult[]
+  availabilityKey: string | null
+  hiddenByPolicy?: { code: string; name: string }[]
+}
+
+export interface SplitResults {
+  onward: SplitList | null
+  return: SplitList | null
+  specialReturn: SplitList | null
+  notes: string[]
+}
+
+// The two picks of a split round trip, carried from the results to the fare,
+// passenger and confirm steps. pricingKey is the fare chosen on each card.
+export interface RoundTripPair {
+  onward: { flightKey: string; pricingKey: string }
+  return: { flightKey: string; pricingKey: string }
+}
+
+interface StoredResults {
+  results: FlatFlightResult[]
+  availabilityKey: string | null
+  split?: SplitResults
+}
 
 // Booking for someone else (app/lib/book/bookingActor.ts): who, shown on every
 // step of the flow and sent to every booking route as travellerId.
@@ -184,13 +214,35 @@ export const flowStorage = {
     return flowStorage.onBehalf()?.travellerId
   },
 
-  saveSearchResults(results: FlatFlightResult[], meta: SearchMeta, availabilityKey: string | null) {
-    safeSet(RESULTS_KEY, { results, availabilityKey })
+  // split: a domestic round trip's lists (results is then empty).
+  saveSearchResults(results: FlatFlightResult[], meta: SearchMeta, availabilityKey: string | null, split?: SplitResults) {
+    safeSet(RESULTS_KEY, { results, availabilityKey, ...(split ? { split } : {}) } satisfies StoredResults)
     safeSet(SEARCH_META_KEY, meta)
+    safeSet(PAIR_KEY, null)
   },
 
-  getSearchResults(): { results: FlatFlightResult[]; availabilityKey: string | null } | null {
+  getSearchResults(): StoredResults | null {
     return safeGet(RESULTS_KEY)
+  },
+
+  // The availability key a flight was found under: its own list's for a
+  // domestic round trip (each column is its own search), else the search's.
+  // Pricing must be asked with the key of the search the fare came from.
+  availabilityKeyFor(flightKey: string): string | null {
+    const stored = safeGet<StoredResults>(RESULTS_KEY)
+    if (!stored) return null
+    for (const list of [stored.split?.onward, stored.split?.return, stored.split?.specialReturn]) {
+      if (list?.results.some(r => r.flightKey === flightKey)) return list.availabilityKey
+    }
+    return stored.availabilityKey
+  },
+
+  savePair(pair: RoundTripPair) {
+    safeSet(PAIR_KEY, pair)
+  },
+
+  getPair(): RoundTripPair | null {
+    return safeGet(PAIR_KEY)
   },
 
   getSearchMeta(): SearchMeta | null {
@@ -198,8 +250,15 @@ export const flowStorage = {
   },
 
   findResultByFlightKey(flightKey: string): FlatFlightResult | null {
-    const stored = safeGet<{ results: FlatFlightResult[] }>(RESULTS_KEY)
-    return stored?.results.find(r => r.flightKey === flightKey) ?? null
+    const stored = safeGet<StoredResults>(RESULTS_KEY)
+    if (!stored) return null
+    const all = [
+      ...(stored.results ?? []),
+      ...(stored.split?.onward?.results ?? []),
+      ...(stored.split?.return?.results ?? []),
+      ...(stored.split?.specialReturn?.results ?? []),
+    ]
+    return all.find(r => r.flightKey === flightKey) ?? null
   },
 
   savePricedFare(fare: PricedFare) {
@@ -332,6 +391,7 @@ export const flowStorage = {
       for (const key of stale) store.removeItem(key)
       store.removeItem(TRIP_ID_KEY)
       store.removeItem(GUEST_BOOKING_KEY)
+      store.removeItem(PAIR_KEY)
     } catch {
       // no-op, matches safeSet's failure handling elsewhere in this file
     }

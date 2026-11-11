@@ -1,0 +1,73 @@
+/* A domestic round trip (app/components/book/RoundTripPicker.tsx): the special
+   return offer, two columns of one-way flights, and a selection bar. */
+
+.wrap { display: flex; flex-direction: column; gap: 12px; }
+
+.notes { background: var(--color-warn-bg); border: 1px solid var(--color-warn-line); color: var(--color-warn-fg); border-radius: 10px; padding: 10px 12px; font-size: 12.5px; line-height: 1.5; }
+.notes p { margin: 0; }
+
+.offer { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; background: var(--color-surface); border: 1px solid var(--color-line); border-radius: 14px; padding: 12px 14px 12px 18px; position: relative; overflow: hidden; }
+.offer::before { content: ''; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--color-success-fg); }
+.offerText { flex: 1 1 280px; min-width: 0; line-height: 1.45; font-size: 13px; color: var(--color-body); }
+.offerText b { color: var(--color-ink); }
+.offerText small { display: block; color: var(--color-secondary); font-size: 12px; }
+.ghostBtn { background: var(--color-surface); border: 1px solid var(--color-line-strong); border-radius: 9px; padding: 7px 12px; font-size: 12.5px; font-weight: 600; color: var(--color-ink); cursor: pointer; white-space: nowrap; }
+
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
+.col { background: var(--color-surface); border: 1px solid var(--color-line); border-radius: 14px; overflow: hidden; min-width: 0; }
+.colHead { padding: 12px 14px 10px; border-bottom: 1px solid var(--color-line); display: flex; flex-direction: column; gap: 8px; }
+.colTitle { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.colTitle b { font-size: 14px; color: var(--color-ink); }
+.colTitle span { font-size: 12px; color: var(--color-secondary); }
+.ctrl { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.ctrl select { font: inherit; font-size: 12px; border: 1px solid var(--color-line); border-radius: 8px; padding: 4px 6px; background: var(--color-surface); color: var(--color-body); }
+.chip { border: 1px solid var(--color-line); background: var(--color-surface); border-radius: 8px; padding: 4px 8px; font-size: 11.5px; color: var(--color-body); cursor: pointer; }
+.chip[aria-pressed="true"] { background: var(--color-rail); border-color: var(--color-rail); color: #fff; font-weight: 600; }
+
+.rows { display: flex; flex-direction: column; max-height: 560px; overflow-y: auto; }
+.row { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 11px 14px; border-bottom: 1px solid #f3f4f6; cursor: pointer; }
+.row:last-child { border-bottom: 0; }
+.row:hover { background: #fafbfe; }
+.row input { accent-color: var(--color-rail); margin: 0; }
+.rowSelected { background: var(--color-info-bg); }
+.rowSelected:hover { background: var(--color-info-bg); }
+.times { display: flex; flex-direction: column; min-width: 0; }
+.times b { font-size: 14px; color: var(--color-ink); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.times b sup { color: var(--color-danger-fg); font-size: 10px; margin-left: 2px; }
+.times span { font-size: 11px; color: var(--color-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rowPrice { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.rowPrice b { font-size: 14px; color: var(--color-ink); font-variant-numeric: tabular-nums; }
+.rowPrice small { font-size: 10.5px; color: var(--color-secondary); display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.empty { padding: 28px 14px; text-align: center; color: var(--color-secondary); font-size: 13px; }
+
+.bar { position: sticky; bottom: 0; background: var(--color-rail); color: #fff; border-radius: 14px; padding: 12px 16px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 14px; align-items: center; z-index: 5; box-shadow: 0 -6px 20px rgba(0, 8, 53, 0.12); }
+.pick { display: flex; gap: 10px; align-items: center; min-width: 0; }
+.pick div { display: flex; flex-direction: column; min-width: 0; }
+.pick small { font-size: 10.5px; color: #aab0d6; text-transform: uppercase; letter-spacing: 0.4px; font-weight: 600; }
+.pick b { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pick span { font-size: 12px; color: #d6d9ef; font-variant-numeric: tabular-nums; }
+.pickEmpty b { color: #8d93bd; font-weight: 500; }
+.total { display: flex; align-items: center; gap: 14px; }
+.total div { text-align: right; }
+.total small { display: block; font-size: 10.5px; color: #aab0d6; text-transform: uppercase; letter-spacing: 0.4px; font-weight: 600; }
+.total b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.continueBtn { background: #fff; color: var(--color-rail); border: 1px solid #fff; border-radius: 10px; padding: 10px 18px; font-weight: 700; font-size: 13.5px; cursor: pointer; }
+.continueBtn:disabled { background: #2a3160; border-color: #2a3160; color: #8d93bd; cursor: not-allowed; }
+.hint { grid-column: 1 / -1; font-size: 12px; color: #c8f0dc; background: rgba(16, 185, 129, 0.14); border-radius: 8px; padding: 7px 10px; }
+.hint button { background: none; border: 0; padding: 0; color: #fff; text-decoration: underline; font-weight: 600; font-size: 12px; cursor: pointer; }
+.barNote { grid-column: 1 / -1; font-size: 11.5px; color: #aab0d6; margin: -4px 0 0; }
+
+.specialHead { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: space-between; }
+.specialHead h2 { margin: 0; font-size: 16px; color: var(--color-ink); }
+.specialHead p { margin: 2px 0 0; font-size: 12.5px; color: var(--color-secondary); }
+
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--color-rail); outline-offset: 2px; }
+
+@media (max-width: 760px) {
+  .cols { grid-template-columns: 1fr; }
+  .rows { max-height: 420px; }
+  .bar { grid-template-columns: 1fr 1fr; }
+  .total { grid-column: 1 / -1; justify-content: space-between; }
+  .total div { text-align: left; }
+}

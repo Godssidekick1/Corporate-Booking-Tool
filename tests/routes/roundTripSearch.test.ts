@@ -93,11 +93,11 @@ d('round trips at search', () => {
     expect(json.notes).toEqual([])
 
     // Each column is one-way fares from its own search, with its own key.
-    expect(json.onward).toMatchObject({ availabilityKey: 'ON-KEY', results: [{ flightKey: 'on-1' }] })
-    expect(json.return).toMatchObject({ availabilityKey: 'RET-KEY', results: [{ flightKey: 'ret-1' }] })
+    expect(json.onward).toMatchObject({ availabilityKey: 'ON-KEY', results: [{ flightKey: 'on:on-1' }] })
+    expect(json.return).toMatchObject({ availabilityKey: 'RET-KEY', results: [{ flightKey: 'ret:ret-1' }] })
     expect(json.onward.results[0].journeys).toHaveLength(1)
     // The special return fare covers both directions at one price.
-    expect(json.specialReturn).toMatchObject({ availabilityKey: 'RTF-KEY', results: [{ flightKey: 'rtf-1' }] })
+    expect(json.specialReturn).toMatchObject({ availabilityKey: 'RTF-KEY', results: [{ flightKey: 'rtf:rtf-1' }] })
     expect(json.specialReturn.results[0].journeys).toHaveLength(2)
     expect(typeof json.onward.results[0].fareOptions[0].sellEstimate).toBe('number')
 
