@@ -421,11 +421,26 @@ export async function applyCorporateEdit(
 
 // ═══ TMC side: reporting lines and bands ════════════════════════════════════
 
-export type ReportingTarget = Pick<Row<'employees'>, 'id' | 'client_id' | 'full_name' | 'email' | 'status' | 'top_of_hierarchy'>
+export type ReportingTarget = Pick<Row<'employees'>, 'id' | 'client_id' | 'full_name' | 'email' | 'role' | 'status' | 'top_of_hierarchy'>
 
 export async function reportingTarget(db: Queryable, employeeId: string): Promise<ReportingTarget | null> {
   return maybeOne<ReportingTarget>(db, sql`
-    select id, client_id, full_name, email, status, top_of_hierarchy from employees where id = ${employeeId}`)
+    select id, client_id, full_name, email, role, status, top_of_hierarchy from employees where id = ${employeeId}`)
+}
+
+// The client's active corporate admins, LOCKED until the transaction ends.
+// Taken before demoting one: two desks removing the last two admins at the
+// same moment would each see the other still there, and leave none.
+export async function lockActiveAdmins(db: Queryable, clientId: string): Promise<string[]> {
+  const rows = await many<{ id: string }>(db, sql`
+    select id from employees where client_id = ${clientId} and role = 'admin' and status = 'active'
+    order by id for update`)
+  return rows.map(r => r.id)
+}
+
+export async function setRole(db: Queryable, employeeId: string, role: string): Promise<{ id: string; role: string }> {
+  return one(db, sql`
+    update employees set role = ${role} where id = ${employeeId} returning id, role`)
 }
 
 export type ReportingEdit = Partial<Pick<Row<'employees'>,
@@ -689,17 +704,19 @@ export type TravellerRosterRow = Pick<Row<'employees'>,
   can_sign_in: boolean
 }
 
+// roles narrows the list ('admin' for the "Admins only" filter); absent: everyone.
 export async function travellerRoster(
   db: Queryable,
   clientId: string,
-  scope: ListScope
+  scope: ListScope,
+  roles?: readonly string[]
 ): Promise<Listed<TravellerRosterRow>> {
   return listEmployees<TravellerRosterRow>(
     db,
     sql`id, full_name, email, role, status, band_code, band_rank, department, cost_centre,
         designation, manager_id, top_of_hierarchy, traveler_profile, first_login_completed,
         public.account_can_sign_in(id) as can_sign_in`,
-    sql`client_id = ${clientId}`,
+    roles?.length ? sql`client_id = ${clientId} and role = any(${[...roles]})` : sql`client_id = ${clientId}`,
     scope,
     [sql`full_name`, sql`email`, sql`department`, sql`designation`, sql`cost_centre`]
   )

@@ -409,6 +409,10 @@ export default function CorporateSettingsPage() {
             </ul>
           )}
           {resetNote && <p style={s.successNote}>{resetNote}</p>}
+          <p style={s.hint}>
+            To make someone a corporate admin, or remove one, open them in{' '}
+            <Link href={`/tmc/configurations/traveller-profiles?client=${clientId}&admins=1`}>Traveller profiles</Link>.
+          </p>
         </>
       )}
 

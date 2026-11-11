@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { CLIENT_ROLES, CLIENT_ROLE_LABEL, isClientRole, type ClientRole } from '@/app/lib/clients/roles'
 import Papa from 'papaparse'
 import SearchableSelect from '@/app/components/SearchableSelect'
 import Pagination from '@/app/components/Pagination'
@@ -73,6 +74,13 @@ const ROLES: { value: string; label: string }[] = [
   { value: 'finance', label: 'Finance' },
   { value: 'admin', label: 'Corporate admin' },
 ]
+// What each role can do, under the role switch in the person panel.
+const ROLE_HELP: Record<ClientRole, string> = {
+  admin: "Manages this company's users and settings, and can book for colleagues where the company books for itself.",
+  finance: 'Approves where an approval chain names finance, and sees spend reports.',
+  employee: 'Travels and books for themselves.',
+}
+
 const EMPTY_PERSON = { fullName: '', email: '', role: 'employee', band: '' }
 
 // Grouped so the panel reads as sections rather than one long column of inputs.
@@ -125,6 +133,13 @@ export default function TravellerProfilesPage() {
 
   const [saving, setSaving] = useState(false)
   const [inviting, setInviting] = useState(false)
+  // The roster narrowed to the client's corporate admins.
+  const [adminsOnly, setAdminsOnly] = useState(false)
+  // Changing someone's role: the role asked for (awaiting confirmation), the
+  // request in flight, and what came back (shown inside the panel).
+  const [roleAsk, setRoleAsk] = useState<ClientRole | null>(null)
+  const [roleBusy, setRoleBusy] = useState(false)
+  const [roleMsg, setRoleMsg] = useState<{ kind: 'ok' | 'warn' | 'error'; text: string } | null>(null)
   const [importing, setImporting] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -148,7 +163,7 @@ export default function TravellerProfilesPage() {
   // meant downloading it first, which is exactly what breaks once a client has a
   // few hundred people.
   const roster = usePagedList<Employee>('/api/tmc/traveler-profiles', {
-    params: { clientId },
+    params: { clientId, role: adminsOnly ? 'admin' : undefined },
     enabled: Boolean(clientId),
   })
 
@@ -177,6 +192,8 @@ export default function TravellerProfilesPage() {
     setDraft(structuredClone(emp))
     setDirty(false)
     setError('')
+    setRoleAsk(null)
+    setRoleMsg(null)
   }
 
   // Shared by the backdrop, the close button and Escape, so all three honour
@@ -265,6 +282,18 @@ export default function TravellerProfilesPage() {
 
   // A different client means different bands, so a half-filled form doesn't
   // carry across.
+  // Opened from a client's "Contacts & access" tab: that client, admins only
+  // (?client=<id>&admins=1). Read once after mount; window is not there on the
+  // server render.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search)
+    const fromUrl = q.get('client')
+    // One-off sync from the URL on arrival.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (fromUrl) setClientId(fromUrl)
+    if (q.get('admins') === '1') setAdminsOnly(true)
+  }, [])
+
   function chooseClient(id: string) {
     setClientId(id)
     setAdding(false); setNewPerson(EMPTY_PERSON); setAddError('')
@@ -284,6 +313,29 @@ export default function TravellerProfilesPage() {
       roster.refetch()
       showSuccess(d.message)
     } finally { setAddBusy(false) }
+  }
+
+  // A role change is its own request, not part of Save: it changes what the
+  // person can do at their company, so it is confirmed and applied on its own.
+  async function changeRole(role: ClientRole) {
+    if (!draft) return
+    setRoleBusy(true); setRoleMsg(null)
+    try {
+      const res = await fetch(`/api/tmc/employees/${draft.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role }),
+      })
+      const d = await res.json()
+      if (!res.ok) { setRoleMsg({ kind: 'error', text: d.error || 'Could not change the role.' }); return }
+      setDraft(prev => prev ? { ...prev, role } : prev)
+      setRoleMsg(d.note
+        ? { kind: 'warn', text: d.note }
+        : { kind: 'ok', text: `${draft.full_name} is now ${CLIENT_ROLE_LABEL[role]}.` })
+      roster.refetch()
+    } catch {
+      setRoleMsg({ kind: 'error', text: 'Could not reach the server. Check your connection and try again.' })
+    } finally {
+      setRoleBusy(false); setRoleAsk(null)
+    }
   }
 
   async function sendInvite() {
@@ -501,6 +553,10 @@ export default function TravellerProfilesPage() {
             onChange={e => roster.setSearch(e.target.value)}
             style={s.search}
           />
+          <label style={s.adminsToggle}>
+            <input type="checkbox" checked={adminsOnly} onChange={e => { setAdminsOnly(e.target.checked); roster.setPage(1) }} />
+            Corporate admins only
+          </label>
 
           {/* Roster takes the full content width. It previously shared a row
               with the detail panel, which left each about 448px once the rail
@@ -529,6 +585,9 @@ export default function TravellerProfilesPage() {
                       <div style={s.nameRow}>
                         <span style={s.name}>{emp.full_name}</span>
                         {!emp.profileComplete && <span style={s.incompleteDot} title="Profile incomplete" />}
+                        {(emp.role === 'admin' || emp.role === 'finance') && (
+                          <span style={emp.role === 'admin' ? s.adminTag : s.financeTag}>{CLIENT_ROLE_LABEL[emp.role]}</span>
+                        )}
                         {!emp.can_sign_in && emp.status !== 'deactivated' && <span style={s.noLogin}>Can&apos;t sign in yet</span>}
                       </div>
                       <div style={s.email}>{emp.email}</div>
@@ -622,6 +681,46 @@ export default function TravellerProfilesPage() {
                       </button>
                     </div>
                   )}
+
+                  {/* ── Role at the company ─────────────────────────── */}
+                  <div style={s.roleCard}>
+                    <div style={s.roleHead}>
+                      <div>
+                        <div style={s.roleLabel}>Role at the company</div>
+                        <div style={s.roleHelp}>{ROLE_HELP[isClientRole(draft.role) ? draft.role : 'employee']}</div>
+                      </div>
+                      <div style={s.roleSeg} role="group" aria-label="Role">
+                        {CLIENT_ROLES.map(r => (
+                          <button key={r} type="button" disabled={roleBusy || draft.status === 'deactivated'}
+                            aria-pressed={draft.role === r}
+                            onClick={() => { setRoleMsg(null); setRoleAsk(r === draft.role ? null : r) }}
+                            style={{ ...s.roleBtn, ...(draft.role === r ? s.roleBtnOn : {}) }}>
+                            {CLIENT_ROLE_LABEL[r]}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {roleAsk && (
+                      <div style={s.roleConfirm}>
+                        <span>
+                          {roleAsk === 'admin'
+                            ? `Make ${draft.full_name} a corporate admin? They will be able to manage this company's users and settings.`
+                            : draft.role === 'admin'
+                              ? `Remove ${draft.full_name} as corporate admin? They will become ${CLIENT_ROLE_LABEL[roleAsk]}.`
+                              : `Change ${draft.full_name} to ${CLIENT_ROLE_LABEL[roleAsk]}?`}
+                        </span>
+                        <span style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                          <button type="button" onClick={() => changeRole(roleAsk)} disabled={roleBusy} style={s.primaryBtn}>
+                            {roleBusy ? 'Saving…' : roleAsk === 'admin' ? 'Make admin' : draft.role === 'admin' ? 'Remove as admin' : 'Change role'}
+                          </button>
+                          <button type="button" onClick={() => setRoleAsk(null)} disabled={roleBusy} style={s.ghostBtn}>Cancel</button>
+                        </span>
+                      </div>
+                    )}
+                    {roleMsg && (
+                      <div style={roleMsg.kind === 'error' ? s.roleError : roleMsg.kind === 'warn' ? s.roleWarn : s.roleOk}>{roleMsg.text}</div>
+                    )}
+                  </div>
 
                   <h3 style={s.sectionHeading}>Corporate</h3>
                   <div style={s.grid}>
@@ -852,6 +951,20 @@ const s: Record<string, React.CSSProperties> = {
   name: { fontSize: 13, fontWeight: 500, color: '#111827' },
   email: { fontSize: 11, color: '#9CA3AF' },
   meta: { fontSize: 11, color: '#6B7280', marginTop: 2 },
+  adminsToggle: { display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5, color: '#374151', marginLeft: 14, cursor: 'pointer', verticalAlign: 'top', height: 38 },
+  adminTag: { fontSize: 10, fontWeight: 700, color: '#fff', background: '#000835', borderRadius: 4, padding: '1px 6px' },
+  financeTag: { fontSize: 10, fontWeight: 700, color: '#065F46', background: '#ECFDF5', borderRadius: 4, padding: '1px 6px' },
+  roleCard: { border: '1px solid #E5E7EB', borderRadius: 10, padding: '12px 14px', margin: '12px 0 4px', display: 'flex', flexDirection: 'column', gap: 10 },
+  roleHead: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' },
+  roleLabel: { fontSize: 12, fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.6px' },
+  roleHelp: { fontSize: 12, color: '#6B7280', marginTop: 3, maxWidth: 340, lineHeight: 1.45 },
+  roleSeg: { display: 'inline-flex', background: '#F3F4F6', borderRadius: 8, padding: 3, gap: 2 },
+  roleBtn: { border: 0, background: 'transparent', borderRadius: 6, padding: '6px 10px', fontSize: 12, color: '#6B7280', cursor: 'pointer' },
+  roleBtnOn: { background: '#fff', color: '#111827', fontWeight: 600, boxShadow: '0 1px 2px rgba(0,0,0,0.08)' },
+  roleConfirm: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', background: '#F5F7FF', border: '1px solid #E0E7FF', borderRadius: 8, padding: '10px 12px', fontSize: 12.5, color: '#1E1B4B', lineHeight: 1.45 },
+  roleOk: { fontSize: 12.5, color: '#065F46', background: '#ECFDF5', borderRadius: 8, padding: '8px 12px' },
+  roleWarn: { fontSize: 12.5, color: '#92400E', background: '#FEF3C7', borderRadius: 8, padding: '8px 12px', lineHeight: 1.45 },
+  roleError: { fontSize: 12.5, color: '#B91C1C', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '8px 12px', lineHeight: 1.45 },
   noLogin: { fontSize: 10, fontWeight: 600, color: '#92400E', background: '#FEF3C7', borderRadius: 4, padding: '1px 6px' },
   inviteBanner: { display: 'flex', alignItems: 'center', gap: 12, background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 12px', fontSize: 12, color: '#92400E', lineHeight: 1.5, marginBottom: 6 },
   incompleteDot: { width: 6, height: 6, borderRadius: '50%', background: '#F59E0B', flexShrink: 0 },

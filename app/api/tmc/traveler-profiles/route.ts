@@ -7,6 +7,7 @@ import * as employees from '@/app/lib/repositories/employees'
 import * as clients from '@/app/lib/repositories/clients'
 import * as bookings from '@/app/lib/repositories/bookings'
 import { route } from '@/app/lib/http/handler'
+import { CLIENT_ROLES, isClientRole } from '@/app/lib/clients/roles'
 
 // ── GET /api/tmc/traveler-profiles?clientId=<uuid> ──────────────────────────
 // Every employee at a client with the details the list needs up front — name,
@@ -53,12 +54,18 @@ export const GET = route(async (req: NextRequest) => {
 
   const params = parsePageParams(req.nextUrl.searchParams)
   const ids = req.nextUrl.searchParams.get('ids')?.split(',').filter(Boolean) ?? []
+  // ?role=admin: the client's corporate admins only (the "Admins only" filter).
+  const role = req.nextUrl.searchParams.get('role')
+  if (role && !isClientRole(role)) {
+    return Response.json({ error: `role must be one of ${CLIENT_ROLES.join(', ')}` }, { status: 400 })
+  }
+  const roleFilter = role ? [role] : undefined
 
   // Bands and cost centres stay unpaged: they feed dropdowns inside the detail
   // panel, are bounded by how many a client defines, and paging them would mean
   // a round trip to open a select.
   const [{ rows, total }, bands, costCentres] = await Promise.all([
-    employees.travellerRoster(db, clientId, ids.length > 0 ? { ids } : { search: params.search, page: params }),
+    employees.travellerRoster(db, clientId, ids.length > 0 ? { ids } : { search: params.search, page: params }, roleFilter),
     employees.bandsForClient(db, clientId),
     clients.costCentres(db, clientId),
   ])
