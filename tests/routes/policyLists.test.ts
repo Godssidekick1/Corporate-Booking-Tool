@@ -149,6 +149,8 @@ d('policy lists: blocked airlines and allowed fare types', () => {
     expect(results[0].fareOptions.map(f => f.pricingKey)).toEqual(['ai-retail', 'ai-corp'])
     // The headline price follows the first fare left, not the removed one.
     expect(results[0]).toMatchObject({ pricingKey: 'ai-retail', preferred: true })
+    // The blocked airline is named, so the page can say why it is missing.
+    expect((res.json as { hiddenByPolicy: unknown }).hiddenByPolicy).toEqual([{ code: 'SG', name: 'SG' }])
   })
 
   it('search: nothing is hidden when the client has policy control off', async () => {

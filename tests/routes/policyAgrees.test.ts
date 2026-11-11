@@ -132,6 +132,12 @@ d('policy: one fare, one verdict', () => {
     // The client's AI discount puts the sell price below the fare.
     expect(sell).toBeLessThan(fare)
 
+    const searchAgain = () => call(searchPost, {
+      as: a.corpAdmin, method: 'POST', url: '/api/book/search',
+      body: { origin: 'DEL', destination: 'BOM', departDate: '10/11/2030', tripType: 'oneway', travellerId: colleague.id },
+    })
+    const flightAfterCap = (r: { json: unknown }) => (r.json as { results: { fareOptions: { policy?: string }[] }[] }).results[0].fareOptions[0].policy
+
     // The cap sits between the two: within on the sell price, over on the fare.
     await setCap(sell)
 
@@ -139,6 +145,8 @@ d('policy: one fare, one verdict', () => {
     const pricePage = await preview({ flight, sellTotal: sell, searchKey: 'SEARCH-KEY', pricingKey: 'pk' })
     expect(pricePage.ok).toBe(true)
     expect(fareCap(pricePage.breaches)).toEqual([])
+    // The card's chip (judged by search) is the fare page's verdict.
+    expect(flightAfterCap(await searchAgain())).toBe(pricePage.verdict)
     // What the price page used to judge (the fare before discount and fee) is
     // over the cap: the disagreement this test exists for.
     expect(fareCap((await preview({ flight, sellTotal: fare })).breaches)).toHaveLength(1)

@@ -47,6 +47,19 @@ export function blockedAirline(flight: Pick<FlatFlightResult, 'journeys' | 'legs
   return airlinesOf(flight).find(code => lists.blockedAirlines.includes(code)) ?? null
 }
 
+// The airlines a search found that the traveller's policy blocks, by name, so
+// the results page can say why they are missing ("SpiceJet isn't shown: the
+// travel policy doesn't allow it") instead of leaving the traveller to wonder.
+export function hiddenAirlines(flights: FlatFlightResult[], lists: PolicyLists): { code: string; name: string }[] {
+  const found = new Map<string, string>()
+  for (const f of flights) {
+    const code = blockedAirline(f, lists)
+    if (!code || found.has(code)) continue
+    found.set(code, f.airline?.code?.toUpperCase() === code && f.airline.name ? f.airline.name : code)
+  }
+  return [...found].map(([code, name]) => ({ code, name }))
+}
+
 export function fareAllowed(fare: Pick<FareOption, 'fareType' | 'brandedFareName' | 'isNdc'>, lists: PolicyLists): boolean {
   return lists.allowedFareTypes.length === 0 || lists.allowedFareTypes.includes(fareTypeOf(fare))
 }

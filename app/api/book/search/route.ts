@@ -16,7 +16,7 @@ import type {
 import type { ItineraryInfo } from '@/app/lib/amadeus/client'
 import { cabinLetter, CABIN_LABELS } from '@/app/lib/book/cabin'
 import { policyListsFor } from '@/app/lib/rule-engine/policyLists'
-import { filterResults } from '@/app/lib/policy/searchFilter'
+import { filterResults, hiddenAirlines } from '@/app/lib/policy/searchFilter'
 import { shownFlights } from '@/app/lib/policy/lowestLogicalFare'
 import { judgeSearchResults } from '@/app/lib/policy/searchVerdicts'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
@@ -548,7 +548,8 @@ export const POST = route(async (req: NextRequest) => {
     // inconsistent, and the browser has no use for either.
     const context = await contextPromise
     // Filtered before markup: nothing the policy hides is priced or sent.
-    const allowed = filterResults(results, await listsPromise)
+    const lists = await listsPromise
+    const allowed = filterResults(results, lists)
     const marked = allowed.map(result => applyMarkup(context, result, adult + child))
 
     // What the traveller was shown: kept for the lowest-logical-fare check at
@@ -573,6 +574,8 @@ export const POST = route(async (req: NextRequest) => {
   ok: true,
   results: priced,
   availabilityKey: availability.Key,
+  // Airlines the policy left out, so the page can say why they are missing.
+  hiddenByPolicy: hiddenAirlines(results, lists),
 })
 
   } catch (err) {
