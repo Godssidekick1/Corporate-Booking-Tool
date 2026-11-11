@@ -4,6 +4,7 @@ import { POST as addPassengerPost } from '@/app/api/book/add-passenger/route'
 import { POST as chainPost } from '@/app/api/tmc/approval-chains/direct/route'
 import { PATCH as decide } from '@/app/api/approvals/[approvalId]/route'
 import { GET as bookingGet } from '@/app/api/book/[bookingId]/route'
+import { POST as cancelPost } from '@/app/api/book/[bookingId]/cancel/route'
 import { call } from '../harness/call'
 import { actors, type Actors } from '../harness/actors'
 import { resetDatabase } from '../harness/db'
@@ -197,6 +198,34 @@ d('round trip pairs', () => {
     const both = await add('REF-RET-4', next.back, { role: 'second', withBookingId: id })
     expect(both.json).toMatchObject({ status: 'approved' })
     expect((await row(id)).status).toBe('approved')
+  })
+
+  it('withdrawn while awaiting approval: both go; once approved, each is cancelled on its own', async () => {
+    await exec(db, sql`update clients set within_policy_approval = 'required' where id = ${clientId}`)
+    expect((await setChain('green')).status).toBe(200)
+    const cancel = (id: string) => call(cancelPost, { as: a.corpAdmin, method: 'POST', url: `/api/book/${id}/cancel`, params: { bookingId: id }, body: { reason: 'Plans changed' } })
+
+    // Awaiting approval: withdrawing the return withdraws the onward and its approval.
+    const pending = legs()
+    const firstId = ((await add('REF-ON-W', pending.onward, { role: 'first' })).json as { bookingId: string }).bookingId
+    const secondId = ((await add('REF-RET-W', pending.back, { role: 'second', withBookingId: firstId })).json as { bookingId: string }).bookingId
+    const res = await cancel(secondId)
+    expect(res.status).toBe(200)
+    expect(res.json).toMatchObject({ status: 'cancelled', alsoWithdrawn: [firstId] })
+    expect((await row(firstId)).status).toBe('cancelled')
+    expect(await approvalsOf(firstId)).toEqual([expect.objectContaining({ status: 'withdrawn' })])
+
+    // Approved: cancelling one leaves the other standing.
+    const approved = legs()
+    const onId = ((await add('REF-ON-A', approved.onward, { role: 'first' })).json as { bookingId: string }).bookingId
+    const retId = ((await add('REF-RET-A', approved.back, { role: 'second', withBookingId: onId })).json as { bookingId: string }).bookingId
+    const [step] = await approvalsOf(onId)
+    expect((await call(decide, { as: { id: approverId }, method: 'PATCH', url: `/api/approvals/${step.id}`,
+      params: { approvalId: step.id }, body: { decision: 'approve' } })).status).toBe(200)
+    const one2 = await cancel(onId)
+    expect(one2.status).toBe(200)
+    expect(one2.json).not.toHaveProperty('alsoWithdrawn')
+    expect((await row(retId)).status).toBe('approved')
   })
 
   it('a return is refused when its onward cannot be paired', async () => {

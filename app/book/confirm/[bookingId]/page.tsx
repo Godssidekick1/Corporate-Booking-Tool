@@ -42,9 +42,28 @@ function TerminalExits() {
   )
 }
 
+// A domestic round trip booked as two linked bookings, onward first.
+const PAIR_STATUS: Record<string, string> = {
+  pending_approval: 'Awaiting approval', approved: 'Approved', held: 'Confirmed', ticketed: 'Ticketed',
+  rejected: 'Rejected', cancelled: 'Cancelled', cancel_requested: 'Cancelling', failed: 'Not confirmed',
+  approval_misconfigured: 'Approval not set up',
+}
+
+interface PairMember {
+  id: string
+  status: string
+  pnr: string | null
+  sell_total: number | null
+  direction: 'onward' | 'return'
+  itinerary: { origin?: { code?: string; dateTime?: string }; destination?: { code?: string; dateTime?: string }; airline?: { code?: string; name?: string }; legs?: { airlineCode?: string; flightNumber?: string }[] } | null
+}
+
 interface Booking {
   id: string
   status: string
+  pair?: PairMember[]
+  // An onward saved without its return (the return could not be added).
+  awaitingReturn?: boolean
   provider: string
   provider_order_id: string
   // What the AIRLINE charges. Kept for reference; the traveller is shown
@@ -239,6 +258,33 @@ export default function ConfirmBookingPage() {
     setError('')
     setErrorCode(null)
     try {
+      // A round trip: both bookings are confirmed with the airline, onward
+      // first. One already confirmed is not sent again; a failure says which
+      // direction is confirmed and which is not.
+      const partners = (booking?.pair ?? []).filter(m => m.id !== bookingId)
+      if (partners.length > 0) {
+        const own = booking?.status === 'approved' ? await bookOne(bookingId) : { ok: true as const }
+        if (!own.ok) {
+          setError(own.error)
+          setErrorCode(own.code ?? null)
+          if (own.code === 'SEARCH_EXPIRED') loadBooking({ silent: true })
+          return
+        }
+        for (const m of partners) {
+          if (m.status !== 'approved') continue
+          const r = await bookOne(m.id)
+          if (!r.ok) {
+            await loadBooking({ silent: true })
+            setError(`The onward flight is confirmed with the airline, but the return could not be: ${r.error} Try again to confirm the return.`)
+            setErrorCode(r.code ?? null)
+            return
+          }
+        }
+        try { sessionStorage.setItem(JUST_BOOKED_KEY, bookingId) } catch { /* the ticket page takes the ordinary path */ }
+        router.replace(`/book/ticket/${bookingId}`)
+        return
+      }
+
       const res = await fetch('/api/book/booking', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -273,6 +319,17 @@ export default function ConfirmBookingPage() {
     } finally {
       setConfirming(false)
     }
+  }
+
+  // One booking confirmed with the airline (POST /api/book/booking).
+  async function bookOne(id: string): Promise<{ ok: true } | { ok: false; error: string; code?: string }> {
+    const res = await fetch('/api/book/booking', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bookingId: id }),
+    })
+    const data = await res.json().catch(() => ({}))
+    return data.ok ? { ok: true } : { ok: false, error: data.error || 'The airline did not confirm it.', code: data.code }
   }
 
   if (loading) {
@@ -612,8 +669,39 @@ export default function ConfirmBookingPage() {
           </button>
         )}
 
+        {/* ── A round trip: both flights, each its own booking ────────── */}
+        {booking.pair && booking.pair.length > 1 && (
+          <div style={s.card}>
+            <p style={s.pairTitle}>Round trip · two bookings</p>
+            {booking.pair.map(m => {
+              const it = m.itinerary
+              const time = (iso?: string) => /T(\d{2}:\d{2})/.exec(iso ?? '')?.[1] ?? ''
+              return (
+                <div key={m.id} style={s.pairRow}>
+                  <span style={s.pairDir}>{m.direction === 'onward' ? 'Onward' : 'Return'}</span>
+                  <span style={s.pairRoute}>
+                    {it?.origin?.code} {time(it?.origin?.dateTime)} → {it?.destination?.code} {time(it?.destination?.dateTime)}
+                    {' · '}{it?.airline?.name ?? it?.airline?.code} {it?.legs?.[0]?.flightNumber ?? ''}
+                  </span>
+                  <span style={s.pairStatus}>{PAIR_STATUS[m.status] ?? m.status}{m.pnr ? ` · PNR ${m.pnr}` : ''}</span>
+                  <span style={s.pairPrice}>{m.sell_total !== null ? `₹${Math.round(m.sell_total).toLocaleString('en-IN')}` : ''}</span>
+                </div>
+              )
+            })}
+            <p style={s.waitingSub}>One approval covers both. Each is confirmed and ticketed on its own, and either can be cancelled alone.</p>
+          </div>
+        )}
+        {booking.awaitingReturn && booking.status === 'pending_approval' && (
+          <div style={s.noticeCard}>
+            <p style={s.noticeText}>
+              This is the onward flight of a round trip, saved without its return because the return could not be added.
+              It has not been sent for approval. Cancel it below, or search again to book the round trip.
+            </p>
+          </div>
+        )}
+
         {/* ── Action area — depends on approval status ────────────────── */}
-        {booking.status === 'pending_approval' && (
+        {booking.status === 'pending_approval' && !booking.awaitingReturn && (
           <>
             <div style={s.waitingCard}>
               <div style={s.spinnerSmall} />
@@ -713,7 +801,7 @@ export default function ConfirmBookingPage() {
               disabled={confirming}
               style={{ ...s.confirmBtn, opacity: confirming ? 0.7 : 1 }}
             >
-              {confirming ? <ButtonBusy label="Booking…" /> : 'Confirm booking →'}
+              {confirming ? <ButtonBusy label="Booking…" /> : booking.pair && booking.pair.length > 1 ? 'Confirm both flights →' : 'Confirm booking →'}
             </button>
             {!confirming && (
               <CancelBookingButton bookingId={booking.id} ticketed={false} onCancelled={() => loadBooking()} />
@@ -825,6 +913,12 @@ const s: Record<string, React.CSSProperties> = {
   approverNoteCard: { background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '12px', padding: '14px 16px', marginBottom: '16px' },
   approverNoteLabel: { fontSize: '11.5px', fontWeight: 700, color: '#1D4ED8', margin: '0 0 4px', textTransform: 'uppercase' as const, letterSpacing: '0.4px' },
   approverNoteText: { fontSize: '13.5px', color: '#1E3A8A', margin: 0, lineHeight: 1.5, fontStyle: 'italic' as const },
+  pairTitle: { fontSize: '12px', fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 10px' },
+  pairRow: { display: 'grid', gridTemplateColumns: '70px minmax(0, 1fr) auto auto', gap: '10px', alignItems: 'center', padding: '8px 0', borderTop: '1px solid #F3F4F6', fontSize: '13px' },
+  pairDir: { fontSize: '11px', fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.4px' },
+  pairRoute: { color: '#111827', fontVariantNumeric: 'tabular-nums', minWidth: 0 },
+  pairStatus: { color: '#6B7280', fontSize: '12px', whiteSpace: 'nowrap' },
+  pairPrice: { fontWeight: 700, color: '#111827', fontVariantNumeric: 'tabular-nums' },
   noticeCard: { background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '12px', padding: '14px 16px', marginBottom: '16px' },
   noticeText: { fontSize: '12px', color: '#92400E', margin: 0, lineHeight: 1.5 },
 

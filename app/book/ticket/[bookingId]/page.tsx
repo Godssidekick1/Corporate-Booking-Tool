@@ -93,9 +93,19 @@ interface BookingPassenger {
   }[]
 }
 
+// The other booking of a round trip booked as two (onward first).
+interface PairMember {
+  id: string
+  status: string
+  pnr: string | null
+  direction: 'onward' | 'return'
+  itinerary: { origin?: { code?: string; dateTime?: string }; destination?: { code?: string; dateTime?: string }; airline?: { code?: string; name?: string }; legs?: { flightNumber?: string }[] } | null
+}
+
 interface Booking {
   id: string
   status: string
+  pair?: PairMember[]
   pnr: string | null
   ticket_numbers: (string | null)[] | null
   // What the company paid. The airline's own figure (total_cost) is never
@@ -160,6 +170,9 @@ export default function TicketPage() {
   const [ticketing, setTicketing] = useState(false)
   const [error, setError] = useState('')
   const ticketingRef = useRef(false) // guards against duplicate concurrent issueTicket() calls
+  // A round trip: the other booking's ticket, issued from here too (once).
+  const partnerRef = useRef(false)
+  const [partnerNote, setPartnerNote] = useState('')
   // The QR, as a data URI, plus the URL behind it so it can be copied as text.
   // Generated server-side so the qrcode library never enters this bundle.
   const [qr, setQr] = useState<{ qr: string | null; url: string | null }>({ qr: null, url: null })
@@ -259,7 +272,9 @@ export default function TicketPage() {
         // Already in flight when Confirm handed over — await that one rather
         // than starting a second.
         await (earlyTicket ?? issueTicket())
+        await ticketPartners(data.booking.pair)
       } else if (data.booking.status === 'ticketed') {
+        await ticketPartners(data.booking.pair)
         // Already done — nothing to do, page renders normally below.
       } else if (
         data.booking.status === 'pending_approval' || data.booking.status === 'approved' ||
@@ -283,6 +298,33 @@ export default function TicketPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  // A round trip booked as two: the other booking, once confirmed (held), is
+  // ticketed from here as well, so one visit issues both. A failure is said
+  // plainly; that booking's own page retries it.
+  async function ticketPartners(pair: PairMember[] | undefined) {
+    const held = (pair ?? []).filter(m => m.id !== bookingId && m.status === 'held')
+    if (held.length === 0 || partnerRef.current) return
+    partnerRef.current = true
+    for (const m of held) {
+      try {
+        const res = await fetch('/api/book/ticket', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bookingId: m.id }),
+        })
+        const d = await res.json().catch(() => ({}))
+        if (!d.ok && d.code !== 'NOT_HELD') {
+          setPartnerNote(`The ${m.direction} flight's ticket could not be issued: ${d.error || 'the airline did not answer.'} Open it to try again.`)
+        }
+      } catch {
+        setPartnerNote(`The ${m.direction} flight's ticket could not be issued just now. Open it to try again.`)
+      }
+    }
+    // Statuses as they now stand.
+    try {
+      const fresh = await fetch(`/api/book/${bookingId}`).then(r => r.json())
+      if (fresh?.booking?.pair) setBooking(prev => prev ? { ...prev, pair: fresh.booking.pair } : prev)
+    } catch { /* the card keeps the statuses it had */ }
   }
 
   async function issueTicket() {
@@ -384,6 +426,30 @@ export default function TicketPage() {
             <p style={s.loadingNote}>
               The airline is confirming your ticket numbers. Please don&apos;t close or refresh this page.
             </p>
+          </div>
+        )}
+
+        {booking.pair && booking.pair.length > 1 && (
+          <div style={s.card}>
+            <p style={{ fontSize: 12, fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 8px' }}>Round trip · two bookings</p>
+            {booking.pair.map(m => {
+              const time = (iso?: string) => /T(\d{2}:\d{2})/.exec(iso ?? '')?.[1] ?? ''
+              const it2 = m.itinerary
+              return (
+                <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', padding: '8px 0', borderTop: '1px solid #F3F4F6', fontSize: 13 }}>
+                  <span>
+                    <b style={{ fontSize: 11, color: '#6B7280', textTransform: 'uppercase', marginRight: 8 }}>{m.direction === 'onward' ? 'Onward' : 'Return'}</b>
+                    {it2?.origin?.code} {time(it2?.origin?.dateTime)} → {it2?.destination?.code} {time(it2?.destination?.dateTime)}
+                  </span>
+                  <span style={{ color: '#6B7280' }}>
+                    {m.status === 'ticketed' ? 'Ticketed' : m.status === 'held' ? 'Confirmed, ticket pending' : m.status}
+                    {m.pnr ? ` · PNR ${m.pnr}` : ''}
+                    {m.id !== bookingId && <> · <Link href={`/book/ticket/${m.id}`}>Open its ticket</Link></>}
+                  </span>
+                </div>
+              )
+            })}
+            {partnerNote && <p style={{ fontSize: 12.5, color: '#B91C1C', margin: '8px 0 0' }}>{partnerNote}</p>}
           </div>
         )}
 

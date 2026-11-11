@@ -18,6 +18,7 @@ import { classifyTrip } from '@/app/lib/rule-engine/classifyTrip'
 import { breachLine } from '@/app/lib/policy/breachText'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
 import DeskFareStrip from '@/app/components/book/DeskFareStrip'
+import { previewPolicy } from '@/app/lib/book/priceFare'
 import { passengerNameProblems } from '@/app/lib/book/passengerNames'
 
 // ── /book/details/[flightKey] ─────────────────────────────────────────────────
@@ -345,6 +346,15 @@ export default function BookingDetailsPage() {
 
   const [flight, setFlight] = useState<FlatFlightResult | null>(null)
   const [priced, setPriced] = useState<PricedFare | null>(null)
+  // A domestic round trip (?pair=1): the return flight and its priced fare,
+  // booked from this same form as a second, linked booking (no seats: the
+  // seat map here is the onward's).
+  const [pairReturn, setPairReturn] = useState<{ flight: FlatFlightResult; priced: PricedFare } | null>(null)
+  const [returnVerdict, setReturnVerdict] = useState<PolicyPreview | null>(null)
+  // The onward booking once created: a return that then fails is retried
+  // against it, never by creating the onward again.
+  const [pairOnwardId, setPairOnwardId] = useState<string | null>(null)
+  const [cancellingOnward, setCancellingOnward] = useState(false)
   const [loadError, setLoadError] = useState('')
   // Set only when the airline accepted the passenger but we failed to save the
   // booking. Its presence is what turns the error page from "try again" into
@@ -430,11 +440,14 @@ export default function BookingDetailsPage() {
       .then(d => { if (live && d.ok) setControls(d) }).catch(() => {})
     return () => { live = false }
   }, [])
-  const outsidePolicy = verdict?.verdict === 'amber' || verdict?.verdict === 'red'
+  // A round trip is judged as one request: the worse of the two flights.
+  const worstVerdict = [verdict?.verdict, returnVerdict?.verdict].includes('red') ? 'red'
+    : [verdict?.verdict, returnVerdict?.verdict].includes('amber') ? 'amber' : verdict?.verdict
+  const outsidePolicy = worstVerdict === 'amber' || worstVerdict === 'red'
   const personalTrip = flowStorage.getPurpose() === 'personal'
   const needsReason = !personalTrip && (reasonAsked ||
     ((who?.policy === 'guidance' || controls?.reasonRequired === true) && outsidePolicy))
-  const redBlocked = !personalTrip && controls?.blocksRed === true && verdict?.verdict === 'red'
+  const redBlocked = !personalTrip && controls?.blocksRed === true && worstVerdict === 'red'
   // The same route and day already booked: the company asks to confirm.
   const [duplicateAsk, setDuplicateAsk] = useState('')
   const confirmDuplicate = useRef(false)
@@ -467,6 +480,19 @@ export default function BookingDetailsPage() {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setLoadError('This booking step has expired. Please search again and reselect your flight.')
       return
+    }
+
+    // A round trip's return, priced on the round trip's fare page.
+    if (new URLSearchParams(window.location.search).get('pair') === '1') {
+      const pair = flowStorage.getPair()
+      const returnFlight = pair && pair.onward.flightKey === flightKey ? flowStorage.findResultByFlightKey(pair.return.flightKey) : null
+      const returnPriced = returnFlight ? flowStorage.getPricedFare(returnFlight.flightKey) : null
+      if (!returnFlight || !returnPriced) {
+        setLoadError('The return flight of this round trip is no longer priced. Go back to the round trip and confirm both fares again.')
+        return
+      }
+      setPairReturn({ flight: returnFlight, priced: returnPriced })
+      previewPolicy(returnFlight, returnPriced).then(setReturnVerdict)
     }
 
     setFlight(storedFlight)
@@ -794,8 +820,8 @@ export default function BookingDetailsPage() {
     const totalSeatFees = Object.values(seatsByPassenger)
       .flat()
       .reduce((sum, seat) => sum + (Number(seat.SeatFee) || 0), 0)
-    // sellTotal already carries any discount and processing fee; totalFare is
-    // the fare line alone. Falls back to totalFare so a quote saved before
+    // Each request's total (in send, below): sellTotal, which already carries
+    // any discount and processing fee, plus that booking's seat fees. Falls back to totalFare so a quote saved before
     // commercial rules existed still works.
     //
     // THIS NUMBER IS NO LONGER AUTHORITATIVE. The server recovers the airline
@@ -803,13 +829,15 @@ export default function BookingDetailsPage() {
     // a markup is embedded in these numbers and sending them onward would quote
     // our own markup to the airline. It is still sent so the server can log when
     // the two disagree, which is the signal that markup is working.
-    const grandTotalFare = (priced.sellTotal ?? priced.totalFare) + totalSeatFees
 
-    try {
-      const res = await fetch('/api/book/add-passenger', {
+    // One booking's request. A round trip sends two: the onward (with its
+    // seats) as the pair's first, then the return naming it.
+    const send = (fare: PricedFare, itinerary: FlatFlightResult | null, seats: Record<number, SelectedSeat[]>, seatFees: number,
+      pair?: { role: 'first' } | { role: 'second'; withBookingId: string }) => fetch('/api/book/add-passenger', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          pair,
           travellerId: flowStorage.travellerId(),
           purpose: flowStorage.getPurpose(),
           // A guest: typed in by hand, not an employee (never when booking for
@@ -818,21 +846,21 @@ export default function BookingDetailsPage() {
           confirmDuplicate: confirmDuplicate.current || undefined,
           policyReasonCode: needsReason ? reasonCode || undefined : undefined,
           policyReasonNote: needsReason ? reasonNote.trim() || undefined : undefined,
-          key: priced.key,
-          pricingKey: priced.pricingKey,
-          provider: priced.provider,
-          resultIndex: priced.resultIndex,
-          referenceNo: priced.referenceNo,
-          totalFare: grandTotalFare,
-          seatFees: totalSeatFees,
-          currency: priced.currency,
-          isRefundable: priced.isRefundable,
-          fareType: priced.fareType,
-          passengerBreakup: priced.passengerBreakup,
-          isNdc: priced.isNdc,
-          searchKey: priced.searchKey,
+          key: fare.key,
+          pricingKey: fare.pricingKey,
+          provider: fare.provider,
+          resultIndex: fare.resultIndex,
+          referenceNo: fare.referenceNo,
+          totalFare: (fare.sellTotal ?? fare.totalFare) + seatFees,
+          seatFees,
+          currency: fare.currency,
+          isRefundable: fare.isRefundable,
+          fareType: fare.fareType,
+          passengerBreakup: fare.passengerBreakup,
+          isNdc: fare.isNdc,
+          searchKey: fare.searchKey,
           tripId: flowStorage.getTripId(),
-          itinerary: flight,
+          itinerary,
           customerInfo: {
             Email: email,
             Mobile: mobile,
@@ -864,12 +892,20 @@ export default function BookingDetailsPage() {
               // special meal on a meal-less fare is a request the airline has
               // no reason to honour and we have no way to pay for.
               MealCode: mealIncluded ? p.mealCode : '',
-              SeatListDetails: toSeatListDetails(seatsByPassenger[i]),
+              SeatListDetails: toSeatListDetails(seats[i]),
             })),
           },
         }),
       })
 
+    try {
+      // A round trip whose onward is already saved: only the return is sent.
+      if (pairReturn && pairOnwardId) {
+        await sendReturn(pairOnwardId)
+        return
+      }
+
+      const res = await send(priced, flight, seatsByPassenger, totalSeatFees, pairReturn ? { role: 'first' } : undefined)
       const data = await res.json()
 
       if (!data.ok) {
@@ -898,14 +934,63 @@ export default function BookingDetailsPage() {
         return
       }
 
+      // A round trip: the onward is saved; now its return, linked to it.
+      if (pairReturn) {
+        setPairOnwardId(data.bookingId)
+        await sendReturn(data.bookingId)
+        return
+      }
+
       // add-passenger created the bookings row — from here on the flow is
       // keyed by bookingId, not flightKey, and sessionStorage is done being used.
       flowStorage.clearTripId()
       router.push(`/book/confirm/${data.bookingId}`)
     } catch {
-      setError('Something went wrong saving passenger details. Please try again.')
+      setError(pairOnwardId
+        ? 'Your onward flight is saved, but the return could not be sent. Check your connection and try the return again.'
+        : 'Something went wrong saving passenger details. Please try again.')
     } finally {
       setSubmitting(false)
+    }
+
+    // The return of a round trip, named against its saved onward. A failure
+    // says plainly which flight is saved and which is not.
+    async function sendReturn(onwardId: string) {
+      if (!pairReturn) return
+      const res = await send(pairReturn.priced, pairReturn.flight, {}, 0, { role: 'second', withBookingId: onwardId })
+      const data = await res.json()
+      if (!data.ok) {
+        if (data.code === 'POLICY_REASON_REQUIRED') { setReasonAsked(true) }
+        if (data.code === 'ORPHANED_PNR') {
+          setLoadError(`Your onward flight is saved, but the return's details reached the airline and could not be saved here. ${data.error}`)
+          setOrphanedReference(data.referenceNo ?? null)
+          return
+        }
+        setError(`Your onward flight is saved, but the return could not be added: ${data.error || 'the airline did not accept it.'} Try the return again, or cancel the onward flight.`)
+        return
+      }
+      flowStorage.clearTripId()
+      router.push(`/book/confirm/${onwardId}`)
+    }
+  }
+
+  // The onward of a round trip whose return could not be added: withdrawn,
+  // so nothing is left waiting half-made.
+  async function cancelOnward() {
+    if (!pairOnwardId) return
+    setCancellingOnward(true)
+    try {
+      const res = await fetch(`/api/book/${pairOnwardId}/cancel`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'Round trip: the return flight could not be added' }),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) { setError(d.error || 'Could not cancel the onward flight. Open it from My trips to cancel it.'); return }
+      setPairOnwardId(null)
+      setError('')
+      setLoadError('The onward flight was cancelled. Search again to book the round trip.')
+    } finally {
+      setCancellingOnward(false)
     }
   }
 
@@ -1025,8 +1110,32 @@ export default function BookingDetailsPage() {
               {formatTime(flight.origin?.dateTime)} · {formatDayLabel(flight.origin?.dateTime)}
             </span>
           </div>
-          <div style={s.summaryFare}>{priced.currency} {priced.totalFare.toLocaleString('en-IN')}</div>
+          <div style={s.summaryFare}>{priced.currency} {(priced.sellTotal ?? priced.totalFare).toLocaleString('en-IN')}</div>
         </div>
+        {pairReturn && (
+          <div style={s.summaryCard}>
+            <div style={s.summaryRoute}>
+              <span style={s.summaryMeta}>Return</span>
+              <span style={s.summaryCode}>{pairReturn.flight.origin?.code}</span>
+              <span style={s.summaryArrow}>→</span>
+              <span style={s.summaryCode}>{pairReturn.flight.destination?.code}</span>
+              <span style={s.summaryMeta}>
+                {formatTime(pairReturn.flight.origin?.dateTime)} · {formatDayLabel(pairReturn.flight.origin?.dateTime)}
+              </span>
+              {returnVerdict?.ok && returnVerdict.verdict && (
+                <span style={{ ...s.summaryMeta, color: VERDICT_META[returnVerdict.verdict].color, fontWeight: 600 }}>
+                  {VERDICT_META[returnVerdict.verdict].label}
+                </span>
+              )}
+            </div>
+            <div style={s.summaryFare}>{pairReturn.priced.currency} {(pairReturn.priced.sellTotal ?? pairReturn.priced.totalFare).toLocaleString('en-IN')}</div>
+          </div>
+        )}
+        {pairReturn && (
+          <p style={s.cardSub}>
+            A round trip: two bookings from one form, sent for approval together. Seats chosen below are for the onward flight; the return&apos;s seat can be chosen at check-in.
+          </p>
+        )}
         <DeskFareStrip desk={priced.desk} currency={priced.currency} />
 
         {/* ── Live policy verdict ──────────────────────────────────── */}
@@ -1559,8 +1668,13 @@ export default function BookingDetailsPage() {
             return <p style={{ ...s.holdNote, ...(left < 5 * 60_000 ? s.holdNoteSoon : {}) }}>Fare held for {m}:{String(sec).padStart(2, '0')}</p>
           })()}
 
+          {pairOnwardId && !submitting && (
+            <button type="button" onClick={cancelOnward} disabled={cancellingOnward} style={s.secondaryInline}>
+              {cancellingOnward ? 'Cancelling…' : 'Cancel the onward flight'}
+            </button>
+          )}
           <button type="submit" disabled={submitting || redBlocked} style={{ ...s.continueBtn, opacity: submitting || redBlocked ? 0.7 : 1 }}>
-            {submitting ? <ButtonBusy label="Saving travellers…" /> : 'Continue to review →'}
+            {submitting ? <ButtonBusy label="Saving travellers…" /> : pairOnwardId ? 'Try the return again →' : 'Continue to review →'}
           </button>
         </form>
       </div>

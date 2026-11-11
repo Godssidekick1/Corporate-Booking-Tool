@@ -79,9 +79,20 @@ export const POST = route(async (
     const withdrawn = await transaction(async tx => {
       const ok = await bookingsRepo.withdraw(tx, booking.id, { by: me.id, reason, statuses: WITHDRAWABLE })
       if (!ok) return null
-      const steps = await approvals.withdrawPending(tx, booking.id)
-      await audit.append(tx, auditEntry('cancelled', { approval_steps_withdrawn: steps }))
-      return { steps }
+      let steps = await approvals.withdrawPending(tx, booking.id)
+      // A round trip still awaiting its one approval is withdrawn as a pair:
+      // the other booking would otherwise wait on an approval nobody can give.
+      // Once approved, each direction is cancelled on its own.
+      const partners = booking.status === 'pending_approval'
+        ? (await bookingsRepo.pairMembers(tx, booking.id)).filter(m => m.id !== booking.id && m.status === 'pending_approval')
+        : []
+      for (const partner of partners) {
+        await bookingsRepo.withdraw(tx, partner.id, { by: me.id, reason, statuses: ['pending_approval'] })
+        steps += await approvals.withdrawPending(tx, partner.id)
+        await audit.append(tx, { ...auditEntry('cancelled', { with_pair: booking.id }), entityId: partner.id })
+      }
+      await audit.append(tx, auditEntry('cancelled', { approval_steps_withdrawn: steps, ...(partners.length ? { pair_withdrawn: partners.map(p => p.id) } : {}) }))
+      return { steps, partners: partners.map(p => p.id) }
     })
     if (!withdrawn) {
       return Response.json({ error: 'This booking changed while you were cancelling it. Reload and try again.', code: 'CHANGED' }, { status: 409 })
@@ -89,6 +100,8 @@ export const POST = route(async (
     return Response.json({
       ok: true, bookingId: booking.id, status: 'cancelled',
       cancellation: { refund: 'none', charges: 0, reason },
+      // The other booking of a round trip, withdrawn with it.
+      ...(withdrawn.partners.length ? { alsoWithdrawn: withdrawn.partners } : {}),
     })
   }
 
