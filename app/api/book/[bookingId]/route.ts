@@ -195,10 +195,22 @@ export const GET = route(async (
     }
   })
 
+  // A domestic round trip booked as two linked bookings: both, onward first.
+  // A lone member is an onward still waiting for its return.
+  const pairRows = await bookingsRepo.pairMembers(db, booking.id)
+
   return Response.json({
     ok: true,
     booking: {
       ...safeBooking,
+      ...(pairRows.length > 0 ? {
+        pair: pairRows.map((p, i) => ({
+          id: p.id, status: p.status, pnr: p.pnr, sell_total: p.sell_total,
+          direction: i === 0 ? 'onward' : 'return',
+          itinerary: travellerItinerary(p.itinerary),
+        })),
+        awaitingReturn: pairRows.length === 1,
+      } : {}),
       // What the corporate is invoiced. Falls back to the airline figure for
       // bookings made before commercial rules existed — on those the two are
       // the same number, so nothing is revealed by the fallback.

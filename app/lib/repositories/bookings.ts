@@ -423,6 +423,77 @@ export async function insert(db: Queryable, b: NewBooking): Promise<{ id: string
     returning id`)
 }
 
+// ═══ Round trip pairs ═══════════════════════════════════════════════════════
+// A domestic round trip booked as two one-way fares (migration
+// 20261111000000_round_trip_pairs): pair_id is the first booking's id, on both.
+
+// The first booking of a pair, waiting for its return.
+export async function markPairFirst(db: Queryable, bookingId: string): Promise<void> {
+  await exec(db, sql`update bookings set pair_id = id, updated_at = now() where id = ${bookingId}`)
+}
+
+export async function linkToPair(db: Queryable, bookingId: string, pairId: string): Promise<void> {
+  await exec(db, sql`update bookings set pair_id = ${pairId}, updated_at = now() where id = ${bookingId}`)
+}
+
+export interface PairOpening {
+  id: string
+  employee_id: string
+  booked_by: string | null
+  client_id: string | null
+  status: string
+  pair_id: string | null
+  policy_verdict: string | null
+  policy_verdict_detail: { breaches?: unknown[] } | null
+  created_at: string
+  // Seconds since it was made, by the database clock (the one created_at uses).
+  age_seconds: number
+  partners: number
+  approval_rows: number
+}
+
+// What the return of a pair needs to know about the onward before it links:
+// whose it is, whether it is still waiting (no partner yet, nothing sent for
+// approval), and its verdict, for the one approval of the pair.
+export async function pairOpening(db: Queryable, bookingId: string): Promise<PairOpening | null> {
+  return maybeOne<PairOpening>(db, sql`
+    select b.id, b.employee_id, b.booked_by, b.client_id, b.status, b.pair_id, b.policy_verdict,
+           b.policy_verdict_detail, b.created_at,
+           extract(epoch from now() - b.created_at)::int as age_seconds,
+           (select count(*)::int from bookings p where p.pair_id = b.id and p.id <> b.id) as partners,
+           (select count(*)::int from approvals a where a.booking_id = b.id) as approval_rows
+    from bookings b where b.id = ${bookingId}`)
+}
+
+// A decision on the pair's approval reaches the other booking too, while it
+// is still waiting on that same decision.
+export async function setPairStatus(db: Queryable, bookingId: string, status: string): Promise<void> {
+  await exec(db, sql`
+    update bookings set status = ${status}, updated_at = now()
+    where pair_id is not null
+      and pair_id = (select pair_id from bookings where id = ${bookingId})
+      and id <> ${bookingId}
+      and status = 'pending_approval'`)
+}
+
+export interface PairMember {
+  id: string
+  status: string
+  pnr: string | null
+  itinerary: unknown
+  sell_total: number | null
+  created_at: string
+}
+
+// Both bookings of a pair, first (onward) first. Empty when not paired.
+export async function pairMembers(db: Queryable, bookingId: string): Promise<PairMember[]> {
+  return many<PairMember>(db, sql`
+    select p.id, p.status, p.pnr, p.itinerary, coalesce(p.sell_total, p.total_cost) as sell_total, p.created_at
+    from bookings b join bookings p on p.pair_id = b.pair_id
+    where b.id = ${bookingId} and b.pair_id is not null
+    order by (p.id = p.pair_id) desc, p.created_at, p.id`)
+}
+
 // ═══ Approval ═══════════════════════════════════════════════════════════════
 
 export type ApprovalTarget = Pick<Row<'bookings'>, 'id' | 'employee_id' | 'client_id' | 'status'>

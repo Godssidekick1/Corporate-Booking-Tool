@@ -93,7 +93,16 @@ interface AddPassengerBody {
   // Booking anyway, after being told the traveller already holds a booking on
   // the same route and day (when the company warns rather than blocks).
   confirmDuplicate?: boolean
+  // A domestic round trip booked as two one-way fares. 'first' is the onward:
+  // created, then left waiting (not sent for approval) for its return.
+  // 'second' is the return, naming the onward: the two are linked and ONE
+  // approval is raised for the pair, judged by the worse of the two verdicts.
+  pair?: { role: 'first' } | { role: 'second'; withBookingId: string }
 }
+
+// How long an onward waits for its return before it can no longer be paired.
+const PAIR_WINDOW_MS = 3 * 60 * 60 * 1000
+const VERDICT_RANK: Record<string, number> = { green: 0, amber: 1, red: 2 }
 
 export const POST = route(async (req: NextRequest) => {
   const user = await requireUser()
@@ -173,6 +182,31 @@ export const POST = route(async (req: NextRequest) => {
         error: trip.approval_status === 'pending'
           ? 'This trip is awaiting sign-off, so it cannot take another booking until it is decided.'
           : 'This trip is signed off and cannot take another booking.',
+      }, { status: 409 })
+    }
+  }
+
+  // ── A round trip's return: its onward must still be waiting for it ──────────
+  // Checked before the airline sees anyone. The onward must be this
+  // traveller's, made by this booker, marked as a pair's first, with no
+  // partner yet and nothing sent for approval, and recent.
+  const pair = body.pair
+  if (pair && pair.role !== 'first' && pair.role !== 'second') {
+    return Response.json({ error: 'pair.role must be "first" or "second"' }, { status: 400 })
+  }
+  const opening = pair?.role === 'second' ? await bookings.pairOpening(db, pair.withBookingId) : null
+  if (pair?.role === 'second') {
+    const waiting = opening
+      && opening.employee_id === employee.id
+      && opening.booked_by === user.id
+      && opening.pair_id === opening.id
+      && opening.partners === 0
+      && (opening.status === 'approved' || (opening.status === 'pending_approval' && opening.approval_rows === 0))
+      && opening.age_seconds * 1000 < PAIR_WINDOW_MS
+    if (!waiting) {
+      return Response.json({
+        error: 'The onward flight of this round trip can no longer be paired with a return. Search again to book the return.',
+        code: 'PAIR_NOT_OPEN',
       }, { status: 409 })
     }
   }
@@ -472,6 +506,21 @@ export const POST = route(async (req: NextRequest) => {
     // 'self' (exempt from approval — startApprovalForBooking already
     // logged that as its own approvals row with status 'approved').
     let finalStatus = 'pending_approval'
+    // Linked first: a pair's status updates below reach both rows. Not fatal:
+    // an unlinked booking still stands on its own and can be cancelled.
+    try {
+      if (pair?.role === 'first') await bookings.markPairFirst(db, booking.id)
+      if (pair?.role === 'second' && opening) await bookings.linkToPair(db, booking.id, opening.id)
+    } catch (linkErr) {
+      console.error('[add-passenger] could not link the round trip pair', linkErr)
+    }
+    // The approval subject for a pair is its first booking.
+    const chainSubject = pair?.role === 'second' && opening ? opening.id : booking.id
+    const setBoth = async (status: string) => {
+      await bookings.setStatus(db, booking.id, status)
+      if (chainSubject !== booking.id) await bookings.setStatus(db, chainSubject, status)
+    }
+
     if (personal) {
       // The traveller's own trip: no company approval to ask for.
       finalStatus = 'approved'
@@ -493,27 +542,41 @@ export const POST = route(async (req: NextRequest) => {
           console.error('[add-passenger] could not audit a desk override', auditErr)
         }
       }
+    } else if (pair?.role === 'first') {
+      // The onward of a round trip waits for its return: one approval is raised
+      // for both once the return's passengers are in. It stays
+      // pending_approval with nothing sent; cancelling it withdraws it.
+      finalStatus = 'pending_approval'
     } else {
+      // A pair's return: judged with its onward, as one request. The worse of
+      // the two verdicts decides which steps run; the approver reads both.
+      const onwardVerdict = opening?.policy_verdict ?? null
+      const verdictForChain = pair?.role === 'second' && onwardVerdict
+        && (VERDICT_RANK[onwardVerdict] ?? 0) > (VERDICT_RANK[policyVerdict ?? 'green'] ?? 0)
+        ? onwardVerdict : policyVerdict
+      const reasonForChain = pair?.role === 'second' && opening
+        ? `Onward flight: ${buildReason((opening.policy_verdict_detail?.breaches ?? []) as Parameters<typeof buildReason>[0])}. Return flight: ${reason}`
+        : reason
       try {
         const outcome = await startApprovalForBooking(db, {
-          bookingId: booking.id,
+          bookingId: chainSubject,
           clientId,
           employeeId: employee.id,
           travelType: travelTypeForApproval,
-          verdict: (policyVerdict as 'green' | 'amber' | 'red') ?? 'green',
-          reason,
+          verdict: (verdictForChain as 'green' | 'amber' | 'red') ?? 'green',
+          reason: reasonForChain,
         })
 
         if (!outcome.requiresApproval) {
           finalStatus = 'approved'
-          await bookings.setStatus(db, booking.id, 'approved')
+          await setBoth('approved')
         } else if (!outcome.approverId) {
           // Chain exists but couldn't resolve a real approver (no manager_id
           // set, or no finance-role employee in the client). Surface this as
           // its own status rather than silently stalling in 'pending_approval'
           // with no approvals row ever created for anyone to act on.
           finalStatus = 'approval_misconfigured'
-          await bookings.setStatus(db, booking.id, 'approval_misconfigured')
+          await setBoth('approval_misconfigured')
         }
       } catch (approvalErr) {
         console.error('Approval chain resolution failed after booking insert', approvalErr)
@@ -529,6 +592,9 @@ export const POST = route(async (req: NextRequest) => {
       status: finalStatus,
       policyVerdict,
       policyVerdictDetail,
+      // A round trip: the onward waiting for its return, or the pair it joined.
+      ...(pair?.role === 'first' ? { awaitingPair: true } : {}),
+      ...(pair?.role === 'second' && opening ? { pairedWith: opening.id } : {}),
     })
   } catch (err) {
     if (err instanceof AmadeusError) return providerFailure(err, 'passenger', user)

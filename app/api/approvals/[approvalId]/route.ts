@@ -102,8 +102,11 @@ export const PATCH = route(async (
     outcomeStatus = await transaction(async (tx) => {
       await approvals.decide(tx, approvalId, decision === 'approve' ? 'approved' : 'rejected', note ?? null)
 
+      // A round trip's two bookings share one approval (raised on the first):
+      // the decision reaches the other while it waits on it too.
       const setBooking = async (status: string) => {
         await bookings.setStatus(tx, booking.id, status)
+        await bookings.setPairStatus(tx, booking.id, status)
         return status
       }
 
