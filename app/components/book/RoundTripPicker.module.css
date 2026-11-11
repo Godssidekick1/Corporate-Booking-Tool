@@ -47,6 +47,8 @@
 .pick small { font-size: 10.5px; color: #aab0d6; text-transform: uppercase; letter-spacing: 0.4px; font-weight: 600; }
 .pick b { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pick span { font-size: 12px; color: #d6d9ef; font-variant-numeric: tabular-nums; }
+.clearPick { margin-left: auto; flex-shrink: 0; width: 24px; height: 24px; border-radius: 50%; border: 1px solid #3a4275; background: transparent; color: #d6d9ef; font-size: 15px; line-height: 1; cursor: pointer; }
+.clearPick:hover { background: #2a3160; color: #fff; }
 .pickEmpty b { color: #8d93bd; font-weight: 500; }
 .total { display: flex; align-items: center; gap: 14px; }
 .total div { text-align: right; }

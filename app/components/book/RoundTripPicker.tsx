@@ -48,7 +48,8 @@ function Column({ title, list, selected, onPick }: {
   title: string
   list: FlatFlightResult[]
   selected: string | null
-  onPick: (f: FlatFlightResult) => void
+  // null: the pick taken back (clicking the chosen row again, or its × below).
+  onPick: (f: FlatFlightResult | null) => void
 }) {
   const [sort, setSort] = useState<SortKey>('cheapest')
   const [quick, setQuick] = useState<Set<Quick>>(new Set())
@@ -103,7 +104,10 @@ function Column({ title, list, selected, onPick }: {
           const numbers = [...new Set((f.legs ?? []).map(l => `${l.airlineCode ?? ''} ${l.flightNumber ?? ''}`.trim()))].join(' · ')
           return (
             <label key={f.flightKey} className={`${css.row} ${isSel ? css.rowSelected : ''}`}>
-              <input type="radio" name={`pick-${title}`} checked={isSel} onChange={() => onPick(f)} />
+              {/* A radio cannot be unchecked by clicking it, so a click on the
+                  chosen row takes the pick back (the label forwards its click). */}
+              <input type="radio" name={`pick-${title}`} checked={isSel} onChange={() => onPick(f)}
+                onClick={() => { if (isSel) onPick(null) }} />
               <AirlineMark code={airlineOf(f)} name={f.airline?.name} size={26} />
               <span className={css.times}>
                 <b>{clock(j?.origin?.dateTime)} → {clock(j?.destination?.dateTime)}{nextDay && <sup>+1</sup>}</b>
@@ -177,7 +181,7 @@ export default function RoundTripPicker({ split, onContinue, onChooseSpecial, na
     )
   }
 
-  const pickLine = (label: string, f: FlatFlightResult | null) => {
+  const pickLine = (label: string, f: FlatFlightResult | null, clear: () => void) => {
     if (!f) return <div className={`${css.pick} ${css.pickEmpty}`}><div><small>{label}</small><b>Pick a flight</b></div></div>
     const j = journeysOf(f)[0]
     return (
@@ -188,6 +192,7 @@ export default function RoundTripPicker({ split, onContinue, onChooseSpecial, na
           <b>{f.airline?.name ?? airlineOf(f)} {f.legs?.[0]?.flightNumber ?? ''}</b>
           <span>{clock(j?.origin?.dateTime)} → {clock(j?.destination?.dateTime)} · {inr(amountOf(cheapestFare(f)))}</span>
         </div>
+        <button type="button" className={css.clearPick} onClick={clear} aria-label={`Remove the ${label.toLowerCase()} flight`} title="Remove">×</button>
       </div>
     )
   }
@@ -221,8 +226,8 @@ export default function RoundTripPicker({ split, onContinue, onChooseSpecial, na
       </div>
 
       <div className={css.bar}>
-        {pickLine('Onward', onPick)}
-        {pickLine('Return', retPick)}
+        {pickLine('Onward', onPick, () => setOnPick(null))}
+        {pickLine('Return', retPick, () => setRetPick(null))}
         <div className={css.total}>
           <div><small>Total, 2 bookings</small><b>{total !== null ? inr(total) : '—'}</b></div>
           <button
