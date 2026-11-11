@@ -110,7 +110,7 @@ d('booking flow', () => {
       as: owner, method: 'POST', url: '/api/book/search',
       body: { origin: 'DEL', destination: 'BOM', departDate: '10/11/2030', tripType: 'oneway' },
     })
-    expect(res).toEqual({ status: 200, json: { ok: true, results: [], availabilityKey: null } })
+    expect(res).toEqual({ status: 200, json: { ok: true, kind: 'oneway', results: [], availabilityKey: null, hiddenByPolicy: [] } })
     expect(fake.searchFlights).toHaveBeenCalledTimes(1)
   })
 

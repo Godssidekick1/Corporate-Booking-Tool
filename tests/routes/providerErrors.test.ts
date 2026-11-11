@@ -66,7 +66,7 @@ d('provider errors reaching the booking screens', () => {
 
   it('search: "Result Not Found" is no flights, not an error', async () => {
     fake.searchFlights.mockRejectedValue(failure('Amadeus FlightAvailability failed: Result Not Found'))
-    expect(await search()).toEqual({ status: 200, json: { ok: true, results: [], availabilityKey: null } })
+    expect(await search()).toEqual({ status: 200, json: { ok: true, kind: 'oneway', results: [], availabilityKey: null, hiddenByPolicy: [] } })
   })
 
   it('search: any other failure is a plain sentence and a reference', async () => {

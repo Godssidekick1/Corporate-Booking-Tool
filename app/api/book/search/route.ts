@@ -3,7 +3,8 @@ import { db } from '@/app/lib/db'
 import { resolveActor, refuse } from '@/app/lib/book/bookingActor'
 import { route } from '@/app/lib/http/handler'
 import { rateLimited } from '@/app/lib/http/rateLimit'
-import { amadeus, AmadeusError } from '@/app/lib/amadeus/client'
+import { amadeus, AmadeusError, type FlightSearchParams } from '@/app/lib/amadeus/client'
+import { isIndianAirport } from '@/app/lib/rule-engine/classifyTrip'
 import { providerFailure, failureKind } from '@/app/lib/book/providerErrors'
 import { harvestAirlines } from '@/app/lib/reference/harvestAirlines'
 import {
@@ -201,6 +202,25 @@ function isValidTravelDate(value: string): boolean {
   return date >= today
 }
 
+// What one provider search yields, as sent to the page.
+interface Found {
+  results: FlatFlightResult[]
+  availabilityKey: string | null
+  hiddenByPolicy: { code: string; name: string }[]
+}
+const NOTHING_FOUND: Found = { results: [], availabilityKey: null, hiddenByPolicy: [] }
+
+// ── POST /api/book/search ────────────────────────────────────────────────────
+// Answers by kind:
+//   oneway    { results, availabilityKey, hiddenByPolicy }
+//   combined  the same, each result both directions at one price (an
+//             international round trip: always combined)
+//   split     a domestic round trip: { onward, return, specialReturn }, each
+//             { results, availabilityKey, hiddenByPolicy } or null when that
+//             search failed, plus notes saying which did. onward and return
+//             are one-way fares for the two columns; specialReturn is the
+//             airlines' paired return fares (RTF), each one booking.
+// ─────────────────────────────────────────────────────────────────────────────
 export const POST = route(async (req: NextRequest) => {
   const user = await requireUser()
   const limited = await rateLimited('search', user.id)
@@ -260,15 +280,15 @@ export const POST = route(async (req: NextRequest) => {
   }
 
   try {
-    // A round trip is a second segment flying the route back, plus RTF: true.
-    // Both have been supported by the client layer since it was written and
-    // never once exercised — no caller had ever set either.
+    // A combined round trip (international, and the special return fares of a
+    // domestic one) is a second segment flying the route back, plus RTF: true.
+    // RTF asks for a paired return fare rather than two priced-apart one-ways,
+    // which is why it comes back as ONE result carrying one pricingKey for both
+    // directions, and why the price and add-passenger routes book one as they
+    // book a one-way. A domestic round trip's two columns are one-way searches
+    // (searchOnce, below).
     //
-    // RTF asks for a combined return fare rather than two priced-apart
-    // one-ways, which is why the response comes back as ONE result carrying one
-    // pricingKey for both directions, and why the price and add-passenger
-    // routes need no changes to book one.
-    // Started BEFORE the provider call and awaited after it, not called in
+    // The commercial context and the policy lists are started BEFORE the provider call and awaited after it, not called in
     // sequence afterwards.
     //
     // Loading the commercial context is five queries, and it depends only on
@@ -292,14 +312,17 @@ export const POST = route(async (req: NextRequest) => {
     const listsPromise = policyListsFor(db, employee.id)
     listsPromise.catch(() => {})
 
-    const availability = await amadeus.searchFlights({
-      segments: isReturn
-        ? [
-            { Origin: normalizedOrigin, Destination: normalizedDestination, DepartDate: departDate },
-            { Origin: normalizedDestination, Destination: normalizedOrigin, DepartDate: returnDate! },
-          ]
-        : [{ Origin: normalizedOrigin, Destination: normalizedDestination, DepartDate: departDate }],
-      rtf: isReturn,
+    // ── One provider search, start to finish ─────────────────────────────────
+    // The availability call, the mapping, markup, the policy filter and
+    // verdicts, and what was shown kept for the lowest-logical-fare check. Run
+    // once for a one-way or a combined round trip, three times at once for a
+    // domestic round trip (below). "No flights" is an empty list, not an error.
+    async function searchOnce(segments: FlightSearchParams['segments'], rtf: boolean): Promise<Found> {
+    let availability: Awaited<ReturnType<typeof amadeus.searchFlights>>
+    try {
+    availability = await amadeus.searchFlights({
+      segments,
+      rtf,
       // Sent as the provider's own word form ("Premium Economy"), normalised
       // through cabinLetter so "premium economy" and 'W' both arrive the same
       // way. Economy is sent as '' — the value every search has used until now
@@ -314,9 +337,16 @@ export const POST = route(async (req: NextRequest) => {
         : '',
       adult, child, infant,
     })
+    } catch (err) {
+      if (err instanceof AmadeusError && failureKind(err) === 'no_results') {
+        console.info('[search] no flights', { requestId: err.requestId, rtf })
+        return NOTHING_FOUND
+      }
+      throw err
+    }
 
     if (!availability.Availibilities || availability.Availibilities.length === 0) {
-  return Response.json({ ok: true, results: [], availabilityKey: null})
+  return NOTHING_FOUND
 }
 
     const allFlights = availability.Availibilities.flatMap(a => a.Availibility)
@@ -570,22 +600,62 @@ export const POST = route(async (req: NextRequest) => {
       }
     }
 
+    // hiddenByPolicy: airlines the policy left out, so the page can say why
+    // they are missing.
+    return { results: priced, availabilityKey: availability.Key ?? null, hiddenByPolicy: hiddenAirlines(results, lists) }
+    }
+
+    const outbound = { Origin: normalizedOrigin, Destination: normalizedDestination, DepartDate: departDate }
+
+    if (!isReturn) {
+      return Response.json({ ok: true, kind: 'oneway', ...(await searchOnce([outbound], false)) })
+    }
+
+    const back = { Origin: normalizedDestination, Destination: normalizedOrigin, DepartDate: returnDate! }
+
+    // ── International round trip: combined, always ───────────────────────────
+    // One RTF search; each result is both directions at one price.
+    if (!(isIndianAirport(normalizedOrigin) && isIndianAirport(normalizedDestination))) {
+      return Response.json({ ok: true, kind: 'combined', ...(await searchOnce([outbound, back], true)) })
+    }
+
+    // ── Domestic round trip: two columns, plus the special return fares ──────
+    // The onward and the return searched as one-ways (each column's fares are
+    // one-way fares, priced and booked on their own), and an RTF search for
+    // the airlines' paired return fares. Three calls at once: the slowest is
+    // the wait, not the sum. Each keeps its own availability key (pricing
+    // needs it) and its own kept search (the lowest-logical-fare check judges a
+    // one-way against its own column). One failing does not hide the others.
+    const [onward, ret, special] = await Promise.allSettled([
+      searchOnce([outbound], false),
+      searchOnce([back], false),
+      searchOnce([outbound, back], true),
+    ])
+    const settled = { onward, return: ret, special }
+    const failures = Object.entries(settled).filter(([, r]) => r.status === 'rejected')
+    if (failures.length === 3) throw (onward as PromiseRejectedResult).reason
+    for (const [which, r] of failures) {
+      console.error(`[search] the ${which} search of a round trip failed; the rest is shown`, (r as PromiseRejectedResult).reason)
+    }
+    const value = (r: PromiseSettledResult<Found>) => r.status === 'fulfilled' ? r.value : null
+    const notes: string[] = []
+    if (onward.status === 'rejected') notes.push('The onward flights could not be loaded just now. Search again to try once more.')
+    if (ret.status === 'rejected') notes.push('The return flights could not be loaded just now. Search again to try once more.')
+    if (special.status === 'rejected') notes.push('Return fares (both flights at one price) could not be loaded just now.')
+
     return Response.json({
-  ok: true,
-  results: priced,
-  availabilityKey: availability.Key,
-  // Airlines the policy left out, so the page can say why they are missing.
-  hiddenByPolicy: hiddenAirlines(results, lists),
-})
+      ok: true,
+      kind: 'split',
+      onward: value(onward),
+      return: value(ret),
+      specialReturn: value(special),
+      notes,
+    })
 
   } catch (err) {
     if (err instanceof AmadeusError) {
       // The airline system's "Result Not Found" means no flights on that
       // route and date: the page's own "No flights found", not an error.
-      if (failureKind(err) === 'no_results') {
-        console.info('[search] no flights', { requestId: err.requestId })
-        return Response.json({ ok: true, results: [], availabilityKey: null })
-      }
       return providerFailure(err, 'search', user)
     }
 
