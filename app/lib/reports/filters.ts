@@ -1,5 +1,5 @@
 import { isUuid } from '@/app/lib/book/bookingActor'
-import type { ReportFilters, FilterKey } from './types'
+import { BOOKING_STATUS_FILTERS, type BookingStatusFilter, type ReportFilters, type FilterKey } from './types'
 
 // ── Reading a report's filters from the query string ─────────────────────────
 // Dates are India's calendar days. Without them a report covers this month
@@ -49,6 +49,12 @@ export function parseFilters(
     if (key === 'clientId' || key === 'clientGroupId') {
       if (!isUuid(raw)) return { error: `${key} is not a valid id` }
       filters[key] = raw
+    } else if (key === 'status') {
+      if (!(BOOKING_STATUS_FILTERS as readonly string[]).includes(raw)) return { error: `status is one of ${BOOKING_STATUS_FILTERS.join(', ')}` }
+      filters.status = raw as BookingStatusFilter
+    } else if (key === 'bookedBy') {
+      if (raw !== 'self' && raw !== 'desk' && raw !== 'colleague') return { error: 'bookedBy is self, desk or colleague' }
+      filters.bookedBy = raw
     } else if (key === 'billable') {
       if (raw !== 'yes' && raw !== 'no') return { error: 'billable is yes or no' }
       filters.billable = raw

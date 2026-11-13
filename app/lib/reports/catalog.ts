@@ -26,4 +26,6 @@ export const TMC_CATALOG = [
   { key: 'desk', title: 'Desk productivity', filters: CLIENTS },
   { key: 'compliance', title: 'Compliance across clients', filters: CLIENTS },
   { key: 'payments', title: 'Payments', filters: CLIENTS },
+  // Each booking with its money; each row opens the booking.
+  { key: 'bookings', title: 'Bookings', filters: [...CLIENTS, 'search', 'status', 'bookedBy'] },
 ] as const satisfies readonly CatalogEntry[]

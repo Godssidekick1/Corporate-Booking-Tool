@@ -1,4 +1,5 @@
 import { sql, one, many, empty, type Queryable, type Sql } from '@/app/lib/db/sql'
+import { searchAcross } from '@/app/lib/db/fragments'
 import type { ReportFilters } from '@/app/lib/reports/types'
 
 // ── Report figures ───────────────────────────────────────────────────────────
@@ -631,4 +632,92 @@ export async function tmcOptions(db: Queryable, tmcId: string): Promise<{ client
   const groups = await many<{ value: string; label: string }>(db, sql`
     select id as value, name as label from client_groups where tmc_id = ${tmcId} order by name`)
   return { clientGroups: groups }
+}
+
+// ── TMC: every booking, with its money ───────────────────────────────────────
+// The Bookings report: one row per booking in scope, made in the range, in
+// any status (the status filter narrows it), newest first, at most `limit`.
+// The airline figure, markup, discount, fee and margin come from the
+// commercials record, as in revenue. Who made it: the traveller (self), the
+// travel desk, or a colleague (a corporate admin booking for them).
+
+const BOOKED_BY = sql`case
+  when b.booked_by is null or b.booked_by = b.employee_id then 'self'
+  when bb.role in ('tmc_admin', 'tc') then 'desk'
+  else 'colleague' end`
+
+export interface BookingListRow {
+  id: string
+  created_at: string
+  status: string
+  pnr: string | null
+  airline_pnr: string | null
+  traveller: string | null
+  client: string
+  booked_by: 'self' | 'desk' | 'colleague'
+  booked_by_name: string | null
+  origin: string | null
+  destination: string | null
+  departs: string | null
+  directions: number
+  airline_code: string | null
+  sell: number
+  airline: number
+  markup: number
+  discount: number
+  fee: number
+  margin: number
+  has_commercials: boolean
+}
+
+export interface BookingListFigures {
+  rows: BookingListRow[]
+  // Before the row cap.
+  total: number
+  booked: number
+  awaiting: number
+  sell: number
+  margin: number
+}
+
+export async function bookingsList(db: Queryable, scope: Scope, f: ReportFilters, limit: number): Promise<BookingListFigures> {
+  // A PNR (ours or the airline's), the provider's reference, a ticket number,
+  // the traveller, or a passenger's name on the booking.
+  const search = searchAcross([
+    sql`b.pnr`, sql`b.airline_pnr`, sql`b.provider_order_id`, sql`e.full_name`,
+    sql`array_to_string(b.ticket_numbers, ' ')`, sql`b.traveler_snapshot::text`,
+  ], f.search)
+  const where = sql`${bookingScope(scope)} and ${inRange(sql`b.created_at`, f)} ${filtersOn(f)}
+    ${f.status ? sql`and b.status = ${f.status}` : empty}
+    ${f.bookedBy ? sql`and ${BOOKED_BY} = ${f.bookedBy}` : empty}
+    ${search}`
+  const from = sql`bookings b join employees e on e.id = b.employee_id
+    join clients c on c.id = b.client_id
+    left join employees bb on bb.id = b.booked_by`
+  const first = sql`coalesce(b.itinerary->'journeys'->0, b.itinerary)`
+  const [rows, sums] = await Promise.all([
+    many<BookingListRow>(db, sql`
+      select b.id, b.created_at, b.status, b.pnr, b.airline_pnr, e.full_name as traveller, c.name as client,
+             ${BOOKED_BY} as booked_by, bb.full_name as booked_by_name,
+             ${first}->'origin'->>'code' as origin, ${first}->'destination'->>'code' as destination,
+             ${first}->'origin'->>'dateTime' as departs,
+             greatest(coalesce(jsonb_array_length(case when jsonb_typeof(b.itinerary->'journeys') = 'array'
+               then b.itinerary->'journeys' end), 1), 1)::int as directions,
+             coalesce(b.itinerary->'airline'->>'code', b.itinerary->'legs'->0->>'airlineCode') as airline_code,
+             ${AMOUNT}::float8 as sell, ${AIRLINE}::float8 as airline,
+             ${adjustment('markup')}::float8 as markup, ${adjustment('discount')}::float8 as discount,
+             ${adjustment('processing_fee')}::float8 as fee, ${MARGIN}::float8 as margin,
+             ${HAS_COMMERCIALS} as has_commercials
+      from ${from} where ${where}
+      order by b.created_at desc, b.id
+      limit ${limit}`),
+    one<{ total: number; booked: number; awaiting: number; sell: number; margin: number }>(db, sql`
+      select count(*)::int as total,
+             count(*) filter (where ${BOOKED})::int as booked,
+             count(*) filter (where b.status = 'pending_approval')::int as awaiting,
+             coalesce(sum(${AMOUNT}) filter (where ${BOOKED}), 0)::float8 as sell,
+             coalesce(sum(${MARGIN}) filter (where ${BOOKED}), 0)::float8 as margin
+      from ${from} where ${where}`),
+  ])
+  return { rows, ...sums }
 }

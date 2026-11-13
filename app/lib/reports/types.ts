@@ -40,6 +40,11 @@ export interface Column {
 
 export type Cell = number | string | null
 
+// A row may carry _href: the page that row opens (the Bookings report opens
+// each booking). Not a column: the screen links the row's first cell, and the
+// CSV, which writes the columns only, leaves it out.
+export const ROW_LINK = '_href'
+
 export interface ReportTable {
   key: string
   title: string
@@ -69,6 +74,14 @@ export interface ReportFilters {
   billable?: 'yes' | 'no'
   clientId?: string
   clientGroupId?: string
+  // The TMC's Bookings report: a PNR, ticket, reference or traveller; one
+  // status; and who made the booking.
+  search?: string
+  status?: BookingStatusFilter
+  bookedBy?: 'self' | 'desk' | 'colleague'
 }
+
+export const BOOKING_STATUS_FILTERS = ['ticketed', 'held', 'approved', 'pending_approval', 'cancelled', 'rejected', 'failed'] as const
+export type BookingStatusFilter = typeof BOOKING_STATUS_FILTERS[number]
 
 export type FilterKey = Exclude<keyof ReportFilters, 'from' | 'to'>

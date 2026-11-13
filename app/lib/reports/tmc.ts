@@ -207,3 +207,63 @@ export async function payments(db: Queryable, scope: TmcScope, f: ReportFilters)
 function money(n: number): string {
   return `₹${Math.round(n).toLocaleString('en-IN')}`
 }
+
+// ── Bookings: each one, with its money ─────────────────────────────────────
+// Every booking in the period, in any status, newest first: who travelled,
+// for which client, the route, the PNR, who made it, and the airline figure,
+// markup, discount, fee, what the client pays and the margin. Each row opens
+// the booking (/tmc/reports/bookings/[id]). The tiles count what was booked
+// with the airline; the table shows every status.
+
+const BOOKINGS_CAP = 2000
+
+const STATUS_LABEL: Record<string, string> = {
+  ticketed: 'Ticketed', held: 'Confirmed', approved: 'Approved, not booked', pending_approval: 'Awaiting approval',
+  cancelled: 'Cancelled', cancel_requested: 'Cancelling', rejected: 'Rejected', failed: 'Failed',
+  approval_misconfigured: 'Approval not set up', priced: 'Priced', passenger_added: 'Passenger added',
+}
+const BOOKED_BY_LABEL: Record<string, string> = { self: 'Traveller', desk: 'Travel desk', colleague: 'Colleague' }
+
+export async function bookings(db: Queryable, scope: TmcScope, f: ReportFilters): Promise<Report> {
+  const r = await reports.bookingsList(db, scope, f, BOOKINGS_CAP)
+  return {
+    key: 'bookings', title: 'Bookings',
+    description: 'Every booking in the period with what it earned: the airline’s fare, markup, discount and fee, what the client pays, and the margin. Open a booking for everything about it.',
+    headline: [
+      { label: 'Bookings', value: r.total, kind: 'count', hint: 'Any status' },
+      { label: 'Booked with the airline', value: r.booked, kind: 'count', hint: 'Confirmed or ticketed' },
+      { label: 'Sell', value: round2(r.sell), kind: 'money', hint: 'Of those booked' },
+      { label: 'Margin', value: round2(r.margin), kind: 'money', hint: 'Of those booked' },
+      { label: 'Awaiting approval', value: r.awaiting, kind: 'count' },
+    ],
+    chart: null,
+    tables: [{
+      key: 'bookings', title: 'Bookings',
+      columns: [col('booked', 'Booked', 'date'), col('traveller', 'Traveller', 'text'), col('client', 'Client', 'text'),
+        col('route', 'Route', 'text'), col('departs', 'Departs', 'date'), col('pnr', 'PNR', 'text'),
+        col('status', 'Status', 'text'), col('bookedBy', 'Booked by', 'text'), col('airline', 'Airline fare', 'money'),
+        col('markup', 'Markup', 'money'), col('discount', 'Discount', 'money'), col('fee', 'Fee', 'money'),
+        col('sell', 'Sell', 'money'), col('margin', 'Margin', 'money')],
+      rows: r.rows.map(b => ({
+        _href: `/tmc/reports/bookings/${b.id}`,
+        booked: b.created_at.slice(0, 10),
+        traveller: b.traveller,
+        client: b.client,
+        route: b.origin && b.destination ? `${b.origin} ${b.directions > 1 ? '⇄' : '→'} ${b.destination}${b.airline_code ? ` · ${b.airline_code}` : ''}` : null,
+        departs: b.departs ? b.departs.slice(0, 10) : null,
+        pnr: b.pnr ?? (b.airline_pnr ? `${b.airline_pnr} (airline)` : null),
+        status: STATUS_LABEL[b.status] ?? b.status,
+        bookedBy: b.booked_by === 'self' ? BOOKED_BY_LABEL.self : `${BOOKED_BY_LABEL[b.booked_by]}${b.booked_by_name ? `: ${b.booked_by_name}` : ''}`,
+        airline: b.has_commercials ? round2(b.airline) : null,
+        markup: b.has_commercials ? round2(b.markup) : null,
+        discount: b.has_commercials ? round2(b.discount) : null,
+        fee: b.has_commercials ? round2(b.fee) : null,
+        sell: round2(b.sell),
+        margin: b.has_commercials ? round2(b.margin) : null,
+      })),
+      note: r.total > r.rows.length
+        ? `Showing the latest ${r.rows.length.toLocaleString('en-IN')} of ${r.total.toLocaleString('en-IN')}. Narrow the dates or filters to see the rest.`
+        : 'A blank airline fare, markup or margin: the booking was made before commercials were recorded.',
+    }],
+  }
+}

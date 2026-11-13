@@ -37,6 +37,7 @@ const TMC_BUILDERS: Builders<typeof TMC_CATALOG, TmcScope> = {
   desk: tmc.desk,
   compliance: tmc.compliance,
   payments: tmc.payments,
+  bookings: tmc.bookings,
 }
 
 export const CORPORATE_REPORTS: readonly ReportDef<ClientScope>[] =

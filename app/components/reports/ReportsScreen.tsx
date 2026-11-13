@@ -1,13 +1,14 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import Tabs, { useUrlTab } from '@/app/components/Tabs'
 import SearchableSelect from '@/app/components/SearchableSelect'
 import Pagination from '@/app/components/Pagination'
 import { SkeletonTiles, SkeletonTable } from '@/app/components/Skeleton'
 import { BarSeries, BarList, StackedSeries } from '@/app/components/charts/Bars'
 import { useLookup, clientOption } from '@/app/hooks/useLookup'
-import type { Report, ReportTable, ValueKind, Cell, FilterKey } from '@/app/lib/reports/types'
+import { ROW_LINK, type Report, type ReportTable, type ValueKind, type Cell, type FilterKey } from '@/app/lib/reports/types'
 import type { CatalogEntry } from '@/app/lib/reports/catalog'
 
 // ── Reports, either side ─────────────────────────────────────────────────────
@@ -58,6 +59,34 @@ function rangeFor(p: Exclude<Preset, 'custom'>): { from: string; to: string } {
 const FILTER_LABEL: Record<FilterKey, string> = {
   department: 'Department', costCentre: 'Cost centre', band: 'Band', billable: 'Billable',
   clientId: 'Client', clientGroupId: 'Client group',
+  search: 'Search', status: 'Status', bookedBy: 'Booked by',
+}
+
+// The Bookings report's status and "booked by" choices.
+const STATUS_OPTIONS: Option[] = [
+  { value: 'ticketed', label: 'Ticketed' }, { value: 'held', label: 'Confirmed, not ticketed' },
+  { value: 'approved', label: 'Approved, not booked' }, { value: 'pending_approval', label: 'Awaiting approval' },
+  { value: 'cancelled', label: 'Cancelled' }, { value: 'rejected', label: 'Rejected' }, { value: 'failed', label: 'Failed' },
+]
+const BOOKED_BY_OPTIONS: Option[] = [
+  { value: 'self', label: 'The traveller' }, { value: 'desk', label: 'The travel desk' }, { value: 'colleague', label: 'A colleague' },
+]
+
+// The search box: sent a moment after typing stops, not on every key.
+function SearchField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [text, setText] = useState(value)
+  useEffect(() => {
+    if (text === value) return
+    const timer = setTimeout(() => onChange(text.trim()), 400)
+    return () => clearTimeout(timer)
+  }, [text, value, onChange])
+  return (
+    <label style={{ ...s.field, minWidth: 220, flex: '1 1 220px' }}>
+      <span style={s.fieldLabel}>{FILTER_LABEL.search}</span>
+      <input type="search" style={s.input} value={text} onChange={e => setText(e.target.value)}
+        placeholder="PNR, ticket, reference or traveller" />
+    </label>
+  )
 }
 
 // ── Formatting by value kind ─────────────────────────────────────────────────
@@ -214,6 +243,7 @@ function FilterBar({ preset, onPreset, range, onRange, keys, options, values, on
     department: options.departments, costCentre: options.costCentres, band: options.bands,
     clientGroupId: options.clientGroups,
     billable: [{ value: 'yes', label: 'Billable' }, { value: 'no', label: 'Not billable' }],
+    status: STATUS_OPTIONS, bookedBy: BOOKED_BY_OPTIONS,
   }
 
   return (
@@ -235,7 +265,9 @@ function FilterBar({ preset, onPreset, range, onRange, keys, options, values, on
           onChange={e => e.target.value && onRange({ ...range, to: e.target.value })} />
       </label>
 
-      {keys.map(k => k === 'clientId' ? (
+      {keys.map(k => k === 'search' ? (
+        <SearchField key={k} value={values.search ?? ''} onChange={v => onChange('search', v)} />
+      ) : k === 'clientId' ? (
         <div key={k} style={{ ...s.field, minWidth: 240, flex: '1 1 240px' }}>
           <span style={s.fieldLabel}>{FILTER_LABEL[k]}</span>
           <SearchableSelect
@@ -331,7 +363,12 @@ function TableCard({ table, csvHref }: { table: ReportTable; csvHref: string }) 
                       ...s.td, textAlign: numeric(c.kind) ? 'right' : 'left',
                       ...(j === 0 ? s.tdFirst : {}),
                       ...(c.kind === 'money' && typeof r[c.key] === 'number' && (r[c.key] as number) < 0 ? s.negative : {}),
-                    }}>{show(r[c.key], c.kind, true)}</td>
+                    }}>
+                      {/* A row that opens a page (the Bookings report): its first cell is the link. */}
+                      {j === 0 && typeof r[ROW_LINK] === 'string'
+                        ? <Link href={r[ROW_LINK] as string} style={s.rowLink}>{show(r[c.key], c.kind, true)}</Link>
+                        : show(r[c.key], c.kind, true)}
+                    </td>
                   ))}
                 </tr>
               ))}
@@ -387,6 +424,7 @@ const s: Record<string, React.CSSProperties> = {
   td: { padding: '9px 10px', borderBottom: '1px solid #F3F4F6', color: '#374151', whiteSpace: 'nowrap' },
   tdFirst: { color: '#111827', fontWeight: 500 },
   negative: { color: '#B91C1C' },
+  rowLink: { color: '#000835', fontWeight: 600, textDecoration: 'underline', textUnderlineOffset: 2 },
   tableFoot: { fontSize: 11.5, color: '#9CA3AF', margin: '10px 0 0' },
   errorBox: {
     fontSize: 13, color: '#991B1B', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8,
