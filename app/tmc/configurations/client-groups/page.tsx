@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { list } from '@/app/components/config/ListPage'
 import CityDropdown from '@/app/components/CityDropdown'
 import CountryDropdown from '@/app/components/CountryDropdown'
 import StateDropdown from '@/app/components/StateDropdown'
@@ -302,8 +303,8 @@ export default function TmcClientGroupsPage() {
               </tr>
             </thead>
             <tbody>
-              {clientGroups.map((g, i) => (
-                <tr key={g.id} style={{ background: i % 2 === 0 ? '#fff' : '#FAFAFA' }}>
+              {clientGroups.map(g => (
+                <tr key={g.id}>
                   <td style={{ ...s.td, fontFamily: 'var(--font-mono)' }}>
                     {g.group_code ?? <span style={{ color: '#9CA3AF' }}>—</span>}
                   </td>
@@ -344,14 +345,14 @@ export default function TmcClientGroupsPage() {
 }
 
 const s: Record<string, React.CSSProperties> = {
-  root: { fontFamily: "'Inter', -apple-system, sans-serif" },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' },
-  heading: { fontSize: '20px', fontWeight: 600, color: '#0A0A14', margin: '0 0 4px', letterSpacing: '-0.3px' },
-  sub: { fontSize: '13px', color: '#6B7280', margin: 0 },
-  primaryBtn: { height: '36px', padding: '0 14px', background: '#000835', color: '#fff', fontSize: '13px', fontWeight: 600, border: 'none', borderRadius: '7px', cursor: 'pointer' },
+  root: list.root,
+  header: list.header,
+  heading: list.title,
+  sub: list.sub,
+  primaryBtn: list.primaryBtn,
   ghostBtn: { height: '36px', padding: '0 14px', background: 'transparent', color: '#6B7280', fontSize: '13px', border: '1px solid #D1D5DB', borderRadius: '7px', cursor: 'pointer' },
-  successBanner: { background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#065F46', marginBottom: '16px' },
-  errorBanner: { background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#DC2626', marginBottom: '16px' },
+  successBanner: list.successBanner,
+  errorBanner: list.errorBanner,
   formCard: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '10px', padding: '20px', marginBottom: '20px' },
   formHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' },
   formTitle: { fontSize: '15px', fontWeight: 600, color: '#111827', margin: 0 },
@@ -366,19 +367,19 @@ const s: Record<string, React.CSSProperties> = {
   label: { fontSize: '11px', fontWeight: 500, color: '#374151' },
   input: { height: '36px', padding: '0 10px', fontSize: '13px', color: '#111827', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '6px', outline: 'none' },
   formActions: { display: 'flex', gap: '10px', justifyContent: 'flex-end' },
-  filters: { display: 'flex', gap: '10px', marginBottom: '12px' },
-  searchInput: { height: '36px', padding: '0 10px', fontSize: '13px', color: '#111827', background: '#fff', border: '1px solid #E5E7EB', borderRadius: '6px', outline: 'none', flex: 1, maxWidth: 340 },
-  dimmed: { opacity: 0.55, transition: 'opacity 120ms ease' },
-  card: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '10px', overflowX: 'auto' },
+  filters: list.filters,
+  searchInput: list.search,
+  dimmed: list.dimmed,
+  card: list.tableWrap,
   table: { width: '100%', minWidth: 820, borderCollapse: 'collapse' as const },
   actionsCell: { textAlign: 'right' as const, whiteSpace: 'nowrap' as const, width: '1%' },
   actions: { display: 'flex', gap: '8px', justifyContent: 'flex-end' },
-  th: { padding: '10px 16px', textAlign: 'left' as const, fontSize: '11px', fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.4px', background: '#F9FAFB', borderBottom: '1px solid #F3F4F6' },
-  td: { padding: '12px 16px', fontSize: '13px', color: '#374151', borderBottom: '1px solid #F9FAFB' },
-  name: { fontWeight: 500, color: '#111827' },
+  th: list.th,
+  td: list.td,
+  name: list.name,
   editBtn: { fontSize: '11px', color: '#374151', background: 'transparent', border: '1px solid #D1D5DB', borderRadius: '5px', padding: '4px 8px', cursor: 'pointer' },
   deleteBtn: { fontSize: '11px', color: '#DC2626', background: 'transparent', border: '1px solid #FECACA', borderRadius: '5px', padding: '4px 8px', cursor: 'pointer' },
-  emptyState: { padding: '48px 20px', textAlign: 'center' as const },
-  emptyTitle: { fontSize: '14px', fontWeight: 600, color: '#374151', margin: '0 0 6px' },
-  emptyDesc: { fontSize: '13px', color: '#9CA3AF', margin: 0 },
+  emptyState: list.empty,
+  emptyTitle: list.emptyTitle,
+  emptyDesc: list.emptyDesc,
 }

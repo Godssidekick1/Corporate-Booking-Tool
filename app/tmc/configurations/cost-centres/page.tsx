@@ -1,322 +1,248 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import Pagination from '@/app/components/Pagination'
+import SlideOver from '@/app/components/SlideOver'
 import SearchableSelect from '@/app/components/SearchableSelect'
+import { SkeletonTable } from '@/app/components/Skeleton'
+import { usePagedList } from '@/app/hooks/usePagedList'
 import { useLookup, clientOption } from '@/app/hooks/useLookup'
+import { ListHeader, ListFilters, ListEmpty, list } from '@/app/components/config/ListPage'
 
-// ── /tmc/configurations/cost-centres ───────────────────────────────────────────────
-// A client's cost centres, with headcount.
+// ── /tmc/configurations/cost-centres ─────────────────────────────────────────
+// Every client's cost centres, with how many people sit on each, in the one
+// list layout: shown straight away across all clients (a counsellor: their
+// portfolio), narrowed by client or search. A row opens it to rename, recode
+// (its people move with it) or delete (when nobody is on it).
 //
 // These were free text typed per employee, so "Sales", "sales" and "Sales "
-// counted as three different things in any report and nothing could offer a
-// list to pick from. Maintaining them here means the traveller-profile screen
-// can offer a dropdown, and a rename carries its people along.
+// counted as three different things in any report. Kept here, the traveller
+// profile screen offers them as a list.
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface CostCentre { id: string; code: string; name: string; employees: number }
+interface Centre { id: string; client_id: string; client_name: string | null; code: string; name: string; employees: number }
 interface Unlisted { code: string; employees: number }
+
+type Editing =
+  | { mode: 'new'; clientId: string; code: string; name: string }
+  | { mode: 'edit'; centre: Centre; code: string; name: string }
 
 export default function CostCentresPage() {
   const [clientId, setClientId] = useState('')
-  // Server-searched: the clients endpoint is paged (10 a page).
   const clientLookup = useLookup('/api/tmc/clients', clientId, { toOption: clientOption })
+  const centres = usePagedList<Centre>('/api/tmc/cost-centres', { params: { list: 1, clientId: clientId || undefined } })
+  const unlisted = (centres.raw?.unlisted as Unlisted[] | undefined) ?? []
 
-  const [centres, setCentres] = useState<CostCentre[]>([])
-  const [departments, setDepartments] = useState<string[]>([])
-  const [unlisted, setUnlisted] = useState<Unlisted[]>([])
-
-  const [form, setForm] = useState({ code: '', name: '' })
-  const [editing, setEditing] = useState<{ previousCode: string; code: string; name: string } | null>(null)
-
-  const [loading, setLoading] = useState(false)
+  const [editing, setEditing] = useState<Editing | null>(null)
+  const formClient = editing?.mode === 'new' ? editing.clientId : ''
+  const formClientLookup = useLookup('/api/tmc/clients', formClient, { toOption: clientOption })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [formError, setFormError] = useState('')
   const [success, setSuccess] = useState('')
 
-  useEffect(() => {
-    if (!clientId) return
-    load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientId])
-
-  async function load() {
-    setLoading(true); setError('')
-    try {
-      const d = await fetch(`/api/tmc/cost-centres?clientId=${clientId}`).then(r => r.json())
-      if (!d.ok) { setError(d.error || 'Could not load cost centres.'); return }
-      setCentres(d.costCentres)
-      setDepartments(d.departments)
-      setUnlisted(d.unlisted)
-      setEditing(null)
-    } finally { setLoading(false) }
+  function done(message: string) {
+    setEditing(null)
+    setSuccess(message)
+    centres.refetch()
   }
 
-  async function add(e: React.FormEvent) {
+  async function send(method: 'POST' | 'PATCH', body: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+    setBusy(true); setFormError(''); setError('')
+    try {
+      // Written out per method so each reads plainly as a write, not a list read.
+      const init = { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+      const res = method === 'POST'
+        ? await fetch('/api/tmc/cost-centres', { method: 'POST', ...init })
+        : await fetch('/api/tmc/cost-centres', { method: 'PATCH', ...init })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok || !d.ok) { setFormError(d.error || 'Could not save that cost centre.'); return null }
+      return d
+    } catch {
+      setFormError('Could not reach the server. Check your connection and try again.')
+      return null
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function save(e: React.FormEvent) {
     e.preventDefault()
-    setBusy(true); setError('')
-    try {
-      const d = await fetch('/api/tmc/cost-centres', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientId, code: form.code, name: form.name }),
-      }).then(r => r.json())
-      if (!d.ok) { setError(d.error || 'Could not add that cost centre.'); return }
-      setForm({ code: '', name: '' })
-      await load()
-      setSuccess(`"${d.costCentre.code}" added.`)
-    } finally { setBusy(false) }
-  }
-
-  async function saveEdit() {
     if (!editing) return
-    setBusy(true); setError('')
-    try {
-      const d = await fetch('/api/tmc/cost-centres', {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          clientId,
-          previousCode: editing.previousCode,
-          code: editing.code,
-          name: editing.name,
-        }),
-      }).then(r => r.json())
-      if (!d.ok) { setError(d.error || 'Could not save that change.'); return }
-      await load()
-      setSuccess(
-        d.moved > 0
-          ? `Renamed, and ${d.moved} employee${d.moved === 1 ? '' : 's'} moved across.`
-          : 'Cost centre updated.'
-      )
-    } finally { setBusy(false) }
+    if (editing.mode === 'new') {
+      if (!editing.clientId) { setFormError('Choose the client this cost centre belongs to.'); return }
+      const d = await send('POST', { clientId: editing.clientId, code: editing.code, name: editing.name })
+      if (d) done(`"${editing.code.trim()}" added.`)
+    } else {
+      const d = await send('PATCH', {
+        clientId: editing.centre.client_id, previousCode: editing.centre.code, code: editing.code, name: editing.name,
+      })
+      const moved = Number(d?.moved ?? 0)
+      if (d) done(moved > 0 ? `Saved, and ${moved} ${moved === 1 ? 'person' : 'people'} moved to the new code.` : 'Cost centre saved.')
+    }
   }
 
-  async function remove(code: string, employees: number) {
-    if (employees > 0) return
-    if (!confirm(`Delete cost centre "${code}"?`)) return
-    setBusy(true); setError('')
+  async function remove(c: Centre) {
+    if (c.employees > 0) return
+    if (!confirm(`Delete cost centre "${c.code}" of ${c.client_name ?? 'this client'}?`)) return
+    setBusy(true); setFormError('')
     try {
-      const d = await fetch(`/api/tmc/cost-centres?clientId=${clientId}&code=${encodeURIComponent(code)}`, {
-        method: 'DELETE',
-      }).then(r => r.json())
-      if (!d.ok) { setError(d.error || 'Could not delete.'); return }
-      await load()
-      setSuccess(`"${code}" deleted.`)
+      const res = await fetch(`/api/tmc/cost-centres?clientId=${c.client_id}&code=${encodeURIComponent(c.code)}`, { method: 'DELETE' })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok || !d.ok) { setFormError(d.error || 'Could not delete it.'); return }
+      done(`"${c.code}" deleted.`)
     } finally { setBusy(false) }
   }
 
   async function adopt(code: string) {
-    setBusy(true); setError('')
+    if (!clientId) return
+    setSuccess(''); setError(''); setBusy(true)
     try {
-      const d = await fetch('/api/tmc/cost-centres', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientId, code, name: code }),
-      }).then(r => r.json())
-      if (!d.ok) { setError(d.error || 'Could not add that cost centre.'); return }
-      await load()
+      const res = await fetch('/api/tmc/cost-centres', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientId, code, name: code }),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok || !d.ok) { setError(d.error || 'Could not add that cost centre.'); return }
       setSuccess(`"${code}" added to the list.`)
-    } finally { setBusy(false) }
+      centres.refetch()
+    } catch {
+      setError('Could not reach the server. Check your connection and try again.')
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
-    <div style={s.root}>
-      <div style={s.header}>
-        <h1 style={s.title}>Cost centres</h1>
-        <p style={s.sub}>
-          The list a client&apos;s people can be assigned to. Renaming one moves everyone on
-          it, so reports stay whole.
-        </p>
-      </div>
+    <div style={list.root}>
+      <ListHeader
+        title="Cost centres"
+        description="Each client's cost centres and how many people sit on each. Rename one and its people move with it."
+        actions={<button type="button" style={list.primaryBtn}
+          onClick={() => { setFormError(''); setEditing({ mode: 'new', clientId, code: '', name: '' }) }}>New cost centre</button>}
+      />
 
-      <div style={s.field}>
-        <label style={s.label}>Client</label>
-        <div style={{ width: 280 }}>
+      <ListFilters>
+        <div style={list.picker}>
           <SearchableSelect
-            value={clientId}
-            onChange={setClientId}
-            options={clientLookup.options}
-            onSearch={clientLookup.onSearch}
-            loading={clientLookup.loading}
+            value={clientId} onChange={id => { setClientId(id); centres.setPage(1) }}
+            options={clientLookup.options} onSearch={clientLookup.onSearch} loading={clientLookup.loading}
             selectedLabel={clientLookup.selectedLabel}
-            placeholder="Search clients by name, code or city…"
-            emptyMessage="No clients match"
+            placeholder="All clients" emptyMessage="No clients match" allowClear clearLabel="All clients"
           />
         </div>
-      </div>
+        <input
+          type="search" value={centres.search} onChange={e => centres.setSearch(e.target.value)}
+          placeholder="Search code, name or client" style={list.search} aria-label="Search cost centres"
+        />
+      </ListFilters>
 
-      {error && <div style={s.errorBanner}>⚠ {error}</div>}
-      {success && <div style={s.successBanner}>✓ {success}</div>}
+      {error && <div style={list.errorBanner}>{error}</div>}
+      {success && <div style={list.successBanner}>{success}</div>}
 
-      {!clientId ? (
-        <div style={s.empty}>
-          <p style={s.emptyTitle}>Pick a client</p>
-          <p style={s.emptyDesc}>Their cost centres will appear here.</p>
+      {clientId && unlisted.length > 0 && (
+        <div style={list.warnBanner}>
+          <strong>{unlisted.length} code{unlisted.length === 1 ? '' : 's'} in use but not on the list</strong>, from an
+          import or older data:{' '}
+          {unlisted.map(u => (
+            <button key={u.code} type="button" onClick={() => adopt(u.code)} disabled={busy}
+              style={{ ...list.ghostBtn, height: 26, margin: '0 6px 4px 0', fontSize: 12 }}>
+              Add {u.code} ({u.employees})
+            </button>
+          ))}
         </div>
-      ) : loading ? (
-        <div style={s.loadingWrap}>
-          <div style={s.spinner} />
-          <p style={s.emptyDesc}>Loading cost centres…</p>
-        </div>
-      ) : (
-        <>
-          <form onSubmit={add} style={s.addForm}>
-            <input
-              type="text" required placeholder="Code — e.g. ENG-01"
-              value={form.code}
-              onChange={e => setForm(p => ({ ...p, code: e.target.value }))}
-              style={{ ...s.input, width: 180 }}
-            />
-            <input
-              type="text" placeholder="Name (defaults to the code)"
-              value={form.name}
-              onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
-              style={{ ...s.input, flex: 1, minWidth: 200 }}
-            />
-            <button type="submit" disabled={busy} style={s.primaryBtn}>Add</button>
-          </form>
-
-          {unlisted.length > 0 && (
-            <div style={s.warnBanner}>
-              <strong>
-                {unlisted.length} cost centre{unlisted.length === 1 ? '' : 's'} in use but not on the list.
-              </strong>{' '}
-              Typed directly onto people, or imported before this list existed.
-              <div style={s.chipRow}>
-                {unlisted.map(u => (
-                  <button key={u.code} onClick={() => adopt(u.code)} disabled={busy} style={s.chip}>
-                    + {u.code} ({u.employees})
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {centres.length === 0 ? (
-            <div style={s.empty}>
-              <p style={s.emptyTitle}>No cost centres yet</p>
-              <p style={s.emptyDesc}>Add one above to start assigning people to it.</p>
-            </div>
-          ) : (
-            <div style={s.tableWrap}>
-              <table style={s.table}>
-                <thead>
-                  <tr>
-                    {['Code', 'Name', 'People', ''].map(h => <th key={h} style={s.th}>{h}</th>)}
-                  </tr>
-                </thead>
-                <tbody>
-                  {centres.map(c => {
-                    const isEditing = editing?.previousCode === c.code
-                    return (
-                      <tr key={c.id} style={s.tr}>
-                        <td style={s.td}>
-                          {isEditing ? (
-                            <input
-                              type="text" value={editing.code}
-                              onChange={e => setEditing(p => p && { ...p, code: e.target.value })}
-                              style={{ ...s.input, width: 140 }}
-                            />
-                          ) : <span style={s.code}>{c.code}</span>}
-                        </td>
-                        <td style={s.td}>
-                          {isEditing ? (
-                            <input
-                              type="text" value={editing.name}
-                              onChange={e => setEditing(p => p && { ...p, name: e.target.value })}
-                              style={{ ...s.input, width: '100%' }}
-                            />
-                          ) : c.name}
-                        </td>
-                        <td style={s.td}>
-                          <span style={s.count}>{c.employees}</span>
-                        </td>
-                        <td style={{ ...s.td, textAlign: 'right' as const }}>
-                          {isEditing ? (
-                            <div style={s.rowActions}>
-                              <button onClick={saveEdit} disabled={busy} style={s.primaryBtn}>Save</button>
-                              <button onClick={() => setEditing(null)} style={s.ghostBtn}>Cancel</button>
-                            </div>
-                          ) : (
-                            <div style={s.rowActions}>
-                              <button
-                                onClick={() => setEditing({ previousCode: c.code, code: c.code, name: c.name })}
-                                style={s.ghostBtn}
-                              >
-                                Edit
-                              </button>
-                              <button
-                                onClick={() => remove(c.code, c.employees)}
-                                disabled={c.employees > 0 || busy}
-                                style={{ ...s.dangerBtn, opacity: c.employees > 0 ? 0.35 : 1 }}
-                                title={c.employees > 0 ? 'Move its people elsewhere first' : 'Delete'}
-                              >
-                                Delete
-                              </button>
-                            </div>
-                          )}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {departments.length > 0 && (
-            <div style={s.deptBlock}>
-              <h2 style={s.deptTitle}>Departments in use</h2>
-              <p style={s.emptyDesc}>
-                Free text on each person, edited on their traveller profile. Listed here so
-                you can spot near-duplicates.
-              </p>
-              <div style={s.chipRow}>
-                {departments.map(d => <span key={d} style={s.deptChip}>{d}</span>)}
-              </div>
-            </div>
-          )}
-        </>
       )}
+
+      {centres.error ? (
+        <p style={list.errorBanner}><strong>Could not load cost centres.</strong> {centres.error}</p>
+      ) : centres.loading ? (
+        <SkeletonTable rows={8} cols={4} />
+      ) : centres.items.length === 0 ? (
+        <ListEmpty
+          title={centres.search || clientId ? 'No cost centres match' : 'No cost centres yet'}
+          description={centres.search || clientId ? 'Try another client or search.' : 'Add a client’s cost centres so their people can be put on them.'}
+        />
+      ) : (
+        <div style={{ ...list.tableWrap, ...(centres.refreshing ? list.dimmed : {}) }}>
+          <table style={list.table}>
+            <thead><tr>{['Code', 'Name', 'Client', 'People'].map(h => <th key={h} style={{ ...list.th, ...(h === 'People' ? list.num : {}) }}>{h}</th>)}</tr></thead>
+            <tbody>
+              {centres.items.map(c => (
+                <tr key={c.id} style={list.row} onClick={() => { setFormError(''); setEditing({ mode: 'edit', centre: c, code: c.code, name: c.name }) }}>
+                  <td style={{ ...list.td, ...list.mono, ...list.name }}>{c.code}</td>
+                  <td style={list.td}>{c.name}</td>
+                  <td style={list.td}>{c.client_name ?? <span style={list.muted}>—</span>}</td>
+                  <td style={{ ...list.td, ...list.num }}>{c.employees}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <Pagination page={centres.page} pageSize={10} total={centres.total} onPageChange={centres.setPage} busy={centres.refreshing} noun="cost centres" />
+
+      <SlideOver
+        open={editing !== null}
+        onClose={() => setEditing(null)}
+        title={editing?.mode === 'edit' ? editing.centre.code : 'New cost centre'}
+        subtitle={editing?.mode === 'edit' ? `${editing.centre.client_name ?? ''} · ${editing.centre.employees} ${editing.centre.employees === 1 ? 'person' : 'people'}` : undefined}
+        footer={editing && (
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', width: '100%' }}>
+            <div>
+              {editing.mode === 'edit' && (
+                <button type="button" style={{ ...list.dangerBtn, opacity: editing.centre.employees > 0 ? 0.5 : 1 }}
+                  disabled={busy || editing.centre.employees > 0} onClick={() => remove(editing.centre)}
+                  title={editing.centre.employees > 0 ? 'Move its people to another cost centre first' : undefined}>
+                  Delete
+                </button>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="button" style={list.ghostBtn} onClick={() => setEditing(null)}>Cancel</button>
+              <button type="submit" form="centre-form" style={{ ...list.primaryBtn, opacity: busy ? 0.6 : 1 }} disabled={busy}>
+                {busy ? 'Saving…' : editing.mode === 'new' ? 'Add cost centre' : 'Save'}
+              </button>
+            </div>
+          </div>
+        )}
+      >
+        {editing && (
+          <form id="centre-form" onSubmit={save} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {editing.mode === 'new' && (
+              <label style={field}>
+                <span style={label}>Client</span>
+                <SearchableSelect
+                  value={editing.clientId} onChange={id => setEditing({ ...editing, clientId: id })}
+                  options={formClientLookup.options} onSearch={formClientLookup.onSearch} loading={formClientLookup.loading}
+                  selectedLabel={formClientLookup.selectedLabel}
+                  placeholder="Choose a client" emptyMessage="No clients match"
+                />
+              </label>
+            )}
+            <label style={field}>
+              <span style={label}>Code</span>
+              <input required value={editing.code} onChange={e => setEditing({ ...editing, code: e.target.value.toUpperCase() })}
+                style={{ ...list.input, ...list.mono }} placeholder="SALES-N" />
+              {editing.mode === 'edit' && editing.code.trim() !== editing.centre.code && editing.centre.employees > 0 && (
+                <span style={hint}>Its {editing.centre.employees} {editing.centre.employees === 1 ? 'person moves' : 'people move'} to the new code.</span>
+              )}
+            </label>
+            <label style={field}>
+              <span style={label}>Name</span>
+              <input required value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })}
+                style={list.input} placeholder="Sales, North" />
+            </label>
+            {editing.mode === 'edit' && editing.centre.employees > 0 && (
+              <span style={hint}>It cannot be deleted while people sit on it: move them in Traveller profiles first.</span>
+            )}
+            {formError && <div style={list.errorBanner}>{formError}</div>}
+          </form>
+        )}
+      </SlideOver>
     </div>
   )
 }
 
-const s: Record<string, React.CSSProperties> = {
-  root: { fontFamily: "'Inter', -apple-system, sans-serif", paddingBottom: 60 },
-  header: { marginBottom: 18 },
-  title: { fontSize: 20, fontWeight: 600, color: '#0A0A14', margin: '0 0 4px', letterSpacing: '-0.3px' },
-  sub: { fontSize: 13, color: '#6B7280', margin: 0, lineHeight: 1.6, maxWidth: 620 },
-
-  field: { display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 18 },
-  label: { fontSize: 11, fontWeight: 600, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.5px' },
-  input: { height: 36, padding: '0 10px', fontSize: 13, color: '#111827', background: '#fff', border: '1px solid #D1D5DB', borderRadius: 7, outline: 'none' },
-
-  errorBanner: { background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#DC2626', marginBottom: 14 },
-  successBanner: { background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#065F46', marginBottom: 14 },
-  warnBanner: { background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 8, padding: '11px 14px', fontSize: 12, color: '#92400E', marginBottom: 14, lineHeight: 1.6 },
-
-  addForm: { display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' },
-  chipRow: { display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 },
-  chip: { background: '#fff', border: '1px solid #FDE68A', color: '#92400E', fontSize: 11, fontWeight: 600, borderRadius: 5, padding: '4px 9px', cursor: 'pointer' },
-  deptChip: { background: '#F3F4F6', color: '#4B5563', fontSize: 11, borderRadius: 5, padding: '4px 9px' },
-
-  tableWrap: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: 10, overflowX: 'auto' },
-  table: { borderCollapse: 'collapse', width: '100%' },
-  th: { padding: '10px 14px', textAlign: 'left', background: '#F9FAFB', borderBottom: '1px solid #E5E7EB', fontSize: 11, fontWeight: 600, color: '#374151', whiteSpace: 'nowrap' },
-  tr: { borderBottom: '1px solid #F3F4F6' },
-  td: { padding: '9px 14px', fontSize: 13, color: '#374151', verticalAlign: 'middle' },
-  code: { fontFamily: 'ui-monospace, monospace', fontSize: 12, fontWeight: 600, color: '#111827', background: '#F3F4F6', borderRadius: 4, padding: '2px 7px' },
-  count: { fontSize: 12, fontWeight: 600, color: '#374151' },
-  rowActions: { display: 'flex', gap: 6, justifyContent: 'flex-end' },
-
-  primaryBtn: { height: 32, padding: '0 14px', background: '#000835', color: '#fff', fontSize: 12, fontWeight: 600, border: 'none', borderRadius: 6, cursor: 'pointer' },
-  ghostBtn: { height: 30, padding: '0 11px', background: '#fff', color: '#374151', fontSize: 12, border: '1px solid #D1D5DB', borderRadius: 6, cursor: 'pointer' },
-  dangerBtn: { height: 30, padding: '0 11px', background: '#fff', color: '#DC2626', fontSize: 12, border: '1px solid #FECACA', borderRadius: 6, cursor: 'pointer' },
-
-  deptBlock: { marginTop: 28, paddingTop: 18, borderTop: '1px solid #E5E7EB' },
-  deptTitle: { fontSize: 14, fontWeight: 600, color: '#111827', margin: '0 0 4px' },
-
-  empty: { padding: '40px 20px', textAlign: 'center' },
-  emptyTitle: { fontSize: 13, fontWeight: 600, color: '#374151', margin: '0 0 4px' },
-  emptyDesc: { fontSize: 12, color: '#9CA3AF', margin: 0 },
-  loadingWrap: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '60px' },
-  spinner: { width: 24, height: 24, border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%', animation: 'spin 0.7s linear infinite' },
-}
+const field: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5 }
+const label: React.CSSProperties = { fontSize: 11, fontWeight: 600, color: '#374151' }
+const hint: React.CSSProperties = { fontSize: 11.5, color: '#6B7280', lineHeight: 1.5 }

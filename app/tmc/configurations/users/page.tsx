@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { list } from '@/app/components/config/ListPage'
 import Pagination from '@/app/components/Pagination'
 import { SkeletonTable } from '@/app/components/Skeleton'
 import { usePagedList } from '@/app/hooks/usePagedList'
@@ -126,10 +127,10 @@ export default function TmcUsersPage() {
               </tr>
             </thead>
             <tbody>
-              {tcs.map((tc, i) => {
+              {tcs.map(tc => {
                 const colors = STATUS_COLORS[tc.status] ?? STATUS_COLORS.active
                 return (
-                  <tr key={tc.id} style={{ background: i % 2 === 0 ? '#fff' : '#FAFAFA' }}>
+                  <tr key={tc.id}>
                     <td style={s.td}><span style={s.name}>{tc.full_name}</span></td>
                     <td style={{ ...s.td, color: '#6B7280' }}>{tc.email}</td>
                     <td style={s.td}>{tc.branchName ?? <span style={{ color: '#9CA3AF' }}>—</span>}</td>
@@ -422,14 +423,14 @@ function ClientAccess({ value, onChange }: { value: string[]; onChange: (ids: st
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const s: Record<string, React.CSSProperties> = {
-  root: { fontFamily: "'Inter', -apple-system, sans-serif" },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' },
-  heading: { fontSize: '20px', fontWeight: 600, color: '#0A0A14', margin: '0 0 4px', letterSpacing: '-0.3px' },
-  sub: { fontSize: '13px', color: '#6B7280', margin: 0 },
-  primaryBtn: { height: '36px', padding: '0 14px', background: '#000835', color: '#fff', fontSize: '13px', fontWeight: 600, border: 'none', borderRadius: '7px', cursor: 'pointer' },
+  root: list.root,
+  header: list.header,
+  heading: list.title,
+  sub: list.sub,
+  primaryBtn: list.primaryBtn,
   ghostBtn: { height: '36px', padding: '0 14px', background: 'transparent', color: '#6B7280', fontSize: '13px', border: '1px solid #D1D5DB', borderRadius: '7px', cursor: 'pointer' },
-  successBanner: { background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#065F46', marginBottom: '16px' },
-  errorBanner: { background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#DC2626', marginBottom: '16px' },
+  successBanner: list.successBanner,
+  errorBanner: list.errorBanner,
   formCard: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '10px', padding: '20px', marginBottom: '20px' },
   formHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' },
   formTitle: { fontSize: '15px', fontWeight: 600, color: '#111827', margin: 0 },
@@ -448,23 +449,23 @@ const s: Record<string, React.CSSProperties> = {
   clientRow: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#374151', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '6px', padding: '6px 10px' },
   removeBtn: { background: 'transparent', border: 'none', color: '#9CA3AF', fontSize: '14px', lineHeight: 1, padding: 0, cursor: 'pointer' },
   formActions: { display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '18px' },
-  filters: { display: 'flex', gap: '10px', marginBottom: '12px' },
-  searchInput: { height: '36px', padding: '0 10px', fontSize: '13px', color: '#111827', background: '#fff', border: '1px solid #E5E7EB', borderRadius: '6px', outline: 'none', flex: 1, maxWidth: 340 },
-  dimmed: { opacity: 0.55, transition: 'opacity 120ms ease' },
+  filters: list.filters,
+  searchInput: list.search,
+  dimmed: list.dimmed,
   // overflowX rather than overflow:hidden — the table has a min-width, so a
   // narrow viewport scrolls the columns instead of clipping the last one.
-  card: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '10px', overflowX: 'auto' },
+  card: list.tableWrap,
   table: { width: '100%', minWidth: 860, borderCollapse: 'collapse' as const },
-  th: { padding: '10px 16px', textAlign: 'left' as const, fontSize: '11px', fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.4px', background: '#F9FAFB', borderBottom: '1px solid #F3F4F6' },
-  td: { padding: '12px 16px', fontSize: '13px', color: '#374151', borderBottom: '1px solid #F9FAFB' },
+  th: list.th,
+  td: list.td,
   actionsCell: { textAlign: 'right' as const, whiteSpace: 'nowrap' as const, width: '1%' },
   actions: { display: 'flex', gap: '8px', justifyContent: 'flex-end' },
-  name: { fontWeight: 500, color: '#111827' },
+  name: list.name,
   badge: { display: 'inline-block', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 500 },
   editBtn: { fontSize: '11px', color: '#374151', background: 'transparent', border: '1px solid #D1D5DB', borderRadius: '5px', padding: '4px 8px', cursor: 'pointer' },
   deactivateBtn: { fontSize: '11px', color: '#DC2626', background: 'transparent', border: '1px solid #FECACA', borderRadius: '5px', padding: '4px 8px', cursor: 'pointer' },
   reactivateBtn: { fontSize: '11px', color: '#065F46', background: 'transparent', border: '1px solid #A7F3D0', borderRadius: '5px', padding: '4px 8px', cursor: 'pointer' },
-  emptyState: { padding: '48px 20px', textAlign: 'center' as const },
-  emptyTitle: { fontSize: '14px', fontWeight: 600, color: '#374151', margin: '0 0 6px' },
-  emptyDesc: { fontSize: '13px', color: '#9CA3AF', margin: 0 },
+  emptyState: list.empty,
+  emptyTitle: list.emptyTitle,
+  emptyDesc: list.emptyDesc,
 }

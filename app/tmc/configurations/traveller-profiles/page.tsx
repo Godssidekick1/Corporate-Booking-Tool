@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { CLIENT_ROLES, CLIENT_ROLE_LABEL, isClientRole, type ClientRole } from '@/app/lib/clients/roles'
+import { ListHeader, ListFilters, ListEmpty, list } from '@/app/components/config/ListPage'
 import Papa from 'papaparse'
 import SearchableSelect from '@/app/components/SearchableSelect'
 import Pagination from '@/app/components/Pagination'
@@ -44,6 +45,9 @@ interface TravelerProfile {
 
 interface Employee {
   id: string
+  // Present on the list across clients; with a client chosen, it is that one.
+  client_id?: string
+  client_name?: string | null
   full_name: string
   email: string
   role: string
@@ -163,13 +167,24 @@ export default function TravellerProfilesPage() {
   // meant downloading it first, which is exactly what breaks once a client has a
   // few hundred people.
   const roster = usePagedList<Employee>('/api/tmc/traveler-profiles', {
-    params: { clientId, role: adminsOnly ? 'admin' : undefined },
-    enabled: Boolean(clientId),
+    params: { clientId: clientId || undefined, role: adminsOnly ? 'admin' : undefined },
   })
 
   const employees = roster.items
+  // The chosen client's bands, for adding a person (only with a client chosen).
   const bands = (roster.raw?.bands as Band[] | undefined) ?? []
-  const costCentres = (roster.raw?.costCentres as CostCentre[] | undefined) ?? []
+  // The open person's client's bands and cost centres, for the panel: loaded
+  // when someone is opened, since the list can span every client.
+  const [panelRefs, setPanelRefs] = useState<{ clientId: string; bands: Band[]; costCentres: CostCentre[] } | null>(null)
+  const panelBands = panelRefs?.bands ?? []
+  const costCentres = panelRefs?.costCentres ?? []
+  const personClient = (emp: { client_id?: string } | null) => emp?.client_id ?? clientId
+  // "Reports to": anyone at the same client, searched (not just this page).
+  const managerLookup = useLookup('/api/tmc/traveler-profiles', draft?.manager_id ?? '', {
+    params: { clientId: personClient(draft) || undefined },
+    enabled: Boolean(draft && personClient(draft)),
+    toOption: row => ({ id: String(row.id), label: String(row.full_name), sublabel: row.designation ? String(row.designation) : undefined }),
+  })
 
   function load() {
     roster.refetch()
@@ -190,6 +205,18 @@ export default function TravellerProfilesPage() {
     if (dirty && !confirm('You have unsaved changes. Discard them?')) return
     setSelectedId(emp.id)
     setDraft(structuredClone(emp))
+    // The person's client's bands and cost centres, for the panel's pickers.
+    const cid = personClient(emp)
+    if (cid && panelRefs?.clientId !== cid) {
+      if (cid === clientId && roster.raw) {
+        setPanelRefs({ clientId: cid, bands, costCentres: (roster.raw?.costCentres as CostCentre[] | undefined) ?? [] })
+      } else {
+        setPanelRefs(null)
+        fetch(`/api/tmc/traveler-profiles?clientId=${cid}&ids=${emp.id}`).then(r => r.json())
+          .then(d => setPanelRefs({ clientId: cid, bands: d.bands ?? [], costCentres: d.costCentres ?? [] }))
+          .catch(() => setPanelRefs({ clientId: cid, bands: [], costCentres: [] }))
+      }
+    }
     setDirty(false)
     setError('')
     setRoleAsk(null)
@@ -393,56 +420,39 @@ export default function TravellerProfilesPage() {
 
   return (
     <div style={s.root}>
-      <div style={s.header}>
-        <h1 style={s.title}>Traveller profiles</h1>
-        <p style={s.sub}>
-          Everything the desk maintains for a client&apos;s people — band, cost centre,
-          reporting line, and the passport and contact details a booking needs.
-        </p>
-      </div>
+      <ListHeader
+        title="Traveller profiles"
+        description="Everything the desk maintains for clients' people: band, cost centre, reporting line, and the passport and contact details a booking needs."
+        actions={<>
+          {/* Adding and importing are per client: they need one chosen. */}
+          <button onClick={downloadCsv} disabled={!clientId} title={clientId ? undefined : 'Choose a client first'}
+            style={{ ...list.ghostBtn, opacity: clientId ? 1 : 0.5 }}>Export CSV</button>
+          <button onClick={() => fileRef.current?.click()} disabled={!clientId || importing} title={clientId ? undefined : 'Choose a client first'}
+            style={{ ...list.ghostBtn, opacity: clientId ? 1 : 0.5 }}>{importing ? 'Importing…' : 'Import CSV'}</button>
+          <button onClick={() => { setAdding(true); setAddError('') }} disabled={!clientId || adding} title={clientId ? undefined : 'Choose a client first'}
+            style={{ ...list.primaryBtn, opacity: clientId && !adding ? 1 : 0.5 }}>Add person</button>
+          <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={handleUpload} style={{ display: 'none' }} />
+        </>}
+      />
 
-      <div style={s.toolbar}>
-        <div style={{ ...s.field, width: 280 }}>
-          <label style={s.label}>Client</label>
+      <ListFilters>
+        <div style={list.picker}>
           <SearchableSelect
-            value={clientId}
-            onChange={chooseClient}
-            options={clientLookup.options}
-            onSearch={clientLookup.onSearch}
-            loading={clientLookup.loading}
+            value={clientId} onChange={chooseClient}
+            options={clientLookup.options} onSearch={clientLookup.onSearch} loading={clientLookup.loading}
             selectedLabel={clientLookup.selectedLabel}
-            placeholder="Search clients by name, code or city…"
-            emptyMessage="No clients match"
+            placeholder="All clients" emptyMessage="No clients match" allowClear clearLabel="All clients"
           />
         </div>
-
-        {clientId && (
-          <div style={s.toolbarActions}>
-            <button
-              onClick={() => { setAdding(true); setAddError('') }}
-              disabled={adding}
-              style={{ ...s.primaryBtn, opacity: adding ? 0.5 : 1 }}
-            >
-              + Add person
-            </button>
-            <button onClick={downloadCsv} style={s.ghostBtn}>↓ Export CSV</button>
-            <button
-              onClick={() => fileRef.current?.click()}
-              disabled={importing}
-              style={s.ghostBtn}
-            >
-              {importing ? 'Importing…' : '↑ Import CSV'}
-            </button>
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".csv,text/csv"
-              onChange={handleUpload}
-              style={{ display: 'none' }}
-            />
-          </div>
-        )}
-      </div>
+        <input
+          type="search" value={roster.search} onChange={e => roster.setSearch(e.target.value)}
+          placeholder="Search name, email, cost centre, designation" style={list.search} aria-label="Search travellers"
+        />
+        <label style={list.check}>
+          <input type="checkbox" checked={adminsOnly} onChange={e => { setAdminsOnly(e.target.checked); roster.setPage(1) }} />
+          Corporate admins only
+        </label>
+      </ListFilters>
 
       {error && <div style={s.errorBanner}>⚠ {error}</div>}
       {success && <div style={s.successBanner}>✓ {success}</div>}
@@ -529,11 +539,8 @@ export default function TravellerProfilesPage() {
         </div>
       )}
 
-      {!clientId ? (
-        <div style={s.empty}>
-          <p style={s.emptyTitle}>Pick a client</p>
-          <p style={s.emptyDesc}>Their people and travel profiles will appear here.</p>
-        </div>
+      {roster.error ? (
+        <p style={list.errorBanner}><strong>Could not load travellers.</strong> {roster.error}</p>
       ) : roster.loading ? (
         <SkeletonTable rows={10} cols={6} />
       ) : (
@@ -546,27 +553,22 @@ export default function TravellerProfilesPage() {
             </div>
           )}
 
-          <input
-            type="search"
-            placeholder="Search name, email, cost centre, designation…"
-            value={roster.search}
-            onChange={e => roster.setSearch(e.target.value)}
-            style={s.search}
-          />
-          <label style={s.adminsToggle}>
-            <input type="checkbox" checked={adminsOnly} onChange={e => { setAdminsOnly(e.target.checked); roster.setPage(1) }} />
-            Corporate admins only
-          </label>
 
           {/* Roster takes the full content width. It previously shared a row
               with the detail panel, which left each about 448px once the rail
               and sub-nav were accounted for — too narrow for either. */}
-          <div style={{ ...s.listPane, ...(roster.refreshing ? s.dimmed : {}) }}>
-            <table style={s.table}>
+          {employees.length === 0 ? (
+            <ListEmpty
+              title={roster.search || adminsOnly ? 'Nobody matches' : clientId ? 'This client has no people yet' : 'No travellers yet'}
+              description={roster.search || adminsOnly ? 'Search covers everyone, not just this page.' : clientId ? 'Add a person, or import them from a CSV.' : 'Clients’ people appear here once they are added.'}
+            />
+          ) : (
+          <div style={{ ...list.tableWrap, ...(roster.refreshing ? list.dimmed : {}) }}>
+            <table style={list.table}>
               <thead>
                 <tr>
-                  {['Employee', 'Designation', 'Department', 'Band', 'Cost centre', 'Trips'].map(h => (
-                    <th key={h} style={s.th}>{h}</th>
+                  {['Employee', ...(clientId ? [] : ['Client']), 'Designation', 'Department', 'Band', 'Cost centre', 'Trips'].map(h => (
+                    <th key={h} style={list.th}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -592,6 +594,7 @@ export default function TravellerProfilesPage() {
                       </div>
                       <div style={s.email}>{emp.email}</div>
                     </td>
+                    {!clientId && <td style={list.td}>{emp.client_name ?? <span style={list.muted}>—</span>}</td>}
                     {/* Designation and department get real columns now — they
                         used to be crammed onto a sub-line under the name. */}
                     <td style={s.td}>{emp.designation || <span style={s.muted}>—</span>}</td>
@@ -611,17 +614,8 @@ export default function TravellerProfilesPage() {
                 ))}
               </tbody>
             </table>
-
-            {employees.length === 0 && (
-              <div style={s.empty}>
-                <p style={s.emptyDesc}>
-                  {roster.search
-                    ? 'Nobody at this client matches that search.'
-                    : 'This client has no employees yet.'}
-                </p>
-              </div>
-            )}
           </div>
+          )}
 
           <Pagination
             page={roster.page} pageSize={10} total={roster.total}
@@ -653,7 +647,7 @@ export default function TravellerProfilesPage() {
                     <div style={s.detailActions}>
                       {dirty && <span style={s.unsaved}>Unsaved</span>}
                       {/* The desk books for them from here (/tmc/book), with this person chosen. */}
-                      <Link href={`/tmc/book?client=${clientId}&traveller=${draft.id}`} style={{ ...s.ghostBtn, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>
+                      <Link href={`/tmc/book?client=${personClient(draft)}&traveller=${draft.id}`} style={{ ...s.ghostBtn, display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}>
                         Book for {draft.full_name.split(' ')[0]}
                       </Link>
                       <button
@@ -736,7 +730,7 @@ export default function TravellerProfilesPage() {
                       <SearchableSelect
                         value={draft.band_code ?? ''}
                         onChange={code => edit({ band_code: code })}
-                        options={bands.map(b => ({
+                        options={panelBands.map(b => ({
                           id: b.code,
                           label: `${b.code} · ${b.label}`,
                           sublabel: `Rank ${b.rank}`,
@@ -784,21 +778,23 @@ export default function TravellerProfilesPage() {
                     </Field>
 
                     <Field label="Reports to">
-                      <select
+                      {/* Searched across the whole client, not just the people on this page. */}
+                      <SearchableSelect
                         value={draft.top_of_hierarchy ? TOP_OF_HIERARCHY : (draft.manager_id ?? '')}
-                        onChange={e => {
-                          const v = e.target.value
+                        onChange={v => {
                           if (v === TOP_OF_HIERARCHY) edit({ top_of_hierarchy: true, manager_id: null })
                           else edit({ top_of_hierarchy: false, manager_id: v || null })
                         }}
-                        style={s.input}
-                      >
-                        <option value="">Not set yet</option>
-                        <option value={TOP_OF_HIERARCHY}>Nobody — top of hierarchy</option>
-                        {employees.filter(o => o.id !== draft.id).map(o => (
-                          <option key={o.id} value={o.id}>{o.full_name}</option>
-                        ))}
-                      </select>
+                        options={[
+                          { id: TOP_OF_HIERARCHY, label: 'Nobody: top of hierarchy' },
+                          ...managerLookup.options.filter(o => o.id !== draft.id),
+                        ]}
+                        onSearch={managerLookup.onSearch}
+                        loading={managerLookup.loading}
+                        selectedLabel={draft.top_of_hierarchy ? 'Nobody: top of hierarchy' : managerLookup.selectedLabel}
+                        placeholder="Not set yet" emptyMessage="Nobody matches"
+                        allowClear clearLabel="Not set yet"
+                      />
                     </Field>
                   </div>
 
