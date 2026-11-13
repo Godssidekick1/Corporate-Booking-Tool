@@ -9,6 +9,8 @@ import { formatTime, formatDayLabel, journeyLabel, baggageLabel } from '@/app/li
 import { mealLabel } from '@/app/lib/book/mealCodes'
 import { JUST_BOOKED_KEY } from '@/app/lib/book/flowStorage'
 import { CancelBookingButton } from '@/app/components/book/CancelBooking'
+import DeskFareStrip from '@/app/components/book/DeskFareStrip'
+import type { DeskView } from '@/app/lib/commercials/deskView'
 
 // ── /book/ticket/[bookingId] ──────────────────────────────────────────────────
 // Displayed once a ticket is issued. Styled as an e-ticket / boarding-pass
@@ -106,6 +108,8 @@ interface Booking {
   id: string
   status: string
   pair?: PairMember[]
+  // The travel desk only, acting for the traveller: how the price was made.
+  desk?: DeskView | null
   pnr: string | null
   ticket_numbers: (string | null)[] | null
   // What the company paid. The airline's own figure (total_cost) is never
@@ -428,6 +432,9 @@ export default function TicketPage() {
             </p>
           </div>
         )}
+
+        {/* The travel desk only: the airline's fare, markup, discount, fee and margin. */}
+        <DeskFareStrip desk={booking.desk} currency={currency || 'INR'} />
 
         {booking.pair && booking.pair.length > 1 && (
           <div style={s.card}>

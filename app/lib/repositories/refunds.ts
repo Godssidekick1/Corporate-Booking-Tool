@@ -357,6 +357,19 @@ export async function refundRules(
 
 // A booking's ticket refunds as its traveller and company may see them: the
 // outcome only, never what the TMC keeps or the airline's figures.
+// A booking's refunds as the TMC desk sees them: one per ticket, with what the
+// TMC kept; each opens in the refund panel by its id.
+export async function forBookingDesk(db: Queryable, bookingId: string): Promise<{
+  id: string; passenger_index: number; ticket_number: string | null; status: string
+  refund_amount: number | null; tmc_retained: number | null; credit_note_no: string | null
+  processed_at: string | null; rejected_reason: string | null
+}[]> {
+  return many(db, sql`
+    select id, passenger_index, ticket_number, status, refund_amount, tmc_retained, credit_note_no,
+           processed_at, rejected_reason
+    from refunds where booking_id = ${bookingId} order by passenger_index`)
+}
+
 export async function outcomeForBooking(db: Queryable, bookingId: string): Promise<{
   status: 'pending' | 'processed' | 'rejected'; refund_amount: number | null; refund_date: string | null
   credit_note_no: string | null; rejected_reason: string | null

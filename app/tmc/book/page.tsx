@@ -93,6 +93,8 @@ export default function TmcBookPage() {
   const [view, setView] = useState<'mine' | 'desk'>('mine')
   // The same check as the rail (tmcNav): null until /api/me answers.
   const [allowed, setAllowed] = useState<boolean | null>(null)
+  // Whether this person may open the TMC's booking page (view_reports).
+  const [canReadBookings, setCanReadBookings] = useState(false)
   const [meId, setMeId] = useState('')
 
   useEffect(() => {
@@ -102,6 +104,7 @@ export default function TmcBookPage() {
         // This tab's flow is the signed-in person's (flowStorage.claim).
         flowStorage.claim(d.employee?.id ?? '')
         setAllowed(Boolean(d.ok) && canAccess(d.employee?.role, d.permissions ?? [], 'book_on_behalf'))
+        setCanReadBookings(Boolean(d.ok) && canAccess(d.employee?.role, d.permissions ?? [], 'view_reports'))
       })
       .catch(() => setAllowed(false))
   }, [])
@@ -349,6 +352,7 @@ export default function TmcBookPage() {
         <BookingHistory
           params={view === 'mine' ? { bookedBy: 'me' } : { scope: 'desk', clientId: clientId || null }}
           columns={['traveller', 'client', 'bookedBy']}
+          rowHref={canReadBookings ? id => `/tmc/reports/bookings/${id}` : undefined}
           empty={view === 'mine' ? 'You have not booked for anyone yet.' : 'Nothing booked on anyone’s behalf yet.'}
         />
       )}

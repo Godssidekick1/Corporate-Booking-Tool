@@ -251,6 +251,51 @@ export async function detail(db: Queryable, bookingId: string): Promise<BookingD
     from bookings where id = ${bookingId}`)
 }
 
+// ═══ One booking, for the TMC desk ══════════════════════════════════════════
+// Everything the desk's booking page shows (/tmc/reports/bookings/[id]): the
+// commercials and the airline's figures included, so only TMC routes read it,
+// after checking the booking is in the caller's TMC and portfolio.
+
+export type DeskBookingDetail = Pick<Row<'bookings'>,
+  | 'id' | 'client_id' | 'tmc_id' | 'employee_id' | 'booked_by' | 'status' | 'created_at' | 'updated_at'
+  | 'provider' | 'provider_order_id' | 'pnr' | 'airline_pnr' | 'ticket_numbers' | 'total_cost' | 'sell_total'
+  | 'commercials' | 'itinerary' | 'traveler_snapshot' | 'fare_breakdown' | 'policy_status' | 'policy_verdict'
+  | 'policy_verdict_detail' | 'policy_reason_code' | 'policy_reason_note' | 'resolved_deal_codes' | 'resolved_fop'
+  | 'purpose' | 'for_guest' | 'trip_id' | 'cancelled_at' | 'cancellation_reason' | 'cancellation' | 'pair_id'
+> & {
+  traveller_name: string | null
+  traveller_email: string | null
+  traveller_band: string | null
+  client_name: string | null
+  booked_by_name: string | null
+  booked_by_role: string | null
+  confirmed_by_name: string | null
+  cancelled_by_name: string | null
+  trip_name: string | null
+}
+
+export async function deskDetail(db: Queryable, bookingId: string): Promise<DeskBookingDetail | null> {
+  return maybeOne<DeskBookingDetail>(db, sql`
+    select b.id, b.client_id, b.tmc_id, b.employee_id, b.booked_by, b.status, b.created_at, b.updated_at,
+           b.provider, b.provider_order_id, b.pnr, b.airline_pnr, b.ticket_numbers, b.total_cost, b.sell_total,
+           b.commercials, b.itinerary, b.traveler_snapshot, b.fare_breakdown, b.policy_status, b.policy_verdict,
+           b.policy_verdict_detail, b.policy_reason_code, b.policy_reason_note, b.resolved_deal_codes, b.resolved_fop,
+           b.purpose, b.for_guest, b.trip_id, b.cancelled_at, b.cancellation_reason, b.cancellation, b.pair_id,
+           e.full_name as traveller_name, e.email as traveller_email, e.band_code as traveller_band,
+           c.name as client_name,
+           bb.full_name as booked_by_name, bb.role as booked_by_role,
+           cf.full_name as confirmed_by_name, cx.full_name as cancelled_by_name,
+           t.name as trip_name
+    from bookings b
+    left join employees e on e.id = b.employee_id
+    left join clients c on c.id = b.client_id
+    left join employees bb on bb.id = b.booked_by
+    left join employees cf on cf.id = b.confirmed_by
+    left join employees cx on cx.id = b.cancelled_by
+    left join trips t on t.id = b.trip_id
+    where b.id = ${bookingId}`)
+}
+
 export type PublicTicketRow = Pick<Row<'bookings'>,
   | 'id' | 'status' | 'pnr' | 'ticket_numbers' | 'provider_order_id' | 'sell_total' | 'commercials'
   | 'itinerary' | 'traveler_snapshot' | 'fare_breakdown'

@@ -403,6 +403,30 @@ export async function latestForBooking(db: Queryable, bookingId: string): Promis
     limit 1`)
 }
 
+// A booking's approval as it went, for the TMC desk's booking page: every
+// step, who it was asked of, the verdict and reason it carried, what they
+// decided and when, oldest first (re-approvals and escalations included).
+export interface BookingApprovalStep {
+  id: string
+  tier: number
+  status: string
+  verdict: string | null
+  reason: string | null
+  approver_name: string | null
+  decision_note: string | null
+  actioned_at: string | null
+  created_at: string
+}
+
+export async function historyForBooking(db: Queryable, bookingId: string): Promise<BookingApprovalStep[]> {
+  return many<BookingApprovalStep>(db, sql`
+    select a.id, a.tier, a.status, a.verdict, a.reason, e.full_name as approver_name, a.decision_note,
+           a.actioned_at, a.created_at
+    from approvals a left join employees e on e.id = a.approver_id
+    where a.booking_id = ${bookingId}
+    order by a.created_at, a.tier, a.id`)
+}
+
 // A trip's sign-off as it went: every step, who it was asked of, what they
 // decided and when -- earlier submissions included, oldest first.
 export interface TripSignOffStep {

@@ -1,4 +1,4 @@
-import { sql, exec, json, type Queryable } from '@/app/lib/db/sql'
+import { sql, exec, json, many, type Queryable } from '@/app/lib/db/sql'
 
 // ── Audit trail ──────────────────────────────────────────────────────────────
 // Owns: audit_log.
@@ -17,6 +17,24 @@ export interface AuditEntry {
   clientId?: string | null
   tmcId?: string | null
   metadata?: Record<string, unknown>
+}
+
+// What happened to one record, oldest first, with who did it. For the TMC
+// desk's booking page; metadata never carries a secret (see above).
+export interface AuditLine {
+  id: string
+  action: string
+  created_at: string
+  user_name: string | null
+  metadata: Record<string, unknown>
+}
+
+export async function forEntity(db: Queryable, entityType: string, entityId: string): Promise<AuditLine[]> {
+  return many<AuditLine>(db, sql`
+    select a.id, a.action, a.created_at, e.full_name as user_name, a.metadata
+    from audit_log a left join employees e on e.id = a.user_id
+    where a.entity_type = ${entityType} and a.entity_id = ${entityId}
+    order by a.created_at, a.id`)
 }
 
 export async function append(db: Queryable, e: AuditEntry): Promise<void> {

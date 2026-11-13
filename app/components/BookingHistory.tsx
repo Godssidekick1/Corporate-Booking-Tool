@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import Pagination from '@/app/components/Pagination'
 import { usePagedList } from '@/app/hooks/usePagedList'
 
@@ -28,10 +29,13 @@ const day = (iso?: string) =>
   iso ? new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : ''
 const money = (n: number) => `₹${Math.round(Number(n)).toLocaleString('en-IN')}`
 
-export default function BookingHistory({ params, columns, empty }: {
+// rowHref: where a row opens (the TMC's booking page, for desk staff who may
+// read reports); absent, rows open nothing.
+export default function BookingHistory({ params, columns, empty, rowHref }: {
   params: Record<string, string | null | undefined>
   columns: Column[]
   empty: string
+  rowHref?: (bookingId: string) => string
 }) {
   const list = usePagedList<HistoryRow>('/api/book/history', { params })
   const show = (c: Column) => columns.includes(c)
@@ -61,7 +65,9 @@ export default function BookingHistory({ params, columns, empty }: {
             <tbody>
               {list.items.map(b => (
                 <tr key={b.id}>
-                  <td style={s.td}>{day(b.created_at)}</td>
+                  <td style={s.td}>{rowHref
+                    ? <Link href={rowHref(b.id)} style={{ color: '#000835', fontWeight: 600 }}>{day(b.created_at)}</Link>
+                    : day(b.created_at)}</td>
                   {show('traveller') && <td style={{ ...s.td, fontWeight: 500, color: '#111827' }}>{b.traveller_name}</td>}
                   {show('client') && <td style={s.td}>{b.client_name}</td>}
                   <td style={s.td}>

@@ -170,6 +170,15 @@ export async function countForBucket(db: Queryable, bucketId: string): Promise<n
 
 export type RuleLabel = Pick<Row<'commercial_rules'>, 'id' | 'kind' | 'airline_code' | 'calc_type' | 'rate' | 'active'>
 
+// The rules a booking's commercials name, as they stand now (a rule may have
+// been switched off since): for the TMC desk's booking page.
+export async function ruleLabels(db: Queryable, tmcId: string, ruleIds: readonly string[]): Promise<RuleLabel[]> {
+  if (ruleIds.length === 0) return []
+  return many<RuleLabel>(db, sql`
+    select id, kind, airline_code, calc_type, rate, active from commercial_rules
+    where tmc_id = ${tmcId} and id = any(${[...ruleIds]})`)
+}
+
 export async function rulesForBucket(db: Queryable, bucketId: string): Promise<RuleLabel[]> {
   return many<RuleLabel>(db, sql`
     select r.id, r.kind, r.airline_code, r.calc_type, r.rate, r.active
