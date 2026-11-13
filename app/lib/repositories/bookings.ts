@@ -20,6 +20,16 @@ export async function countForClients(db: Queryable, clientIds: readonly string[
 }
 
 // Bookings per traveller at a client, for the people on one roster page.
+// The same, for people of any client (the cross-client traveller list).
+export async function tripCountsFor(db: Queryable, employeeIds: readonly string[]): Promise<Map<string, number>> {
+  if (employeeIds.length === 0) return new Map()
+  const rows = await many<{ employee_id: string; n: number }>(db, sql`
+    select employee_id, count(*)::int as n from bookings
+    where employee_id = any(${[...employeeIds]})
+    group by employee_id`)
+  return new Map(rows.map(r => [r.employee_id, r.n]))
+}
+
 export async function tripCounts(
   db: Queryable,
   clientId: string,

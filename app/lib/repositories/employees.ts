@@ -722,6 +722,30 @@ export async function travellerRoster(
   )
 }
 
+// Every client's people at once, for the Traveller profiles list before a
+// client is chosen: the TMC's clients (clientIds null) or a counsellor's
+// portfolio. Each row says whose client it is.
+export async function travellerRosterAcross(
+  db: Queryable,
+  reach: { tmcId: string; clientIds: readonly string[] | null },
+  scope: ListScope,
+  roles?: readonly string[]
+): Promise<Listed<TravellerRosterRow & { client_id: string; client_name: string | null }>> {
+  const inReach = reach.clientIds === null
+    ? sql`client_id in (select id from clients where tmc_id = ${reach.tmcId})`
+    : sql`client_id = any(${[...reach.clientIds]}) and client_id in (select id from clients where tmc_id = ${reach.tmcId})`
+  return listEmployees(
+    db,
+    sql`id, client_id, (select c.name from clients c where c.id = employees.client_id) as client_name,
+        full_name, email, role, status, band_code, band_rank, department, cost_centre,
+        designation, manager_id, top_of_hierarchy, traveler_profile, first_login_completed,
+        public.account_can_sign_in(id) as can_sign_in`,
+    roles?.length ? sql`${inReach} and role = any(${[...roles]})` : inReach,
+    scope,
+    [sql`full_name`, sql`email`, sql`department`, sql`designation`, sql`cost_centre`]
+  )
+}
+
 export interface ProfileTarget {
   id: string
   client_id: string | null

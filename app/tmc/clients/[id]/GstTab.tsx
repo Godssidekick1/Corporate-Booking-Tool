@@ -64,7 +64,8 @@ export default function GstTab({ clientId, onCount }: {
   const [error, setError] = useState('')
 
   const centreLookup = useLookup('/api/tmc/cost-centres', draft.cost_centre_id ?? '', {
-    params: { clientId },
+    // list=1: the paged list (items), which a lookup reads.
+    params: { clientId, list: 1 },
     toOption: row => ({ id: String(row.id), label: String(row.code), sublabel: String(row.name ?? '') }),
   })
 
@@ -294,7 +295,8 @@ export default function GstTab({ clientId, onCount }: {
 // cost centre resolve it once.
 function CostCentreName({ id, clientId }: { id: string; clientId: string }) {
   const lookup = useLookup('/api/tmc/cost-centres', id, {
-    params: { clientId },
+    // list=1: the paged list (items), which a lookup reads.
+    params: { clientId, list: 1 },
     toOption: row => ({ id: String(row.id), label: String(row.code) }),
   })
   return <span style={s.mono}>{lookup.selectedLabel || '…'}</span>

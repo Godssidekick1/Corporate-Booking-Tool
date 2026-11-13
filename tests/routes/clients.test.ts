@@ -572,8 +572,26 @@ d('tmc/cost-centres', () => {
   })
 
   it('GET: centres with headcount, departments in use, and unlisted codes', async () => {
-    expect(await call(centresGet, { as: a.tmcAdmin, url: '/api/tmc/cost-centres' }))
-      .toEqual({ status: 400, json: { error: 'clientId is required' } })
+    // No client (2026-11-13): every client's cost centres, paged; never
+    // another TMC's, never for a company user.
+    const all = await call(centresGet, { as: a.tmcAdmin, url: '/api/tmc/cost-centres' })
+    expect(all.status).toBe(200)
+    const listed = (all.json as { items: { client_id: string }[] }).items
+    expect(listed.some(c => c.client_id === bcg)).toBe(true)
+    const theirs = await call(centresGet, { as: a.otherTmcAdmin!, url: '/api/tmc/cost-centres' })
+    expect((theirs.json as { items: { client_id: string }[] }).items.some(c => c.client_id === bcg)).toBe(false)
+    expect((await call(centresGet, { as: a.corpAdmin, url: '/api/tmc/cost-centres' })).status).toBe(403)
+    // One client, as the list screen asks: its codes, and a code in use that
+    // the list lacks (one person moved onto it for this check, then back).
+    const someone = await one<{ id: string; cost_centre: string | null }>(db, sql`
+      select id, cost_centre from employees where client_id = ${bcg} order by id limit 1`)
+    await exec(db, sql`update employees set cost_centre = 'ZZOLD1' where id = ${someone.id}`)
+    try {
+      const oneClient = await call(centresGet, { as: a.tmcAdmin, url: `/api/tmc/cost-centres?list=1&clientId=${bcg}&search=zz-none` })
+      expect(oneClient.json).toMatchObject({ items: [], total: 0, unlisted: [{ code: 'ZZOLD1', employees: 1 }] })
+    } finally {
+      await exec(db, sql`update employees set cost_centre = ${someone.cost_centre} where id = ${someone.id}`)
+    }
     const res = await call(centresGet, { as: a.tmcAdmin, url: `/api/tmc/cost-centres?clientId=${bcg}` })
     expect(res.status).toBe(200)
     expect(res.json).toMatchSnapshot()

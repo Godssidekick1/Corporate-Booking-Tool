@@ -449,9 +449,31 @@ d('tmc/traveler-profiles', () => {
       select id, email from employees where client_id = ${clientId} order by full_name, id`)
   })
 
-  it('GET: clientId required; another TMC\'s client is not found', async () => {
-    expect(await call(profilesGet, { as: a.tmcAdmin, url: '/api/tmc/traveler-profiles' }))
-      .toEqual({ status: 400, json: { error: 'clientId is required' } })
+  // No client chosen (2026-11-13): everyone the caller can reach, each row
+  // naming its client; never another TMC's people, never for a company user.
+  it('GET: without a client, every client\'s people; another TMC\'s client is not found', async () => {
+    const all = await call(profilesGet, { as: a.tmcAdmin, url: '/api/tmc/traveler-profiles' })
+    expect(all.status).toBe(200)
+    const rows = (all.json as { items: { client_id: string; client_name: string | null }[] }).items
+    expect(rows.length).toBeGreaterThan(0)
+    expect(rows.every(r => r.client_id && r.client_name)).toBe(true)
+    const mine = await one<{ n: number }>(db, sql`
+      select count(*)::int as n from employees e join clients c on c.id = e.client_id where c.tmc_id = ${a.tmcAdmin.tmc_id}`)
+    expect((all.json as { total: number }).total).toBe(mine.n)
+    const theirs = await call(profilesGet, { as: a.otherTmcAdmin!, url: '/api/tmc/traveler-profiles' })
+    expect((theirs.json as { items: { client_id: string }[] }).items.some(r => r.client_id === clientId)).toBe(false)
+    expect((await call(profilesGet, { as: a.corpAdmin, url: '/api/tmc/traveler-profiles' })).status).toBe(403)
+    // A counsellor: their portfolio's people only.
+    if (a.tc) {
+      const portfolio = (await many<{ client_id: string }>(db, sql`
+        select client_id from employee_client_access where employee_id = ${a.tc.id}`)).map(r => r.client_id)
+      const tcList = await call(profilesGet, { as: a.tc, url: '/api/tmc/traveler-profiles' })
+      if (tcList.status === 200) {
+        expect((tcList.json as { items: { client_id: string }[] }).items.every(r => portfolio.includes(r.client_id))).toBe(true)
+      } else {
+        expect(tcList.status).toBe(403) // no manage_users
+      }
+    }
     expect(await call(profilesGet, { as: a.otherTmcAdmin!, url: `/api/tmc/traveler-profiles?clientId=${clientId}` }))
       .toEqual({ status: 404, json: { error: 'Client not found for this TMC' } })
   })

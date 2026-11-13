@@ -5,6 +5,8 @@ import { db, transaction, isConstraint } from '@/app/lib/db'
 import * as employees from '@/app/lib/repositories/employees'
 import * as clients from '@/app/lib/repositories/clients'
 import { route } from '@/app/lib/http/handler'
+import { requireTmcPermission, getAccessibleClientIds } from '@/app/lib/permissions/requireTmcPermission'
+import { parsePageParams, pagedResponse } from '@/app/lib/pagination'
 
 // ── /api/tmc/cost-centres ────────────────────────────────────────────────────
 // A client's cost centres, with how many people sit in each.
@@ -35,8 +37,33 @@ export const GET = route(async (req: NextRequest) => {
   const user = await requireUser()
 
   const clientId = req.nextUrl.searchParams.get('clientId')
-  if (!clientId) {
-    return Response.json({ error: 'clientId is required' }, { status: 400 })
+
+  // ── The list: every client's cost centres, paged ──────────────────────────
+  // No client, or ?list=1: the Cost centres screen's table, across the TMC's
+  // clients (a counsellor: their portfolio), optionally one client, searched.
+  // With one client chosen it also names codes people are on that the list
+  // lacks, so they can be added.
+  if (!clientId || req.nextUrl.searchParams.get('list') === '1') {
+    const auth = await requireTmcPermission(db, user.id, 'manage_users', clientId ?? undefined)
+    if (!auth.authorized || !auth.tmcId) {
+      return Response.json({ error: auth.error ?? 'Forbidden' }, { status: auth.status ?? 403 })
+    }
+    const clientIds = await getAccessibleClientIds(db, user.id, auth.role ?? 'tc')
+    const params = parsePageParams(req.nextUrl.searchParams)
+    const { rows, total } = await clients.costCentresAcross(db, { tmcId: auth.tmcId, clientIds }, {
+      clientId, search: params.search, page: params,
+      // A picker naming its chosen one (useLookup asks by id).
+      ids: req.nextUrl.searchParams.get('ids')?.split(',').filter(Boolean),
+    })
+    let unlisted: { code: string; employees: number }[] = []
+    if (clientId) {
+      const [centres, people] = await Promise.all([clients.costCentres(db, clientId), employees.costCentreUsage(db, clientId)])
+      const known = new Set(centres.map(c => c.code))
+      const counts = new Map<string, number>()
+      for (const e of people) if (e.cost_centre && !known.has(e.cost_centre)) counts.set(e.cost_centre, (counts.get(e.cost_centre) ?? 0) + 1)
+      unlisted = [...counts].map(([code, n]) => ({ code, employees: n }))
+    }
+    return Response.json({ ...pagedResponse(rows, total, params), unlisted })
   }
 
   const access = await authoriseClient(user.id, clientId)

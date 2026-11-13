@@ -260,6 +260,42 @@ export async function costCentresWithDates(db: Queryable, clientId: string): Pro
     select id, code, name, created_at from cost_centres where client_id = ${clientId} order by code, id`)
 }
 
+// Every client's cost centres at once, for the Cost centres list: the TMC's
+// clients (clientIds null) or a counsellor's portfolio, optionally one client,
+// searched by code, name or client, with how many active people sit on each.
+export interface CostCentreListRow {
+  id: string
+  client_id: string
+  client_name: string | null
+  code: string
+  name: string
+  employees: number
+  created_at: string
+}
+
+export async function costCentresAcross(
+  db: Queryable,
+  reach: { tmcId: string; clientIds: readonly string[] | null },
+  f: { clientId?: string | null; search?: string; page: Pick<PageParams, 'from' | 'to'>; ids?: readonly string[] }
+): Promise<{ rows: CostCentreListRow[]; total: number }> {
+  const where = sql`c.tmc_id = ${reach.tmcId}
+    ${reach.clientIds === null ? empty : sql`and cc.client_id = any(${[...reach.clientIds]})`}
+    ${f.clientId ? sql`and cc.client_id = ${f.clientId}` : empty}
+    ${f.ids?.length ? sql`and cc.id = any(${[...f.ids]})` : empty}
+    ${searchAcross([sql`cc.code`, sql`cc.name`, sql`c.name`], f.search)}`
+  const from = sql`cost_centres cc join clients c on c.id = cc.client_id`
+  const [rows, count] = await Promise.all([
+    many<CostCentreListRow>(db, sql`
+      select cc.id, cc.client_id, c.name as client_name, cc.code, cc.name, cc.created_at,
+             (select count(*)::int from employees e
+               where e.client_id = cc.client_id and e.cost_centre = cc.code and e.status <> 'deactivated') as employees
+      from ${from} where ${where}
+      order by c.name, cc.code, cc.id ${page(f.page)}`),
+    one<{ n: number }>(db, sql`select count(*)::int as n from ${from} where ${where}`),
+  ])
+  return { rows, total: count.n }
+}
+
 export async function insertCostCentre(
   db: Queryable,
   c: Pick<Row<'cost_centres'>, 'client_id' | 'code' | 'name'>
