@@ -4,10 +4,11 @@ import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import AirlineMark from '@/app/components/AirlineMark'
+import FareCards from '@/app/components/book/FareCards'
 import { flowStorage, type PricedFare, type RoundTripPair } from '@/app/lib/book/flowStorage'
 import { priceFare, previewPolicy, type PolicyPreview, type PricedLine } from '@/app/lib/book/priceFare'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
-import { journeysOf, type FareOption, type FlatFlightResult } from '@/app/lib/book/types'
+import { journeysOf, type FlatFlightResult } from '@/app/lib/book/types'
 
 // ── /book/price/round-trip ───────────────────────────────────────────────────
 // A domestic round trip's two picks, priced side by side: each flight is its
@@ -34,7 +35,6 @@ const day = (iso?: string) => {
   const d = /^(\d{4}-\d{2}-\d{2})/.exec(iso ?? '')?.[1]
   return d ? new Date(`${d}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' }) : ''
 }
-const fareName = (o: FareOption, i: number) => o.brandedFareName || o.fareType || `Fare ${i + 1}`
 
 export default function RoundTripFarePage() {
   const router = useRouter()
@@ -115,17 +115,11 @@ export default function RoundTripFarePage() {
                     </div>
                   </div>
                 </div>
-                <label style={s.fareSelect}>
-                  <span>Fare</span>
-                  <select value={side.pricingKey} disabled={side.loading} onChange={e => changeFare(dir, e.target.value)}>
-                    {f.fareOptions.map((o, i) => (
-                      <option key={o.pricingKey} value={o.pricingKey}>
-                        {fareName(o, i)} · {inr(o.sellEstimate ?? o.totalFare ?? 0)}{o.refundable ? ' · refundable' : ''}
-                      </option>
-                    ))}
-                  </select>
-                </label>
               </div>
+
+              {/* Every fare of this flight, with what it includes; choosing one prices it. */}
+              <FareCards flight={f} selectedKey={side.pricingKey} busy={side.loading}
+                onSelect={o => { if (o.pricingKey !== side.pricingKey) changeFare(dir, o.pricingKey) }} />
 
               {side.loading && <p style={s.muted}>Confirming the live fare with the airline…</p>}
               {side.error && <div style={s.error}>{side.error}</div>}
