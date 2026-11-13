@@ -172,6 +172,10 @@ interface LegInfo {
   // Which direction this leg belongs to, so the tabs can say "Return · BOM → DEL"
   // rather than presenting four hops as one undifferentiated row.
   journeyNo: number
+  // A round trip booked as two: which booking the leg is on, and that
+  // booking's flight key (its seat map is asked of its own priced fare).
+  part?: 'onward' | 'return'
+  flightKey?: string
 }
 
 // Seat-map legs, walked out of the journeys rather than reassembled.
@@ -483,6 +487,7 @@ export default function BookingDetailsPage() {
     }
 
     // A round trip's return, priced on the round trip's fare page.
+    let pairReturnFlight: FlatFlightResult | null = null
     if (new URLSearchParams(window.location.search).get('pair') === '1') {
       const pair = flowStorage.getPair()
       const returnFlight = pair && pair.onward.flightKey === flightKey ? flowStorage.findResultByFlightKey(pair.return.flightKey) : null
@@ -491,13 +496,23 @@ export default function BookingDetailsPage() {
         setLoadError('The return flight of this round trip is no longer priced. Go back to the round trip and confirm both fares again.')
         return
       }
+      pairReturnFlight = returnFlight
       setPairReturn({ flight: returnFlight, priced: returnPriced })
       previewPolicy(returnFlight, returnPriced).then(setReturnVerdict)
     }
 
     setFlight(storedFlight)
     setPriced(storedPriced)
-    setLegs(buildLegs(storedFlight))
+    if (pairReturnFlight) {
+      // Both flights' seat maps: the onward's legs, then the return's.
+      const onwardLegs = buildLegs(storedFlight).map(l => ({ ...l, part: 'onward' as const, flightKey }))
+      const returnLegs = buildLegs(pairReturnFlight).map(l => ({
+        ...l, legIndex: l.legIndex + onwardLegs.length, journeyNo: 2, part: 'return' as const, flightKey: pairReturnFlight!.flightKey,
+      }))
+      setLegs([...onwardLegs, ...returnLegs])
+    } else {
+      setLegs(buildLegs(storedFlight))
+    }
     setSeatsByPassenger(flowStorage.getSelectedSeats(flightKey))
 
     // Domestic vs international drives whether passport fields are shown/required —
@@ -564,7 +579,7 @@ export default function BookingDetailsPage() {
   useEffect(() => {
     if (!flight || !priced) return
 
-    const seatFees = Object.values(seatsByPassenger)
+    const seatFees = Object.values(seatsOn('onward'))
       .flat()
       .map(s => s.SeatFee)
 
@@ -674,7 +689,7 @@ export default function BookingDetailsPage() {
   }
 
   async function loadLegSeatMap(leg: LegInfo) {
-    const priced = flowStorage.getPricedFare(flightKey)
+    const priced = flowStorage.getPricedFare(leg.flightKey ?? flightKey)
     if (!priced) return
 
     setLoadingLeg(true)
@@ -703,6 +718,14 @@ export default function BookingDetailsPage() {
 
   function updatePassenger<K extends keyof PassengerForm>(index: number, key: K, value: PassengerForm[K]) {
     setPassengers(prev => prev.map((p, i) => i === index ? { ...p, [key]: value } : p))
+  }
+
+  // The seats picked on one booking's legs, per passenger. A single booking
+  // has no parts: 'onward' is then every seat.
+  function seatsOn(part: 'onward' | 'return'): Record<number, SelectedSeat[]> {
+    const returnLegs = new Set(legs.filter(l => l.part === 'return').map(l => l.legIndex))
+    return Object.fromEntries(Object.entries(seatsByPassenger).map(([i, seats]) =>
+      [Number(i), seats.filter(s => returnLegs.has(s.legIndex) === (part === 'return'))]))
   }
 
   function selectedSeatFor(passengerIndex: number, legIndex: number): SelectedSeat | undefined {
@@ -817,9 +840,11 @@ export default function BookingDetailsPage() {
     // itself) — roll them into the total here so what's charged/displayed/
     // policy-checked actually reflects what the traveler picked, not just
     // the base priced fare from before seat selection.
-    const totalSeatFees = Object.values(seatsByPassenger)
-      .flat()
-      .reduce((sum, seat) => sum + (Number(seat.SeatFee) || 0), 0)
+    const onwardSeats = seatsOn('onward')
+    const returnSeats = seatsOn('return')
+    const feesOf = (seats: Record<number, SelectedSeat[]>) =>
+      Object.values(seats).flat().reduce((sum, seat) => sum + (Number(seat.SeatFee) || 0), 0)
+    const totalSeatFees = feesOf(onwardSeats)
     // Each request's total (in send, below): sellTotal, which already carries
     // any discount and processing fee, plus that booking's seat fees. Falls back to totalFare so a quote saved before
     // commercial rules existed still works.
@@ -905,7 +930,7 @@ export default function BookingDetailsPage() {
         return
       }
 
-      const res = await send(priced, flight, seatsByPassenger, totalSeatFees, pairReturn ? { role: 'first' } : undefined)
+      const res = await send(priced, flight, onwardSeats, totalSeatFees, pairReturn ? { role: 'first' } : undefined)
       const data = await res.json()
 
       if (!data.ok) {
@@ -957,7 +982,7 @@ export default function BookingDetailsPage() {
     // says plainly which flight is saved and which is not.
     async function sendReturn(onwardId: string) {
       if (!pairReturn) return
-      const res = await send(pairReturn.priced, pairReturn.flight, {}, 0, { role: 'second', withBookingId: onwardId })
+      const res = await send(pairReturn.priced, pairReturn.flight, returnSeats, feesOf(returnSeats), { role: 'second', withBookingId: onwardId })
       const data = await res.json()
       if (!data.ok) {
         if (data.code === 'POLICY_REASON_REQUIRED') { setReasonAsked(true) }
@@ -1133,7 +1158,7 @@ export default function BookingDetailsPage() {
         )}
         {pairReturn && (
           <p style={s.cardSub}>
-            A round trip: two bookings from one form, sent for approval together. Seats chosen below are for the onward flight; the return&apos;s seat can be chosen at check-in.
+            A round trip: two bookings from one form, sent for approval together. Seats can be chosen on both flights below.
           </p>
         )}
         <DeskFareStrip desk={priced.desk} currency={priced.currency} />
