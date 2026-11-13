@@ -436,26 +436,34 @@ export default function TicketPage() {
         {/* The travel desk only: the airline's fare, markup, discount, fee and margin. */}
         <DeskFareStrip desk={booking.desk} currency={currency || 'INR'} />
 
+        {/* A round trip booked as two: one ticket each. The tabs switch between
+            them here (each has its own Download / print below), so both can be
+            opened and downloaded without going to My trips. */}
         {booking.pair && booking.pair.length > 1 && (
-          <div style={s.card}>
-            <p style={{ fontSize: 12, fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 8px' }}>Round trip · two bookings</p>
-            {booking.pair.map(m => {
-              const time = (iso?: string) => /T(\d{2}:\d{2})/.exec(iso ?? '')?.[1] ?? ''
-              const it2 = m.itinerary
-              return (
-                <div key={m.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', padding: '8px 0', borderTop: '1px solid #F3F4F6', fontSize: 13 }}>
-                  <span>
-                    <b style={{ fontSize: 11, color: '#6B7280', textTransform: 'uppercase', marginRight: 8 }}>{m.direction === 'onward' ? 'Onward' : 'Return'}</b>
-                    {it2?.origin?.code} {time(it2?.origin?.dateTime)} → {it2?.destination?.code} {time(it2?.destination?.dateTime)}
-                  </span>
-                  <span style={{ color: '#6B7280' }}>
-                    {m.status === 'ticketed' ? 'Ticketed' : m.status === 'held' ? 'Confirmed, ticket pending' : m.status}
-                    {m.pnr ? ` · PNR ${m.pnr}` : ''}
-                    {m.id !== bookingId && <> · <Link href={`/book/ticket/${m.id}`}>Open its ticket</Link></>}
-                  </span>
-                </div>
-              )
-            })}
+          <div className="no-print" style={{ marginBottom: 16 }}>
+            <p style={{ fontSize: 12, fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.5px', margin: '0 0 8px' }}>Your round trip · two tickets</p>
+            <div role="tablist" aria-label="Tickets" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              {booking.pair.map(m => {
+                const time = (iso?: string) => /T(\d{2}:\d{2})/.exec(iso ?? '')?.[1] ?? ''
+                const it2 = m.itinerary
+                const current = m.id === bookingId
+                const state = m.status === 'ticketed' ? 'Ticketed' : m.status === 'held' ? 'Ticket being issued' : m.status.replace(/_/g, ' ')
+                const body = (
+                  <>
+                    <span style={{ fontSize: 10.5, fontWeight: 700, color: current ? '#AAB0D6' : '#6B7280', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                      {m.direction === 'onward' ? 'Onward' : 'Return'} ticket
+                    </span>
+                    <span style={{ fontSize: 14, fontWeight: 700 }}>{it2?.origin?.code} {time(it2?.origin?.dateTime)} → {it2?.destination?.code} {time(it2?.destination?.dateTime)}</span>
+                    <span style={{ fontSize: 12, color: current ? '#D6D9EF' : '#6B7280' }}>{state}{m.pnr ? ` · PNR ${m.pnr}` : ''}</span>
+                  </>
+                )
+                const tab: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 2, borderRadius: 12, padding: '10px 14px', textDecoration: 'none',
+                  border: current ? '1px solid #000835' : '1px solid #E5E7EB', background: current ? '#000835' : '#fff', color: current ? '#fff' : '#111827' }
+                return current
+                  ? <div key={m.id} role="tab" aria-selected="true" style={tab}>{body}</div>
+                  : <Link key={m.id} role="tab" aria-selected="false" href={`/book/ticket/${m.id}`} replace style={tab}>{body}</Link>
+              })}
+            </div>
             {partnerNote && <p style={{ fontSize: 12.5, color: '#B91C1C', margin: '8px 0 0' }}>{partnerNote}</p>}
           </div>
         )}
