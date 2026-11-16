@@ -523,12 +523,27 @@ export interface CancellationResponse {
   Error: AmadeusError_ | null
 }
 
-// FareRule
+// FareRule — confirmed against the test system (2026-11-16 probe). The rules
+// themselves are in FareRulesFlight[].Remarks as a JSON STRING (normalisation
+// does not reach inside it): an array of sectors with their policies, or an
+// error object ({ errorMessage, errorCode }) when the GDS has no rule for the
+// fare's booking code. The other per-flight fields have been seen null.
+// Parsed by app/lib/book/fareRules.ts.
 export interface FareRuleResponse {
   Status: string
-  Key: string
-  FareRules: unknown[]
+  FareRulesFlight: { Remarks: string | null }[] | null
   Error: AmadeusError_ | null
+}
+
+export interface FareRuleRequest {
+  // The search RESPONSE's Key (not the one sent with the search), as pricing.
+  key: string
+  pricingKey: string
+  resultIndex: string
+  provider: string
+  // For a booked ticket: ask by PNR and ticket number instead.
+  pnr?: string
+  ticketNo?: string
 }
 
 // SeatMap — confirmed against a real UAT response. Note the envelope here is
@@ -948,19 +963,22 @@ export const amadeus = {
   },
 
   // ── 8. Fare rule ───────────────────────────────────────────────────────────
-  async fareRule(
-    resultKey: string,
-    pricingKey: string,
-    provider: string
-  ): Promise<FareRuleResponse> {
+  // The airline's cancellation, change and no-show rules for one fare, as the
+  // documented request (UserID is the client code). Path and key confirmed on
+  // the test system: Key is the availability response's Key, as for pricing.
+  async fareRule(req: FareRuleRequest): Promise<FareRuleResponse> {
     const json = await withSession<AmadeusEnvelope & FareRuleResponse>(
       'flight/Non-LccFareRule',
       (sessionId) => ({
         ClientCode: CLIENT_CODE,
         SessionID: sessionId,
-        Key: resultKey,
-        Pricingkey: pricingKey,
-        Provider: provider,
+        Key: req.key,
+        Pricingkey: req.pricingKey,
+        ResultIndex: req.resultIndex,
+        UserID: CLIENT_CODE,
+        Provider: req.provider,
+        PNRNO: req.pnr ?? '',
+        TicketNo: req.ticketNo ?? '',
       }),
       'FareRule'
     )
