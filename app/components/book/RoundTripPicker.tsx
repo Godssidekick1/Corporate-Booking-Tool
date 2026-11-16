@@ -2,7 +2,10 @@
 
 import { useState } from 'react'
 import AirlineMark from '@/app/components/AirlineMark'
-import FlightResults, { youPay } from '@/app/components/book/FlightResults'
+import FlightResults from '@/app/components/book/FlightResults'
+import FilterPanel from '@/app/components/book/FilterPanel'
+import { activeCount, applyFilters, emptyFilters, flip, youPay, type Filters } from '@/app/lib/book/resultFilters'
+import rcss from './FlightResults.module.css'
 import FareCards from '@/app/components/book/FareCards'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
 import { journeysOf, type FareOption, type FlatFlightResult } from '@/app/lib/book/types'
@@ -14,6 +17,10 @@ import css from './RoundTripPicker.module.css'
 // flights, one picked from each, adding up in the bar below. Each pick is
 // priced and booked on its own (two linked bookings, one checkout).
 //
+// The filters on the left are the one-way list's (FilterPanel): stops,
+// airlines, price per flight, refundable and within policy apply to both
+// columns; each column has its own departure and arrival times.
+//
 // The airlines' special return fares (one price for both flights, one
 // booking: the RTF search) are offered above the columns when there are any,
 // and named in the bar when the two picks also come as one. Opening them shows
@@ -23,7 +30,6 @@ import css from './RoundTripPicker.module.css'
 const inr = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`
 const clock = (iso?: string) => /T(\d{2}:\d{2})/.exec(iso ?? '')?.[1] ?? '—'
 const dayOf = (iso?: string) => /^(\d{4}-\d{2}-\d{2})/.exec(iso ?? '')?.[1] ?? ''
-const hourOf = (iso?: string) => Number(/T(\d{2})/.exec(iso ?? '')?.[1] ?? NaN)
 function minutes(d?: string) { const m = /^(\d+):(\d{2})/.exec(d ?? ''); return m ? Number(m[1]) * 60 + Number(m[2]) : 0 }
 const hm = (mins: number) => `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, '0')}m`
 const airlineOf = (f: FlatFlightResult) => (f.airline?.code ?? f.legs?.[0]?.airlineCode ?? '').toUpperCase()
@@ -36,21 +42,16 @@ const numbersOf = (legs: { airlineCode?: string; flightNumber?: string }[] | und
   (legs ?? []).map(l => `${l.airlineCode ?? ''}${l.flightNumber ?? ''}`).join('|')
 
 type SortKey = 'cheapest' | 'earliest' | 'fastest'
-type Quick = 'nonstop' | 'morning' | 'evening' | 'refundable' | 'within'
-const QUICK: { key: Quick; label: string; test: (f: FlatFlightResult) => boolean }[] = [
-  { key: 'nonstop', label: 'Non-stop', test: f => (journeysOf(f)[0]?.stopCount ?? 0) === 0 },
-  { key: 'morning', label: 'Morning', test: f => { const h = hourOf(journeysOf(f)[0]?.origin?.dateTime); return h >= 6 && h < 12 } },
-  { key: 'evening', label: 'Evening', test: f => hourOf(journeysOf(f)[0]?.origin?.dateTime) >= 18 },
-  { key: 'refundable', label: 'Refundable', test: f => f.fareOptions.some(o => o.refundable) },
-  { key: 'within', label: 'Within policy', test: f => f.fareOptions.some(o => o.policy === 'green') },
-]
 
 // A pick: the flight, and which of its fares (the cheapest until another is chosen).
 interface Pick { flight: FlatFlightResult; pricingKey: string }
 
-function Column({ title, list, selected, onPick }: {
+function Column({ title, list, visible, onClear, selected, onPick }: {
   title: string
   list: FlatFlightResult[]
+  // The flights the filters leave.
+  visible: FlatFlightResult[]
+  onClear: () => void
   selected: Pick | null
   // null: the pick taken back (clicking the chosen row again, or its × below).
   onPick: (pick: Pick | null) => void
@@ -58,16 +59,12 @@ function Column({ title, list, selected, onPick }: {
   const [sort, setSort] = useState<SortKey>('cheapest')
   // The flight whose fares are open below its row.
   const [openFares, setOpenFares] = useState<string | null>(null)
-  const [quick, setQuick] = useState<Set<Quick>>(new Set())
   const first = list[0] ? journeysOf(list[0])[0] : undefined
   const route = first ? `${first.origin?.code} → ${first.destination?.code}` : ''
   const date = first?.origin?.dateTime
     ? new Date(`${dayOf(first.origin.dateTime)}T00:00:00`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })
     : ''
-  const judged = list.some(f => f.fareOptions.some(o => o.policy))
-
-  const rows = list
-    .filter(f => [...quick].every(k => QUICK.find(q => q.key === k)!.test(f)))
+  const rows = [...visible]
     .sort((a, b) => {
       if (sort === 'cheapest') return (youPay(a) ?? Infinity) - (youPay(b) ?? Infinity)
       const ja = journeysOf(a)[0], jb = journeysOf(b)[0]
@@ -75,31 +72,26 @@ function Column({ title, list, selected, onPick }: {
       return (ja?.origin?.dateTime ?? '').localeCompare(jb?.origin?.dateTime ?? '')
     })
 
-  function flip(k: Quick) {
-    const next = new Set(quick)
-    if (next.has(k)) next.delete(k)
-    else next.add(k)
-    setQuick(next)
-  }
-
   return (
     <section className={css.col} aria-label={`${title} flights`}>
       <div className={css.colHead}>
-        <div className={css.colTitle}><b>{title} · {route}</b><span>{date}{date ? ' · ' : ''}{list.length} flight{list.length === 1 ? '' : 's'}</span></div>
-        <div className={css.ctrl}>
-          <select value={sort} onChange={e => setSort(e.target.value as SortKey)} aria-label={`Sort ${title.toLowerCase()} flights`}>
-            <option value="cheapest">Cheapest first</option>
-            <option value="earliest">Earliest first</option>
-            <option value="fastest">Fastest first</option>
-          </select>
-          {QUICK.filter(q => q.key !== 'within' || judged).map(q => (
-            <button key={q.key} type="button" className={css.chip} aria-pressed={quick.has(q.key)} onClick={() => flip(q.key)}>{q.label}</button>
-          ))}
+        <div className={css.colTitle}>
+          <b>{title} · {route}</b>
+          <span>{date}{date ? ' · ' : ''}{visible.length === list.length ? list.length : `${visible.length} of ${list.length}`} flight{list.length === 1 ? '' : 's'}</span>
         </div>
+        <select className={css.sort} value={sort} onChange={e => setSort(e.target.value as SortKey)} aria-label={`Sort ${title.toLowerCase()} flights`}>
+          <option value="cheapest">Cheapest first</option>
+          <option value="earliest">Earliest first</option>
+          <option value="fastest">Fastest first</option>
+        </select>
       </div>
       <div className={css.rows} role="radiogroup" aria-label={`${title} flights`}>
         {rows.length === 0 ? (
-          <div className={css.empty}>{list.length === 0 ? 'No flights found for this direction.' : 'No flights match. Clear a filter.'}</div>
+          <div className={css.empty}>
+            {list.length === 0 ? 'No flights found for this direction.' : (
+              <>No {title.toLowerCase()} flights match these filters. <button type="button" className={css.linkBtn} onClick={onClear}>Clear all</button></>
+            )}
+          </div>
         ) : rows.map(f => {
           const j = journeysOf(f)[0]
           const isSel = selected?.flight.flightKey === f.flightKey
@@ -150,6 +142,37 @@ function Column({ title, list, selected, onPick }: {
   )
 }
 
+// Each airline flying both ways: its cheapest onward plus its cheapest return.
+// A click filters both columns to that airline, as the one-way strip does.
+function AirlineStrip({ onward, back, airlines, onAirlines }: {
+  onward: FlatFlightResult[]
+  back: FlatFlightResult[]
+  airlines: Set<string>
+  onAirlines: (next: Set<string>) => void
+}) {
+  const cheapestOn = (list: FlatFlightResult[], code: string) =>
+    Math.min(...list.filter(f => airlineOf(f) === code).map(f => youPay(f) ?? Infinity))
+  const both = [...new Set(onward.map(airlineOf))].filter(code => code && back.some(f => airlineOf(f) === code))
+    .map(code => ({ code, name: onward.find(f => airlineOf(f) === code)?.airline?.name ?? code, from: cheapestOn(onward, code) + cheapestOn(back, code) }))
+    .filter(a => Number.isFinite(a.from))
+    .sort((a, b) => a.from - b.from)
+  if (both.length < 2) return null
+  return (
+    <div className={rcss.strip} role="group" aria-label="Lowest price both ways, by airline">
+      <button type="button" className={rcss.all} aria-pressed={airlines.size === 0} onClick={() => onAirlines(new Set())}>
+        <b>All airlines</b><small>{onward.length + back.length} flights</small>
+      </button>
+      {both.map(a => (
+        <button key={a.code} type="button" aria-pressed={airlines.has(a.code)} onClick={() => onAirlines(flip(airlines, a.code))}>
+          <AirlineMark code={a.code} name={a.name} size={26} />
+          <b>{inr(a.from)}</b>
+          <small>{a.name} · both ways</small>
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export interface RoundTripPickerProps {
   split: SplitResults
   // The two picks: the page goes on to price both.
@@ -170,6 +193,12 @@ export default function RoundTripPicker({ split, onContinue, onChooseSpecial, na
   // The fare each pick carries.
   const fareOf = (s: Pick | null) => s ? s.flight.fareOptions.find(o => o.pricingKey === s.pricingKey) ?? cheapestFare(s.flight) : null
   const [showSpecial, setShowSpecial] = useState(false)
+  const [filters, setFilters] = useState<Filters>(() => emptyFilters(2))
+  const [showFilters, setShowFilters] = useState(false)
+  const [visibleOn, visibleBack] = applyFilters([onward, back], filters)
+  const active = activeCount(filters)
+  // Airlines the policy left out of either column, named once.
+  const hidden = [...new Map([...(split.onward?.hiddenByPolicy ?? []), ...(split.return?.hiddenByPolicy ?? [])].map(h => [h.code, h])).values()]
 
   // The return fare that is these exact two flights, if the airline sells one.
   const matching = onPick && retPick ? special.find(s => {
@@ -248,9 +277,26 @@ export default function RoundTripPicker({ split, onContinue, onChooseSpecial, na
         </div>
       )}
 
-      <div className={css.cols}>
-        <Column title="Onward" list={onward} selected={onSel} onPick={setOnSel} />
-        <Column title="Return" list={back} selected={retSel} onPick={setRetSel} />
+      <div className={rcss.body}>
+        <FilterPanel
+          lists={[onward, back]} filters={filters} onChange={setFilters} shown={showFilters} hiddenByPolicy={hidden}
+          departLabels={['Onward · departs', 'Return · departs']} arriveLabels={['Onward · arrives', 'Return · arrives']}
+          priceLabel="Price per flight, up to"
+        />
+        <div className={css.main}>
+          <AirlineStrip onward={onward} back={back} airlines={filters.airlines}
+            onAirlines={airlines => setFilters(f => ({ ...f, airlines }))} />
+          <div className={css.toolbar}>
+            <span>Pick one flight each way. Filters apply to both columns; times to their own.</span>
+            <button type="button" className={rcss.filtersToggle} onClick={() => setShowFilters(v => !v)} aria-expanded={showFilters}>
+              Filters{active ? ` (${active})` : ''}
+            </button>
+          </div>
+          <div className={css.cols}>
+            <Column title="Onward" list={onward} visible={visibleOn} onClear={() => setFilters(emptyFilters(2))} selected={onSel} onPick={setOnSel} />
+            <Column title="Return" list={back} visible={visibleBack} onClear={() => setFilters(emptyFilters(2))} selected={retSel} onPick={setRetSel} />
+          </div>
+        </div>
       </div>
 
       <div className={css.bar}>

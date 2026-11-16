@@ -1,10 +1,18 @@
 'use client'
 
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useState } from 'react'
 import AirlineMark from '@/app/components/AirlineMark'
+import FilterPanel from '@/app/components/book/FilterPanel'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
 import { journeysOf, type FareOption, type FlatFlightResult, type Journey } from '@/app/lib/book/types'
+import {
+  activeCount, airlineOf, applyFilters, durationOf, emptyFilters, fareAmount, flip, minutes, stopsOf, youPay,
+  type Filters,
+} from '@/app/lib/book/resultFilters'
 import css from './FlightResults.module.css'
+
+// The cheapest fare's price, for callers that render flights themselves.
+export { youPay }
 
 // ── FlightResults ────────────────────────────────────────────────────────────
 // The list of flights a search found: filters on the left, a lowest-price-by-
@@ -20,16 +28,7 @@ import css from './FlightResults.module.css'
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Verdict = 'green' | 'amber' | 'red'
-type Bucket = 'early' | 'morning' | 'afternoon' | 'evening'
 type SortKey = 'cheapest' | 'fastest' | 'earliest' | 'latest'
-
-const BUCKETS: { key: Bucket; label: string; path: string }[] = [
-  { key: 'early', label: 'Before 6', path: 'M4 18h16M7 14a5 5 0 0 1 10 0' },
-  { key: 'morning', label: '6 – 12', path: 'M12 3v2M5 12H3m18 0h-2M6.3 6.3 4.9 4.9m12.8 1.4 1.4-1.4M8 12a4 4 0 0 1 8 0' },
-  { key: 'afternoon', label: '12 – 6', path: 'M12 2v2m0 16v2M2 12h2m16 0h2M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10' },
-  { key: 'evening', label: 'After 6', path: 'M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5' },
-]
-const STOPS: { key: number; label: string }[] = [{ key: 0, label: 'Non-stop' }, { key: 1, label: '1 stop' }, { key: 2, label: '2+ stops' }]
 
 const inr = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`
 
@@ -37,28 +36,7 @@ const inr = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`
 // local airport times with no zone, so parsing to a Date would shift them.
 const clock = (iso?: string) => /T(\d{2}:\d{2})/.exec(iso ?? '')?.[1] ?? '—'
 const dayOf = (iso?: string) => /^(\d{4}-\d{2}-\d{2})/.exec(iso ?? '')?.[1] ?? ''
-const hourOf = (iso?: string) => Number(/T(\d{2})/.exec(iso ?? '')?.[1] ?? NaN)
-function bucketOf(iso?: string): Bucket | null {
-  const h = hourOf(iso)
-  if (!Number.isFinite(h)) return null
-  return h < 6 ? 'early' : h < 12 ? 'morning' : h < 18 ? 'afternoon' : 'evening'
-}
-function minutes(duration?: string): number {
-  const m = /^(\d+):(\d{2})/.exec(duration ?? '')
-  return m ? Number(m[1]) * 60 + Number(m[2]) : 0
-}
 const hm = (mins: number) => `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, '0')}m`
-
-const fareAmount = (f: FareOption) => f.sellEstimate ?? f.totalFare
-const airlineOf = (f: FlatFlightResult) => (f.airline?.code ?? f.legs?.[0]?.airlineCode ?? '').toUpperCase()
-const stopsOf = (f: FlatFlightResult) => Math.max(...journeysOf(f).map(j => j.stopCount ?? 0))
-const durationOf = (f: FlatFlightResult) => journeysOf(f).reduce((sum, j) => sum + minutes(j.totalDuration ?? j.duration), 0)
-
-// What the company pays for the cheapest fare.
-export function youPay(f: FlatFlightResult): number | undefined {
-  const amounts = f.fareOptions.map(fareAmount).filter((n): n is number => typeof n === 'number')
-  return amounts.length ? Math.min(...amounts) : f.sellEstimate ?? f.totalFare
-}
 
 // The card's one chip. The cheapest fare's verdict, unless a dearer fare on
 // the same flight is within policy (a refundable fare where the policy asks
@@ -73,7 +51,6 @@ function cardVerdict(f: FlatFlightResult): { verdict: Verdict; from?: number } |
   if (within.length) return { verdict: 'green', from: Math.min(...within) }
   return { verdict: cheapest.policy! }
 }
-const hasWithin = (f: FlatFlightResult) => f.fareOptions.some(o => o.policy === 'green')
 
 function Chip({ verdict, from }: { verdict: Verdict; from?: number }) {
   const meta = VERDICT_META[verdict]
@@ -127,39 +104,16 @@ export interface FlightResultsProps {
 
 export default function FlightResults({ results, hiddenByPolicy = [], onChoose, navigatingKey }: FlightResultsProps) {
   const [sort, setSort] = useState<SortKey>('cheapest')
-  const [airlines, setAirlines] = useState<Set<string>>(new Set())
-  const [stops, setStops] = useState<Set<number>>(new Set())
-  const [dep, setDep] = useState<Set<Bucket>>(new Set())
-  const [arr, setArr] = useState<Set<Bucket>>(new Set())
-  const [refundable, setRefundable] = useState(false)
-  const [withinOnly, setWithinOnly] = useState(false)
-  const [maxPrice, setMaxPrice] = useState<number | null>(null)
+  const [filters, setFilters] = useState<Filters>(() => emptyFilters(1))
   const [open, setOpen] = useState<Set<string>>(new Set())
   const [showFilters, setShowFilters] = useState(false)
 
   const prices = results.map(youPay).filter((n): n is number => typeof n === 'number')
-  const lo = prices.length ? Math.floor(Math.min(...prices)) : 0
-  const hi = prices.length ? Math.ceil(Math.max(...prices)) : 0
-  const judged = results.some(r => r.fareOptions.some(o => o.policy))
   const roundTrip = results.some(r => journeysOf(r).length > 1)
+  const airlines = filters.airlines
+  const setAirlines = (next: Set<string>) => setFilters(f => ({ ...f, airlines: next }))
 
-  // Each filter's test on its own, so a group's counts can be worked out with
-  // every OTHER group applied: a chip's number is what clicking it would show.
-  const tests = useMemo(() => ({
-    airlines: (f: FlatFlightResult) => airlines.size === 0 || airlines.has(airlineOf(f)),
-    stops: (f: FlatFlightResult) => stops.size === 0 || stops.has(Math.min(stopsOf(f), 2)),
-    dep: (f: FlatFlightResult) => dep.size === 0 || dep.has(bucketOf(journeysOf(f)[0]?.origin?.dateTime) as Bucket),
-    arr: (f: FlatFlightResult) => arr.size === 0 || arr.has(bucketOf(journeysOf(f)[0]?.destination?.dateTime) as Bucket),
-    refundable: (f: FlatFlightResult) => !refundable || f.fareOptions.some(o => o.refundable),
-    within: (f: FlatFlightResult) => !withinOnly || hasWithin(f),
-    price: (f: FlatFlightResult) => maxPrice === null || (youPay(f) ?? Infinity) <= maxPrice,
-  }), [airlines, stops, dep, arr, refundable, withinOnly, maxPrice])
-  type Group = keyof typeof tests
-  const passes = (f: FlatFlightResult, except?: Group) =>
-    (Object.keys(tests) as Group[]).every(k => k === except || tests[k](f))
-  const countIf = (group: Group, pred: (f: FlatFlightResult) => boolean) => results.filter(f => passes(f, group) && pred(f)).length
-
-  const shown = results.filter(f => passes(f)).sort((a, b) => {
+  const shown = applyFilters([results], filters)[0].sort((a, b) => {
     if (sort === 'cheapest') return (youPay(a) ?? Infinity) - (youPay(b) ?? Infinity)
     if (sort === 'fastest') return durationOf(a) - durationOf(b)
     const da = journeysOf(a)[0]?.origin?.dateTime ?? '', db = journeysOf(b)[0]?.origin?.dateTime ?? ''
@@ -170,107 +124,14 @@ export default function FlightResults({ results, hiddenByPolicy = [], onChoose, 
   const nameOf = (code: string) => results.find(r => airlineOf(r) === code)?.airline?.name ?? code
   const cheapest = prices.length ? Math.min(...prices) : undefined
   const fastest = results.length ? Math.min(...results.map(durationOf)) : 0
-  const active = airlines.size + stops.size + dep.size + arr.size + (refundable ? 1 : 0) + (withinOnly ? 1 : 0) + (maxPrice !== null ? 1 : 0)
-
-  function flip<T>(set: Set<T>, value: T, update: (s: Set<T>) => void) {
-    const next = new Set(set)
-    if (next.has(value)) next.delete(value)
-    else next.add(value)
-    update(next)
-  }
-  function clearAll() {
-    setAirlines(new Set()); setStops(new Set()); setDep(new Set()); setArr(new Set())
-    setRefundable(false); setWithinOnly(false); setMaxPrice(null)
-  }
-
-  const bucketButtons = (which: 'dep' | 'arr') => {
-    const set = which === 'dep' ? dep : arr
-    const setter = which === 'dep' ? setDep : setArr
-    return BUCKETS.map(b => {
-      const count = countIf(which, f => bucketOf(journeysOf(f)[0]?.[which === 'dep' ? 'origin' : 'destination']?.dateTime) === b.key)
-      const on = set.has(b.key)
-      return (
-        <button key={b.key} type="button" aria-pressed={on} disabled={!count && !on} title={`${count} flight${count === 1 ? '' : 's'}`}
-          onClick={() => flip(set, b.key, setter)}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true"><path d={b.path} /></svg>
-          {b.label}
-        </button>
-      )
-    })
-  }
+  const active = activeCount(filters)
 
   return (
     <div className={css.body}>
-      <aside className={`${css.filters} ${showFilters ? css.filtersShown : ''}`} aria-label="Filters">
-        <div className={css.filtersHead}>
-          <b>Filters</b>
-          {active > 0 && <button type="button" className={css.linkBtn} onClick={clearAll}>Clear all ({active})</button>}
-        </div>
-
-        {judged && (
-          <label className={css.toggle}>
-            <span>Within policy only <small>({countIf('within', hasWithin)})</small></span>
-            <input type="checkbox" checked={withinOnly} onChange={e => setWithinOnly(e.target.checked)} />
-          </label>
-        )}
-
-        <div className={css.group}>
-          <h4>Stops</h4>
-          <div className={css.chips}>
-            {STOPS.map(s => {
-              const count = countIf('stops', f => Math.min(stopsOf(f), 2) === s.key)
-              const on = stops.has(s.key)
-              return (
-                <button key={s.key} type="button" className={css.chip} aria-pressed={on} disabled={!count && !on}
-                  onClick={() => flip(stops, s.key, setStops)}>
-                  {s.label}<small>{count}</small>
-                </button>
-              )
-            })}
-          </div>
-        </div>
-
-        <div className={css.group}>
-          <h4>Departs{roundTrip ? ' (outbound)' : ''}</h4>
-          <div className={css.tod}>{bucketButtons('dep')}</div>
-        </div>
-        <div className={css.group}>
-          <h4>Arrives{roundTrip ? ' (outbound)' : ''}</h4>
-          <div className={css.tod}>{bucketButtons('arr')}</div>
-        </div>
-
-        <div className={css.group}>
-          <h4>Airlines</h4>
-          {codes.map(code => (
-            <label key={code} className={css.airlineOpt}>
-              <input type="checkbox" checked={airlines.has(code)} onChange={() => flip(airlines, code, setAirlines)} />
-              <span className={css.airlineName}><AirlineMark code={code} name={nameOf(code)} size={22} /><span>{nameOf(code)}</span></span>
-              <small>{countIf('airlines', f => airlineOf(f) === code)}</small>
-            </label>
-          ))}
-          {hiddenByPolicy.length > 0 && (
-            <div className={css.hiddenNote}>
-              {hiddenByPolicy.map(h => h.name).join(', ')} {hiddenByPolicy.length === 1 ? 'isn’t' : 'aren’t'} shown: the travel policy doesn&apos;t allow {hiddenByPolicy.length === 1 ? 'it' : 'them'}.
-            </div>
-          )}
-        </div>
-
-        {hi > lo && (
-          <div className={css.group}>
-            <h4>Price, up to</h4>
-            <div className={css.range}>
-              <input type="range" min={lo} max={hi} step={10} value={maxPrice ?? hi} aria-label="Highest price"
-                onChange={e => { const v = Number(e.target.value); setMaxPrice(v >= hi ? null : v) }} />
-              <div className={css.rangeEnds}><span>{inr(lo)}</span><b>{inr(maxPrice ?? hi)}</b></div>
-            </div>
-          </div>
-        )}
-
-        <label className={css.toggle}>
-          <span>Refundable fares only <small>({countIf('refundable', f => f.fareOptions.some(o => o.refundable))})</small></span>
-          <input type="checkbox" checked={refundable} onChange={e => setRefundable(e.target.checked)} />
-        </label>
-      </aside>
+      <FilterPanel
+        lists={[results]} filters={filters} onChange={setFilters} hiddenByPolicy={hiddenByPolicy} shown={showFilters}
+        departLabels={[`Departs${roundTrip ? ' (outbound)' : ''}`]} arriveLabels={[`Arrives${roundTrip ? ' (outbound)' : ''}`]}
+      />
 
       <section className={css.results}>
         {codes.length > 1 && (
@@ -282,7 +143,7 @@ export default function FlightResults({ results, hiddenByPolicy = [], onChoose, 
               const mine = results.filter(r => airlineOf(r) === code)
               const from = Math.min(...mine.map(r => youPay(r) ?? Infinity))
               return (
-                <button key={code} type="button" aria-pressed={airlines.has(code)} onClick={() => flip(airlines, code, setAirlines)}>
+                <button key={code} type="button" aria-pressed={airlines.has(code)} onClick={() => setAirlines(flip(airlines, code))}>
                   <AirlineMark code={code} name={nameOf(code)} size={26} />
                   <b>{Number.isFinite(from) ? inr(from) : '—'}</b>
                   <small>{nameOf(code)}{mine.some(r => stopsOf(r) === 0) ? ' · non-stop' : ''}</small>
@@ -356,7 +217,7 @@ export default function FlightResults({ results, hiddenByPolicy = [], onChoose, 
                     {flight.fareOptions.length > 1 ? `${journeys.length > 1 ? ', ' : ' · '}${flight.fareOptions.length} fares` : ''}
                   </span>
                   <button type="button" className={css.faresBtn} aria-expanded={isOpen}
-                    onClick={() => flip(open, flight.flightKey, setOpen)}>
+                    onClick={() => setOpen(flip(open, flight.flightKey))}>
                     {isOpen ? 'Hide fares' : 'View fares'} <Chevron />
                   </button>
                 </div>
