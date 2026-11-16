@@ -4,6 +4,7 @@ import { NextRequest } from 'next/server'
 import { db } from '@/app/lib/db'
 import * as employees from '@/app/lib/repositories/employees'
 import { route } from '@/app/lib/http/handler'
+import { CLIENT_ROLES, isClientRole } from '@/app/lib/clients/roles'
 
 // ── GET /api/settings/users ──────────────────────────────────────────────────
 // List all employees in the admin's client, for the settings/users table.
@@ -30,10 +31,21 @@ export const GET = route(async (req: NextRequest) => {
     return Response.json(pagedResponse([], 0, params))
   }
 
+  // ?role= and ?status=: the Users screen's filters.
+  const role = req.nextUrl.searchParams.get('role') || undefined
+  const status = req.nextUrl.searchParams.get('status') || undefined
+  if (role && !isClientRole(role)) {
+    return Response.json({ error: `role must be one of ${CLIENT_ROLES.join(', ')}` }, { status: 400 })
+  }
+  if (status && !['active', 'invited', 'deactivated'].includes(status)) {
+    return Response.json({ error: 'status must be active, invited or deactivated' }, { status: 400 })
+  }
+
   const { rows, total } = await employees.directory(
     db,
     caller.client_id,
-    ids.length > 0 ? { ids } : { search: params.search, page: params }
+    ids.length > 0 ? { ids } : { search: params.search, page: params },
+    { role, status }
   )
 
   return Response.json(pagedResponse(rows, total, params))

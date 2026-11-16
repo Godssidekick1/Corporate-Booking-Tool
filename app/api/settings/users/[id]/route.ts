@@ -4,6 +4,7 @@ import { NextRequest } from 'next/server'
 import { db, transaction } from '@/app/lib/db'
 import * as employees from '@/app/lib/repositories/employees'
 import { route } from '@/app/lib/http/handler'
+import * as audit from '@/app/lib/repositories/audit'
 
 // ── PATCH /api/settings/users/[id] ───────────────────────────────────────────
 // Admin edits an existing employee: role change and/or status toggle
@@ -114,6 +115,15 @@ export const PATCH = route(async (
   const updated = await transaction(async tx => {
     const row = await employees.applyCorporateEdit(tx, id, update)
     if (row && update.status === 'deactivated') await endAllSessions(tx, id, 'employee_deactivated', user.id)
+    // A role is who may manage the company's account: every change is recorded.
+    // (The last admin is safe here: an admin cannot edit their own account, so
+    // whoever demotes another admin is one still.)
+    if (row && update.role !== undefined && update.role !== target.role) {
+      await audit.append(tx, {
+        action: 'employee.role_changed', entityType: 'employee', entityId: id, userId: user.id,
+        clientId: caller.client_id, metadata: { from: target.role, to: update.role, by: 'company_admin' },
+      })
+    }
     return row
   })
 

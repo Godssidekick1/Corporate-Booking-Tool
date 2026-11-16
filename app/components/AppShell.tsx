@@ -233,6 +233,16 @@ function NavIcon({ name, active }: { name?: string; active?: boolean }) {
           <rect x="3" y="16" width="7" height="5" rx="1" />
         </svg>
       )
+    case 'org':
+      // An org chart: one box above, two below, joined.
+      return (
+        <svg {...common}>
+          <rect x="9" y="3" width="6" height="5" rx="1" />
+          <rect x="3" y="16" width="6" height="5" rx="1" />
+          <rect x="15" y="16" width="6" height="5" rx="1" />
+          <path d="M12 8v4M6 16v-2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2" />
+        </svg>
+      )
     case 'groups':
       return (
         <svg {...common}>

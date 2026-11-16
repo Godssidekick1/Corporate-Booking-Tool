@@ -6,7 +6,7 @@ import type { ShellItem } from '@/app/components/AppShell'
 // corporate page shares it (CorporateShell). The travel profile is not here:
 // it is the person's own entry at the rail's foot.
 //
-//   everyone            Dashboard, My trips
+//   everyone            Dashboard, My trips, Organization
 //   self-booking        Book travel (a CBT-only client's travel desk books)
 //   approvers           Approvals: admins, finance, and anyone with reports
 //   admin, finance      Reports
@@ -20,6 +20,8 @@ export function corporateNav(
   const items: ShellItem[] = [{ label: 'Dashboard', href: '/dashboard', icon: 'dashboard' }]
   if (canSelfBook) items.push({ label: 'Book travel', href: '/book', icon: 'flight' })
   items.push({ label: 'My trips', href: '/bookings', icon: 'trips' })
+  // Everyone: who reports to whom, Teams-style (/organization).
+  items.push({ label: 'Organization', href: '/organization', icon: 'org' })
   if (isApprover) items.push({ label: 'Approvals', href: '/approvals', icon: 'check', badge: pendingApprovals })
   if (role === 'admin' || role === 'finance') items.push({ label: 'Reports', href: '/reports', icon: 'assessment' })
   if (role === 'admin') items.push({ label: 'Settings', href: '/settings', icon: 'settings' })

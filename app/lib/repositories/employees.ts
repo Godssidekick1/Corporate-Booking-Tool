@@ -316,12 +316,17 @@ export type DirectoryRow = Pick<Row<'employees'>,
 >
 
 // The corporate settings/users table.
-export async function directory(db: Queryable, clientId: string, scope: ListScope): Promise<Listed<DirectoryRow>> {
+// filters: one role and/or one status (the Users screen's filter row).
+export async function directory(
+  db: Queryable, clientId: string, scope: ListScope, filters: { role?: string; status?: string } = {}
+): Promise<Listed<DirectoryRow>> {
   return listEmployees<DirectoryRow>(
     db,
     sql`id, full_name, email, role, status, band_code, department, cost_centre,
         onboarding_method, manager_id, top_of_hierarchy`,
-    sql`client_id = ${clientId}`,
+    sql`client_id = ${clientId}
+      ${filters.role ? sql`and role = ${filters.role}` : empty}
+      ${filters.status ? sql`and status = ${filters.status}` : empty}`,
     scope,
     [sql`full_name`, sql`email`, sql`department`, sql`cost_centre`]
   )
@@ -394,9 +399,9 @@ export async function findWithStatusInClient(
   db: Queryable,
   employeeId: string,
   clientId: string
-): Promise<Pick<Row<'employees'>, 'id' | 'client_id' | 'status'> | null> {
+): Promise<Pick<Row<'employees'>, 'id' | 'client_id' | 'status' | 'role'> | null> {
   return maybeOne(db, sql`
-    select id, client_id, status from employees where id = ${employeeId} and client_id = ${clientId}`)
+    select id, client_id, status, role from employees where id = ${employeeId} and client_id = ${clientId}`)
 }
 
 export type CorporateEdit = Partial<Pick<Row<'employees'>, 'role' | 'status'>>
@@ -744,6 +749,39 @@ export async function travellerRosterAcross(
     scope,
     [sql`full_name`, sql`email`, sql`department`, sql`designation`, sql`cost_centre`]
   )
+}
+
+// ═══ The company's people, counted (Settings → Company) ═════════════════════
+
+export interface CompanyPeople {
+  active: number
+  invited: number
+  deactivated: number
+  admins: number
+  finance: number
+  // Active people with no reporting line who are not at the top.
+  noManager: number
+  departments: number
+  bands: { code: string; label: string; rank: number; people: number }[]
+}
+
+export async function companyPeople(db: Queryable, clientId: string): Promise<CompanyPeople> {
+  const [counts, bands] = await Promise.all([
+    one<Omit<CompanyPeople, 'bands'>>(db, sql`
+      select count(*) filter (where status = 'active')::int as active,
+             count(*) filter (where status = 'invited')::int as invited,
+             count(*) filter (where status = 'deactivated')::int as deactivated,
+             count(*) filter (where status = 'active' and role = 'admin')::int as admins,
+             count(*) filter (where status = 'active' and role = 'finance')::int as finance,
+             count(*) filter (where status = 'active' and manager_id is null and not top_of_hierarchy)::int as "noManager",
+             count(distinct nullif(trim(department), '')) filter (where status <> 'deactivated')::int as departments
+      from employees where client_id = ${clientId}`),
+    many<CompanyPeople['bands'][number]>(db, sql`
+      select b.code, b.label, b.rank,
+             (select count(*)::int from employees e where e.client_id = b.client_id and e.band_code = b.code and e.status <> 'deactivated') as people
+      from bands b where b.client_id = ${clientId} order by b.rank, b.id`),
+  ])
+  return { ...counts, bands }
 }
 
 export interface ProfileTarget {

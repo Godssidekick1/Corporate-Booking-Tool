@@ -1,424 +1,379 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Pagination from '@/app/components/Pagination'
 import SlideOver from '@/app/components/SlideOver'
 import BookingHistory from '@/app/components/BookingHistory'
 import { SkeletonTable } from '@/app/components/Skeleton'
 import { usePagedList } from '@/app/hooks/usePagedList'
+import { ListHeader, ListFilters, ListEmpty, list } from '@/app/components/config/ListPage'
+import { CLIENT_ROLES, CLIENT_ROLE_LABEL, isClientRole, type ClientRole } from '@/app/lib/clients/roles'
+
+// ── /settings/users ──────────────────────────────────────────────────────────
+// The company's people, in the same list layout as the travel desk's screens:
+// search and filters, a table that opens each person in a panel. In the panel
+// an admin changes someone's role (confirmed first, and recorded), deactivates
+// or reactivates them, and sees their bookings. Bands and reporting lines are
+// shown but set by the travel desk, because policy and approvals follow them.
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface Employee {
   id: string
   full_name: string
   email: string
-  role: 'admin' | 'finance' | 'employee'
+  role: string
   status: string
   band_code: string | null
   department: string | null
+  cost_centre: string | null
   onboarding_method: string | null
 }
+interface Band { id: string; code: string; label: string; rank: number }
 
-const ROLES = ['employee', 'finance', 'admin'] as const
-
-// Mirrors MIN_INITIAL_PASSWORD in app/api/employees/route.ts, which rejects
-// anything shorter. Checked here too so the admin finds out before submitting.
+// Mirrors MIN_INITIAL_PASSWORD in app/api/employees/route.ts.
 const MIN_INITIAL_PASSWORD = 10
-const STATUS_COLORS: Record<string, { bg: string; fg: string }> = {
-  active:      { bg: '#ECFDF5', fg: '#065F46' },
-  invited:     { bg: '#FEF3C7', fg: '#92400E' },
-  deactivated: { bg: '#F3F4F6', fg: '#6B7280' },
+
+const STATUS_STYLE: Record<string, React.CSSProperties> = {
+  active: { color: '#065F46', background: '#ECFDF5' },
+  invited: { color: '#92400E', background: '#FEF3C7' },
+  deactivated: { color: '#6B7280', background: '#F3F4F6' },
+}
+const STATUS_LABEL: Record<string, string> = { active: 'Active', invited: 'Invited', deactivated: 'Deactivated' }
+const ROLE_HELP: Record<ClientRole, string> = {
+  admin: 'Manages the company’s users and settings, and books for colleagues where the company books for itself.',
+  finance: 'Approves where an approval chain names finance, and sees spend reports.',
+  employee: 'Travels and books for themselves.',
 }
 
-type Mode = 'list' | 'invite' | 'direct'
+type Adding = 'invite' | 'direct' | null
 
 export default function SettingsUsersPage() {
-  const list = usePagedList<Employee>('/api/settings/users')
-  const employees = list.items
-  const [mode, setMode] = useState<Mode>('list')
-  // Whose bookings are open in the drawer: an admin sees anyone's at their
-  // company, including those booked for them by others (GET /api/book/history).
-  const [historyOf, setHistoryOf] = useState<Employee | null>(null)
-  const [error, setError] = useState('')
+  const [role, setRole] = useState('')
+  const [status, setStatus] = useState('')
+  const people = usePagedList<Employee>('/api/settings/users', { params: { role: role || undefined, status: status || undefined } })
+
+  const [bands, setBands] = useState<Band[]>([])
+  useEffect(() => {
+    let live = true
+    fetch('/api/settings/bands').then(r => r.json()).then(d => { if (live && d.ok) setBands(d.bands) }).catch(() => {})
+    return () => { live = false }
+  }, [])
+
+  const [open, setOpen] = useState<Employee | null>(null)
+  const [adding, setAdding] = useState<Adding>(null)
   const [success, setSuccess] = useState('')
 
-  function loadEmployees() {
-    list.refetch()
-  }
-
-  async function handleRoleChange(id: string, role: string) {
-    setError(''); setSuccess('')
-    const res = await fetch(`/api/settings/users/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ role }),
-    })
-    const data = await res.json()
-    if (!res.ok) { setError(data.error || 'Could not update role.'); return }
-    list.refetch()
-    setSuccess('Role updated.')
-  }
-
-  async function handleBandChange(id: string, band: string) {
-    setError(''); setSuccess('')
-    const res = await fetch(`/api/settings/users/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ band }),
-    })
-    const data = await res.json()
-    if (!res.ok) { setError(data.error || 'Could not update band.'); return }
-    list.refetch()
-    setSuccess('Band updated.')
-  }
-
-  async function handleStatusToggle(emp: Employee) {
-    const newStatus = emp.status === 'active' ? 'deactivated' : 'active'
-    setError(''); setSuccess('')
-    const res = await fetch(`/api/settings/users/${emp.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: newStatus }),
-    })
-    const data = await res.json()
-    if (!res.ok) { setError(data.error || 'Could not update status.'); return }
-    list.refetch()
-    setSuccess(newStatus === 'deactivated' ? 'User deactivated.' : 'User reactivated.')
+  function done(message: string) {
+    setSuccess(message)
+    setAdding(null)
+    people.refetch()
   }
 
   return (
-    <div style={s.root}>
-      <div style={s.header}>
-        <div>
-          <h1 style={s.heading}>Users</h1>
-          <p style={s.sub}>{list.total} {list.total === 1 ? 'person' : 'people'} in your company.</p>
-        </div>
-        <div style={s.headerBtns}>
-          <button onClick={() => setMode('direct')} style={s.ghostBtn}>+ Add directly</button>
-          <button onClick={() => setMode('invite')} style={s.primaryBtn}>+ Invite by email</button>
-        </div>
-      </div>
-
-      {success && <div style={s.successBanner}>✓ {success}</div>}
-      {error && <div style={s.errorBanner}>✕ {error}</div>}
-
-      {mode === 'invite' && (
-        <InviteForm
-          onClose={() => setMode('list')}
-          onDone={() => { setMode('list'); loadEmployees(); setSuccess('Invite sent.') }}
-          onError={setError}
-        />
-      )}
-
-      {mode === 'direct' && (
-        <DirectAddForm
-          onClose={() => setMode('list')}
-          onDone={() => { setMode('list'); loadEmployees(); setSuccess('Employee added.') }}
-          onError={setError}
-        />
-      )}
-
-      <div style={s.card}>
-        {list.loading ? (
-          <SkeletonTable rows={8} cols={6} />
-        ) : employees.length === 0 ? (
-          <div style={s.emptyState}>
-            <p style={s.emptyTitle}>No employees yet</p>
-            <p style={s.emptyDesc}>Invite your first team member using the button above.</p>
-          </div>
-        ) : (
-          <table style={s.table}>
-            <thead>
-              <tr>
-                {['Name', 'Email', 'Role', 'Band', 'Status', ''].map(h => (
-                  <th key={h} style={s.th}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {employees.map((emp, i) => {
-                const colors = STATUS_COLORS[emp.status] ?? STATUS_COLORS.active
-                return (
-                  <tr key={emp.id} style={{ background: i % 2 === 0 ? '#fff' : '#FAFAFA' }}>
-                    <td style={s.td}><span style={s.name}>{emp.full_name}</span></td>
-                    <td style={{ ...s.td, color: '#6B7280' }}>{emp.email}</td>
-                    <td style={s.td}>
-                      <select
-                        value={emp.role}
-                        onChange={e => handleRoleChange(emp.id, e.target.value)}
-                        disabled={emp.status === 'deactivated'}
-                        style={s.roleSelect}
-                      >
-                        {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
-                      </select>
-                    </td>
-                    <td style={s.td}>
-                      <select
-                        value={emp.band_code ?? 'L1'}
-                        onChange={e => handleBandChange(emp.id, e.target.value)}
-                        disabled={emp.status === 'deactivated'}
-                        style={s.roleSelect}
-                      >
-                        {['L1', 'L2', 'L3', 'L4', 'L5'].map(b => <option key={b} value={b}>{b}</option>)}
-                      </select>
-                    </td>
-                    <td style={s.td}>
-                      <span style={{ ...s.badge, background: colors.bg, color: colors.fg }}>
-                        {emp.status}
-                      </span>
-                    </td>
-                    <td style={{ ...s.td, textAlign: 'right' as const, whiteSpace: 'nowrap' as const }}>
-                      <button onClick={() => setHistoryOf(emp)} style={{ ...s.reactivateBtn, color: '#374151', borderColor: '#E5E7EB', marginRight: 6 }}>
-                        Bookings
-                      </button>
-                      {emp.status !== 'invited' && (
-                        <button
-                          onClick={() => handleStatusToggle(emp)}
-                          style={emp.status === 'active' ? s.deactivateBtn : s.reactivateBtn}
-                        >
-                          {emp.status === 'active' ? 'Deactivate' : 'Reactivate'}
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      <Pagination
-        page={list.page} pageSize={10} total={list.total}
-        onPageChange={list.setPage} busy={list.refreshing} noun="people"
+    <div style={list.root}>
+      <ListHeader
+        title="Users"
+        description={`${people.total} ${people.total === 1 ? 'person' : 'people'} in your company. Open someone to change their role, deactivate them or see their bookings.`}
+        actions={<>
+          <button type="button" style={list.ghostBtn} onClick={() => setAdding('direct')}>Add directly</button>
+          <button type="button" style={list.primaryBtn} onClick={() => setAdding('invite')}>Invite by email</button>
+        </>}
       />
 
-      <SlideOver open={historyOf !== null} onClose={() => setHistoryOf(null)}
-        title={historyOf ? `${historyOf.full_name}'s bookings` : ''}
-        subtitle="Including any booked for them by you, a colleague or the travel desk.">
-        {historyOf && (
-          <BookingHistory params={{ traveller: historyOf.id }} columns={['bookedBy']}
-            empty={`${historyOf.full_name} has no bookings yet.`} />
-        )}
+      <ListFilters>
+        <input type="search" value={people.search} onChange={e => people.setSearch(e.target.value)}
+          placeholder="Search name, email, department or cost centre" style={list.search} aria-label="Search people" />
+        <select value={role} onChange={e => { setRole(e.target.value); people.setPage(1) }} style={list.input} aria-label="Role">
+          <option value="">Any role</option>
+          {CLIENT_ROLES.map(r => <option key={r} value={r}>{CLIENT_ROLE_LABEL[r]}</option>)}
+        </select>
+        <select value={status} onChange={e => { setStatus(e.target.value); people.setPage(1) }} style={list.input} aria-label="Status">
+          <option value="">Any status</option>
+          {Object.entries(STATUS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+      </ListFilters>
+
+      {success && <div style={list.successBanner}>{success}</div>}
+
+      {people.error ? (
+        <p style={list.errorBanner}><strong>Could not load people.</strong> {people.error}</p>
+      ) : people.loading ? (
+        <SkeletonTable rows={8} cols={5} />
+      ) : people.items.length === 0 ? (
+        <ListEmpty
+          title={people.search || role || status ? 'Nobody matches' : 'No people yet'}
+          description={people.search || role || status ? 'Search covers everyone, not just this page.' : 'Invite your first colleague with the button above.'}
+        />
+      ) : (
+        <div style={{ ...list.tableWrap, ...(people.refreshing ? list.dimmed : {}) }}>
+          <table style={list.table}>
+            <thead><tr>{['Person', 'Role', 'Department', 'Band', 'Status'].map(h => <th key={h} style={list.th}>{h}</th>)}</tr></thead>
+            <tbody>
+              {people.items.map(p => (
+                <tr key={p.id} style={list.row} onClick={() => setOpen(p)}>
+                  <td style={list.td}>
+                    <span style={list.name}>{p.full_name}</span>
+                    <span style={list.sublabel}>{p.email}</span>
+                  </td>
+                  <td style={list.td}>
+                    {p.role === 'admin' || p.role === 'finance'
+                      ? <span style={{ ...list.pill, ...(p.role === 'admin' ? adminTag : financeTag) }}>{CLIENT_ROLE_LABEL[p.role as ClientRole]}</span>
+                      : <span style={list.muted}>Employee</span>}
+                  </td>
+                  <td style={list.td}>{p.department || <span style={list.muted}>—</span>}</td>
+                  <td style={list.td}>{p.band_code ? <span style={{ ...list.pill, ...bandTag }}>{p.band_code}</span> : <span style={list.muted}>—</span>}</td>
+                  <td style={list.td}><span style={{ ...list.pill, ...(STATUS_STYLE[p.status] ?? {}) }}>{STATUS_LABEL[p.status] ?? p.status}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <Pagination page={people.page} pageSize={10} total={people.total} onPageChange={people.setPage} busy={people.refreshing} noun="people" />
+
+      <PersonPanel
+        person={open}
+        bands={bands}
+        onClose={() => setOpen(null)}
+        onChanged={(next, message) => { setOpen(next); setSuccess(message); people.refetch() }}
+      />
+
+      <SlideOver open={adding !== null} onClose={() => setAdding(null)}
+        title={adding === 'invite' ? 'Invite by email' : 'Add directly'}
+        subtitle={adding === 'invite'
+          ? 'They get an email invite and choose their own password.'
+          : 'The account is created now with a starting password you pass on; they change it on first sign-in.'}>
+        {adding && <AddForm mode={adding} bands={bands} onDone={done} />}
       </SlideOver>
     </div>
   )
 }
 
-// ── Invite form ───────────────────────────────────────────────────────────────
+// ── One person ───────────────────────────────────────────────────────────────
 
-function InviteForm({ onClose, onDone, onError }: {
+function PersonPanel({ person, bands, onClose, onChanged }: {
+  person: Employee | null
+  bands: Band[]
   onClose: () => void
-  onDone: () => void
-  onError: (msg: string) => void
+  onChanged: (next: Employee, message: string) => void
 }) {
-  const [email, setEmail] = useState('')
-  const [fullName, setFullName] = useState('')
-  const [role, setRole] = useState<typeof ROLES[number]>('employee')
-  const [band, setBand] = useState('L1')
-  const [submitting, setSubmitting] = useState(false)
+  const [ask, setAsk] = useState<ClientRole | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [tab, setTab] = useState<'details' | 'bookings'>('details')
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setSubmitting(true)
+  // A different person: a fresh panel.
+  const [shownId, setShownId] = useState<string | null>(null)
+  if (person && person.id !== shownId) {
+    setShownId(person.id); setAsk(null); setError(''); setTab('details')
+  }
+
+  async function patch(body: Record<string, unknown>, message: string) {
+    if (!person) return
+    setBusy(true); setError('')
     try {
-      const res = await fetch('/api/employees', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, full_name: fullName, role, band }),
+      const res = await fetch(`/api/settings/users/${person.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       })
-      const data = await res.json()
-      if (!res.ok) { onError(data.error || 'Could not send invite.'); return }
-      onDone()
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) { setError(d.error || 'Could not save that change.'); return }
+      setAsk(null)
+      onChanged({ ...person, ...(body as Partial<Employee>) }, message)
+    } catch {
+      setError('Could not reach the server. Check your connection and try again.')
     } finally {
-      setSubmitting(false)
+      setBusy(false)
     }
   }
 
+  const band = person?.band_code ? bands.find(b => b.code === person.band_code) : null
+  const currentRole: ClientRole = person && isClientRole(person.role) ? person.role : 'employee'
+
   return (
-    <form onSubmit={handleSubmit} style={s.formCard}>
-      <div style={s.formHeader}>
-        <h2 style={s.formTitle}>Invite by email</h2>
-        <button type="button" onClick={onClose} style={s.closeBtn}>✕</button>
-      </div>
-      <p style={s.formSub}>
-        They&apos;ll receive an email invite and choose their own password. Nothing gets
-        shared out-of-band, so this is the safer option wherever email reaches them.
-      </p>
-      <div style={s.fields}>
-        <div style={s.field}>
-          <label style={s.label}>Full name</label>
-          <input type="text" required value={fullName} onChange={e => setFullName(e.target.value)} placeholder="Jane Smith" style={s.input} />
+    <SlideOver open={person !== null} onClose={onClose}
+      title={person?.full_name ?? ''}
+      subtitle={person ? `${person.email} · ${STATUS_LABEL[person.status] ?? person.status}` : undefined}>
+      {person && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {(['details', 'bookings'] as const).map(t => (
+              <button key={t} type="button" onClick={() => setTab(t)} aria-pressed={tab === t}
+                style={{ ...chip, ...(tab === t ? chipOn : {}) }}>{t === 'details' ? 'Details' : 'Bookings'}</button>
+            ))}
+          </div>
+
+          {tab === 'bookings' ? (
+            <BookingHistory params={{ traveller: person.id }} columns={['bookedBy']} empty={`${person.full_name} has no bookings yet.`} />
+          ) : (
+            <>
+              <section style={card}>
+                <div style={cardHead}>
+                  <div>
+                    <div style={cardTitle}>Role</div>
+                    <div style={hint}>{ROLE_HELP[currentRole]}</div>
+                  </div>
+                  <div style={seg} role="group" aria-label="Role">
+                    {CLIENT_ROLES.map(r => (
+                      <button key={r} type="button" disabled={busy || person.status === 'deactivated'} aria-pressed={currentRole === r}
+                        onClick={() => setAsk(r === currentRole ? null : r)}
+                        style={{ ...segBtn, ...(currentRole === r ? segBtnOn : {}) }}>{CLIENT_ROLE_LABEL[r]}</button>
+                    ))}
+                  </div>
+                </div>
+                {ask && (
+                  <div style={confirm}>
+                    <span>
+                      {ask === 'admin'
+                        ? `Make ${person.full_name} a corporate admin? They will manage the company’s users and settings.`
+                        : currentRole === 'admin'
+                          ? `Remove ${person.full_name} as corporate admin? They will become ${CLIENT_ROLE_LABEL[ask]}.`
+                          : `Change ${person.full_name} to ${CLIENT_ROLE_LABEL[ask]}?`}
+                    </span>
+                    <span style={{ display: 'flex', gap: 6 }}>
+                      <button type="button" style={list.primaryBtn} disabled={busy}
+                        onClick={() => patch({ role: ask }, `${person.full_name} is now ${CLIENT_ROLE_LABEL[ask]}.`)}>
+                        {busy ? 'Saving…' : 'Confirm'}
+                      </button>
+                      <button type="button" style={list.ghostBtn} onClick={() => setAsk(null)} disabled={busy}>Cancel</button>
+                    </span>
+                  </div>
+                )}
+              </section>
+
+              <section style={card}>
+                <div style={cardTitle}>Travel profile</div>
+                <dl style={facts}>
+                  <dt style={dt}>Band</dt>
+                  <dd style={dd}>{person.band_code ? `${person.band_code}${band?.label && band.label !== person.band_code ? `: ${band.label}` : ''}` : '—'}</dd>
+                  <dt style={dt}>Department</dt><dd style={dd}>{person.department || '—'}</dd>
+                  <dt style={dt}>Cost centre</dt><dd style={dd}>{person.cost_centre || '—'}</dd>
+                </dl>
+                <p style={hint}>Bands and reporting lines are set by your travel desk: travel policy and approvals follow them.</p>
+              </section>
+
+              {person.status !== 'invited' && (
+                <section style={card}>
+                  <div style={cardTitle}>Access</div>
+                  <p style={hint}>
+                    {person.status === 'active'
+                      ? 'Deactivating signs them out everywhere and stops them signing in. Their bookings stay.'
+                      : 'Reactivating lets them sign in again.'}
+                  </p>
+                  <div>
+                    <button type="button" disabled={busy}
+                      style={person.status === 'active' ? list.dangerBtn : list.ghostBtn}
+                      onClick={() => patch(
+                        { status: person.status === 'active' ? 'deactivated' : 'active' },
+                        person.status === 'active' ? `${person.full_name} is deactivated.` : `${person.full_name} is active again.`,
+                      )}>
+                      {person.status === 'active' ? 'Deactivate' : 'Reactivate'}
+                    </button>
+                  </div>
+                </section>
+              )}
+
+              {error && <div style={list.errorBanner}>{error}</div>}
+            </>
+          )}
         </div>
-        <div style={s.field}>
-          <label style={s.label}>Email</label>
-          <input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="jane@company.com" style={s.input} />
-        </div>
-        <div style={s.field}>
-          <label style={s.label}>Role</label>
-          <select value={role} onChange={e => setRole(e.target.value as typeof ROLES[number])} style={s.input}>
-            {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
-          </select>
-        </div>
-        <div style={s.field}>
-          <label style={s.label}>Band</label>
-          <select value={band} onChange={e => setBand(e.target.value)} style={s.input}>
-            {['L1', 'L2', 'L3', 'L4', 'L5'].map(b => <option key={b} value={b}>{b}</option>)}
-          </select>
-        </div>
-      </div>
-      <div style={s.formActions}>
-        <button type="button" onClick={onClose} style={s.ghostBtn}>Cancel</button>
-        <button type="submit" disabled={submitting} style={{ ...s.primaryBtn, opacity: submitting ? 0.7 : 1 }}>
-          {submitting ? 'Sending…' : 'Send invite →'}
-        </button>
-      </div>
-    </form>
+      )}
+    </SlideOver>
   )
 }
 
-// ── Direct add form ───────────────────────────────────────────────────────────
+// ── Adding someone: by invite, or directly with a starting password ─────────
 
-function DirectAddForm({ onClose, onDone, onError }: {
-  onClose: () => void
-  onDone: () => void
-  onError: (msg: string) => void
-}) {
-  const [form, setForm] = useState({
-    email: '', full_name: '', role: 'employee' as typeof ROLES[number], band: 'L1',
-    department: '', cost_centre: '', password: '',
-  })
-  const [submitting, setSubmitting] = useState(false)
+function AddForm({ mode, bands, onDone }: { mode: 'invite' | 'direct'; bands: Band[]; onDone: (message: string) => void }) {
+  const [form, setForm] = useState({ full_name: '', email: '', role: 'employee', band: '', department: '', cost_centre: '', password: '' })
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const set = (k: keyof typeof form, v: string) => setForm(f => ({ ...f, [k]: v }))
+  // The least senior band by default: the one most new people join.
+  const band = form.band || bands[bands.length - 1]?.code || ''
 
-  function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) {
-    const { name, value } = e.target
-    setForm(prev => ({ ...prev, [name]: value }))
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault()
-
-    if (form.password.length < MIN_INITIAL_PASSWORD) {
-      onError(`The starting password must be at least ${MIN_INITIAL_PASSWORD} characters.`)
+    setError('')
+    if (mode === 'direct' && form.password.length < MIN_INITIAL_PASSWORD) {
+      setError(`The starting password must be at least ${MIN_INITIAL_PASSWORD} characters.`)
       return
     }
-
-    setSubmitting(true)
+    setBusy(true)
     try {
-      const res = await fetch('/api/employees', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, method: 'direct' }),
-      })
-      const data = await res.json()
-      if (!res.ok) { onError(data.error || 'Could not add employee.'); return }
-      onDone()
+      const body = mode === 'invite'
+        ? { email: form.email, full_name: form.full_name, role: form.role, band }
+        : { ...form, band, method: 'direct' }
+      const res = await fetch('/api/employees', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) { setError(d.error || (mode === 'invite' ? 'Could not send the invite.' : 'Could not add them.')); return }
+      onDone(mode === 'invite' ? `Invite sent to ${form.email}.` : `${form.full_name} added.`)
+    } catch {
+      setError('Could not reach the server. Check your connection and try again.')
     } finally {
-      setSubmitting(false)
+      setBusy(false)
     }
   }
 
   return (
-    <form onSubmit={handleSubmit} style={s.formCard}>
-      <div style={s.formHeader}>
-        <h2 style={s.formTitle}>Add directly</h2>
-        <button type="button" onClick={onClose} style={s.closeBtn}>✕</button>
-      </div>
-      <p style={s.formSub}>
-        Creates the account straight away with a starting password you choose and
-        pass on yourself — no email is sent. They&apos;ll be required to set their own
-        password the first time they sign in, so you won&apos;t keep knowing it.
-      </p>
-      <div style={s.fields}>
-        <div style={s.field}>
-          <label style={s.label}>Full name</label>
-          <input name="full_name" type="text" required value={form.full_name} onChange={handleChange} placeholder="Jane Smith" style={s.input} />
-        </div>
-        <div style={s.field}>
-          <label style={s.label}>Email</label>
-          <input name="email" type="email" required value={form.email} onChange={handleChange} placeholder="jane@company.com" style={s.input} />
-        </div>
-        <div style={{ ...s.field, gridColumn: '1 / -1' }}>
-          <label style={s.label}>Starting password</label>
-          <input
-            name="password"
-            type="text"
-            required
-            minLength={MIN_INITIAL_PASSWORD}
-            value={form.password}
-            onChange={handleChange}
-            placeholder={`At least ${MIN_INITIAL_PASSWORD} characters`}
-            style={s.input}
-          />
-          <span style={s.fieldHint}>
-            Shown in plain text so you can read it out or copy it. They must change it
-            on first sign-in.
-          </span>
-        </div>
-        <div style={s.field}>
-          <label style={s.label}>Role</label>
-          <select name="role" value={form.role} onChange={handleChange} style={s.input}>
-            {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
-          </select>
-        </div>
-        <div style={s.field}>
-          <label style={s.label}>Band</label>
-          <select name="band" value={form.band} onChange={handleChange} style={s.input}>
-            {['L1', 'L2', 'L3', 'L4', 'L5'].map(b => <option key={b} value={b}>{b}</option>)}
-          </select>
-        </div>
-        <div style={s.field}>
-          <label style={s.label}>Department (optional)</label>
-          <input name="department" type="text" value={form.department} onChange={handleChange} style={s.input} />
-        </div>
-        <div style={s.field}>
-          <label style={s.label}>Cost centre (optional)</label>
-          <input name="cost_centre" type="text" value={form.cost_centre} onChange={handleChange} style={s.input} />
-        </div>
-      </div>
-      <div style={s.formActions}>
-        <button type="button" onClick={onClose} style={s.ghostBtn}>Cancel</button>
-        <button type="submit" disabled={submitting} style={{ ...s.primaryBtn, opacity: submitting ? 0.7 : 1 }}>
-          {submitting ? 'Adding…' : 'Add employee →'}
+    <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <Field label="Full name"><input required value={form.full_name} onChange={e => set('full_name', e.target.value)} style={list.input} placeholder="Jane Smith" /></Field>
+      <Field label="Work email"><input required type="email" value={form.email} onChange={e => set('email', e.target.value)} style={list.input} placeholder="jane@company.com" /></Field>
+      {mode === 'direct' && (
+        <Field label="Starting password" hint="Shown in plain text so you can pass it on. They must change it on first sign-in.">
+          <input required minLength={MIN_INITIAL_PASSWORD} value={form.password} onChange={e => set('password', e.target.value)} style={list.input}
+            placeholder={`At least ${MIN_INITIAL_PASSWORD} characters`} />
+        </Field>
+      )}
+      <Field label="Role">
+        <select value={form.role} onChange={e => set('role', e.target.value)} style={list.input}>
+          {CLIENT_ROLES.map(r => <option key={r} value={r}>{CLIENT_ROLE_LABEL[r]}</option>)}
+        </select>
+      </Field>
+      <Field label="Band" hint={bands.length === 0 ? 'Your company has no bands yet: ask your travel desk to set them up.' : undefined}>
+        <select value={band} onChange={e => set('band', e.target.value)} style={list.input} required disabled={bands.length === 0}>
+          {bands.map(b => <option key={b.id} value={b.code}>{b.code}{b.label && b.label !== b.code ? ` — ${b.label}` : ''}</option>)}
+        </select>
+      </Field>
+      {mode === 'direct' && (
+        <>
+          <Field label="Department (optional)"><input value={form.department} onChange={e => set('department', e.target.value)} style={list.input} /></Field>
+          <Field label="Cost centre (optional)"><input value={form.cost_centre} onChange={e => set('cost_centre', e.target.value)} style={list.input} /></Field>
+        </>
+      )}
+      {error && <div style={list.errorBanner}>{error}</div>}
+      <div>
+        <button type="submit" style={{ ...list.primaryBtn, opacity: busy || bands.length === 0 ? 0.6 : 1 }} disabled={busy || bands.length === 0}>
+          {busy ? 'Saving…' : mode === 'invite' ? 'Send invite' : 'Add person'}
         </button>
       </div>
     </form>
   )
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
-
-const s: Record<string, React.CSSProperties> = {
-  root: { fontFamily: "'Inter', -apple-system, sans-serif" },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' },
-  heading: { fontSize: '20px', fontWeight: 600, color: '#0A0A14', margin: '0 0 4px', letterSpacing: '-0.3px' },
-  sub: { fontSize: '13px', color: '#6B7280', margin: 0 },
-  headerBtns: { display: 'flex', gap: '10px' },
-  primaryBtn: { height: '36px', padding: '0 14px', background: '#000835', color: '#fff', fontSize: '13px', fontWeight: 600, border: 'none', borderRadius: '7px', cursor: 'pointer' },
-  ghostBtn: { height: '36px', padding: '0 14px', background: 'transparent', color: '#6B7280', fontSize: '13px', border: '1px solid #D1D5DB', borderRadius: '7px', cursor: 'pointer' },
-  successBanner: { background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#065F46', marginBottom: '16px' },
-  errorBanner: { background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#DC2626', marginBottom: '16px' },
-  formCard: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '10px', padding: '20px', marginBottom: '20px' },
-  formHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' },
-  formTitle: { fontSize: '15px', fontWeight: 600, color: '#111827', margin: 0 },
-  closeBtn: { background: 'transparent', border: 'none', color: '#9CA3AF', fontSize: '16px', cursor: 'pointer' },
-  formSub: { fontSize: '12px', color: '#6B7280', margin: '0 0 16px' },
-  fields: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '14px', marginBottom: '14px' },
-  field: { display: 'flex', flexDirection: 'column', gap: '5px' },
-  fieldHint: { fontSize: '11px', color: '#9CA3AF', lineHeight: 1.5 },
-  label: { fontSize: '11px', fontWeight: 500, color: '#374151' },
-  input: { height: '36px', padding: '0 10px', fontSize: '13px', color: '#111827', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '6px', outline: 'none' },
-  checkboxRow: { display: 'flex', alignItems: 'center', gap: '7px', fontSize: '12px', color: '#374151', marginBottom: '16px' },
-  formActions: { display: 'flex', gap: '10px', justifyContent: 'flex-end' },
-  card: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '10px', overflow: 'hidden' },
-  table: { width: '100%', borderCollapse: 'collapse' as const },
-  th: { padding: '10px 16px', textAlign: 'left' as const, fontSize: '11px', fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.4px', background: '#F9FAFB', borderBottom: '1px solid #F3F4F6' },
-  td: { padding: '12px 16px', fontSize: '13px', color: '#374151', borderBottom: '1px solid #F9FAFB' },
-  name: { fontWeight: 500, color: '#111827' },
-  roleSelect: { fontSize: '12px', color: '#374151', padding: '4px 6px', border: '1px solid #E5E7EB', borderRadius: '5px', background: '#fff' },
-  badge: { display: 'inline-block', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 500 },
-  deactivateBtn: { fontSize: '11px', color: '#DC2626', background: 'transparent', border: '1px solid #FECACA', borderRadius: '5px', padding: '4px 8px', cursor: 'pointer' },
-  reactivateBtn: { fontSize: '11px', color: '#065F46', background: 'transparent', border: '1px solid #A7F3D0', borderRadius: '5px', padding: '4px 8px', cursor: 'pointer' },
-  emptyState: { padding: '48px 20px', textAlign: 'center' as const },
-  emptyTitle: { fontSize: '14px', fontWeight: 600, color: '#374151', margin: '0 0 6px' },
-  emptyDesc: { fontSize: '13px', color: '#9CA3AF', margin: 0 },
+function Field({ label, hint: help, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+      <span style={{ fontSize: 11, fontWeight: 600, color: '#374151' }}>{label}</span>
+      {children}
+      {help && <span style={hint}>{help}</span>}
+    </label>
+  )
 }
+
+const adminTag: React.CSSProperties = { color: '#fff', background: '#000835' }
+const financeTag: React.CSSProperties = { color: '#065F46', background: '#ECFDF5' }
+const bandTag: React.CSSProperties = { color: '#3730A3', background: '#EEF2FF' }
+const card: React.CSSProperties = { border: '1px solid #E5E7EB', borderRadius: 10, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 }
+const cardHead: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }
+const cardTitle: React.CSSProperties = { fontSize: 12, fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.5px' }
+const hint: React.CSSProperties = { fontSize: 12, color: '#6B7280', lineHeight: 1.5, margin: 0 }
+const seg: React.CSSProperties = { display: 'inline-flex', background: '#F3F4F6', borderRadius: 8, padding: 3, gap: 2 }
+const segBtn: React.CSSProperties = { border: 0, background: 'transparent', borderRadius: 6, padding: '6px 10px', fontSize: 12, color: '#6B7280', cursor: 'pointer' }
+const segBtnOn: React.CSSProperties = { background: '#fff', color: '#111827', fontWeight: 600, boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }
+const confirm: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', background: '#F5F7FF', border: '1px solid #E0E7FF', borderRadius: 8, padding: '10px 12px', fontSize: 12.5, color: '#1E1B4B', lineHeight: 1.45 }
+const facts: React.CSSProperties = { margin: 0, display: 'grid', gridTemplateColumns: '110px 1fr', gap: '6px 12px', fontSize: 13 }
+const dt: React.CSSProperties = { color: '#6B7280' }
+const dd: React.CSSProperties = { margin: 0, color: '#111827' }
+const chip: React.CSSProperties = { border: '1px solid #E5E7EB', background: '#fff', borderRadius: 8, padding: '5px 12px', fontSize: 12.5, color: '#374151', cursor: 'pointer' }
+const chipOn: React.CSSProperties = { background: '#000835', borderColor: '#000835', color: '#fff', fontWeight: 600 }
