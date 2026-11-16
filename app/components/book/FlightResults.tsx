@@ -3,11 +3,10 @@
 import { Fragment, useState } from 'react'
 import AirlineMark from '@/app/components/AirlineMark'
 import FilterPanel from '@/app/components/book/FilterPanel'
-import FareRow from '@/app/components/book/FareRow'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
 import { journeysOf, type FareOption, type FlatFlightResult, type Journey } from '@/app/lib/book/types'
 import {
-  activeCount, airlineOf, applyFilters, durationOf, emptyFilters, fareAmount, flip, minutes, stopsOf, youPay,
+  activeCount, airlineOf, applyFilters, defaultFare, durationOf, emptyFilters, fareAmount, flip, minutes, stopsOf, youPay,
   type Filters,
 } from '@/app/lib/book/resultFilters'
 import css from './FlightResults.module.css'
@@ -21,8 +20,9 @@ export { youPay }
 // airline's logo, the times, duration and stops of each direction, what the
 // company pays for its cheapest fare, and ONE chip: the traveller's policy
 // verdict (user, 2026-11-10: baggage, refundability and the rest belong in the
-// fare options, not on the card). The fare options open inside the card;
-// choosing one goes to the fare page with that fare selected.
+// fare options, not on the card). Fares are chosen on the fare page (user,
+// 2026-11-16): a card says how many there are and continues there, starting
+// on the cheapest fare within policy.
 //
 // Every figure shown is the sell estimate (what the company pays), the one the
 // policy judges. A round trip priced together is one card with both directions.
@@ -90,15 +90,15 @@ function Leg({ journey }: { journey: Journey }) {
   )
 }
 
-const Chevron = () => (
-  <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m3 4.5 3 3 3-3" /></svg>
+const Arrow = () => (
+  <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M2.5 6h7M6.5 3l3 3-3 3" /></svg>
 )
 
 export interface FlightResultsProps {
   results: FlatFlightResult[]
   // Airlines the traveller's policy left out of these results, by name.
   hiddenByPolicy?: { code: string; name: string }[]
-  // The flight and fare chosen; the page goes on to the fare page.
+  // The flight, and the fare to start on; the page goes on to the fare page.
   onChoose: (flight: FlatFlightResult, fare: FareOption) => void
   navigatingKey: string | null
 }
@@ -106,9 +106,6 @@ export interface FlightResultsProps {
 export default function FlightResults({ results, hiddenByPolicy = [], onChoose, navigatingKey }: FlightResultsProps) {
   const [sort, setSort] = useState<SortKey>('cheapest')
   const [filters, setFilters] = useState<Filters>(() => emptyFilters(1))
-  const [open, setOpen] = useState<Set<string>>(new Set())
-  // The fare whose card is opening the fare page.
-  const [openingKey, setOpeningKey] = useState<string | null>(null)
   const [showFilters, setShowFilters] = useState(false)
 
   const prices = results.map(youPay).filter((n): n is number => typeof n === 'number')
@@ -186,13 +183,12 @@ export default function FlightResults({ results, hiddenByPolicy = [], onChoose, 
         ) : shown.map(flight => {
           const code = airlineOf(flight)
           const journeys = journeysOf(flight)
-          const isOpen = open.has(flight.flightKey)
           const chip = cardVerdict(flight)
           const price = youPay(flight)
           const numbers = [...new Set((flight.legs ?? []).map(l => `${l.airlineCode ?? code} ${l.flightNumber ?? ''}`.trim()))].join(' · ')
           const navigating = navigatingKey === flight.flightKey
           return (
-            <article key={flight.flightKey} className={`${css.card} ${isOpen ? css.cardOpen : ''}`}>
+            <article key={flight.flightKey} className={css.card}>
               <div className={css.cardMain}>
                 <div className={css.carrier}>
                   <AirlineMark code={code} name={flight.airline?.name} />
@@ -216,25 +212,17 @@ export default function FlightResults({ results, hiddenByPolicy = [], onChoose, 
                   <small>You pay</small>
                   <b>{price !== undefined ? inr(price) : '—'}</b>
                   <span className={css.priceSub}>
-                    {journeys.length > 1 ? 'both flights' : flight.fareOptions.length > 1 ? 'from' : ''}
-                    {flight.fareOptions.length > 1 ? `${journeys.length > 1 ? ', ' : ' · '}${flight.fareOptions.length} fares` : ''}
+                    {journeys.length > 1 ? 'both flights' : flight.fareOptions.length > 1 ? 'cheapest fare' : ''}
                   </span>
-                  <button type="button" className={css.faresBtn} aria-expanded={isOpen}
-                    onClick={() => setOpen(flip(open, flight.flightKey))}>
-                    {isOpen ? 'Hide fares' : 'View fares'} <Chevron />
+                  <button type="button" className={css.continueBtn} disabled={navigatingKey !== null}
+                    onClick={() => { const fare = defaultFare(flight); if (fare) onChoose(flight, fare) }}>
+                    {navigating ? 'Opening…' : <>Continue to see {flight.fareOptions.length} {flight.fareOptions.length === 1 ? 'fare' : 'fares'} <Arrow /></>}
                   </button>
                 </div>
               </div>
 
               {chip && <div className={css.tags}><Chip verdict={chip.verdict} from={chip.from} /></div>}
 
-              {isOpen && (
-                <div className={css.fareRow}>
-                  <FareRow flight={flight} mode="choose" label={`Fares on ${flight.airline?.name ?? code}`}
-                    busy={navigatingKey !== null} busyKey={navigating ? openingKey : null}
-                    onPick={fare => { setOpeningKey(fare.pricingKey); onChoose(flight, fare) }} />
-                </div>
-              )}
             </article>
           )
         })}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { activeCount, applyFilters, countIf, emptyFilters, flip, isRefundable, stopsOf, type Filters } from './resultFilters'
+import { activeCount, applyFilters, countIf, defaultFare, emptyFilters, flip, isRefundable, stopsOf, type Filters } from './resultFilters'
 import type { FlatFlightResult } from './types'
 
 // ── The results' filters, for one list and for a round trip's two ────────────
@@ -51,6 +51,22 @@ describe('one list', () => {
     expect(keys(applyFilters([ONWARD], withF({ withinOnly: true }, 1)))).toEqual([['o1', 'o2']])
     const evening = emptyFilters(1); evening.times[0].dep.add('evening')
     expect(keys(applyFilters([ONWARD], evening))).toEqual([['o3']])
+  })
+})
+
+describe('the fare a flight starts with on the fare page', () => {
+  const withFares = (fares: { key: string; price: number; policy?: 'green' | 'amber' | 'red' }[]) =>
+    ({ ...ONWARD[0], fareOptions: fares.map(f => ({ pricingKey: f.key, sellEstimate: f.price, policy: f.policy })) }) as FlatFlightResult
+
+  it('the cheapest within policy, even when a cheaper fare needs approval', () => {
+    expect(defaultFare(withFares([
+      { key: 'saver', price: 5000, policy: 'amber' }, { key: 'flex', price: 7000, policy: 'green' }, { key: 'value', price: 6000, policy: 'green' },
+    ]))?.pricingKey).toBe('value')
+  })
+  it('the cheapest when none is within policy, or policy is not judged', () => {
+    expect(defaultFare(withFares([{ key: 'a', price: 7000, policy: 'red' }, { key: 'b', price: 6500, policy: 'amber' }]))?.pricingKey).toBe('b')
+    expect(defaultFare(withFares([{ key: 'a', price: 7000 }, { key: 'b', price: 6500 }]))?.pricingKey).toBe('b')
+    expect(defaultFare(withFares([]))).toBeUndefined()
   })
 })
 

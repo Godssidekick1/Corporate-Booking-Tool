@@ -126,7 +126,7 @@ export default function RoundTripFarePage() {
               </div>
 
               {/* Every fare of this flight, with what it includes; choosing one prices it. */}
-              <FareRow flight={f} mode="select" selectedKey={side.pricingKey} busy={side.loading}
+              <FareRow flight={f} selectedKey={side.pricingKey} busy={side.loading}
                 label={`${dir === 'onward' ? 'Onward' : 'Return'} fares`}
                 onPick={o => { if (o.pricingKey !== side.pricingKey) changeFare(dir, o.pricingKey) }} />
 

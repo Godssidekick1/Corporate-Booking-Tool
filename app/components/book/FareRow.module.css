@@ -1,6 +1,5 @@
-/* A flight's fares in one row that scrolls sideways (FareRow.tsx): results
-   cards, the round-trip columns and both fare pages. App tokens from
-   app/globals.css. */
+/* A flight's fares in one row that scrolls sideways (FareRow.tsx), on both
+   fare pages. App tokens from app/globals.css. */
 
 .row { position: relative; min-width: 0; }
 .head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; min-height: 32px; }
@@ -52,8 +51,6 @@
   margin: auto 14px 14px; height: 36px; border-radius: 9px; border: 1px solid var(--color-rail); color: var(--color-rail);
   background: var(--color-surface); font: inherit; font-weight: 600; font-size: 13px; display: grid; place-items: center; cursor: pointer;
 }
-.action:disabled { opacity: 0.6; cursor: progress; }
-span.action { cursor: inherit; }
 
 /* Chosen: a filled band across the top and a tick. */
 .chosen { border-color: var(--color-rail); box-shadow: 0 0 0 1px var(--color-rail); }

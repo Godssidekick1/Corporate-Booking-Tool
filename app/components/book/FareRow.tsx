@@ -6,17 +6,13 @@ import type { FareOption, FlatFlightResult, PenaltyLine } from '@/app/lib/book/t
 import css from './FareRow.module.css'
 
 // ── FareRow ──────────────────────────────────────────────────────────────────
-// A flight's fares in one row that scrolls sideways, wherever fares are shown:
-// a results card, a round-trip column, both fare pages. Each card says what the
+// A flight's fares in one row that scrolls sideways, on both fare pages (the
+// results only say how many fares a flight has). Each card says what the
 // company pays, the policy verdict, refundability with the cancellation fee,
 // the change fee, baggage, meal and up to four of the airline's inclusions.
 //
-// Two ways to use it:
-//   'select': one fare is chosen (a radio group: arrow keys move the choice).
-//             The chosen card gets a filled band and a tick, and is scrolled
-//             into view.
-//   'choose': each card's button acts at once (the results list: choosing
-//             opens the fare page).
+// One fare is chosen: a radio group, where arrow keys move the choice. The
+// chosen card gets a filled band and a tick, and is scrolled into view.
 // ◀ ▶ appear only when the row is wider than its box. A flight with one fare
 // shows one card, no scroller.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -54,9 +50,8 @@ const Tick = () => (
 
 export interface FareRowProps {
   flight: FlatFlightResult
-  mode: 'select' | 'choose'
   onPick: (fare: FareOption, index: number) => void
-  // 'select': the chosen fare's pricing key.
+  // The chosen fare's pricing key.
   selectedKey?: string | null
   // The verdict to show per fare, when the page knows better than search did
   // (the fare page judges each fare as priced). Default: the search's verdict.
@@ -64,15 +59,13 @@ export interface FareRowProps {
   // Meal included, per fare, when the page knows better (priced).
   mealOf?: (fare: FareOption, index: number) => boolean | undefined
   busy?: boolean
-  // 'choose': the card being opened shows this on its button.
-  busyKey?: string | null
   label?: string
   // The line above the row; default "N fares".
   caption?: string
 }
 
 export default function FareRow({
-  flight, mode, onPick, selectedKey = null, verdictOf, mealOf, busy = false, busyKey = null, label = 'Fares', caption,
+  flight, onPick, selectedKey = null, verdictOf, mealOf, busy = false, label = 'Fares', caption,
 }: FareRowProps) {
   const track = useRef<HTMLDivElement>(null)
   const [edges, setEdges] = useState({ overflow: false, start: true, end: true })
@@ -118,7 +111,7 @@ export default function FareRow({
 
   // Arrow keys move the choice (a radio group's keyboard), and focus with it.
   function onKey(e: React.KeyboardEvent, i: number) {
-    if (mode !== 'select' || busy) return
+    if (busy) return
     const step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0
     if (!step) return
     e.preventDefault()
@@ -143,9 +136,9 @@ export default function FareRow({
         )}
       </div>
       <div ref={track} className={`${css.track} ${single ? css.single : ''}`}
-        role={mode === 'select' ? 'radiogroup' : 'list'} aria-label={label}>
+        role="radiogroup" aria-label={label}>
         {fares.map((fare, i) => {
-          const chosen = mode === 'select' && fare.pricingKey === selectedKey
+          const chosen = fare.pricingKey === selectedKey
           const amount = fareAmountOf(fare)
           const name = fareName(fare, i)
           const cancel = fee(fare.cancelPenalties)
@@ -153,13 +146,12 @@ export default function FareRow({
           const v = verdictOf ? verdictOf(fare, i) : fare.policy
           const verdict = v ? VERDICT_META[v] : null
           const meal = mealOf?.(fare, i) ?? fare.mealIncluded
-          const opening = busyKey !== null && busyKey === fare.pricingKey
           const body = (
             <>
               <div className={css.top}>
                 <div className={css.name}>
                   <b title={name}>{name}</b>
-                  {mode === 'select' && <span className={css.tick}><Tick /></span>}
+                  <span className={css.tick}><Tick /></span>
                 </div>
                 <div className={css.amount}>{amount !== undefined ? inr(amount) : '—'}<small>you pay</small></div>
                 {verdict && (
@@ -180,16 +172,6 @@ export default function FareRow({
             </>
           )
 
-          if (mode === 'choose') {
-            return (
-              <div key={fare.pricingKey || i} data-key={fare.pricingKey} className={css.card} role="listitem">
-                {body}
-                <button type="button" className={css.action} disabled={busy} onClick={() => onPick(fare, i)}>
-                  {opening ? 'Opening…' : 'Choose'}
-                </button>
-              </div>
-            )
-          }
           return (
             <div
               key={fare.pricingKey || i} data-key={fare.pricingKey}

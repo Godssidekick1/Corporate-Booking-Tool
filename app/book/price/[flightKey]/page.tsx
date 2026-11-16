@@ -13,6 +13,7 @@ import DeskFareStrip from '@/app/components/book/DeskFareStrip'
 import FareRulesPanel from '@/app/components/book/FareRulesPanel'
 import FareRow, { fareName } from '@/app/components/book/FareRow'
 import lay from '../FarePage.module.css'
+import { defaultFare } from '@/app/lib/book/resultFilters'
 import type { FareRules } from '@/app/lib/book/fareRules'
 import type { DeskView } from '@/app/lib/commercials/deskView'
 import {
@@ -153,7 +154,11 @@ export default function SelectFarePage() {
     // Read once from the URL here rather than through useSearchParams: only
     // the first render needs it, and a refresh keeps it.
     const wanted = new URLSearchParams(window.location.search).get('fare')
-    const startIndex = Math.max(0, stored.fareOptions.findIndex(f => f.pricingKey === wanted))
+    // The fare asked for, else the one a flight starts with (cheapest within
+    // policy, else cheapest): the results continue here without choosing.
+    const wantedIndex = stored.fareOptions.findIndex(f => f.pricingKey === wanted)
+    const startFare = defaultFare(stored)
+    const startIndex = wantedIndex >= 0 ? wantedIndex : Math.max(0, stored.fareOptions.findIndex(f => f === startFare))
     setFlight(stored)
     setSelectedFareIndex(startIndex)
     runPricing(stored, startIndex)
@@ -520,7 +525,7 @@ export default function SelectFarePage() {
         <p style={s.cardSub}>Seats are chargeable and selected on the next step.</p>
         <div style={s.fareRowWrap}>
           <FareRow
-            flight={flight} mode="select" label="Fares on this flight"
+            flight={flight} label="Fares on this flight"
             selectedKey={activeFare?.pricingKey ?? null}
             caption={hasMultipleFares ? `${flight.fareOptions.length} fares on this flight` : 'The fare on this flight'}
             // Each fare as judged here (the sell price, priced), else as search judged it.

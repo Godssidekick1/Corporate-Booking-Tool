@@ -69,6 +69,16 @@ export function youPay(f: FlatFlightResult): number | undefined {
   return amounts.length ? Math.min(...amounts) : f.sellEstimate ?? f.totalFare
 }
 
+// The fare a flight starts with when none was chosen (fares are chosen on the
+// fare page): the cheapest within policy, else the cheapest. Within policy
+// first, so a traveller is not walked to a fare that needs approval when a
+// compliant one is on the same flight.
+export function defaultFare(f: FlatFlightResult): FareOption | undefined {
+  const cheapest = (list: FareOption[]) =>
+    list.reduce<FareOption | undefined>((m, o) => (m === undefined || (fareAmount(o) ?? Infinity) < (fareAmount(m) ?? Infinity) ? o : m), undefined)
+  return cheapest(f.fareOptions.filter(o => o.policy === 'green')) ?? cheapest(f.fareOptions)
+}
+
 // ── Passing and counting ─────────────────────────────────────────────────────
 
 const timesOf = (filters: Filters, list: number): Times =>

@@ -4,9 +4,8 @@ import { useState } from 'react'
 import AirlineMark from '@/app/components/AirlineMark'
 import FlightResults from '@/app/components/book/FlightResults'
 import FilterPanel from '@/app/components/book/FilterPanel'
-import { activeCount, applyFilters, emptyFilters, flip, youPay, type Filters } from '@/app/lib/book/resultFilters'
+import { activeCount, applyFilters, defaultFare, emptyFilters, flip, youPay, type Filters } from '@/app/lib/book/resultFilters'
 import rcss from './FlightResults.module.css'
-import FareRow from '@/app/components/book/FareRow'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
 import { journeysOf, type FareOption, type FlatFlightResult } from '@/app/lib/book/types'
 import type { RoundTripPair, SplitResults } from '@/app/lib/book/flowStorage'
@@ -34,16 +33,16 @@ function minutes(d?: string) { const m = /^(\d+):(\d{2})/.exec(d ?? ''); return 
 const hm = (mins: number) => `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, '0')}m`
 const airlineOf = (f: FlatFlightResult) => (f.airline?.code ?? f.legs?.[0]?.airlineCode ?? '').toUpperCase()
 const amountOf = (o: FareOption) => o.sellEstimate ?? o.totalFare ?? Infinity
-// The fare a pick starts with: the cheapest. Another fare can be chosen on the
-// next page.
-const cheapestFare = (f: FlatFlightResult) => f.fareOptions.reduce((a, b) => (amountOf(b) < amountOf(a) ? b : a), f.fareOptions[0])
+// The fare a pick starts with: the cheapest within policy, else the cheapest.
+// Fares are chosen on the round trip's fare page.
+const startFare = (f: FlatFlightResult) => defaultFare(f) ?? f.fareOptions[0]
 // The flight numbers of one direction, to match a pick to a return fare.
 const numbersOf = (legs: { airlineCode?: string; flightNumber?: string }[] | undefined) =>
   (legs ?? []).map(l => `${l.airlineCode ?? ''}${l.flightNumber ?? ''}`).join('|')
 
 type SortKey = 'cheapest' | 'earliest' | 'fastest'
 
-// A pick: the flight, and which of its fares (the cheapest until another is chosen).
+// A pick: the flight, and which of its fares (startFare until another is chosen).
 interface Pick { flight: FlatFlightResult; pricingKey: string }
 
 function Column({ title, list, visible, onClear, selected, onPick }: {
@@ -57,8 +56,6 @@ function Column({ title, list, visible, onClear, selected, onPick }: {
   onPick: (pick: Pick | null) => void
 }) {
   const [sort, setSort] = useState<SortKey>('cheapest')
-  // The flight whose fares are open below its row.
-  const [openFares, setOpenFares] = useState<string | null>(null)
   const first = list[0] ? journeysOf(list[0])[0] : undefined
   const route = first ? `${first.origin?.code} → ${first.destination?.code}` : ''
   const date = first?.origin?.dateTime
@@ -95,20 +92,18 @@ function Column({ title, list, visible, onClear, selected, onPick }: {
         ) : rows.map(f => {
           const j = journeysOf(f)[0]
           const isSel = selected?.flight.flightKey === f.flightKey
-          // The chosen fare when this flight is picked, else the cheapest.
-          const fare = (isSel && f.fareOptions.find(o => o.pricingKey === selected?.pricingKey)) || cheapestFare(f)
+          // The chosen fare when this flight is picked, else the one it starts with.
+          const fare = (isSel && f.fareOptions.find(o => o.pricingKey === selected?.pricingKey)) || startFare(f)
           const verdict = fare?.policy
           const nextDay = dayOf(j?.destination?.dateTime) > dayOf(j?.origin?.dateTime)
           const stops = j?.stopCount ?? 0
           const numbers = [...new Set((f.legs ?? []).map(l => `${l.airlineCode ?? ''} ${l.flightNumber ?? ''}`.trim()))].join(' · ')
-          const faresOpen = openFares === f.flightKey
           return (
-            <div key={f.flightKey}>
-            <label className={`${css.row} ${isSel ? css.rowSelected : ''}`}>
+            <label key={f.flightKey} className={`${css.row} ${isSel ? css.rowSelected : ''}`}>
               {/* A radio cannot be unchecked by clicking it, so a click on the
                   chosen row takes the pick back (the label forwards its click). */}
               <input type="radio" name={`pick-${title}`} checked={isSel}
-                onChange={() => onPick({ flight: f, pricingKey: cheapestFare(f).pricingKey })}
+                onChange={() => onPick({ flight: f, pricingKey: startFare(f).pricingKey })}
                 onClick={() => { if (isSel) onPick(null) }} />
               <AirlineMark code={airlineOf(f)} name={f.airline?.name} size={26} />
               <span className={css.times}>
@@ -120,22 +115,10 @@ function Column({ title, list, visible, onClear, selected, onPick }: {
                 {verdict && (
                   <small><span className={css.dot} style={{ background: VERDICT_META[verdict].color }} />{VERDICT_META[verdict].label}</small>
                 )}
-                {/* Inside the label, so preventDefault: opening the fares
-                    must not also pick the flight. */}
-                <button type="button" className={css.faresBtn} aria-expanded={faresOpen}
-                  onClick={ev => { ev.preventDefault(); ev.stopPropagation(); setOpenFares(faresOpen ? null : f.flightKey) }}>
-                  {faresOpen ? 'Hide fares' : `${f.fareOptions.length} fare${f.fareOptions.length === 1 ? '' : 's'}`}
-                </button>
+                {/* How many to choose from on the fare page. */}
+                <span className={css.fareCount}>{f.fareOptions.length} fare{f.fareOptions.length === 1 ? '' : 's'}</span>
               </span>
             </label>
-            {faresOpen && (
-              <div className={css.fares}>
-                <FareRow flight={f} mode="select" selectedKey={isSel ? fare.pricingKey : null}
-                  label={`${title} fares on ${f.airline?.name ?? airlineOf(f)}`}
-                  onPick={o => onPick({ flight: f, pricingKey: o.pricingKey })} />
-              </div>
-            )}
-            </div>
           )
         })}
       </div>
@@ -192,7 +175,7 @@ export default function RoundTripPicker({ split, onContinue, onChooseSpecial, na
   const onPick = onSel?.flight ?? null
   const retPick = retSel?.flight ?? null
   // The fare each pick carries.
-  const fareOf = (s: Pick | null) => s ? s.flight.fareOptions.find(o => o.pricingKey === s.pricingKey) ?? cheapestFare(s.flight) : null
+  const fareOf = (s: Pick | null) => s ? s.flight.fareOptions.find(o => o.pricingKey === s.pricingKey) ?? startFare(s.flight) : null
   const [showSpecial, setShowSpecial] = useState(false)
   const [filters, setFilters] = useState<Filters>(() => emptyFilters(2))
   const [showFilters, setShowFilters] = useState(false)
@@ -318,10 +301,10 @@ export default function RoundTripPicker({ split, onContinue, onChooseSpecial, na
         {matching && matchingPrice !== undefined && total !== null && matchingPrice < total && (
           <div className={css.hint}>
             These two flights also come as a {matching.airline?.name ?? airlineOf(matching)} return fare for {inr(matchingPrice)}, saving {inr(total - matchingPrice)}.{' '}
-            <button type="button" onClick={() => onChooseSpecial(matching, cheapestFare(matching))}>Use the return fare</button>
+            <button type="button" onClick={() => onChooseSpecial(matching, startFare(matching))}>Use the return fare</button>
           </div>
         )}
-        <p className={css.barNote}>Each flight is priced and booked on its own: passenger details once, one approval for both, and either can be cancelled alone.</p>
+        <p className={css.barNote}>You choose each flight&apos;s fare on the next page. Each is priced and booked on its own: passenger details once, one approval for both, and either can be cancelled alone.</p>
       </div>
     </div>
   )
