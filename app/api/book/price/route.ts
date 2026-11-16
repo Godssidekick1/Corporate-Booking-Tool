@@ -16,6 +16,8 @@ import type { ResolvedCommercials } from '@/app/lib/commercials/resolveCommercia
 import { cabinLetter } from '@/app/lib/book/cabin'
 import { deskView } from '@/app/lib/commercials/deskView'
 import type { FlatFlightResult } from '@/app/lib/book/types'
+import { fetchFareRules } from '@/app/lib/book/fetchFareRules'
+import { travellerFareRules } from '@/app/lib/book/fareRules'
 import { NextRequest } from 'next/server'
 
 // POST /api/book/price
@@ -197,6 +199,12 @@ if (!key || !pricingKey || !provider || !resultIndex) {
       return Response.json({ ok: false, error: refusal, code: 'POLICY_DISALLOWED' }, { status: 422 })
     }
 
+    // ── The airline's fare rules ─────────────────────────────────────────────
+    // Asked once pricing has answered (the session is warm, so the two calls
+    // never race to sign in), alongside the commercials below. Never fatal:
+    // null when the airline gives none, and the fare page says so.
+    const fareRulesPending = fetchFareRules({ key, pricingKey, resultIndex: String(resultIndex), provider })
+
     // ── Commercials ──────────────────────────────────────────────────────────
     // The full pipeline runs here, not at search: discount and processing fee
     // depend on passenger and sector counts, which only exist once an itinerary
@@ -254,6 +262,7 @@ if (!key || !pricingKey || !provider || !resultIndex) {
     //
     // Upserted on (amadeus_key, reference_no): re-pricing the same itinerary is
     // a normal thing to do, and the newest quote is the one that counts.
+    const fareRules = await fareRulesPending
     if (employee?.client_id) {
       try {
         await bookingsRepo.saveQuote(db, {
@@ -270,6 +279,8 @@ if (!key || !pricingKey || !provider || !resultIndex) {
           sell_total: record.sellTotal,
           // The airline's own answer, judged by add-passenger's policy check.
           fare_conditions: { refundable: details.isRefundable, cancelPenalties: details.cancelPenalties },
+          // Copied onto the booking at add-passenger.
+          fare_rules: fareRules,
           // Enforced by add-passenger (app/lib/book/quoteHold.ts). An expired
           // quote is refused there and the fare is priced again.
           expires_at: new Date(Date.now() + QUOTE_HOLD_MINUTES * 60 * 1000).toISOString(),
@@ -329,6 +340,9 @@ if (!key || !pricingKey || !provider || !resultIndex) {
       })),
       // What they pay, before seat fees.
       sellTotal: record.sellTotal,
+      // The airline's cancellation and change rules (no deal code); null when
+      // it gave none.
+      fareRules: travellerFareRules(fareRules),
       // The travel desk only (TMC staff booking for someone): how the price
       // is made. Absent for everyone else, not hidden.
       ...(actor.actor.via === 'tmc' ? { desk: deskView(record) } : {}),

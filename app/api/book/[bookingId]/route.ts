@@ -15,6 +15,7 @@ import { round2 } from '@/app/lib/commercials/fareComponents'
 import type { CommercialsRecord } from '@/app/lib/commercials/composeSellPrice'
 import { deskView } from '@/app/lib/commercials/deskView'
 import { travellerItinerary, travellerFareBreakdown } from '@/app/lib/book/travellerView'
+import { travellerFareRules, asFareRules } from '@/app/lib/book/fareRules'
 import { NextRequest } from 'next/server'
 
 // One passenger's fare, as frozen on bookings.fare_breakdown.
@@ -119,9 +120,12 @@ export const GET = route(async (
   // and it is the other half of the subtraction that reveals the markup.
   // cancellation is the provider's raw answer, the airline's refund included:
   // it is replaced below by what this caller may see (app/lib/book/cancellation.ts).
+  // fare_rules carries the deal code the fare was priced under: replaced below
+  // by the traveller's copy, without it.
   const {
     commercials: storedCommercials, total_cost,
     cancellation: storedCancellation, cancelled_at, cancellation_reason, cancelled_by_name,
+    fare_rules: storedFareRules,
     ...safeBooking
   } = booking
   const cancellation = cancellationView(
@@ -230,6 +234,9 @@ export const GET = route(async (
       // Who cancelled, when, why, and the charges; the provider's full answer
       // for the travel desk only. Absent while the booking stands.
       ...(cancellation ? { cancellation } : {}),
+      // The airline's cancellation and change rules as priced. Never the deal
+      // code (the TMC's booking page shows that). Null when it sent none.
+      fare_rules: travellerFareRules(asFareRules(storedFareRules)),
       // The travel desk only: TMC staff acting for the traveller see how the
       // price was made. Absent for everyone else.
       ...(onBehalf && (user.employee?.role === 'tmc_admin' || user.employee?.role === 'tc')

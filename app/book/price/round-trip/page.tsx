@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import AirlineMark from '@/app/components/AirlineMark'
 import FareCards from '@/app/components/book/FareCards'
+import FareRulesPanel from '@/app/components/book/FareRulesPanel'
+import type { FareRules } from '@/app/lib/book/fareRules'
 import { flowStorage, type PricedFare, type RoundTripPair } from '@/app/lib/book/flowStorage'
 import { priceFare, previewPolicy, type PolicyPreview, type PricedLine } from '@/app/lib/book/priceFare'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
@@ -27,6 +29,7 @@ interface Side {
   priced: PricedFare | null
   lines: PricedLine[]
   verdict: PolicyPreview | null
+  fareRules: FareRules | null
 }
 
 const inr = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`
@@ -44,11 +47,11 @@ export default function RoundTripFarePage() {
     setSides(prev => (prev ? { ...prev, [dir]: { ...prev[dir], ...change } } : prev)), [])
 
   const price = useCallback(async (dir: Dir, flight: FlatFlightResult, pricingKey: string) => {
-    patch(dir, { loading: true, error: '', priced: null, verdict: null, pricingKey })
+    patch(dir, { loading: true, error: '', priced: null, verdict: null, fareRules: null, pricingKey })
     const fare = flight.fareOptions.find(o => o.pricingKey === pricingKey) ?? flight.fareOptions[0]
     const outcome = await priceFare(flight, fare)
     if (!outcome.ok) { patch(dir, { loading: false, error: outcome.error }); return }
-    patch(dir, { loading: false, priced: outcome.priced, lines: outcome.lines })
+    patch(dir, { loading: false, priced: outcome.priced, lines: outcome.lines, fareRules: outcome.fareRules })
     patch(dir, { verdict: await previewPolicy(flight, outcome.priced) })
   }, [patch])
 
@@ -59,7 +62,7 @@ export default function RoundTripFarePage() {
     // Only reachable by picking both flights on the results page.
     if (!pair || !onward || !back) { router.replace('/book/flights'); return }
     const side = (flight: FlatFlightResult, pricingKey: string): Side =>
-      ({ flight, pricingKey, loading: true, error: '', priced: null, lines: [], verdict: null })
+      ({ flight, pricingKey, loading: true, error: '', priced: null, lines: [], verdict: null, fareRules: null })
     // Seeding this page's state from what the results page kept, once.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSides({ onward: side(onward, pair.onward.pricingKey), return: side(back, pair.return.pricingKey) })
@@ -136,6 +139,10 @@ export default function RoundTripFarePage() {
                 <div style={{ ...s.verdict, color: meta.color, background: meta.bg, borderColor: meta.border }}>
                   <b>{meta.label}</b>{side.verdict?.reason && side.verdict.verdict !== 'green' ? ` · ${side.verdict.reason}` : ''}
                 </div>
+              )}
+              {/* This flight's own rules: each booking of the pair is cancelled on its own. */}
+              {(side.loading || side.priced) && (
+                <FareRulesPanel rules={side.fareRules} loading={side.loading} compact embedded />
               )}
             </section>
           )

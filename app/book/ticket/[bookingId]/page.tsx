@@ -9,6 +9,8 @@ import { formatTime, formatDayLabel, journeyLabel, baggageLabel } from '@/app/li
 import { mealLabel } from '@/app/lib/book/mealCodes'
 import { JUST_BOOKED_KEY } from '@/app/lib/book/flowStorage'
 import { CancelBookingButton } from '@/app/components/book/CancelBooking'
+import FareRulesPanel from '@/app/components/book/FareRulesPanel'
+import type { FareRules } from '@/app/lib/book/fareRules'
 import DeskFareStrip from '@/app/components/book/DeskFareStrip'
 import type { DeskView } from '@/app/lib/commercials/deskView'
 
@@ -124,6 +126,8 @@ interface Booking {
     PassengerDetails: BookingPassenger[]
   } | null
   fare_breakdown: { currency: string } | null
+  // The airline's cancellation and change rules as priced; null when it sent none.
+  fare_rules?: FareRules | null
 }
 
 const PAX_TYPE_LABEL: Record<string, string> = {
@@ -755,6 +759,11 @@ export default function TicketPage() {
                 </button>
               )}
             </div>
+
+            {/* What cancelling or changing this ticket costs, from the airline. */}
+            {booking.fare_rules && (
+              <div className="no-print"><FareRulesPanel rules={booking.fare_rules} compact /></div>
+            )}
 
             <div className="no-print" style={s.doneLinks}>
               <Link href={exits.trips.href} style={s.doneLink}>{exits.trips.label === 'My trips' ? 'View my tickets' : exits.trips.label} →</Link>

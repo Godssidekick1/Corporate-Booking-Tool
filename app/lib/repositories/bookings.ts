@@ -2,6 +2,7 @@ import { sql, empty, many, one, maybeOne, exec, json, type Queryable } from '@/a
 import { page } from '@/app/lib/db/fragments'
 import type { Row } from '@/app/lib/db/types.generated'
 import type { FareConditions } from '@/app/lib/book/types'
+import type { FareRules } from '@/app/lib/book/fareRules'
 import type { ShownFlight } from '@/app/lib/policy/lowestLogicalFare'
 
 // ── Bookings and price quotes ────────────────────────────────────────────────
@@ -243,7 +244,7 @@ export type BookingDetail = Pick<Row<'bookings'>,
   | 'id' | 'status' | 'booking_type' | 'provider' | 'provider_order_id' | 'pnr' | 'ticket_numbers'
   | 'sell_total' | 'total_cost' | 'commercials' | 'itinerary' | 'traveler_snapshot' | 'fare_breakdown'
   | 'policy_status' | 'policy_verdict' | 'policy_verdict_detail' | 'employee_id' | 'trip_id' | 'is_ndc'
-  | 'created_at' | 'updated_at' | 'cancelled_at' | 'cancellation_reason' | 'cancellation'
+  | 'created_at' | 'updated_at' | 'cancelled_at' | 'cancellation_reason' | 'cancellation' | 'fare_rules'
 > & BookedByName & TicketFooter & { cancelled_by_name: string | null }
 
 // The company's own words at the foot of its e-tickets (Corporate Settings).
@@ -255,7 +256,7 @@ export async function detail(db: Queryable, bookingId: string): Promise<BookingD
     select id, status, booking_type, provider, provider_order_id, pnr, ticket_numbers, sell_total,
            total_cost, commercials, itinerary, traveler_snapshot, fare_breakdown, policy_status,
            policy_verdict, policy_verdict_detail, employee_id, trip_id, is_ndc, created_at, updated_at,
-           cancelled_at, cancellation_reason, cancellation,
+           cancelled_at, cancellation_reason, cancellation, fare_rules,
            (select k.full_name from employees k where k.id = cancelled_by) as cancelled_by_name,
            ${BOOKED_BY_NAME}, ${TICKET_FOOTER}
     from bookings where id = ${bookingId}`)
@@ -272,6 +273,7 @@ export type DeskBookingDetail = Pick<Row<'bookings'>,
   | 'commercials' | 'itinerary' | 'traveler_snapshot' | 'fare_breakdown' | 'policy_status' | 'policy_verdict'
   | 'policy_verdict_detail' | 'policy_reason_code' | 'policy_reason_note' | 'resolved_deal_codes' | 'resolved_fop'
   | 'purpose' | 'for_guest' | 'trip_id' | 'cancelled_at' | 'cancellation_reason' | 'cancellation' | 'pair_id'
+  | 'fare_rules'
 > & {
   traveller_name: string | null
   traveller_email: string | null
@@ -291,6 +293,7 @@ export async function deskDetail(db: Queryable, bookingId: string): Promise<Desk
            b.commercials, b.itinerary, b.traveler_snapshot, b.fare_breakdown, b.policy_status, b.policy_verdict,
            b.policy_verdict_detail, b.policy_reason_code, b.policy_reason_note, b.resolved_deal_codes, b.resolved_fop,
            b.purpose, b.for_guest, b.trip_id, b.cancelled_at, b.cancellation_reason, b.cancellation, b.pair_id,
+           b.fare_rules,
            e.full_name as traveller_name, e.email as traveller_email, e.band_code as traveller_band,
            c.name as client_name,
            bb.full_name as booked_by_name, bb.role as booked_by_role,
@@ -363,7 +366,7 @@ export async function saveTravellerSnapshot(db: Queryable, bookingId: string, sn
 export type NewQuote = Pick<Row<'price_quotes'>,
   | 'client_id' | 'employee_id' | 'priced_by' | 'amadeus_key' | 'reference_no' | 'pricing_key' | 'provider'
   | 'result_index' | 'sell_total' | 'expires_at'
-> & { airline_components: unknown; commercials: unknown; fare_conditions: FareConditions | null }
+> & { airline_components: unknown; commercials: unknown; fare_conditions: FareConditions | null; fare_rules: FareRules | null }
 
 // Re-pricing the same itinerary is normal; the newest quote is the one that
 // counts, so the pair (amadeus_key, reference_no) is upserted. employee_id is
@@ -372,24 +375,25 @@ export type NewQuote = Pick<Row<'price_quotes'>,
 export async function saveQuote(db: Queryable, q: NewQuote): Promise<void> {
   await exec(db, sql`
     insert into price_quotes (client_id, employee_id, priced_by, amadeus_key, reference_no, pricing_key, provider,
-                              result_index, airline_components, commercials, sell_total, expires_at, fare_conditions)
+                              result_index, airline_components, commercials, sell_total, expires_at, fare_conditions, fare_rules)
     values (${q.client_id}, ${q.employee_id}, ${q.priced_by}, ${q.amadeus_key}, ${q.reference_no}, ${q.pricing_key},
             ${q.provider}, ${q.result_index}, ${json(q.airline_components)}, ${json(q.commercials)},
-            ${q.sell_total}, ${q.expires_at}, ${q.fare_conditions ? json(q.fare_conditions) : null})
+            ${q.sell_total}, ${q.expires_at}, ${q.fare_conditions ? json(q.fare_conditions) : null},
+            ${q.fare_rules ? json(q.fare_rules) : null})
     on conflict (amadeus_key, reference_no) do update set
       client_id = excluded.client_id, employee_id = excluded.employee_id, priced_by = excluded.priced_by,
       pricing_key = excluded.pricing_key, provider = excluded.provider,
       result_index = excluded.result_index, airline_components = excluded.airline_components,
       commercials = excluded.commercials, sell_total = excluded.sell_total,
-      expires_at = excluded.expires_at, fare_conditions = excluded.fare_conditions`)
+      expires_at = excluded.expires_at, fare_conditions = excluded.fare_conditions, fare_rules = excluded.fare_rules`)
 }
 
 export type HeldQuote = Pick<Row<'price_quotes'>, 'airline_components' | 'commercials' | 'sell_total' | 'employee_id' | 'priced_by' | 'expires_at'>
-  & { fare_conditions: FareConditions | null }
+  & { fare_conditions: FareConditions | null; fare_rules: FareRules | null }
 
 export async function heldQuote(db: Queryable, amadeusKey: string, referenceNo: string): Promise<HeldQuote | null> {
   return maybeOne<HeldQuote>(db, sql`
-    select airline_components, commercials, sell_total, employee_id, priced_by, expires_at, fare_conditions from price_quotes
+    select airline_components, commercials, sell_total, employee_id, priced_by, expires_at, fare_conditions, fare_rules from price_quotes
     where amadeus_key = ${amadeusKey} and reference_no = ${referenceNo}`)
 }
 
@@ -456,6 +460,8 @@ export type NewBooking = Pick<Row<'bookings'>,
   fare_breakdown: unknown
   policy_verdict_detail: unknown
   purpose?: 'business' | 'personal'
+  // The airline's rules, from the quote (null when it gave none).
+  fare_rules?: FareRules | null
   for_guest?: boolean
 }
 
@@ -466,7 +472,7 @@ export async function insert(db: Queryable, b: NewBooking): Promise<{ id: string
       client_id, employee_id, booked_by, booking_type, status, total_cost, sell_total, provider,
       provider_order_id, amadeus_key, pricing_key, result_index, search_key, trip_id, is_ndc,
       policy_status, policy_verdict, policy_reason_code, policy_reason_note, resolved_deal_codes, resolved_fop, commercials, itinerary,
-      traveler_snapshot, fare_breakdown, policy_verdict_detail, purpose, for_guest)
+      traveler_snapshot, fare_breakdown, policy_verdict_detail, purpose, for_guest, fare_rules)
     values (
       ${b.client_id}, ${b.employee_id}, ${b.booked_by}, ${b.booking_type}, ${b.status}, ${b.total_cost},
       ${b.sell_total}, ${b.provider}, ${b.provider_order_id}, ${b.amadeus_key}, ${b.pricing_key},
@@ -474,7 +480,7 @@ export async function insert(db: Queryable, b: NewBooking): Promise<{ id: string
       ${b.policy_reason_code}, ${b.policy_reason_note},
       ${json(b.resolved_deal_codes)}, ${json(b.resolved_fop)}, ${json(b.commercials)}, ${json(b.itinerary)},
       ${json(b.traveler_snapshot)}, ${json(b.fare_breakdown)}, ${json(b.policy_verdict_detail)},
-      ${b.purpose ?? 'business'}, ${b.for_guest ?? false})
+      ${b.purpose ?? 'business'}, ${b.for_guest ?? false}, ${b.fare_rules ? json(b.fare_rules) : null})
     returning id`)
 }
 

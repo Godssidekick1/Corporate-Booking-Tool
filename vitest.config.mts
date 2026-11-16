@@ -22,6 +22,11 @@ if (existsSync(envPath)) {
   }
 }
 
+// ── The airline provider: never reached from a test ──────────────────────────
+// Its calls can create real PNRs. Pointed at an unroutable host whatever
+// .env.local says; tests/setup/provider.ts makes fetch refuse it outright.
+process.env.AMADEUS_API_BASE_URL = 'http://provider.blocked-in-tests.invalid'
+
 // ── The test database ────────────────────────────────────────────────────────
 // Tests never touch cbt_local. Every run clones a fresh cbt_test from
 // cbt_template -- an anonymised copy of cbt_local built by
@@ -111,7 +116,7 @@ export default defineConfig({
     // carry a session cookie for that user (tests/setup/auth.ts), so a test
     // calls a handler directly, as any user, through the real session lookup.
     // Outgoing email is replaced the same way, so no test can send any.
-    setupFiles: ['./tests/setup/auth.ts', './tests/setup/mail.ts', './tests/setup/dbContext.ts'],
+    setupFiles: ['./tests/setup/auth.ts', './tests/setup/mail.ts', './tests/setup/dbContext.ts', './tests/setup/provider.ts'],
     env: testUrl && adminUrl
       ? { DATABASE_URL: testUrl, TEST_DATABASE_URL: testUrl, TEST_ADMIN_DATABASE_URL: adminUrl }
       : {},

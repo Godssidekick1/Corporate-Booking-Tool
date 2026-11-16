@@ -13,6 +13,8 @@ import { breachLine } from '@/app/lib/policy/breachText'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
 import DeskFareStrip from '@/app/components/book/DeskFareStrip'
 import { CancellationNotice, CancelBookingButton, type CancellationInfo } from '@/app/components/book/CancelBooking'
+import FareRulesPanel from '@/app/components/book/FareRulesPanel'
+import type { FareRules } from '@/app/lib/book/fareRules'
 import type { DeskView } from '@/app/lib/commercials/deskView'
 
 // Tax codes a traveller might reasonably want named. Anything not in here shows
@@ -80,6 +82,8 @@ interface Booking {
   // Set once cancelled: who, when, why, the charges (and, for the desk, the
   // provider's figures). Null while the booking stands.
   cancellation?: CancellationInfo | null
+  // The airline's cancellation and change rules as priced; null when it sent none.
+  fare_rules?: FareRules | null
   // The sell-side fare: base with the markup already inside it, the tax total,
   // and the airline's own tax codes. Absent on pre-commercial-rules bookings.
   fare?: {
@@ -699,6 +703,9 @@ export default function ConfirmBookingPage() {
             </p>
           </div>
         )}
+
+        {/* ── The airline's rules for this fare, as priced ─────────────── */}
+        {booking.fare_rules && <FareRulesPanel rules={booking.fare_rules} compact />}
 
         {/* ── Action area — depends on approval status ────────────────── */}
         {booking.status === 'pending_approval' && !booking.awaitingReturn && (

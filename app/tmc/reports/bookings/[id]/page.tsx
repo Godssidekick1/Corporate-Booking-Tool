@@ -5,6 +5,8 @@ import type React from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import AirlineMark from '@/app/components/AirlineMark'
+import FareRulesPanel from '@/app/components/book/FareRulesPanel'
+import type { FareRules } from '@/app/lib/book/fareRules'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
 import { s, money, dateOnly, dateTime } from '@/app/tmc/configurations/cancellation-queues/ui'
 
@@ -61,6 +63,7 @@ interface DeskBooking {
   }
   dealCodes: unknown
   formOfPayment: unknown
+  fareRules: FareRules | null
   policy: { status: string | null; verdict: string | null; breaches: unknown[]; reason: string | null; reasonCode: string | null; reasonNote: string | null }
   approvals: { id: string; tier: number; status: string; verdict: string | null; reason: string | null; approver: string | null; note: string | null; askedAt: string; decidedAt: string | null }[]
   approvalOnPair: boolean
@@ -270,6 +273,16 @@ export default function DeskBookingPage() {
             : <p style={s.hint}>None resolved.</p>}
         </section>
       </div>
+
+      {/* ── The airline's fare rules: what a cancellation or change costs ── */}
+      {booking.fareRules
+        ? <FareRulesPanel rules={booking.fareRules} showDealCode title="Fare rules (airline)" />
+        : (
+          <section style={card}>
+            <h2 style={h2}>Fare rules (airline)</h2>
+            <p style={s.hint}>None stored: booked before fare rules were fetched, or the airline sent none.</p>
+          </section>
+        )}
 
       {/* ── Policy and approval ────────────────────────────────────── */}
       <section style={card}>

@@ -1,5 +1,6 @@
 import { flowStorage, type PricedFare } from './flowStorage'
 import type { FareOption, FlatFlightResult } from './types'
+import { asFareRules, type FareRules } from './fareRules'
 
 // ── priceFare ────────────────────────────────────────────────────────────────
 // Prices one fare of one flight (POST /api/book/price) and keeps the priced
@@ -12,7 +13,7 @@ import type { FareOption, FlatFlightResult } from './types'
 export interface PricedLine { source: string; label: string; sign: -1 | 1; amount: number }
 
 export type PriceOutcome =
-  | { ok: true; priced: PricedFare; lines: PricedLine[] }
+  | { ok: true; priced: PricedFare; lines: PricedLine[]; fareRules: FareRules | null }
   | { ok: false; error: string }
 
 export async function priceFare(flight: FlatFlightResult, fare: FareOption): Promise<PriceOutcome> {
@@ -68,7 +69,11 @@ export async function priceFare(flight: FlatFlightResult, fare: FareOption): Pro
     brandedFareName: fare.brandedFareName,
   }
   flowStorage.savePricedFare(priced)
-  return { ok: true, priced, lines: (data.lines as PricedLine[] | undefined) ?? [] }
+  return {
+    ok: true, priced, lines: (data.lines as PricedLine[] | undefined) ?? [],
+    // The airline's cancellation and change rules (null when it sent none).
+    fareRules: asFareRules(data.fareRules),
+  }
 }
 
 export interface PolicyPreview {

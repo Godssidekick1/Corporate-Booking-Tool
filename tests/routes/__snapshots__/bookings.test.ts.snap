@@ -48,6 +48,7 @@ exports[`traveller bookings and trips > booking: the sell-side view, with no air
       ],
       "seatFees": 0,
     },
+    "fare_rules": null,
     "id": "b007376c-1265-4519-ad2f-fa912ce5f915",
     "is_ndc": false,
     "itinerary": {

@@ -13,6 +13,7 @@ import { deskView } from '@/app/lib/commercials/deskView'
 import { ADJUSTMENT_LABELS, type Adjustment } from '@/app/lib/commercials/adjustment'
 import type { CommercialsRecord } from '@/app/lib/commercials/composeSellPrice'
 import { buildReason } from '@/app/lib/approval-engine/resolveApprovalTier'
+import { asFareRules } from '@/app/lib/book/fareRules'
 
 // ── GET /api/tmc/bookings/[id] ───────────────────────────────────────────────
 // One booking, all of it, for the TMC desk's booking page
@@ -120,6 +121,9 @@ export const GET = route(async (_req: NextRequest, { params }: Ctx) => {
       },
       dealCodes: booking.resolved_deal_codes,
       formOfPayment: booking.resolved_fop,
+      // The airline's rules as priced (or as last fetched by PNR), deal code
+      // included: the cancellation charges a refund is worked out from.
+      fareRules: asFareRules(booking.fare_rules),
       policy: {
         status: booking.policy_status,
         verdict: booking.policy_verdict,

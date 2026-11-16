@@ -9,6 +9,8 @@ import { ButtonBusy } from '@/app/components/FlowLoader'
 import { breachLine } from '@/app/lib/policy/breachText'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
 import DeskFareStrip from '@/app/components/book/DeskFareStrip'
+import FareRulesPanel from '@/app/components/book/FareRulesPanel'
+import type { FareRules } from '@/app/lib/book/fareRules'
 import type { DeskView } from '@/app/lib/commercials/deskView'
 import {
   FlatFlightResult, FareOption, formatTime, formatDayLabel, journeysOf, journeyLabel,
@@ -69,6 +71,9 @@ interface PriceApiResult {
   sellTotal?: number
   // The travel desk only: how the price is made (never sent to anyone else).
   desk?: DeskView | null
+  // The airline's cancellation and change rules for this fare; null when it
+  // sent none.
+  fareRules?: FareRules | null
 }
 
 interface PolicyPreview {
@@ -353,8 +358,11 @@ export default function SelectFarePage() {
   // every click — the thing `alignSelf: flex-start` was added to paper over.
   // Choosing and reading are different jobs and now happen in different places.
   function fareDetailSections(fare: FareOption, mealsIncluded: boolean | undefined) {
-    const changeText = penaltySummary(fare.changePenalties)
-    const cancelText = penaltySummary(fare.cancelPenalties)
+    // The airline's full rules, once priced, say more than the one-line fees:
+    // shown in their own panel, so the lines here would only repeat them.
+    const rulesShown = fare === activeFare && !pricingLoading && !!pricing?.fareRules?.sectors.length
+    const changeText = rulesShown ? null : penaltySummary(fare.changePenalties)
+    const cancelText = rulesShown ? null : penaltySummary(fare.cancelPenalties)
     const bases = fare.fareBases ?? (fare.fareBasis ? [{ journeyNo: 1, code: fare.fareBasis }] : [])
 
     return (
@@ -625,6 +633,13 @@ export default function SelectFarePage() {
               {fareDetailSections(activeFare, selectedMealsIncluded)}
             </div>
           </div>
+        )}
+
+        {/* ── The airline's fare rules for the chosen fare ───────────────
+            Fetched with the live price: cancellation and change charges by
+            how long before departure, and no-show. */}
+        {activeFare && (pricingLoading || pricing?.ok) && (
+          <FareRulesPanel rules={pricing?.fareRules} loading={pricingLoading} compact />
         )}
 
         {/* ── Fare breakdown — live from Pricing ──────────────────────── */}
