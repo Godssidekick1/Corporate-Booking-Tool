@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import AirlineMark from '@/app/components/AirlineMark'
-import FareCards from '@/app/components/book/FareCards'
+import FareRow from '@/app/components/book/FareRow'
 import FareRulesPanel from '@/app/components/book/FareRulesPanel'
 import type { FareRules } from '@/app/lib/book/fareRules'
 import { flowStorage, type PricedFare, type RoundTripPair } from '@/app/lib/book/flowStorage'
@@ -123,8 +123,9 @@ export default function RoundTripFarePage() {
               </div>
 
               {/* Every fare of this flight, with what it includes; choosing one prices it. */}
-              <FareCards flight={f} selectedKey={side.pricingKey} busy={side.loading}
-                onSelect={o => { if (o.pricingKey !== side.pricingKey) changeFare(dir, o.pricingKey) }} />
+              <FareRow flight={f} mode="select" selectedKey={side.pricingKey} busy={side.loading}
+                label={`${dir === 'onward' ? 'Onward' : 'Return'} fares`}
+                onPick={o => { if (o.pricingKey !== side.pricingKey) changeFare(dir, o.pricingKey) }} />
 
               {side.loading && <p style={s.muted}>Confirming the live fare with the airline…</p>}
               {side.error && <div style={s.error}>{side.error}</div>}

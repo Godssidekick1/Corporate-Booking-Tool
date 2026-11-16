@@ -6,7 +6,7 @@ import FlightResults from '@/app/components/book/FlightResults'
 import FilterPanel from '@/app/components/book/FilterPanel'
 import { activeCount, applyFilters, emptyFilters, flip, youPay, type Filters } from '@/app/lib/book/resultFilters'
 import rcss from './FlightResults.module.css'
-import FareCards from '@/app/components/book/FareCards'
+import FareRow from '@/app/components/book/FareRow'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
 import { journeysOf, type FareOption, type FlatFlightResult } from '@/app/lib/book/types'
 import type { RoundTripPair, SplitResults } from '@/app/lib/book/flowStorage'
@@ -130,8 +130,9 @@ function Column({ title, list, visible, onClear, selected, onPick }: {
             </label>
             {faresOpen && (
               <div className={css.fares}>
-                <FareCards flight={f} selectedKey={isSel ? fare.pricingKey : null}
-                  onSelect={o => onPick({ flight: f, pricingKey: o.pricingKey })} />
+                <FareRow flight={f} mode="select" selectedKey={isSel ? fare.pricingKey : null}
+                  label={`${title} fares on ${f.airline?.name ?? airlineOf(f)}`}
+                  onPick={o => onPick({ flight: f, pricingKey: o.pricingKey })} />
               </div>
             )}
             </div>

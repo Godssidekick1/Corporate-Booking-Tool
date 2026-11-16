@@ -96,16 +96,8 @@
 .pill i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 
 /* Fare options, inside the card */
-.fareGrid { border-top: 1px solid var(--color-line); background: var(--color-canvas); padding: 14px 18px 16px; border-radius: 0 0 14px 14px; display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
-.fare { background: var(--color-surface); border: 1px solid var(--color-line); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
-.fareTop { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
-.fareTop b { font-size: 12.5px; color: var(--color-ink); text-transform: uppercase; letter-spacing: 0.3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fareTop span { font-size: 16px; font-weight: 700; color: var(--color-ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.fare ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; font-size: 12px; color: var(--color-body); }
-.fare li::before { content: '·'; color: var(--color-muted); margin-right: 6px; }
-.fareNo { color: var(--color-muted); }
-.chooseBtn { margin-top: auto; background: var(--color-rail); border: 1px solid var(--color-rail); color: #fff; border-radius: 10px; padding: 8px 12px; font-weight: 600; font-size: 12.5px; cursor: pointer; }
-.chooseBtn:disabled { opacity: 0.6; cursor: wait; }
+/* The card's fares, in one row that scrolls sideways (FareRow). */
+.fareRow { border-top: 1px solid var(--color-line); background: var(--color-canvas); padding: 14px 18px 12px; border-radius: 0 0 14px 14px; }
 
 .empty { background: var(--color-surface); border: 1px dashed var(--color-line-strong); border-radius: 14px; padding: 36px 16px; text-align: center; color: var(--color-secondary); font-size: 13px; }
 .empty b { display: block; color: var(--color-ink); margin-bottom: 4px; }
@@ -126,7 +118,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--color-rail)
   .price small { display: none; }
   .faresBtn { margin-top: 0; }
   .tags { padding: 0 14px 12px; }
-  .fareGrid { padding: 12px; grid-template-columns: 1fr; }
+  .fareRow { padding: 12px; }
   .leg { grid-template-columns: 56px minmax(0, 1fr) 56px; }
 }
 @media (prefers-reduced-motion: reduce) {

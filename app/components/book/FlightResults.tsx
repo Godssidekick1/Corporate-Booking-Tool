@@ -3,6 +3,7 @@
 import { Fragment, useState } from 'react'
 import AirlineMark from '@/app/components/AirlineMark'
 import FilterPanel from '@/app/components/book/FilterPanel'
+import FareRow from '@/app/components/book/FareRow'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
 import { journeysOf, type FareOption, type FlatFlightResult, type Journey } from '@/app/lib/book/types'
 import {
@@ -106,6 +107,8 @@ export default function FlightResults({ results, hiddenByPolicy = [], onChoose, 
   const [sort, setSort] = useState<SortKey>('cheapest')
   const [filters, setFilters] = useState<Filters>(() => emptyFilters(1))
   const [open, setOpen] = useState<Set<string>>(new Set())
+  // The fare whose card is opening the fare page.
+  const [openingKey, setOpeningKey] = useState<string | null>(null)
   const [showFilters, setShowFilters] = useState(false)
 
   const prices = results.map(youPay).filter((n): n is number => typeof n === 'number')
@@ -226,28 +229,10 @@ export default function FlightResults({ results, hiddenByPolicy = [], onChoose, 
               {chip && <div className={css.tags}><Chip verdict={chip.verdict} from={chip.from} /></div>}
 
               {isOpen && (
-                <div className={css.fareGrid}>
-                  {flight.fareOptions.map((fare, i) => {
-                    const amount = fareAmount(fare)
-                    const name = fare.brandedFareName || fare.fareType || `Fare ${i + 1}`
-                    return (
-                      <div key={fare.pricingKey || i} className={css.fare}
-                        style={fare.policy && fare.policy !== 'green' ? { borderColor: VERDICT_META[fare.policy].border } : undefined}>
-                        <div className={css.fareTop}><b title={name}>{name}</b><span>{amount !== undefined ? inr(amount) : '—'}</span></div>
-                        {fare.policy && <div><Chip verdict={fare.policy} /></div>}
-                        <ul>
-                          <li className={fare.refundable ? '' : css.fareNo}>{fare.refundable ? 'Refundable' : 'Non-refundable'}</li>
-                          {flight.checkInBaggageKg && <li>{flight.checkInBaggageKg} kg check-in{flight.cabinBaggageKg ? `, ${flight.cabinBaggageKg} kg cabin` : ''}</li>}
-                          {!flight.checkInBaggageKg && flight.checkInBaggagePieces && <li>{flight.checkInBaggagePieces} check-in</li>}
-                          <li className={fare.mealIncluded ? '' : css.fareNo}>{fare.mealIncluded ? 'Meal included' : 'Meal not included'}</li>
-                          {(fare.brandedServices ?? []).slice(0, 3).map(s => <li key={s}>{s}</li>)}
-                        </ul>
-                        <button type="button" className={css.chooseBtn} disabled={navigating} onClick={() => onChoose(flight, fare)}>
-                          {navigating ? 'Opening…' : 'Choose'}
-                        </button>
-                      </div>
-                    )
-                  })}
+                <div className={css.fareRow}>
+                  <FareRow flight={flight} mode="choose" label={`Fares on ${flight.airline?.name ?? code}`}
+                    busy={navigatingKey !== null} busyKey={navigating ? openingKey : null}
+                    onPick={fare => { setOpeningKey(fare.pricingKey); onChoose(flight, fare) }} />
                 </div>
               )}
             </article>

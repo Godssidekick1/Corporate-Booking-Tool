@@ -1,0 +1,72 @@
+/* A flight's fares in one row that scrolls sideways (FareRow.tsx): results
+   cards, the round-trip columns and both fare pages. App tokens from
+   app/globals.css. */
+
+.row { position: relative; min-width: 0; }
+.head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; min-height: 32px; }
+.head > span { font-size: 12.5px; color: var(--color-secondary); }
+.arrows { display: flex; gap: 6px; }
+.arrows button {
+  width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--color-line-strong); background: var(--color-surface);
+  color: var(--color-rail); cursor: pointer; display: grid; place-items: center;
+}
+.arrows button svg { width: 14px; height: 14px; }
+.arrows button:disabled { opacity: 0.35; cursor: default; }
+
+.track {
+  display: flex; gap: 12px; overflow-x: auto; scroll-snap-type: x mandatory; scroll-behavior: smooth;
+  padding: 2px 2px 10px; align-items: stretch; scrollbar-width: thin; overscroll-behavior-x: contain;
+}
+.single { overflow: visible; }
+
+.card {
+  flex: 0 0 252px; scroll-snap-align: start; min-width: 0;
+  display: flex; flex-direction: column; background: var(--color-surface); border: 1px solid var(--color-line);
+  border-radius: 13px; overflow: hidden; text-align: left; padding: 0; font: inherit; color: inherit;
+}
+.single .card { flex-basis: min(100%, 340px); }
+.selectable { cursor: pointer; }
+.selectable:hover { border-color: var(--color-line-strong); }
+.card:focus-visible { outline: 2px solid var(--color-rail); outline-offset: 2px; }
+
+.top { padding: 13px 14px 11px; display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--color-line); }
+.name { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.name b { font-size: 12.5px; letter-spacing: 0.4px; text-transform: uppercase; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-ink); }
+.tick {
+  width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid var(--color-line-strong); flex-shrink: 0;
+  display: grid; place-items: center; color: transparent;
+}
+.tick svg { width: 12px; height: 12px; }
+.amount { font-size: 21px; font-weight: 700; letter-spacing: -0.3px; color: var(--color-ink); font-variant-numeric: tabular-nums; }
+.amount small { font-size: 11.5px; color: var(--color-secondary); font-weight: 500; margin-left: 5px; letter-spacing: 0; }
+.verdict { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px; border: 1px solid transparent; }
+.verdict i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+.lines { list-style: none; margin: 0; padding: 12px 14px; display: grid; gap: 7px; font-size: 12.5px; color: var(--color-body); }
+.lines li { display: flex; gap: 8px; align-items: baseline; line-height: 1.4; }
+.lines li::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--color-success-fg); flex-shrink: 0; transform: translateY(-1px); }
+.lines li.no { color: var(--color-muted); }
+.lines li.no::before { background: var(--color-line-strong); }
+
+.action {
+  margin: auto 14px 14px; height: 36px; border-radius: 9px; border: 1px solid var(--color-rail); color: var(--color-rail);
+  background: var(--color-surface); font: inherit; font-weight: 600; font-size: 13px; display: grid; place-items: center; cursor: pointer;
+}
+.action:disabled { opacity: 0.6; cursor: progress; }
+span.action { cursor: inherit; }
+
+/* Chosen: a filled band across the top and a tick. */
+.chosen { border-color: var(--color-rail); box-shadow: 0 0 0 1px var(--color-rail); }
+.chosen .top { background: var(--color-rail); border-color: var(--color-rail); }
+.chosen .name b, .chosen .amount { color: #fff; }
+.chosen .amount small { color: #c9cdea; }
+.chosen .tick { background: #fff; border-color: #fff; color: var(--color-rail); }
+.chosen .verdict { background: rgba(255, 255, 255, 0.14) !important; color: #fff !important; border-color: transparent !important; }
+.chosen .action { background: var(--color-rail); color: #fff; }
+
+@media (max-width: 560px) {
+  .card { flex-basis: 78vw; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .track { scroll-behavior: auto; }
+}
