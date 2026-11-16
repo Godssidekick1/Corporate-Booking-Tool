@@ -24,6 +24,9 @@ interface AirportDropdownProps {
   disabled?: boolean
   exclude?: string
   dropdownStyle?: React.CSSProperties
+  // 'short' shows the chosen airport as "Bengaluru (BLR)" while closed: the
+  // results page's edit bar has room for one line per field.
+  display?: 'full' | 'short'
 }
 
 interface Airport { code: string; name: string; city: string; country_code: string; country: string }
@@ -45,7 +48,7 @@ function lookup(code: string): Promise<Airport | null> {
 }
 
 export default function AirportDropdown({
-  value, onChange, id, label, disabled, exclude, dropdownStyle,
+  value, onChange, id, label, disabled, exclude, dropdownStyle, display = 'full',
 }: AirportDropdownProps) {
   // What each code is, once known: undefined = not looked up yet, null = no
   // such airport.
@@ -72,7 +75,7 @@ export default function AirportDropdown({
   }, [value, known])
 
   // While open the box shows what is typed; closed, the chosen airport.
-  const shown = isOpen ? query : selected ? airportLabel(selected) : value
+  const shown = isOpen ? query : selected ? (display === 'short' ? `${selected.city} (${selected.code})` : airportLabel(selected)) : value
   // Opening the box puts the chosen airport's label in it, selected; that is
   // not a search, so it lists the default suggestions instead.
   const search = selected && query === airportLabel(selected) ? '' : query.trim()
@@ -234,7 +237,9 @@ const errorStyle: React.CSSProperties = {
 }
 
 const dropdownWrapStyle: React.CSSProperties = {
-  position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 30,
+  // At least wide enough to read a row when the field itself is narrow (the
+  // edit bar's From and To).
+  position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, minWidth: '300px', zIndex: 30,
   background: '#fff', border: '1px solid #E5E7EB', borderRadius: '10px',
   boxShadow: '0 8px 24px rgba(0,0,0,0.08)', overflow: 'hidden', maxHeight: '280px', overflowY: 'auto',
 }

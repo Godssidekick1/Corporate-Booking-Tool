@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import AirlineMark from '@/app/components/AirlineMark'
 import Link from 'next/link'
 import { flowStorage } from '@/app/lib/book/flowStorage'
+import { useResultsHref } from '@/app/components/book/search/useResultsHref'
 import { ButtonBusy } from '@/app/components/FlowLoader'
 import { breachLine } from '@/app/lib/policy/breachText'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
@@ -120,6 +121,7 @@ function sentenceCase(value: string): string {
 
 export default function SelectFarePage() {
   const router = useRouter()
+  const resultsHref = useResultsHref()
   const params = useParams<{ flightKey: string }>()
   const flightKey = decodeURIComponent(params.flightKey)
 
@@ -306,7 +308,7 @@ export default function SelectFarePage() {
     return (
       <div style={s.page}>
         <div style={s.root}>
-          <Link href="/book/flights" style={s.backLink}>← Back to results</Link>
+          <Link href={resultsHref} style={s.backLink}>← Back to results</Link>
           <div style={s.errorCard}>
             <p style={s.errorTitle}>⚠ {error}</p>
             <Link href="/book/flights" style={s.errorLink}>← Search again</Link>
@@ -442,7 +444,7 @@ export default function SelectFarePage() {
   return (
     <div style={s.page}>
       <div style={s.root}>
-        <Link href="/book/flights" style={s.backLink}>← Back to results</Link>
+        <Link href={resultsHref} style={s.backLink}>← Back to results</Link>
 
         <div style={s.header}>
           <h1 style={s.heading}>Select your fare</h1>

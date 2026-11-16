@@ -10,6 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { FlatFlightResult, SelectedSeat } from './types'
+import { resultsHrefFor, sameQuery, type SearchQuery } from './searchQuery'
 
 const RESULTS_KEY = 'cbt:book:searchResults'
 const SEARCH_META_KEY = 'cbt:book:searchMeta'
@@ -50,6 +51,10 @@ interface StoredResults {
   results: FlatFlightResult[]
   availabilityKey: string | null
   split?: SplitResults
+  hiddenByPolicy?: { code: string; name: string }[]
+  // When the search answered (ms since epoch): the results page reuses a list
+  // only while the airline's availability is still likely to hold.
+  savedAt?: number
 }
 
 // Booking for someone else (app/lib/book/bookingActor.ts): who, shown on every
@@ -82,6 +87,8 @@ export interface SearchMeta {
   adult: number
   child: number
   infant: number
+  // The search itself, as the results page's address carries it.
+  query?: SearchQuery
 }
 
 export interface PricedFare {
@@ -215,14 +222,43 @@ export const flowStorage = {
   },
 
   // split: a domestic round trip's lists (results is then empty).
-  saveSearchResults(results: FlatFlightResult[], meta: SearchMeta, availabilityKey: string | null, split?: SplitResults) {
-    safeSet(RESULTS_KEY, { results, availabilityKey, ...(split ? { split } : {}) } satisfies StoredResults)
+  saveSearchResults(
+    results: FlatFlightResult[], meta: SearchMeta, availabilityKey: string | null, split?: SplitResults,
+    hiddenByPolicy: { code: string; name: string }[] = [],
+  ) {
+    safeSet(RESULTS_KEY, {
+      results, availabilityKey, ...(split ? { split } : {}), hiddenByPolicy, savedAt: Date.now(),
+    } satisfies StoredResults)
     safeSet(SEARCH_META_KEY, meta)
     safeSet(PAIR_KEY, null)
   },
 
   getSearchResults(): StoredResults | null {
     return safeGet(RESULTS_KEY)
+  },
+
+  // The stored list for exactly this search, while younger than maxAgeMs: the
+  // results page shows it instead of asking the airline again (Back from the
+  // fare page, a refresh). Older, or another search: null, and it searches.
+  freshResults(query: SearchQuery, maxAgeMs: number, now: number = Date.now()): StoredResults | null {
+    const stored = safeGet<StoredResults>(RESULTS_KEY)
+    const meta = safeGet<SearchMeta>(SEARCH_META_KEY)
+    if (!stored?.savedAt || !sameQuery(meta?.query, query)) return null
+    return now - stored.savedAt < maxAgeMs ? stored : null
+  },
+
+  // The stored list goes (the search, kept in the meta, stays for the form):
+  // the next visit to the results page asks the airline.
+  dropResults() {
+    if (typeof window === 'undefined') return
+    try { window.sessionStorage.removeItem(RESULTS_KEY) } catch { /* as safeSet */ }
+  },
+
+  // Where "Back to results" goes: the last search's results page, or the
+  // search form when there has been none in this tab.
+  resultsHref(): string {
+    const query = safeGet<SearchMeta>(SEARCH_META_KEY)?.query
+    return query ? resultsHrefFor(query) : '/book/flights'
   },
 
   // The availability key a flight was found under: its own list's for a

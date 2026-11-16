@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { flowStorage, type OnBehalf } from '@/app/lib/book/flowStorage'
@@ -44,6 +44,20 @@ export default function BookingFlowChrome({ children }: { children: React.ReactN
 
   const activeIndex = STEPS.findIndex(step => step.match(pathname))
 
+  // The sticky header's height, published as --book-chrome-h so what sticks
+  // beneath it (the results page's edit bar) sits just under it, whatever
+  // height the header wraps to and whether the booking-for bar shows.
+  const stickyRef = useRef<HTMLDivElement>(null)
+  const inFlow = activeIndex !== -1
+  useEffect(() => {
+    const el = stickyRef.current
+    if (!inFlow || !el || typeof ResizeObserver === 'undefined') return
+    const root = document.documentElement
+    const ro = new ResizeObserver(() => root.style.setProperty('--book-chrome-h', `${el.offsetHeight}px`))
+    ro.observe(el)
+    return () => { ro.disconnect(); root.style.removeProperty('--book-chrome-h') }
+  }, [inFlow])
+
   // Keep the trip the traveller started in. Without this, leaving the flow to
   // search again drops the tripId and the next booking attaches to nothing —
   // they would have to go back to the trip and start from "+ Add flight".
@@ -85,7 +99,7 @@ export default function BookingFlowChrome({ children }: { children: React.ReactN
   return (
     <div style={s.shell}>
       {/* Header and the booking-for bar stick together, whatever height the header wraps to. */}
-      <div style={s.sticky}>
+      <div ref={stickyRef} style={s.sticky}>
       <header style={s.bar}>
         <nav style={s.steps} aria-label="Booking progress">
           {STEPS.map((step, i) => (

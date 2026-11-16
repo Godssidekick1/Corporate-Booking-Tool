@@ -1,28 +1,23 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import AirportDropdown from '@/app/components/AirportDropdown'
 import { flowStorage, type OnBehalf } from '@/app/lib/book/flowStorage'
 import SearchableSelect from '@/app/components/SearchableSelect'
 import { useLookup } from '@/app/hooks/useLookup'
 import TripPicker, { resolveTrip, type TripChoice } from '@/app/components/TripPicker'
+import TravellersPopover, { useDismiss } from '@/app/components/book/search/TravellersPopover'
 import { searchPreferences } from '@/app/lib/book/searchPreferences'
-import type { FareOption, FlatFlightResult } from '@/app/lib/book/types'
-import FlightResults from '@/app/components/book/FlightResults'
-import RoundTripPicker from '@/app/components/book/RoundTripPicker'
-import type { RoundTripPair, SplitResults } from '@/app/lib/book/flowStorage'
+import { displayDate, isoDay, queryProblem, resultsHrefFor, type Cabin, type SearchQuery } from '@/app/lib/book/searchQuery'
 
-function toApiDate(input: string) {
-  const [y, m, d] = input.split('-')
-  return `${d}/${m}/${y}`
-}
-
-function toDisplayDate(input: string) {
-  if (!input) return ''
-  const d = new Date(input)
-  return d.toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short' })
-}
+// ── /book/flights: the search ────────────────────────────────────────────────
+// Who is travelling, why, and where to. Searching opens the results page
+// (/book/flights/results), whose address carries the search; the airline is
+// asked there. What stays here is everything that is not the route: the
+// traveller (a colleague, a guest), the trip it goes under and its purpose.
+// Coming back ("Change" on the results) finds the last search filled in.
+// ─────────────────────────────────────────────────────────────────────────────
 
 // Shown as one-click quick-search chips only for first-time users (no saved
 // search history yet) — a common-route shortcut, not a permanent feature of
@@ -39,7 +34,7 @@ export default function BookFlightsSearchPage() {
 
   const [origin, setOrigin] = useState('')
   const [destination, setDestination] = useState('')
-  const [departDate, setDepartDate] = useState(() => new Date().toISOString().split('T')[0])
+  const [departDate, setDepartDate] = useState(() => isoDay())
   // The provider has no returnDate field — a round trip is a second segment
   // flying the route back, plus RTF: true. The API route builds that; this
   // form only has to collect the date.
@@ -50,7 +45,9 @@ export default function BookFlightsSearchPage() {
   const [infant, setInfant] = useState(0)
   const [travelersOpen, setTravelersOpen] = useState(false)
   const travelersRef = useRef<HTMLDivElement>(null)
-  const [cabinPref, setCabinPref] = useState<'Economy' | 'Premium Economy' | 'Business' | 'First'>('Economy')
+  const closeTravelers = useCallback(() => setTravelersOpen(false), [])
+  useDismiss(travelersRef, travelersOpen, closeTravelers)
+  const [cabinPref, setCabinPref] = useState<Cabin>('Economy')
   // Ticked by default — the common case is booking your own travel, and the
   // passengers page autofills slot 1 from the traveler profile whenever this
   // is true. Unticking it means "I'm booking for someone else," so slot 1
@@ -171,6 +168,19 @@ export default function BookFlightsSearchPage() {
   }, [])
 
   useEffect(() => {
+    // Back from the results ("Change"): this tab's last search, dates and all,
+    // unless its departure has passed.
+    const last = flowStorage.getSearchMeta()?.query
+    if (last && last.departDate >= isoDay()) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reading sessionStorage, which the server render cannot see
+      setOrigin(last.origin); setDestination(last.destination)
+      setDepartDate(last.departDate)
+      setTripType(last.returnDate ? 'return' : 'oneway'); setReturnDate(last.returnDate ?? '')
+      setAdult(last.adult); setChild(last.child); setInfant(last.infant)
+      setCabinPref(last.cabin)
+      return
+    }
+
     const lastOrigin = searchPreferences.getLastOrigin()
     const lastDestination = searchPreferences.getLastDestination()
     const lastTravelers = searchPreferences.getLastTravelers()
@@ -194,80 +204,28 @@ export default function BookFlightsSearchPage() {
     setShowPopularRoutes(false)
   }
 
+  // Set while the results page is being opened (a new trip is made first).
   const [searching, setSearching] = useState(false)
-  const [hasSearched, setHasSearched] = useState(false)
-  const [results, setResults] = useState<FlatFlightResult[]>([])
-  // A domestic round trip: two columns and the special return fares.
-  const [split, setSplit] = useState<SplitResults | null>(null)
   const [error, setError] = useState('')
-  const [navigatingKey, setNavigatingKey] = useState<string | null>(null)
-
-  // Airlines the traveller's policy left out of the results (named in the filters).
-  const [hiddenByPolicy, setHiddenByPolicy] = useState<{ code: string; name: string }[]>([])
-  // A new search starts the results with no filters, sort or open cards.
-  const [searchSeq, setSearchSeq] = useState(0)
-
-  // The travellers popover had exactly one way out: the Done button. Clicking
-  // the page, pressing Escape and hitting Search all left it open — and since it
-  // is absolutely positioned over the fields below it, an open popover is also
-  // what stops the Search click from landing.
-  //
-  // Closed on mousedown rather than click, so that the popover is already gone
-  // by the time the click resolves and the press reaches whatever was underneath
-  // it. Closing on `click` would swallow that first press as a dismissal.
-  useEffect(() => {
-    if (!travelersOpen) return
-
-    function handlePointerDown(e: MouseEvent) {
-      if (travelersRef.current && !travelersRef.current.contains(e.target as Node)) {
-        setTravelersOpen(false)
-      }
-    }
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') setTravelersOpen(false)
-    }
-
-    document.addEventListener('mousedown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [travelersOpen])
 
   function swapOriginDestination() {
     setOrigin(destination)
     setDestination(origin)
   }
 
-  function handleChooseFare(flight: FlatFlightResult, fare: FareOption) {
-    // Nothing to price here: that is the next page's job. The fare chosen in
-    // the card goes in the URL, so the fare page opens with it selected (and a
-    // refresh keeps it).
-    setNavigatingKey(flight.flightKey)
-    const query = fare.pricingKey ? `?fare=${encodeURIComponent(fare.pricingKey)}` : ''
-    router.push(`/book/price/${encodeURIComponent(flight.flightKey)}${query}`)
-  }
-
-  // A domestic round trip's two picks: both are priced together on the next page.
-  function handleContinuePair(pair: RoundTripPair) {
-    flowStorage.savePair(pair)
-    setNavigatingKey(pair.onward.flightKey)
-    router.push('/book/price/round-trip')
-  }
-
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault()
-    // Searching means they are done choosing travellers. Leaving it open would
-    // float the popover over the results they just asked for.
+    // Searching means they are done choosing travellers.
     setTravelersOpen(false)
-    if (infant > adult) {
-      setError('Each infant must travel with an adult. Please adjust traveler counts.')
-      return
+    const query: SearchQuery = {
+      origin, destination, departDate,
+      returnDate: tripType === 'return' ? returnDate : null,
+      adult, child, infant, cabin: cabinPref,
     }
+    const wrong = queryProblem(query, isoDay())
+    if (wrong) { setError(wrong); return }
     setSearching(true)
     setError('')
-    setHasSearched(false)
     try {
       // A new trip for the colleague is created now, the first moment it is
       // certainly wanted; once made it is an existing one.
@@ -277,74 +235,25 @@ export default function BookFlightsSearchPage() {
           id = await resolveTrip(who.travellerId, trip)
         } catch (err) {
           setError((err as Error).message)
+          setSearching(false)
           return
         }
         flowStorage.setTripId(id, who.travellerId)
         setTrip(id ? { kind: 'existing', id } : { kind: 'none' })
       }
-      const res = await fetch('/api/book/search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          // Booking for someone else: whose (bookingActor); absent = oneself.
-          travellerId: flowStorage.travellerId(),
-          origin, destination,
-          departDate: toApiDate(departDate),
-          tripType,
-          // Sent only when it is actually a round trip, so switching back to
-          // one way can't leave a stale return date behind in the request.
-          returnDate: tripType === 'return' ? toApiDate(returnDate) : undefined,
-          // The selector has existed since this page was written and its value
-          // has never left the browser, which is why every search came back
-          // economy whatever was picked.
-          cabin: cabinPref,
-          adult, child, infant,
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        // The airline's own wording comes back to the travel desk only
-        // (app/lib/book/providerErrors.ts); everyone else gets the plain line.
-        const forDesk = data.provider?.message ? ` Airline system: ${data.provider.message}` : ''
-        setError(`${data.error || 'Search failed.'}${forDesk}`)
-        return
-      }
-
-      const foundResults: FlatFlightResult[] = data.results ?? []
-      const foundSplit: SplitResults | null = data.kind === 'split'
-        ? { onward: data.onward ?? null, return: data.return ?? null, specialReturn: data.specialReturn ?? null, notes: data.notes ?? [] }
-        : null
-      setResults(foundResults)
-      setSplit(foundSplit)
-      setHiddenByPolicy(data.hiddenByPolicy ?? [])
-      setSearchSeq(n => n + 1)
-      setHasSearched(true)
-      searchPreferences.saveLastSearch({ origin, destination, adult, child, infant, cabinPref })
       // A guest is typed in by hand; a colleague's details come from their
       // profile (the passenger page reads flowStorage.onBehalf).
       flowStorage.setGuestBooking(who ? false : !bookingForSelf)
       // A personal trip is the traveller's own: never inside a business trip.
       flowStorage.setPurpose(personal ? 'personal' : 'business')
       if (personal) flowStorage.setTripId(null)
-
-      // Save results + search context to sessionStorage so /book/price/[flightKey]
-      // can look up the exact result the user picked without re-searching, and
-      // so the "back to results" link on later pages has something to return to.
-      flowStorage.saveSearchResults(
-  foundResults,
-  {
-    origin, destination,
-    departDate: toDisplayDate(departDate),
-    tripType,
-    returnDate: tripType === 'return' ? toDisplayDate(returnDate) : undefined,
-    adult, child, infant,
-  },
-  data.availabilityKey ?? null,
-  foundSplit ?? undefined,
-)
+      // The results page asks the airline (and keeps the list for the later
+      // steps and "Back to results"). Always afresh from here: the traveller
+      // may have changed, and their policy shapes the list.
+      flowStorage.dropResults()
+      router.push(resultsHrefFor(query))
     } catch {
       setError('Something went wrong. Please try again.')
-    } finally {
       setSearching(false)
     }
   }
@@ -494,10 +403,10 @@ export default function BookFlightsSearchPage() {
                 <input
                   type="date" required value={departDate}
                   onChange={e => setDepartDate(e.target.value)}
-                  min={new Date().toISOString().split('T')[0]}
+                  min={isoDay()}
                   style={s.input}
                 />
-                {departDate && <span style={s.airportHint}>{toDisplayDate(departDate)}</span>}
+                {departDate && <span style={s.airportHint}>{displayDate(departDate)}</span>}
               </div>
 
               {tripType === 'return' && (
@@ -511,7 +420,7 @@ export default function BookFlightsSearchPage() {
                     min={departDate}
                     style={s.input}
                   />
-                  {returnDate && <span style={s.airportHint}>{toDisplayDate(returnDate)}</span>}
+                  {returnDate && <span style={s.airportHint}>{displayDate(returnDate)}</span>}
                 </div>
               )}
 
@@ -526,59 +435,17 @@ export default function BookFlightsSearchPage() {
                 </button>
 
                 {travelersOpen && (
-                  <div style={s.travelersPopover}>
-                    {/* Only the rows scroll. Done and the infant warning sit
-                        outside that box, so they are visible whatever the
-                        viewport height — previously the whole popover scrolled
-                        as one, which put Done below the fold and made the one
-                        control that closed the thing the hardest to reach. */}
-                    <div style={s.travelerRows}>
-                    {([
-                      { key: 'adult', label: 'Adults', sub: '12+ years', value: adult, setValue: setAdult, min: 1 },
-                      { key: 'child', label: 'Children', sub: '2–11 years', value: child, setValue: setChild, min: 0 },
-                      { key: 'infant', label: 'Infants', sub: 'Under 2 years', value: infant, setValue: setInfant, min: 0 },
-                    ] as const).map(row => (
-                      <div key={row.key} style={s.travelerRow}>
-                        <div>
-                          <div style={s.travelerRowLabel}>{row.label}</div>
-                          <div style={s.travelerRowSub}>{row.sub}</div>
-                        </div>
-                        <div style={s.travelerStepper}>
-                          <button
-                            type="button"
-                            onClick={() => row.setValue(Math.max(row.min, row.value - 1))}
-                            disabled={row.value <= row.min}
-                            style={{ ...s.stepperBtn, opacity: row.value <= row.min ? 0.4 : 1 }}
-                          >
-                            −
-                          </button>
-                          <span style={s.stepperValue}>{row.value}</span>
-                          <button
-                            type="button"
-                            onClick={() => row.setValue(Math.min(9, row.value + 1))}
-                            disabled={adult + child + infant >= 9}
-                            style={{ ...s.stepperBtn, opacity: adult + child + infant >= 9 ? 0.4 : 1 }}
-                          >
-                            +
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                    </div>
-                    {infant > adult && (
-                      <p style={s.travelerNote}>Each infant must travel with an adult.</p>
-                    )}
-                    <button type="button" onClick={() => setTravelersOpen(false)} style={s.travelersDoneBtn}>
-                      Done
-                    </button>
-                    <p style={s.travelerDismissHint}>or click anywhere to close</p>
-                  </div>
+                  <TravellersPopover
+                    value={{ adult, child, infant }}
+                    onChange={v => { setAdult(v.adult); setChild(v.child); setInfant(v.infant) }}
+                    onDone={closeTravelers}
+                  />
                 )}
               </div>
 
               <div style={s.field}>
                 <label style={s.label}>Cabin</label>
-                <select value={cabinPref} onChange={e => setCabinPref(e.target.value as 'Economy' | 'Premium Economy' | 'Business' | 'First')} style={s.input}>
+                <select value={cabinPref} onChange={e => setCabinPref(e.target.value as Cabin)} style={s.input}>
                   <option value="Economy">Economy</option>
                   <option value="Premium Economy">Premium Economy</option>
                   <option value="Business">Business</option>
@@ -606,46 +473,6 @@ export default function BookFlightsSearchPage() {
           </div>
         )}
 
-        {/* ── Results ────────────────────────────────────────────────── */}
-        {searching && (
-          <div style={s.loadingState}>
-            {[0, 1, 2].map(i => <div key={i} style={s.skeletonCard} />)}
-          </div>
-        )}
-
-        {hasSearched && !searching && split && (
-          !split.onward?.results.length && !split.return?.results.length && !split.specialReturn?.results.length ? (
-            <div style={s.emptyState}>
-              <p style={s.emptyTitle}>No flights found</p>
-              <p style={s.emptyDesc}>{split.notes[0] ?? 'Try different dates or another route.'}</p>
-            </div>
-          ) : (
-            <RoundTripPicker
-              key={searchSeq}
-              split={split}
-              navigatingKey={navigatingKey}
-              onChooseSpecial={handleChooseFare}
-              onContinue={handleContinuePair}
-            />
-          )
-        )}
-
-        {hasSearched && !searching && !split && (
-          results.length === 0 ? (
-            <div style={s.emptyState}>
-              <p style={s.emptyTitle}>No flights found</p>
-              <p style={s.emptyDesc}>Try a different date or route.</p>
-            </div>
-          ) : (
-            <FlightResults
-              key={searchSeq}
-              results={results}
-              hiddenByPolicy={hiddenByPolicy}
-              navigatingKey={navigatingKey}
-              onChoose={handleChooseFare}
-            />
-          )
-        )}
       </div>
     </div>
   )
@@ -710,46 +537,4 @@ const s: Record<string, React.CSSProperties> = {
 
   errorBanner: { display: 'flex', alignItems: 'center', gap: '8px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', color: '#DC2626', marginBottom: '16px' },
   bannerIcon: { fontSize: '14px' },
-
-  loadingState: { display: 'flex', flexDirection: 'column', gap: '12px' },
-  skeletonCard: { height: '128px', borderRadius: '14px', background: 'linear-gradient(90deg, #F3F4F6 25%, #E5E7EB 37%, #F3F4F6 63%)', backgroundSize: '400% 100%' },
-
-  emptyState: { textAlign: 'center' as const, padding: '56px 20px', background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px' },
-  emptyTitle: { fontSize: '15px', fontWeight: 600, color: '#374151', margin: '0 0 6px' },
-  emptyDesc: { fontSize: '13px', color: '#9CA3AF', margin: 0 },
-
-
-  // Matches nothing, so it cannot be clicked into an empty results list.
-
-
-
-
-
-
-
-  travelersPopover: {
-    position: 'absolute' as const, top: 'calc(100% + 6px)', left: 0, right: 0, zIndex: 10,
-    background: '#fff', border: '1px solid #E5E7EB', borderRadius: '12px', padding: '14px',
-    boxShadow: '0 8px 24px rgba(0,0,0,0.08)',
-  },
-  // Caps at roughly three rows and scrolls beyond that, while Done stays put
-  // below it. maxHeight is in rem so it tracks the user's text size rather than
-  // clipping when they have scaled it up.
-  travelerRows: { maxHeight: '11rem', overflowY: 'auto' as const },
-  travelerRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 0' },
-  travelerRowLabel: { fontSize: '13px', fontWeight: 600, color: '#111827' },
-  travelerRowSub: { fontSize: '11px', color: '#9CA3AF' },
-  travelerStepper: { display: 'flex', alignItems: 'center', gap: '10px' },
-  stepperBtn: {
-    width: '26px', height: '26px', borderRadius: '50%', border: '1px solid #D1D5DB', background: '#fff',
-    color: '#000835', fontSize: '14px', fontWeight: 700, cursor: 'pointer', display: 'flex',
-    alignItems: 'center', justifyContent: 'center', lineHeight: 1,
-  },
-  stepperValue: { fontSize: '13px', fontWeight: 600, color: '#111827', minWidth: '16px', textAlign: 'center' as const },
-  travelerNote: { fontSize: '11px', color: '#DC2626', margin: '8px 0 0' },
-  travelersDoneBtn: {
-    width: '100%', height: '32px', marginTop: '8px', background: '#000835', color: '#fff',
-    fontSize: '12px', fontWeight: 600, border: 'none', borderRadius: '8px', cursor: 'pointer',
-  },
-  travelerDismissHint: { fontSize: '10.5px', color: '#9CA3AF', textAlign: 'center' as const, margin: '6px 0 0' },
 }

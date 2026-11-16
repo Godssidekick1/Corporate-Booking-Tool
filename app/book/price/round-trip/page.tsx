@@ -8,6 +8,7 @@ import FareCards from '@/app/components/book/FareCards'
 import FareRulesPanel from '@/app/components/book/FareRulesPanel'
 import type { FareRules } from '@/app/lib/book/fareRules'
 import { flowStorage, type PricedFare, type RoundTripPair } from '@/app/lib/book/flowStorage'
+import { useResultsHref } from '@/app/components/book/search/useResultsHref'
 import { priceFare, previewPolicy, type PolicyPreview, type PricedLine } from '@/app/lib/book/priceFare'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
 import { journeysOf, type FlatFlightResult } from '@/app/lib/book/types'
@@ -41,6 +42,7 @@ const day = (iso?: string) => {
 
 export default function RoundTripFarePage() {
   const router = useRouter()
+  const resultsHref = useResultsHref()
   const [sides, setSides] = useState<Record<Dir, Side> | null>(null)
 
   const patch = useCallback((dir: Dir, change: Partial<Side>) =>
@@ -90,7 +92,7 @@ export default function RoundTripFarePage() {
   return (
     <div style={s.page}>
       <div style={s.root}>
-        <Link href="/book/flights" style={s.backLink}>← Back to results</Link>
+        <Link href={resultsHref} style={s.backLink}>← Back to results</Link>
         <div style={{ marginBottom: 18 }}>
           <h1 style={s.heading}>Your round trip</h1>
           <p style={s.sub}>Two flights, each priced and booked on its own. You fill in passenger details once for both.</p>
