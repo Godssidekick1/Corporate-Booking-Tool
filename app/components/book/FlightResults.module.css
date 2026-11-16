@@ -2,7 +2,7 @@
    column, results on the right; the column folds behind a button on narrow
    screens. Colours are the app's own (app/globals.css tokens). */
 
-.body { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 18px; align-items: start; }
+.body { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 20px; align-items: start; }
 .results { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 
 /* Filters */

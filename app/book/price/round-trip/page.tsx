@@ -4,8 +4,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import AirlineMark from '@/app/components/AirlineMark'
-import FareRow from '@/app/components/book/FareRow'
+import FareRow, { fareName } from '@/app/components/book/FareRow'
 import FareRulesPanel from '@/app/components/book/FareRulesPanel'
+import lay from '../FarePage.module.css'
 import type { FareRules } from '@/app/lib/book/fareRules'
 import { flowStorage, type PricedFare, type RoundTripPair } from '@/app/lib/book/flowStorage'
 import { useResultsHref } from '@/app/components/book/search/useResultsHref'
@@ -79,7 +80,7 @@ export default function RoundTripFarePage() {
     price(dir, sides[dir].flight, pricingKey)
   }
 
-  if (!sides) return <div style={s.page}><div style={s.root}><p style={s.sub}>Loading your flights…</p></div></div>
+  if (!sides) return <div style={s.page}><div className={lay.root}><p style={s.sub}>Loading your flights…</p></div></div>
 
   const ready = sides.onward.priced && sides.return.priced
   const total = (sides.onward.priced?.sellTotal ?? 0) + (sides.return.priced?.sellTotal ?? 0)
@@ -91,13 +92,15 @@ export default function RoundTripFarePage() {
 
   return (
     <div style={s.page}>
-      <div style={s.root}>
+      <div className={lay.root}>
         <Link href={resultsHref} style={s.backLink}>← Back to results</Link>
         <div style={{ marginBottom: 18 }}>
           <h1 style={s.heading}>Your round trip</h1>
           <p style={s.sub}>Two flights, each priced and booked on its own. You fill in passenger details once for both.</p>
         </div>
 
+        <div className={lay.layout}>
+        <div className={lay.main}>
         {(['onward', 'return'] as const).map(dir => {
           const side = sides[dir]
           const f = side.flight
@@ -151,18 +154,44 @@ export default function RoundTripFarePage() {
           )
         })}
 
-        <div style={s.totalBar}>
-          <div>
-            <div style={s.totalLabel}>Total, 2 bookings</div>
-            <div style={s.totalAmount}>{ready ? inr(total) : '—'}</div>
-          </div>
-          <button type="button" onClick={continueToPassengers} disabled={!ready || busy} style={{ ...s.primaryBtn, opacity: !ready || busy ? 0.5 : 1 }}>
-            Continue to passengers
-          </button>
         </div>
-        <p style={s.note}>
-          One approval covers both flights. Each is ticketed on its own, and either can be cancelled later without the other.
-        </p>
+
+        {/* The summary, in view while the two flights scroll. */}
+        <aside className={lay.side} aria-label="Price summary">
+          <div style={s.summary}>
+            <h2 style={s.summaryTitle}>Price summary</h2>
+            {(['onward', 'return'] as const).map(dir => {
+              const side = sides[dir]
+              const j = journeysOf(side.flight)[0]
+              const fare = side.flight.fareOptions.findIndex(o => o.pricingKey === side.pricingKey)
+              const meta = side.verdict?.ok && side.verdict.verdict ? VERDICT_META[side.verdict.verdict] : null
+              return (
+                <div key={dir} style={s.summaryFlight}>
+                  <span style={s.dirLabel}>{dir === 'onward' ? 'Onward' : 'Return'} · {day(j?.origin?.dateTime)}</span>
+                  <b style={s.summaryName}>
+                    {side.flight.airline?.name ?? side.flight.airline?.code} · {fare >= 0 ? fareName(side.flight.fareOptions[fare], fare) : 'Fare'}
+                  </b>
+                  <div style={s.summaryLine}>
+                    <span>{j?.origin?.code} → {j?.destination?.code} · {clock(j?.origin?.dateTime)}</span>
+                    <span>{side.loading ? '…' : side.priced ? inr(side.priced.sellTotal ?? side.priced.totalFare) : '—'}</span>
+                  </div>
+                  {meta && <span style={{ ...s.summaryVerdict, color: meta.color, background: meta.bg, borderColor: meta.border }}>{meta.label}</span>}
+                </div>
+              )
+            })}
+            <div style={s.summaryTotal}>
+              <span>Total, 2 bookings</span>
+              <b>{ready ? inr(total) : '—'}</b>
+            </div>
+            <button type="button" onClick={continueToPassengers} disabled={!ready || busy} style={{ ...s.primaryBtn, opacity: !ready || busy ? 0.5 : 1 }}>
+              Continue to passengers
+            </button>
+            <p style={s.note}>
+              One approval covers both flights. Each is ticketed on its own, and either can be cancelled later without the other.
+            </p>
+          </div>
+        </aside>
+        </div>
       </div>
     </div>
   )
@@ -170,26 +199,28 @@ export default function RoundTripFarePage() {
 
 const s: Record<string, React.CSSProperties> = {
   page: { background: '#F9FAFB', minHeight: '100vh' },
-  root: { maxWidth: '820px', margin: '0 auto', padding: '32px 24px 64px' },
   backLink: { fontSize: '13px', color: '#6B7280', textDecoration: 'none', display: 'inline-block', marginBottom: '16px' },
-  heading: { fontSize: '22px', fontWeight: 700, color: '#0A0A14', margin: '0 0 6px', letterSpacing: '-0.4px' },
+  heading: { fontSize: '24px', fontWeight: 700, color: '#0A0A14', margin: '0 0 6px', letterSpacing: '-0.4px' },
   sub: { fontSize: '13px', color: '#6B7280', margin: 0, lineHeight: 1.5 },
-  card: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '18px 20px', marginBottom: '14px', display: 'flex', flexDirection: 'column', gap: 12 },
+  card: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '20px 22px', marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: 14 },
   cardTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' },
   carrier: { display: 'flex', gap: 12, alignItems: 'center', minWidth: 0 },
   dirLabel: { fontSize: 10.5, fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.5px' },
-  flightLine: { fontSize: 14, fontWeight: 600, color: '#111827', marginTop: 2 },
-  timeLine: { fontSize: 13, color: '#374151', marginTop: 2, fontVariantNumeric: 'tabular-nums' },
-  fareSelect: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11, fontWeight: 600, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.4px', minWidth: 220 },
+  flightLine: { fontSize: 15, fontWeight: 600, color: '#111827', marginTop: 2 },
+  timeLine: { fontSize: 14, color: '#374151', marginTop: 2, fontVariantNumeric: 'tabular-nums' },
   muted: { fontSize: 13, color: '#6B7280', margin: 0 },
   error: { fontSize: 13, color: '#B91C1C', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '9px 12px' },
   lines: { display: 'flex', flexDirection: 'column', gap: 4, borderTop: '1px solid #F3F4F6', paddingTop: 10 },
   line: { display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#374151', fontVariantNumeric: 'tabular-nums' },
   lineTotal: { fontWeight: 700, color: '#111827', borderTop: '1px solid #F3F4F6', paddingTop: 6, marginTop: 2 },
   verdict: { fontSize: 12.5, border: '1px solid', borderRadius: 8, padding: '8px 12px', lineHeight: 1.45 },
-  totalBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, background: '#000835', color: '#fff', borderRadius: 14, padding: '14px 20px', marginTop: 6, flexWrap: 'wrap' },
-  totalLabel: { fontSize: 11, fontWeight: 600, color: '#AAB0D6', textTransform: 'uppercase', letterSpacing: '0.4px' },
-  totalAmount: { fontSize: 22, fontWeight: 700, fontVariantNumeric: 'tabular-nums' },
-  primaryBtn: { background: '#fff', color: '#000835', border: 0, borderRadius: 10, padding: '11px 20px', fontWeight: 700, fontSize: 14, cursor: 'pointer' },
-  note: { fontSize: 12, color: '#6B7280', marginTop: 10, lineHeight: 1.5 },
+  summary: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: 14, padding: 20, display: 'flex', flexDirection: 'column', gap: 12 },
+  summaryTitle: { fontSize: 15, fontWeight: 600, color: '#111827', margin: 0 },
+  summaryFlight: { display: 'flex', flexDirection: 'column', gap: 3, paddingBottom: 12, borderBottom: '1px solid #F3F4F6' },
+  summaryName: { fontSize: 13.5, color: '#111827' },
+  summaryLine: { display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13, color: '#374151', fontVariantNumeric: 'tabular-nums' },
+  summaryVerdict: { alignSelf: 'flex-start', marginTop: 4, fontSize: 11.5, fontWeight: 600, border: '1px solid', borderRadius: 6, padding: '2px 8px' },
+  summaryTotal: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, fontSize: 14.5, fontWeight: 700, color: '#111827' },
+  primaryBtn: { height: 48, background: '#000835', color: '#fff', border: 0, borderRadius: 11, fontWeight: 700, fontSize: 15, cursor: 'pointer' },
+  note: { fontSize: 12, color: '#6B7280', margin: 0, lineHeight: 1.5 },
 }

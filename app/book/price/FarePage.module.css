@@ -1,0 +1,15 @@
+/* The fare pages' layout (price/[flightKey], price/round-trip): the flight,
+   its fares and rules on the left; the price summary on the right, staying in
+   view under the booking chrome (--book-chrome-h) while the left scrolls.
+   Stacks on narrower screens. The pages' own styles stay inline; only what
+   needs a media query lives here. */
+
+.root { max-width: 1320px; margin: 0 auto; padding: 28px max(16px, 2vw) 64px; font-family: 'Inter', -apple-system, sans-serif; }
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 24px; align-items: start; }
+.main { min-width: 0; }
+.side { position: sticky; top: calc(var(--book-chrome-h, 0px) + 16px); display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
+@media (max-width: 980px) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .side { position: static; }
+}

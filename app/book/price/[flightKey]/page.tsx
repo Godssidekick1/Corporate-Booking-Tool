@@ -11,7 +11,8 @@ import { breachLine } from '@/app/lib/policy/breachText'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
 import DeskFareStrip from '@/app/components/book/DeskFareStrip'
 import FareRulesPanel from '@/app/components/book/FareRulesPanel'
-import FareRow from '@/app/components/book/FareRow'
+import FareRow, { fareName } from '@/app/components/book/FareRow'
+import lay from '../FarePage.module.css'
 import type { FareRules } from '@/app/lib/book/fareRules'
 import type { DeskView } from '@/app/lib/commercials/deskView'
 import {
@@ -444,13 +445,16 @@ export default function SelectFarePage() {
 
   return (
     <div style={s.page}>
-      <div style={s.root}>
+      <div className={lay.root}>
         <Link href={resultsHref} style={s.backLink}>← Back to results</Link>
 
         <div style={s.header}>
           <h1 style={s.heading}>Select your fare</h1>
           <p style={s.sub}>Review the fare details, then confirm to lock in the live price.</p>
         </div>
+
+        <div className={lay.layout}>
+        <div className={lay.main}>
 
         {/* ── Flight summary — available instantly, no API call ─────── */}
         <div style={s.card}>
@@ -569,9 +573,21 @@ export default function SelectFarePage() {
           <FareRulesPanel rules={pricing?.fareRules} loading={pricingLoading} compact />
         )}
 
-        {/* ── Fare breakdown — live from Pricing ──────────────────────── */}
-        <div style={s.card}>
-          <h2 style={s.cardTitle}>Fare breakdown</h2>
+        </div>
+
+        {/* ── The price summary, in view while the fares and rules scroll ── */}
+        <aside className={lay.side} aria-label="Price summary">
+        <div style={{ ...s.card, marginBottom: 0 }}>
+          <h2 style={s.cardTitle}>Price summary</h2>
+          {activeFare && (
+            <div style={s.summaryFare}>
+              <span style={s.summaryFareLabel}>Your fare</span>
+              <b>{flight.airline?.name ?? flight.airline?.code} · {fareName(activeFare, selectedFareIndex)}</b>
+              <span style={s.summaryFareRoute}>
+                {journeys[0]?.origin?.code} → {journeys[0]?.destination?.code}{hasReturn ? ' and back' : ''} · {formatDayLabel(journeys[0]?.origin?.dateTime)}
+              </span>
+            </div>
+          )}
 
           {pricingLoading && (
             <div style={s.pricingLoadingRow}>
@@ -635,6 +651,12 @@ export default function SelectFarePage() {
                 </div>
               )}
 
+              {selectedVerdictColor && (
+                <div style={{ ...s.summaryVerdict, color: selectedVerdictColor.color, background: selectedVerdictColor.bg, borderColor: selectedVerdictColor.border }}>
+                  <span style={{ ...s.fareVerdictDot, background: selectedVerdictColor.color }} />{selectedVerdictColor.label}
+                </div>
+              )}
+
               <div style={s.fareTags}>
                 <span style={{ ...s.tag, color: pricing.isRefundable ? '#065F46' : '#9CA3AF', background: pricing.isRefundable ? '#ECFDF5' : '#F3F4F6' }}>
                   {pricing.isRefundable ? 'Refundable' : 'Non-refundable'}
@@ -658,6 +680,8 @@ export default function SelectFarePage() {
               airline. */}
           {continuing ? <ButtonBusy label="Opening…" /> : 'Select this fare →'}
         </button>
+        </aside>
+        </div>
       </div>
     </div>
   )
@@ -665,13 +689,14 @@ export default function SelectFarePage() {
 
 const s: Record<string, React.CSSProperties> = {
   page: { background: '#F9FAFB', minHeight: '100vh' },
-  root: { fontFamily: "'Inter', -apple-system, sans-serif", maxWidth: '1040px', margin: '0 auto', padding: '32px 24px 64px' },
+  // The loading and error states; the page itself uses FarePage.module.css.
+  root: { fontFamily: "'Inter', -apple-system, sans-serif", maxWidth: '1320px', margin: '0 auto', padding: '28px max(16px, 2vw) 64px' },
 
   backLink: { fontSize: '13px', color: '#6B7280', textDecoration: 'none', display: 'inline-block', marginBottom: '16px' },
 
   header: { marginBottom: '20px' },
-  heading: { fontSize: '22px', fontWeight: 700, color: '#0A0A14', margin: '0 0 6px', letterSpacing: '-0.4px' },
-  sub: { fontSize: '13px', color: '#6B7280', margin: 0, lineHeight: 1.5 },
+  heading: { fontSize: '24px', fontWeight: 700, color: '#0A0A14', margin: '0 0 6px', letterSpacing: '-0.4px' },
+  sub: { fontSize: '14px', color: '#6B7280', margin: 0, lineHeight: 1.5 },
 
   loadingCard: { display: 'flex', justifyContent: 'center', padding: '80px 0' },
   spinner: { width: '22px', height: '22px', border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%', animation: 'spin 0.7s linear infinite' },
@@ -689,18 +714,18 @@ const s: Record<string, React.CSSProperties> = {
 
   card: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '20px', marginBottom: '16px' },
   cardHeader: { marginBottom: '14px' },
-  cardTitle: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: '0 0 16px' },
+  cardTitle: { fontSize: '15px', fontWeight: 600, color: '#111827', margin: '0 0 16px' },
 
   airlineBlock: { display: 'flex', alignItems: 'center', gap: '10px' },
   airlineAvatar: { width: '34px', height: '34px', borderRadius: '9px', background: '#EEF2FF', color: '#3730A3', fontSize: '14px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-  airlineName: { fontSize: '13px', fontWeight: 600, color: '#111827' },
+  airlineName: { fontSize: '14.5px', fontWeight: 600, color: '#111827' },
   airlineMeta: { fontSize: '11px', color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' },
   ndcTag: { fontSize: '9px', fontWeight: 700, color: '#3730A3', background: '#EEF2FF', padding: '1px 6px', borderRadius: '4px', letterSpacing: '0.3px' },
 
   routeRow: { display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '14px', padding: '14px 0', borderTop: '1px solid #F3F4F6', borderBottom: '1px solid #F3F4F6' },
   journeyLabel: { display: 'block', fontSize: '11px', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.4px', marginTop: '10px' },
   routePoint: { display: 'flex', flexDirection: 'column', gap: '2px', flex: '0 0 auto', minWidth: '58px' },
-  routeTime: { fontSize: '16px', fontWeight: 700, color: '#111827' },
+  routeTime: { fontSize: '19px', fontWeight: 700, color: '#111827' },
   routeCode: { fontSize: '11px', fontWeight: 600, color: '#6B7280' },
   routeTerminal: { fontSize: '9.5px', color: '#9CA3AF' },
   routeDay: { fontSize: '10px', color: '#9CA3AF' },
@@ -759,7 +784,12 @@ const s: Record<string, React.CSSProperties> = {
   fareCredit: { color: '#166534' },
   fareRowTotal: { borderTop: '1px solid #F3F4F6', marginTop: '4px', paddingTop: '12px' },
   fareTotalLabel: { fontSize: '14px', fontWeight: 700, color: '#111827' },
-  fareTotalValue: { fontSize: '18px', fontWeight: 700, color: '#0A0A14' },
+  fareTotalValue: { fontSize: '22px', fontWeight: 700, color: '#0A0A14', letterSpacing: '-0.3px' },
+
+  summaryFare: { display: 'flex', flexDirection: 'column', gap: '3px', fontSize: '13.5px', color: '#111827', paddingBottom: '12px', marginBottom: '6px', borderBottom: '1px solid #F3F4F6' },
+  summaryFareLabel: { fontSize: '10.5px', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.5px' },
+  summaryFareRoute: { fontSize: '12.5px', color: '#6B7280' },
+  summaryVerdict: { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '12px', fontSize: '13px', fontWeight: 600, border: '1px solid', borderRadius: '10px', padding: '9px 12px' },
 
   paxBreakup: { marginTop: '12px', paddingTop: '12px', borderTop: '1px dashed #E5E7EB' },
   paxBreakupTitle: { fontSize: '11px', fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.4px', margin: '0 0 8px' },
