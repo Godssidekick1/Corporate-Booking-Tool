@@ -9,6 +9,9 @@ import {
 } from '@/app/lib/refunds/compute'
 import { s, STATE_META, MODE_LABELS, money, dateOnly, dateTime, type QueueState } from '../ui'
 import CreditNote, { type Parties } from './CreditNote'
+import FareRulesPanel from '@/app/components/book/FareRulesPanel'
+import type { FareRules } from '@/app/lib/book/fareRules'
+import type { PenaltyFromRules } from '@/app/lib/refunds/penaltyFromRules'
 
 // ── The refund panel ─────────────────────────────────────────────────────────
 // One cancelled ticket: what it cost, what is kept back, what goes back.
@@ -49,10 +52,12 @@ interface PanelData {
   sameState: boolean | null
   attachments: Attachment[]
   parties: Parties | null
+  fareRules: FareRules | null
+  penaltyFromRules: PenaltyFromRules | null
 }
 
 const SOURCE_TAG: Record<LineSource, string> = {
-  booking: 'booking', airline: 'from airline', rule: 'client rule', computed: 'computed', edited: 'edited',
+  booking: 'booking', airline: 'from airline', fare_rules: 'from fare rules', rule: 'client rule', computed: 'computed', edited: 'edited',
 }
 
 const today = () => new Date().toISOString().slice(0, 10)
@@ -256,6 +261,13 @@ export default function RefundPanelPage() {
                           {data.sameState ? `CGST ${money(c.gst.onTmcFee.cgst)} + SGST ${money(c.gst.onTmcFee.sgst)}` : `IGST ${money(c.gst.onTmcFee.igst)}`} at {c.gst.rate}%
                         </span>
                       )}
+                      {/* How the fare rules gave this figure, or why they gave none. */}
+                      {d.key === 'airline_penalty' && editable && data.penaltyFromRules && (
+                        <>
+                          {data.penaltyFromRules.basis.map((line, i) => <span key={`b${i}`} style={p.subInline}>{line}</span>)}
+                          {data.penaltyFromRules.warnings.map((line, i) => <span key={`w${i}`} style={{ ...p.subInline, color: 'var(--color-warn-fg)' }}>{line}</span>)}
+                        </>
+                      )}
                     </td>
                     <td style={p.v}>
                       {editable ? (
@@ -279,6 +291,9 @@ export default function RefundPanelPage() {
               </tbody>
             </table>
           </section>
+
+          {/* The airline's rules, beside the figures they explain. */}
+          {data.fareRules && <FareRulesPanel rules={data.fareRules} showDealCode title="Fare rules (airline)" />}
         </div>
 
         {/* ── Right: the summary and the decision ─────────────────────────────── */}

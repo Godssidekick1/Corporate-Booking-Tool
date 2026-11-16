@@ -3,7 +3,8 @@ import { requireUser } from '@/app/lib/auth/session'
 import { db } from '@/app/lib/db'
 import * as refunds from '@/app/lib/repositories/refunds'
 import { refundCaller } from '@/app/lib/refunds/access'
-import { computeFor, refundInputs, refundRule, sameGstState, defaultMode, ticketSummary, type FrozenLines } from '@/app/lib/refunds/panel'
+import { computeFor, refundInputs, refundRule, sameGstState, defaultMode, ticketSummary, rulesPenalty, type FrozenLines } from '@/app/lib/refunds/panel'
+import { asFareRules } from '@/app/lib/book/fareRules'
 import { route } from '@/app/lib/http/handler'
 import { isUuid } from '@/app/lib/book/bookingActor'
 
@@ -65,5 +66,9 @@ export const GET = route(async (_req: NextRequest, { params }: { params: Promise
     sameState,
     attachments,
     parties,
+    // The airline's rules for this booking (null for one booked before they
+    // were fetched), and how the airline penalty was read from them.
+    fareRules: asFareRules(d.booking.fare_rules),
+    penaltyFromRules: rulesPenalty(d),
   })
 })

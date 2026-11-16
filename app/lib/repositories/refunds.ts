@@ -151,7 +151,7 @@ export type RefundDetail = Row<'refunds'> & {
   booking: Pick<Row<'bookings'>,
     | 'id' | 'status' | 'employee_id' | 'booked_by' | 'provider_order_id' | 'pnr' | 'airline_pnr' | 'ticket_numbers'
     | 'itinerary' | 'traveler_snapshot' | 'fare_breakdown' | 'commercials' | 'sell_total' | 'total_cost'
-    | 'resolved_fop' | 'cancelled_at' | 'cancellation_reason' | 'cancellation' | 'created_at'
+    | 'resolved_fop' | 'cancelled_at' | 'cancellation_reason' | 'cancellation' | 'created_at' | 'fare_rules'
   > & { cancelled_by_name: string | null }
   client: Pick<Row<'clients'>,
     | 'id' | 'name' | 'client_code' | 'state' | 'refund_markup' | 'refund_processing_fee'
@@ -174,7 +174,7 @@ export async function detail(
     one<RefundDetail['booking']>(db, sql`
       select id, status, employee_id, booked_by, provider_order_id, pnr, airline_pnr, ticket_numbers, itinerary,
              traveler_snapshot, fare_breakdown, commercials, sell_total, total_cost, resolved_fop, cancelled_at,
-             cancellation_reason, cancellation, created_at,
+             cancellation_reason, cancellation, created_at, fare_rules,
              (select e.full_name from employees e where e.id = cancelled_by) as cancelled_by_name
       from bookings where id = ${row.booking_id}`),
     one<RefundDetail['client']>(db, sql`

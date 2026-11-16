@@ -3,6 +3,8 @@ import type { CommercialsRecord } from '@/app/lib/commercials/composeSellPrice'
 import type { CancellationRecord } from '@/app/lib/book/cancellation'
 import { gstCodeForState } from '@/app/lib/data/locations'
 import { computeRefund, type RefundInputs, type RefundRule, type RefundComputation, type DeductionKey } from './compute'
+import { penaltyFromRules, type PenaltyFromRules } from './penaltyFromRules'
+import { asFareRules } from '@/app/lib/book/fareRules'
 
 // ── From a stored booking to the refund panel ───────────────────────────────
 // Reads what the booking froze (commercials, the per-passenger fare, the
@@ -38,8 +40,26 @@ export function refundRule(c: RefundDetail['client']): RefundRule {
   }
 }
 
+// The airline penalty the booking's fare rules give for this ticket, by when it
+// was cancelled; null when the booking has no rules. See penaltyFromRules.ts
+// for when nothing is prefilled (and why).
+export function rulesPenalty(d: RefundDetail): PenaltyFromRules | null {
+  const b = d.booking
+  const pax = ((b.traveler_snapshot as { PassengerDetails?: Pax[] } | null)?.PassengerDetails ?? [])[d.passenger_index]
+  const cancellation = b.cancellation as unknown as CancellationRecord | null
+  const count = Math.max(1, ((b.traveler_snapshot as { PassengerDetails?: Pax[] } | null)?.PassengerDetails ?? []).length)
+  return penaltyFromRules(asFareRules(b.fare_rules), {
+    paxType: pax?.PaxType,
+    cancelledAt: b.cancelled_at,
+    // The provider's charge is for the whole booking: this ticket's even share,
+    // only to tell whether it charged anything at all.
+    providerCharge: cancellation ? num(cancellation.cancellationCharge) / count : 0,
+  })
+}
+
 export function refundInputs(d: RefundDetail): RefundInputs {
   const b = d.booking
+  const fromRules = rulesPenalty(d)
   const commercials = b.commercials as unknown as CommercialsRecord | null
   const pax = ((b.traveler_snapshot as { PassengerDetails?: Pax[] } | null)?.PassengerDetails ?? [])
   const fare = (b.fare_breakdown ?? {}) as { seatFees?: number; passengerBreakup?: RefundInputs['passengerBreakup'] }
@@ -65,6 +85,8 @@ export function refundInputs(d: RefundDetail): RefundInputs {
     provider: cancellation
       ? { cancellationCharge: num(cancellation.cancellationCharge), serviceTaxOnRaf: num(cancellation.serviceTaxOnRaf) }
       : null,
+    // From the fare rules when they give a figure to trust; else 0 to be typed.
+    ...(fromRules?.amount != null ? { penalty: fromRules.amount, penaltySource: 'fare_rules' as const } : {}),
   }
 }
 

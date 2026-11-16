@@ -44,6 +44,8 @@ export interface RefundInputs {
   provider: { cancellationCharge: number; serviceTaxOnRaf: number } | null
   // The fare's cancellation penalty per ticket, when known.
   penalty?: number
+  // Where it came from: the airline's fare rules (penaltyFromRules.ts).
+  penaltySource?: 'fare_rules'
 }
 
 export interface RefundRule {
@@ -71,7 +73,7 @@ export const DEDUCTION_LABELS: Record<DeductionKey, string> = {
   discount_recalled: 'Discount recalled',
 }
 
-export type LineSource = 'booking' | 'airline' | 'rule' | 'computed' | 'edited'
+export type LineSource = 'booking' | 'airline' | 'fare_rules' | 'rule' | 'computed' | 'edited'
 
 export interface Line { key: string; label: string; amount: number; source: LineSource }
 
@@ -156,7 +158,7 @@ export function computeRefund(
   const defaults: Record<DeductionKey, { amount: number; source: LineSource }> = {
     airline_cancellation_charge: { amount: input.provider ? part(input.provider.cancellationCharge) : 0, source: 'airline' },
     airline_charge_tax: { amount: input.provider ? part(input.provider.serviceTaxOnRaf) : 0, source: 'airline' },
-    airline_penalty: { amount: r2(input.penalty ?? 0), source: 'airline' },
+    airline_penalty: { amount: r2(input.penalty ?? 0), source: input.penaltySource ?? 'airline' },
     tmc_cancellation_fee: { amount: tmcFeeDefault, source: 'rule' },
     gst_on_tmc_fee: { amount: 0, source: 'computed' }, // set below, from the fee as it stands
     markup_kept: { amount: rule.refundMarkup ? 0 : markup, source: 'rule' },
