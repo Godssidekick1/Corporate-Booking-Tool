@@ -18,7 +18,7 @@ export function corporateNav(
   { canSelfBook, isApprover, pendingApprovals = 0 }: { canSelfBook: boolean; isApprover: boolean; pendingApprovals?: number }
 ): ShellItem[] {
   const items: ShellItem[] = [{ label: 'Dashboard', href: '/dashboard', icon: 'dashboard' }]
-  if (canSelfBook) items.push({ label: 'Book travel', href: '/book', icon: 'flight' })
+  if (canSelfBook) items.push({ label: 'Book travel', href: '/book/flights', icon: 'flight' })
   items.push({ label: 'My trips', href: '/bookings', icon: 'trips' })
   // Everyone: who reports to whom, Teams-style (/organization).
   items.push({ label: 'Organization', href: '/organization', icon: 'org' })

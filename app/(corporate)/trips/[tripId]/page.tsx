@@ -14,7 +14,7 @@ export default function TripPage() {
   return (
     <div style={{ background: '#F9FAFB', minHeight: '100vh' }}>
       <div className="page-frame narrow" style={{ fontFamily: "'Inter', -apple-system, sans-serif" }}>
-        <TripWorkspace tripId={tripId} home="/bookings" backHref="/book" backLabel="Trips" />
+        <TripWorkspace tripId={tripId} home="/bookings" backHref="/bookings" backLabel="My trips" />
       </div>
     </div>
   )

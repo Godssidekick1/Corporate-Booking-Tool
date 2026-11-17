@@ -261,7 +261,7 @@ export default function DashboardPage() {
               })}
             </p>
           </div>
-          {canSelfBook && <a href="/book" style={s.bookBtn}>+ New booking</a>}
+          {canSelfBook && <a href="/book/flights" style={s.bookBtn}>+ New booking</a>}
         </div>
 
         {/* ── "Your booking needs you" banner — any role, since even an   */}
@@ -403,7 +403,7 @@ export default function DashboardPage() {
                     : 'When your team starts booking, their trips will appear here.'
               }
               cta={canSelfBook ? 'Make your first booking →' : undefined}
-              ctaHref={canSelfBook ? '/book' : undefined}
+              ctaHref={canSelfBook ? '/book/flights' : undefined}
             />
           )}
         </Section>
