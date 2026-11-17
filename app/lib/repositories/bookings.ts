@@ -343,12 +343,13 @@ export async function shareInfo(db: Queryable, bookingId: string): Promise<Share
 }
 
 // The provider keys a passenger-details correction is re-sent with.
+// itinerary: for the passenger checks' travel date (ages on the day of travel).
 export type PassengerEditTarget = Pick<Row<'bookings'>,
-  'id' | 'employee_id' | 'status' | 'provider' | 'provider_order_id' | 'amadeus_key' | 'total_cost'>
+  'id' | 'employee_id' | 'status' | 'provider' | 'provider_order_id' | 'amadeus_key' | 'total_cost' | 'itinerary'>
 
 export async function passengerEditTarget(db: Queryable, bookingId: string): Promise<PassengerEditTarget | null> {
   return maybeOne<PassengerEditTarget>(db, sql`
-    select id, employee_id, status, provider, provider_order_id, amadeus_key, total_cost
+    select id, employee_id, status, provider, provider_order_id, amadeus_key, total_cost, itinerary
     from bookings where id = ${bookingId}`)
 }
 

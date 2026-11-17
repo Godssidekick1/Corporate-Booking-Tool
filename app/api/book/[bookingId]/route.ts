@@ -3,7 +3,7 @@ import { actingTraveller } from '@/app/lib/book/bookingActor'
 import { amadeus, AmadeusError, CustomerInfo } from '@/app/lib/amadeus/client'
 import { providerFailure, isDeskStaff } from '@/app/lib/book/providerErrors'
 import { cancellationView } from '@/app/lib/book/cancellation'
-import { firstPassengerNameProblem } from '@/app/lib/book/passengerNames'
+import { passengerProblems } from '@/app/lib/book/passengerChecks'
 import { db } from '@/app/lib/db'
 import * as employees from '@/app/lib/repositories/employees'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
@@ -301,9 +301,19 @@ export const PATCH = route(async (
   if (!customerInfo?.PassengerDetails?.length) {
     return Response.json({ error: 'customerInfo.PassengerDetails must include at least one passenger' }, { status: 400 })
   }
-  // A correction is held to the same rule as the first entry (app/lib/book/passengerNames.ts).
-  const badName = firstPassengerNameProblem(customerInfo.PassengerDetails)
-  if (badName) return Response.json({ ...badName, code: 'INVALID_PASSENGER_NAME' }, { status: 400 })
+  // A correction is held to the same rules as the first entry
+  // (app/lib/book/passengerChecks.ts), against the booking's own travel date.
+  const firstFlight = (booking.itinerary as { journeys?: { origin?: { dateTime?: string } }[]; origin?: { dateTime?: string } } | null)
+  const problem = passengerProblems(customerInfo.PassengerDetails, customerInfo, {
+    travelDate: (firstFlight?.journeys?.[0] ?? firstFlight)?.origin?.dateTime?.slice(0, 10),
+  })[0]
+  if (problem) {
+    return Response.json({
+      // kind is internal: the answer keeps its shape (passenger, field, error, code).
+      passenger: problem.passenger, field: problem.field, error: problem.error,
+      code: problem.kind === 'name' ? 'INVALID_PASSENGER_NAME' : 'INVALID_PASSENGER',
+    }, { status: 400 })
+  }
 
   // The correction is re-sent against the priced session. Without its key or
   // reference there is nothing to send it to -- the provider could only reject

@@ -21,6 +21,7 @@ import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
 import DeskFareStrip from '@/app/components/book/DeskFareStrip'
 import { previewPolicy } from '@/app/lib/book/priceFare'
 import { passengerNameProblems } from '@/app/lib/book/passengerNames'
+import { passengerProblems } from '@/app/lib/book/passengerChecks'
 
 // ── /book/details/[flightKey] ─────────────────────────────────────────────────
 // Merges what used to be two separate steps (/book/seats then
@@ -125,44 +126,9 @@ const PAX_TYPE_LABEL: Record<PassengerForm['paxType'], string> = {
   ADT: 'Adult', CHD: 'Child', INF: 'Infant',
 }
 
-function ageInYears(dob: string): number {
-  const birth = new Date(dob)
-  const now = new Date()
-  let age = now.getFullYear() - birth.getFullYear()
-  const monthDiff = now.getMonth() - birth.getMonth()
-  if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < birth.getDate())) age--
-  return age
-}
-
-function validateAge(paxType: PassengerForm['paxType'], dob: string): string | null {
-  if (!dob) return null // required-field validation handles empty separately
-  const birth = new Date(dob)
-  if (isNaN(birth.getTime()) || birth > new Date()) {
-    return 'Date of birth cannot be in the future.'
-  }
-  const age = ageInYears(dob)
-  if (paxType === 'ADT' && age < 12) {
-    return 'Adult passengers must be 12 years or older. Add this traveler as a child instead.'
-  }
-  if (paxType === 'CHD' && (age < 2 || age > 11)) {
-    return 'Child passengers must be between 2 and 11 years old.'
-  }
-  if (paxType === 'INF' && age >= 2) {
-    return 'Infant passengers must be under 2 years old.'
-  }
-  return null
-}
-
-function validateEmail(email: string): string | null {
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return 'Enter a valid email address.'
-  return null
-}
-
-function validateMobile(mobile: string): string | null {
-  // Indian mobile numbers: 10 digits, starting 6-9. Adjust if supporting other countries.
-  if (!/^[6-9]\d{9}$/.test(mobile)) return 'Enter a valid 10-digit mobile number.'
-  return null
-}
+// Ages, infants, repeats, passport expiry and contact details are checked by
+// the shared rules (app/lib/book/passengerChecks.ts), the same the server
+// applies: age is measured on the day of travel, not today.
 
 // ── Seat selection helpers (unchanged from /book/seats) ──────────────────────
 
@@ -791,8 +757,6 @@ export default function BookingDetailsPage() {
     const errors: Record<string, string> = {}
 
     passengers.forEach((p, i) => {
-      const ageError = validateAge(p.paxType, p.dateOfBirth)
-      if (ageError) errors[`passenger-${i}-dob`] = ageError
       // A name the airline would refuse fails the booking at the very last
       // step with no reason given, so it is caught here (app/lib/book/passengerNames.ts).
       // The self-booker's own name is locked to their profile: say who can fix it.
@@ -804,11 +768,24 @@ export default function BookingDetailsPage() {
       }
     })
 
-    const emailError = validateEmail(email)
-    if (emailError) errors['contact-email'] = emailError
-
-    const mobileError = validateMobile(mobile)
-    if (mobileError) errors['contact-mobile'] = mobileError
+    // Everything else the airline would refuse: ages on the travel date,
+    // infants against adults, the same person twice, passport expiry,
+    // contact details. Names are handled above (with the profile note).
+    const travelDate = flight ? journeysOf(flight)[0]?.origin?.dateTime?.slice(0, 10) : undefined
+    const shared = passengerProblems(passengers.map(p => ({
+      FirstName: p.firstName, MiddleName: p.middleName, LastName: p.lastName, DateOfBirth: p.dateOfBirth,
+      PaxType: p.paxType, PassportNumber: p.passportNumber, ExpiryDate: p.expiryDate,
+    })), { Email: email, Mobile: mobile }, { travelDate })
+    for (const problem of shared) {
+      if (problem.kind === 'name') continue
+      const key = problem.field === 'email' ? 'contact-email'
+        : problem.field === 'mobile' ? 'contact-mobile'
+        : problem.field === 'travellers' ? 'travellers'
+        : `passenger-${problem.passenger}-${problem.field === 'dateOfBirth' ? 'dob' : problem.field === 'passportExpiry' ? 'expiryDate' : problem.field}`
+      errors[key] ??= problem.error
+    }
+    if (!email.trim()) errors['contact-email'] ??= 'Enter an email address: the airline sends the booking there.'
+    if (!mobile.trim()) errors['contact-mobile'] ??= 'Enter a mobile number: the airline uses it for flight changes.'
 
     // The pickers carry no native `required` (the old text boxes did), so it
     // is checked here, where the other contact fields are.
@@ -825,7 +802,7 @@ export default function BookingDetailsPage() {
     setError('')
     const errors = validateAll()
     if (Object.keys(errors).length > 0) {
-      setError('Please fix the highlighted fields before continuing.')
+      setError(errors['travellers'] ?? 'Please fix the highlighted fields before continuing.')
       // Open the step AND the traveller with the problem. Without both, a
       // collapsed accordion turns "please fix the highlighted fields" into a
       // lie — there would be no highlighted field anywhere on screen.
@@ -1364,7 +1341,8 @@ export default function BookingDetailsPage() {
 
                   <div style={s.field}>
                     <label style={s.label}>Passport expiry</label>
-                    <input type="date" required disabled={locked} value={passenger.expiryDate} onChange={e => updatePassenger(i, 'expiryDate', e.target.value)} style={{ ...s.input, ...(locked ? s.inputLocked : {}) }} />
+                    <input type="date" required disabled={locked} value={passenger.expiryDate} onChange={e => updatePassenger(i, 'expiryDate', e.target.value)} style={{ ...s.input, ...(locked ? s.inputLocked : {}), ...(fieldErrors[`passenger-${i}-expiryDate`] ? s.inputError : {}) }} />
+                    {fieldErrors[`passenger-${i}-expiryDate`] && <p style={s.fieldError}>{fieldErrors[`passenger-${i}-expiryDate`]}</p>}
                   </div>
                 </>
               )}

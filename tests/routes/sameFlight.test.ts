@@ -122,6 +122,32 @@ d('a traveller already on this flight', () => {
     expect(confirmed.status).toBe(200)
   })
 
+  // The same "before the airline" principle for the passengers themselves
+  // (app/lib/book/passengerChecks.ts): each refused with plain words, the
+  // airline never asked.
+  it('passengers the airline would refuse are refused first, saying why', async () => {
+    const send = async (passengers: Record<string, unknown>[], contact: Record<string, unknown> = {}) => {
+      fake.addPassenger.mockClear()
+      const res = await book(`REF-PC-${Math.random().toString(36).slice(2, 8)}`, {
+        confirmDuplicate: true,
+        customerInfo: { Email: 'c@example.test', Mobile: '9999999999', PassengerDetails: passengers, ...contact },
+      })
+      expect(fake.addPassenger).not.toHaveBeenCalled()
+      return res
+    }
+    const adult = { FirstName: 'Ravi', LastName: 'Kumar', PaxType: 'ADT' }
+    // The flight is 9 Dec 2030: born Jan 2026, this "infant" will be 4 that day.
+    const infantTooOld = await send([adult, { FirstName: 'Mira', LastName: 'Kumar', PaxType: 'INF', DateOfBirth: '01/01/2026' }])
+    expect(infantTooOld.status).toBe(400)
+    expect(infantTooOld.json).toMatchObject({ code: 'INVALID_PASSENGER', field: 'dateOfBirth', passenger: 1 })
+    expect((infantTooOld.json as { error: string }).error).toMatch(/under 2 on the day of travel/)
+
+    expect((await send([adult, { ...adult }])).json).toMatchObject({ code: 'INVALID_PASSENGER', error: expect.stringMatching(/same name/) })
+    expect((await send([adult], { Email: 'not-an-email' })).json).toMatchObject({ code: 'INVALID_PASSENGER', field: 'email' })
+    // Names keep their own code, as before.
+    expect((await send([{ ...adult, LastName: '00003' }])).json).toMatchObject({ code: 'INVALID_PASSENGER_NAME' })
+  })
+
   it('a booking the airline turns down with no reason is explained, not "try again"', async () => {
     const res = await book('REF-SF-4', { confirmDuplicate: true })
     expect(res.status).toBe(200)

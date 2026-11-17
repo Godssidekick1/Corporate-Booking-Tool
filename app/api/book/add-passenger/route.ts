@@ -19,7 +19,7 @@ import { stampFop } from '@/app/lib/fop/stampFop'
 import { loadClientGates } from '@/app/lib/clients/clientGates'
 import { bookingRightsFor } from '@/app/lib/rule-engine/bookingRights'
 import { QUOTE_EXPIRED_MESSAGE } from '@/app/lib/book/quoteHold'
-import { firstPassengerNameProblem } from '@/app/lib/book/passengerNames'
+import { passengerProblems } from '@/app/lib/book/passengerChecks'
 import type { FlatFlightResult } from '@/app/lib/book/types'
 import { rulesForQuote } from '@/app/lib/book/quoteFareRules'
 
@@ -135,11 +135,20 @@ export const POST = route(async (req: NextRequest) => {
     return Response.json({ error: 'customerInfo.PassengerDetails must include at least one passenger' }, { status: 400 })
   }
 
-  // Before anything reaches the airline: a name it would refuse fails the
-  // Booking call later with no reason given (app/lib/book/passengerNames.ts).
-  const badName = firstPassengerNameProblem(customerInfo.PassengerDetails)
-  if (badName) {
-    return Response.json({ ...badName, code: 'INVALID_PASSENGER_NAME' }, { status: 400 })
+  // Before anything reaches the airline: names, ages on the travel date,
+  // infants against adults, the same person twice, passport expiry and the
+  // contact details -- each of which the airline refuses later, often with no
+  // reason given (app/lib/book/passengerChecks.ts).
+  const firstFlight = (itinerary as FlatFlightResult | undefined)?.journeys?.[0] ?? (itinerary as FlatFlightResult | undefined)
+  const problem = passengerProblems(customerInfo.PassengerDetails, customerInfo, {
+    travelDate: firstFlight?.origin?.dateTime?.slice(0, 10),
+  })[0]
+  if (problem) {
+    return Response.json({
+      // kind is internal: the answer keeps its shape (passenger, field, error, code).
+      passenger: problem.passenger, field: problem.field, error: problem.error,
+      code: problem.kind === 'name' ? 'INVALID_PASSENGER_NAME' : 'INVALID_PASSENGER',
+    }, { status: 400 })
   }
 
   // ── How this company books (Corporate Settings) ───────────────────────────
