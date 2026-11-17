@@ -57,6 +57,10 @@ export default function SearchEditBar({ query, busy, onSearch }: {
   const wrapRef = useRef<HTMLDivElement>(null)
   const closePax = useCallback(() => setPaxOpen(false), [])
   useDismiss(paxRef, paxOpen, closePax)
+  const [tripOpen, setTripOpen] = useState(false)
+  const tripRef = useRef<HTMLDivElement>(null)
+  const closeTrip = useCallback(() => setTripOpen(false), [])
+  useDismiss(tripRef, tripOpen, closeTrip)
 
   // A search run from elsewhere (arrival, Back) resets the draft to it.
   // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -86,14 +90,36 @@ export default function SearchEditBar({ query, busy, onSearch }: {
   return (
     <div ref={wrapRef} className={css.wrap}>
       <form className={css.bar} onSubmit={submit} aria-label="Change the search">
-        <label className={`${css.field} ${css.trip} ${css.tripCell}`}>
-          <span className={css.label}>Trip</span>
-          <select className={css.select} value={draft.returnDate ? 'return' : 'oneway'}
-            onChange={e => set({ returnDate: e.target.value === 'return' ? plusDays(draft.departDate, 2) : null })}>
-            <option value="oneway">One way</option>
-            <option value="return">Round trip</option>
-          </select>
-        </label>
+        {/* Trip type: a small menu in the bar's own style (a native select's
+            list was cramped and looked like a different app). */}
+        <div ref={tripRef} className={css.tripCell} style={{ position: 'relative', display: 'grid' }}>
+          <button type="button" className={`${css.field} ${css.trip}`} aria-haspopup="menu" aria-expanded={tripOpen}
+            onClick={() => setTripOpen(o => !o)}>
+            <span className={css.label}>Trip</span>
+            <span className={css.value}>{draft.returnDate ? 'Round trip' : 'One way'}</span>
+          </button>
+          {tripOpen && (
+            <div className={`${css.pop} ${css.tripPop}`} role="menu" aria-label="Trip type">
+              {([
+                { key: 'oneway', label: 'One way', sub: 'A single flight' },
+                { key: 'return', label: 'Round trip', sub: 'Out and back, two dates' },
+              ] as const).map(o => {
+                const on = (o.key === 'return') === !!draft.returnDate
+                return (
+                  <button key={o.key} type="button" role="menuitemradio" aria-checked={on}
+                    className={`${css.tripOption} ${on ? css.tripOptionOn : ''}`}
+                    onClick={() => {
+                      if (!on) set({ returnDate: o.key === 'return' ? plusDays(draft.departDate, 2) : null })
+                      setTripOpen(false)
+                    }}>
+                    <span className={css.tripRadio} aria-hidden="true" />
+                    <span><b>{o.label}</b><small>{o.sub}</small></span>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
 
         <div className={css.field}>
           <span className={css.label}>From</span>

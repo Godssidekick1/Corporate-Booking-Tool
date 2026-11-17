@@ -64,6 +64,9 @@ export default function AirportDropdown({
   // Enter pressed before the server answered: pick its first answer instead.
   const pendingEnter = useRef(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  // Select the whole text once the box has opened (see onFocus).
+  const selectOnOpen = useRef(false)
+  const keepSelection = useRef(false)
 
   // A code set from outside (a saved search, a popular route, the swap
   // button) is looked up for its label.
@@ -73,6 +76,12 @@ export default function AirportDropdown({
     lookup(value).then(a => { if (live) setKnown(k => ({ ...k, [value]: a })) })
     return () => { live = false }
   }, [value, known])
+
+  useEffect(() => {
+    if (!isOpen || !selectOnOpen.current) return
+    selectOnOpen.current = false
+    inputRef.current?.select()
+  }, [isOpen, query])
 
   // While open the box shows what is typed; closed, the chosen airport.
   const shown = isOpen ? query : selected ? (display === 'short' ? `${selected.city} (${selected.code})` : airportLabel(selected)) : value
@@ -167,16 +176,24 @@ export default function AirportDropdown({
         onFocus={() => {
           setQuery(selected ? airportLabel(selected) : '')
           setIsOpen(true)
-          // Selecting all text on focus so typing immediately replaces the
-          // current selection's label, rather than requiring a manual clear.
-          // The text is the same label either side of this render.
-          inputRef.current?.select()
+          // All of the text selected on focus, so typing replaces the chosen
+          // airport at once (no backspacing). Done after this render (the
+          // effect below): the box's text changes on opening (a short label
+          // becomes the full one), and changing it drops a selection.
+          selectOnOpen.current = true
+          keepSelection.current = true
         }}
+        // The click that focused the box would put the caret where it landed
+        // and undo the selection; its mouseup is let pass once.
+        onMouseUp={e => { if (keepSelection.current) { e.preventDefault(); keepSelection.current = false } }}
+        onBlur={() => { keepSelection.current = false }}
         // Still focused after Escape: a click opens it again.
         onMouseDown={() => {
           if (!isOpen && document.activeElement === inputRef.current) {
             setQuery(selected ? airportLabel(selected) : '')
             setIsOpen(true)
+            selectOnOpen.current = true
+            keepSelection.current = true
           }
         }}
         onChange={e => {

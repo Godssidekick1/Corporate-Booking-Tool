@@ -25,8 +25,24 @@
 /* A native control laid over the whole field: the field shows the friendly
    value, the control does the work (keyboard, picker, screen readers). */
 .overlay { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border: 0; padding: 0; font: inherit; }
-.select { appearance: none; border: 0; background: transparent; padding: 0; font: inherit; font-size: 15px; font-weight: 600; color: var(--color-ink); cursor: pointer; width: 100%; outline: none; }
-.trip::after { content: ''; position: absolute; right: 12px; bottom: 13px; width: 6px; height: 6px; border-right: 1.6px solid var(--color-secondary); border-bottom: 1.6px solid var(--color-secondary); transform: rotate(45deg); pointer-events: none; }
+.trip::after { content: ''; position: absolute; right: 14px; top: 50%; margin-top: -1px; width: 6px; height: 6px; border-right: 1.6px solid var(--color-secondary); border-bottom: 1.6px solid var(--color-secondary); transform: translateY(-50%) rotate(45deg); pointer-events: none; transition: transform 0.15s; }
+.trip[aria-expanded="true"]::after { transform: translateY(-20%) rotate(-135deg); }
+.trip .value { padding-right: 16px; }
+
+/* The trip type menu */
+.tripPop { left: 0; right: auto; min-width: 240px; padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+.tripOption {
+  display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 12px; border: 0; border-radius: 9px;
+  background: transparent; font: inherit; text-align: left; cursor: pointer; color: var(--color-ink);
+}
+.tripOption:hover { background: var(--color-canvas); }
+.tripOption b { display: block; font-size: 14px; font-weight: 600; }
+.tripOption small { display: block; font-size: 12px; color: var(--color-secondary); margin-top: 1px; }
+.tripRadio { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--color-line-strong); flex-shrink: 0; display: grid; place-items: center; }
+.tripOptionOn { background: var(--color-info-bg); }
+.tripOptionOn:hover { background: var(--color-info-bg); }
+.tripOptionOn .tripRadio { border-color: var(--color-rail); }
+.tripOptionOn .tripRadio::after { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--color-rail); }
 
 .clear {
   position: absolute; top: 50%; right: 8px; transform: translateY(-50%); z-index: 2;
