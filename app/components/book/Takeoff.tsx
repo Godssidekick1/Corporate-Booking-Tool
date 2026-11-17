@@ -5,9 +5,9 @@ import css from './Takeoff.module.css'
 
 // ── Loaders for the booking flow ─────────────────────────────────────────────
 // A plane taking off, wherever the flow waits on the airline:
-//   SearchLoader  the results page while a search runs (7-8 s is normal): the
-//                 scene, what the search is doing step by step, and the shape
-//                 of the results to come.
+//   SearchLoader  the results page while a search runs (7-8 s is normal): a
+//                 loading screen over the page (no scrolling, nothing to click
+//                 behind it) with the scene and the search's steps.
 //   PageLoader    a page or panel loading: the scene, smaller, and a line.
 //   TakeoffScene  the scene alone (the "please wait" overlay uses it).
 // Our own drawing, inline SVG and CSS: nothing fetched. Reduced motion shows a
@@ -64,6 +64,18 @@ export function SearchLoader({ route, dates }: { route: string; dates: string })
     return () => { clearInterval(tick); clearTimeout(late) }
   }, [steps.length])
 
+  // A loading screen: the page behind it does not scroll while it is up, and
+  // the new results start at the top. The scrollbar's space is kept so the
+  // page does not shift sideways as it locks and unlocks.
+  useEffect(() => {
+    const root = document.documentElement
+    const before = { overflow: root.style.overflow, gutter: root.style.scrollbarGutter }
+    window.scrollTo(0, 0)
+    root.style.scrollbarGutter = 'stable'
+    root.style.overflow = 'hidden'
+    return () => { root.style.overflow = before.overflow; root.style.scrollbarGutter = before.gutter }
+  }, [])
+
   return (
     <div className={css.search} role="status" aria-live="polite" aria-busy="true">
       <div className={css.searchCard}>
@@ -80,7 +92,6 @@ export function SearchLoader({ route, dates }: { route: string; dates: string })
         </ol>
         {slow && <p className={css.slow}>The airlines are taking longer than usual. Still searching…</p>}
       </div>
-      {[0, 1, 2].map(i => <div key={i} className={`skeleton ${css.ghost}`} style={{ opacity: 1 - i * 0.25 }} />)}
     </div>
   )
 }

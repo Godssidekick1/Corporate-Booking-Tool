@@ -86,11 +86,12 @@
 .price b { font-size: 20px; color: var(--color-ink); letter-spacing: -0.4px; font-variant-numeric: tabular-nums; }
 .priceSub { font-size: 11px; color: var(--color-secondary); }
 /* Fares are chosen on the fare page: the card continues there. */
-.continueBtn { margin-top: 6px; background: var(--color-rail); border: 1px solid var(--color-rail); border-radius: 9px; padding: 8px 12px; font-size: 12.5px; font-weight: 600; color: #fff; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+.continueBtn { flex-shrink: 0; background: var(--color-rail); border: 1px solid var(--color-rail); border-radius: 9px; padding: 8px 12px; font-size: 12.5px; font-weight: 600; color: #fff; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
 .continueBtn:hover { background: var(--color-rail-hover); border-color: var(--color-rail-hover); }
 .continueBtn:disabled { opacity: 0.65; cursor: progress; }
 .continueBtn svg { width: 12px; height: 12px; }
-.tags { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 18px 14px; }
+.foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 4px 18px 14px; }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
 .pill { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 6px; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; border: 1px solid transparent; }
 .pill i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 
@@ -113,8 +114,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--color-rail)
   .cardMain { grid-template-columns: 1fr; gap: 12px; padding: 14px 14px 10px; }
   .price { flex-direction: row; align-items: center; justify-content: space-between; text-align: left; border-top: 1px solid #f3f4f6; padding-top: 10px; flex-wrap: wrap; }
   .price small { display: none; }
-  .continueBtn { margin-top: 0; }
-  .tags { padding: 0 14px 12px; }
+  .foot { padding: 4px 14px 12px; flex-wrap: wrap; }
+  .continueBtn { flex: 1 1 auto; justify-content: center; }
   .leg { grid-template-columns: 56px minmax(0, 1fr) 56px; }
 }
 @media (prefers-reduced-motion: reduce) {

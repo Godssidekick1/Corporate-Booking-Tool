@@ -214,14 +214,18 @@ export default function FlightResults({ results, hiddenByPolicy = [], onChoose, 
                   <span className={css.priceSub}>
                     {journeys.length > 1 ? 'both flights' : flight.fareOptions.length > 1 ? 'cheapest fare' : ''}
                   </span>
-                  <button type="button" className={css.continueBtn} disabled={navigatingKey !== null}
-                    onClick={() => { const fare = defaultFare(flight); if (fare) onChoose(flight, fare) }}>
-                    {navigating ? 'Opening…' : <>Continue to see {flight.fareOptions.length} {flight.fareOptions.length === 1 ? 'fare' : 'fares'} <Arrow /></>}
-                  </button>
                 </div>
               </div>
 
-              {chip && <div className={css.tags}><Chip verdict={chip.verdict} from={chip.from} /></div>}
+              {/* The card's foot: the policy chip on the left, the way on to
+                  the fares on the right, clear of the times above. */}
+              <div className={css.foot}>
+                <div className={css.tags}>{chip && <Chip verdict={chip.verdict} from={chip.from} />}</div>
+                <button type="button" className={css.continueBtn} disabled={navigatingKey !== null}
+                  onClick={() => { const fare = defaultFare(flight); if (fare) onChoose(flight, fare) }}>
+                  {navigating ? 'Opening…' : <>Continue to see {flight.fareOptions.length} {flight.fareOptions.length === 1 ? 'fare' : 'fares'} <Arrow /></>}
+                </button>
+              </div>
 
             </article>
           )
