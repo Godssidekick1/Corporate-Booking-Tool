@@ -3,7 +3,8 @@
    is in the scene's own units (viewBox 400 x 120), so it scales with the box.
    App tokens from app/globals.css. */
 
-.scene { display: block; width: 100%; max-width: 420px; height: auto; overflow: visible; }
+/* Clipped to its box: the clouds drift in and out of view, never past the edge. */
+.scene { display: block; width: 100%; max-width: 420px; height: auto; overflow: hidden; }
 .compact { max-width: 220px; }
 
 .ground { stroke: var(--color-line-strong); stroke-width: 1.5; }
@@ -51,17 +52,17 @@
   display: grid; place-items: center; padding: 24px 16px; overflow: hidden; overscroll-behavior: contain;
   background: var(--color-canvas);
 }
+/* The whole screen is the loader: no card, the scene wide across the page. */
 .searchCard {
-  width: min(100%, 520px);
-  background: var(--color-surface); border: 1px solid var(--color-line); border-radius: 16px;
-  box-shadow: 0 16px 40px rgba(0, 8, 53, 0.08);
-  padding: 28px 24px 24px; display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center;
+  width: min(100%, 760px);
+  display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center;
 }
-.searchTitle { margin: 0; font-size: 17px; font-weight: 700; color: var(--color-ink); letter-spacing: -0.2px; }
-.searchRoute { margin: -8px 0 0; font-size: 13px; color: var(--color-secondary); }
-.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; min-width: min(100%, 300px); text-align: left; }
-.step { display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--color-muted); transition: color 0.3s; }
-.step i { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--color-line-strong); flex-shrink: 0; display: grid; place-items: center; }
+.searchCard .scene { max-width: 760px; }
+.searchTitle { margin: 8px 0 0; font-size: 24px; font-weight: 700; color: var(--color-ink); letter-spacing: -0.4px; }
+.searchRoute { margin: -8px 0 4px; font-size: 15px; color: var(--color-secondary); }
+.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; min-width: min(100%, 330px); text-align: left; }
+.step { display: flex; align-items: center; gap: 10px; font-size: 14.5px; color: var(--color-muted); transition: color 0.3s; }
+.step i { width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--color-line-strong); flex-shrink: 0; display: grid; place-items: center; }
 .step i svg { width: 10px; height: 10px; opacity: 0; }
 .stepNow { color: var(--color-ink); font-weight: 600; }
 .stepNow i { border-color: var(--color-rail); border-top-color: transparent; animation: spin 0.8s linear infinite; }
