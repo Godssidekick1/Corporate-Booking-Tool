@@ -221,6 +221,7 @@ const STATUS_LABEL: Record<string, string> = {
   ticketed: 'Ticketed', held: 'Confirmed', approved: 'Approved, not booked', pending_approval: 'Awaiting approval',
   cancelled: 'Cancelled', cancel_requested: 'Cancelling', rejected: 'Rejected', failed: 'Failed',
   approval_misconfigured: 'Approval not set up', priced: 'Priced', passenger_added: 'Passenger added',
+  reapproval_needed: 'Sent back: fare rose',
 }
 const BOOKED_BY_LABEL: Record<string, string> = { self: 'Traveller', desk: 'Travel desk', colleague: 'Colleague' }
 

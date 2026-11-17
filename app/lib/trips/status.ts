@@ -32,6 +32,7 @@ const BOOKING: Record<string, StatusMeta> = {
   pending_approval:      { label: 'Pending approval', color: '#92400E', bg: '#FEF3C7' },
   approved:              { label: 'Approved',         color: '#1E40AF', bg: '#DBEAFE' },
   approval_misconfigured:{ label: 'Approval not set up', color: '#991B1B', bg: '#FEE2E2' },
+  reapproval_needed:     { label: 'Fare rose: needs decision', color: '#92400E', bg: '#FEF3C7' },
   rejected:              { label: 'Rejected',         color: '#991B1B', bg: '#FEE2E2' },
   failed:                { label: 'Failed',           color: '#991B1B', bg: '#FEE2E2' },
   cancel_requested:      { label: 'Cancellation requested', color: '#92400E', bg: '#FEF3C7' },

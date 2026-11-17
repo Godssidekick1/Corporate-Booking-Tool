@@ -5,6 +5,7 @@ import { POST as pricePost } from '@/app/api/book/price/route'
 import { POST as addPassenger } from '@/app/api/book/add-passenger/route'
 import { POST as refreshFare } from '@/app/api/approvals/[approvalId]/refresh-fare/route'
 import { POST as reapproval } from '@/app/api/book/[bookingId]/reapproval/route'
+import { GET as actionableGet } from '@/app/api/bookings/actionable/route'
 import { AmadeusError } from '@/app/lib/amadeus/client'
 import { call } from '../harness/call'
 import { actors, type Actors } from '../harness/actors'
@@ -184,6 +185,10 @@ d('refresh fare after a long wait', () => {
 
     // The step is closed: refreshing it again is refused.
     expect((await refresh(step.id)).status).toBe(409)
+    // And it waits on the traveller: it is in their "needs your action" list.
+    const actionable = await call(actionableGet, { as: colleague, url: '/api/bookings/actionable' })
+    expect((actionable.json as { bookings: { id: string; status: string }[] }).bookings)
+      .toContainEqual(expect.objectContaining({ id: returned, status: 'reapproval_needed' }))
   })
 
   it('asking again: a reason is required, then a new round starts at the new price', async () => {
