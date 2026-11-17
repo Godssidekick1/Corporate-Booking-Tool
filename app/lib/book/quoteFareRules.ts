@@ -10,10 +10,10 @@ import type { FareRules } from '@/app/lib/book/fareRules'
 // no rules is null.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Long enough for the airline's fare-rule answer, which takes 7-12 s on the
-// test system (two or three at once are the slow end). The price is already
-// on screen, so waiting costs only the rules panel.
-export const FARE_RULES_WAIT_MS = 25_000
+// Long enough for the airline's fare-rule answer: 7-12 s on the test system on
+// 16 Nov, 22.6 s for a single call on 17 Nov. The price is already on screen,
+// so waiting costs only the rules panel.
+export const FARE_RULES_WAIT_MS = 45_000
 
 export interface QuoteKeys {
   id: string

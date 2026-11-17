@@ -88,8 +88,12 @@ export async function fetchRulesFor(priced: Pick<PricedFare, 'key' | 'referenceN
       signal,
     })
     const data = await res.json()
+    // Said in the console (the dev server's log shows it): a refusal here
+    // would otherwise look exactly like "the airline gave no rules".
+    if (!data.ok) console.warn('[fare rules] not shown:', res.status, data.error ?? '')
     return data.ok ? asFareRules(data.fareRules) : null
-  } catch {
+  } catch (error) {
+    console.warn('[fare rules] request failed:', error instanceof Error ? error.message : error)
     return null
   }
 }

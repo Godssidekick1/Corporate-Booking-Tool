@@ -32,9 +32,18 @@ export const POST = route(async (req: Request) => {
   const quote = await quoteForRules(db, key, referenceNo)
   // Someone else's quote reads as none at all.
   if (!quote || quote.priced_by !== user.id) {
+    console.info('[fare rules] refused:', quote ? 'priced by someone else' : 'no such quote')
     return Response.json({ ok: false, error: 'This fare is no longer priced. Choose it again.', code: 'QUOTE_NOT_FOUND' }, { status: 404 })
   }
 
+  // One line per request (the quote's id, never its keys): whether the rules
+  // were kept already, came from the airline and how long it took, or did not.
+  const t0 = Date.now()
+  const kept = !!quote.fare_rules
   const rules = await rulesForQuote(db, quote)
+  console.info(`[fare rules] quote ${quote.id}: ${kept ? 'already kept'
+    : !quote.search_key ? 'no search key (priced before it was kept)'
+    : rules ? `from the airline in ${Date.now() - t0} ms (${rules.sectors.length} sector${rules.sectors.length === 1 ? '' : 's'})`
+    : `none after ${Date.now() - t0} ms`}`)
   return Response.json({ ok: true, fareRules: travellerFareRules(rules) })
 })
