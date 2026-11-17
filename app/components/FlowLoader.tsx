@@ -1,6 +1,7 @@
 'use client'
 
 import React from 'react'
+import { TakeoffScene } from '@/app/components/book/Takeoff'
 
 // ── Loaders for the booking flow ─────────────────────────────────────────────
 // Three of the steps in this flow call the airline, and those calls are slow in
@@ -84,7 +85,7 @@ export function BusyOverlay({
       style={s.backdrop}
     >
       <div style={s.card}>
-        <Spinner size={30} color="#000835" track="#E5E7EB" />
+        <TakeoffScene compact />
         <p style={s.title}>{title}</p>
         {note && <p style={s.note}>{note}</p>}
         {/* Said plainly, because the reason to stay on the page is real: these

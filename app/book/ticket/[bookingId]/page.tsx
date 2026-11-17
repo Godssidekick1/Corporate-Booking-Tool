@@ -12,6 +12,7 @@ import { CancelBookingButton } from '@/app/components/book/CancelBooking'
 import FareRulesPanel from '@/app/components/book/FareRulesPanel'
 import type { FareRules } from '@/app/lib/book/fareRules'
 import DeskFareStrip from '@/app/components/book/DeskFareStrip'
+import { PageLoader } from '@/app/components/book/Takeoff'
 import type { DeskView } from '@/app/lib/commercials/deskView'
 
 // ── /book/ticket/[bookingId] ──────────────────────────────────────────────────
@@ -376,9 +377,7 @@ export default function TicketPage() {
     return (
       <div style={s.page}>
         <div style={s.root}>
-          <div style={s.loadingCard}>
-            <div style={s.spinner} />
-          </div>
+          <PageLoader label="Loading your ticket" />
         </div>
       </div>
     )
@@ -428,13 +427,8 @@ export default function TicketPage() {
         {/* A full-page state rather than an overlay: there is nothing behind it
             worth seeing yet, because the ticket is what this page is. */}
         {ticketing && (
-          <div style={s.loadingCard}>
-            <div style={s.spinner} />
-            <p style={s.loadingText}>Issuing your ticket…</p>
-            <p style={s.loadingNote}>
-              The airline is confirming your ticket numbers. Please don&apos;t close or refresh this page.
-            </p>
-          </div>
+          <PageLoader label="Issuing your ticket…"
+            note="The airline is confirming your ticket numbers. Please don't close or refresh this page." />
         )}
 
         {/* The travel desk only: the airline's fare, markup, discount, fee and margin. */}

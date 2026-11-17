@@ -7,6 +7,7 @@ import SearchEditBar from '@/app/components/book/search/SearchEditBar'
 import { runSearch, type Found } from '@/app/components/book/search/runSearch'
 import FlightResults from '@/app/components/book/FlightResults'
 import RoundTripPicker from '@/app/components/book/RoundTripPicker'
+import { SearchLoader } from '@/app/components/book/Takeoff'
 import { flowStorage, type RoundTripPair } from '@/app/lib/book/flowStorage'
 import { displayDate, parseQuery, resultsHrefFor, type SearchQuery } from '@/app/lib/book/searchQuery'
 import type { FareOption, FlatFlightResult } from '@/app/lib/book/types'
@@ -103,6 +104,7 @@ export default function FlightResultsPage() {
 
   if (!query) return <div style={s.page} />
 
+
   const split = found?.split ?? null
   const route = query.returnDate ? `${query.origin} ⇄ ${query.destination}` : `${query.origin} → ${query.destination}`
   const dates = query.returnDate ? `${displayDate(query.departDate)} – ${displayDate(query.returnDate)}` : displayDate(query.departDate)
@@ -137,10 +139,9 @@ export default function FlightResultsPage() {
           </div>
         )}
 
+        {/* Keyed by the search: a new one starts its steps again. */}
         {status === 'searching' && (
-          <div style={s.loading} aria-busy="true" aria-label="Searching flights">
-            {[0, 1, 2, 3].map(i => <div key={i} style={s.skeleton} />)}
-          </div>
+          <SearchLoader key={resultsHrefFor(query)} route={route} dates={dates} />
         )}
 
         {status === 'done' && found && split && (
@@ -190,8 +191,6 @@ const s: Record<string, React.CSSProperties> = {
   },
   retry: { marginLeft: 'auto', border: '1px solid var(--color-danger-line)', background: 'var(--color-surface)', color: 'var(--color-danger-fg)', borderRadius: '8px', padding: '5px 12px', fontSize: '12.5px', fontWeight: 600, cursor: 'pointer' },
 
-  loading: { display: 'flex', flexDirection: 'column', gap: '12px' },
-  skeleton: { height: '128px', borderRadius: '14px', background: 'linear-gradient(90deg, #F3F4F6 25%, #E5E7EB 37%, #F3F4F6 63%)', backgroundSize: '400% 100%' },
 
   empty: { textAlign: 'center', padding: '56px 20px', background: 'var(--color-surface)', border: '1px solid var(--color-line)', borderRadius: '14px' },
   emptyTitle: { fontSize: '15px', fontWeight: 600, color: 'var(--color-body)', margin: '0 0 6px' },

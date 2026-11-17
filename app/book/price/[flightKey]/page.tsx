@@ -7,6 +7,7 @@ import Link from 'next/link'
 import { flowStorage } from '@/app/lib/book/flowStorage'
 import { useResultsHref } from '@/app/components/book/search/useResultsHref'
 import { ButtonBusy } from '@/app/components/FlowLoader'
+import { PageLoader } from '@/app/components/book/Takeoff'
 import { breachLine } from '@/app/lib/policy/breachText'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
 import DeskFareStrip from '@/app/components/book/DeskFareStrip'
@@ -329,7 +330,7 @@ export default function SelectFarePage() {
     return (
       <div style={s.page}>
         <div style={s.root}>
-          <div style={s.loadingCard}><div style={s.spinner} /></div>
+          <PageLoader label="Opening your flight" />
         </div>
       </div>
     )
@@ -703,7 +704,6 @@ const s: Record<string, React.CSSProperties> = {
   heading: { fontSize: '24px', fontWeight: 700, color: '#0A0A14', margin: '0 0 6px', letterSpacing: '-0.4px' },
   sub: { fontSize: '14px', color: '#6B7280', margin: 0, lineHeight: 1.5 },
 
-  loadingCard: { display: 'flex', justifyContent: 'center', padding: '80px 0' },
   spinner: { width: '22px', height: '22px', border: '2.5px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%', animation: 'spin 0.7s linear infinite' },
   spinnerSmall: { width: '16px', height: '16px', border: '2px solid #E5E7EB', borderTopColor: '#000835', borderRadius: '50%', animation: 'spin 0.7s linear infinite' },
 

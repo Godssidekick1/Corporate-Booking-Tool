@@ -14,6 +14,7 @@ import { CountrySelect, RegionSelect, CitySelect, findCountry, useCountries } fr
 import { genderForTitle } from '@/app/lib/places/profileFormat'
 import { mealCodesFor, mealLabel, fromProfilePreference, NO_MEAL_PREFERENCE } from '@/app/lib/book/mealCodes'
 import { ButtonBusy, BusyOverlay } from '@/app/components/FlowLoader'
+import { PageLoader } from '@/app/components/book/Takeoff'
 import { classifyTrip } from '@/app/lib/rule-engine/classifyTrip'
 import { breachLine } from '@/app/lib/policy/breachText'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
@@ -1103,9 +1104,7 @@ export default function BookingDetailsPage() {
     return (
       <div style={s.page}>
         <div style={s.root}>
-          <div style={s.loadingCard}>
-            <div style={s.spinner} />
-          </div>
+          <PageLoader label="Loading passenger details" />
         </div>
       </div>
     )
@@ -1585,10 +1584,7 @@ export default function BookingDetailsPage() {
 
             <div style={s.planeCard}>
               {loadingLeg && (
-                <div style={s.loadingCard}>
-                  <div style={s.spinner} />
-                  <p style={s.loadingText}>Loading seat map…</p>
-                </div>
+                <PageLoader label="Loading the seat map" note="Asking the airline which seats are free." />
               )}
 
               {!loadingLeg && activeSeatMap && activeSeatMap.available && (

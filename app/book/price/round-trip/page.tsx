@@ -7,6 +7,7 @@ import AirlineMark from '@/app/components/AirlineMark'
 import FareRow, { fareName } from '@/app/components/book/FareRow'
 import FareRulesPanel from '@/app/components/book/FareRulesPanel'
 import lay from '../FarePage.module.css'
+import { PageLoader } from '@/app/components/book/Takeoff'
 import type { FareRules } from '@/app/lib/book/fareRules'
 import { flowStorage, type PricedFare, type RoundTripPair } from '@/app/lib/book/flowStorage'
 import { useResultsHref } from '@/app/components/book/search/useResultsHref'
@@ -80,7 +81,7 @@ export default function RoundTripFarePage() {
     price(dir, sides[dir].flight, pricingKey)
   }
 
-  if (!sides) return <div style={s.page}><div className={lay.root}><p style={s.sub}>Loading your flights…</p></div></div>
+  if (!sides) return <div style={s.page}><div className={lay.root}><PageLoader label="Opening your flights" /></div></div>
 
   const ready = sides.onward.priced && sides.return.priced
   const total = (sides.onward.priced?.sellTotal ?? 0) + (sides.return.priced?.sellTotal ?? 0)

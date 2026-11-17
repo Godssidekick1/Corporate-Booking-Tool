@@ -9,6 +9,7 @@ import { round2 } from '@/app/lib/commercials/fareComponents'
 import { mealLabel } from '@/app/lib/book/mealCodes'
 import { JUST_BOOKED_KEY } from '@/app/lib/book/flowStorage'
 import { ButtonBusy, BusyOverlay } from '@/app/components/FlowLoader'
+import { PageLoader } from '@/app/components/book/Takeoff'
 import { breachLine } from '@/app/lib/policy/breachText'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
 import DeskFareStrip from '@/app/components/book/DeskFareStrip'
@@ -340,9 +341,7 @@ export default function ConfirmBookingPage() {
     return (
       <div style={s.page}>
         <div style={s.root}>
-          <div style={s.loadingCard}>
-            <div style={s.spinner} />
-          </div>
+          <PageLoader label="Loading your booking" />
         </div>
       </div>
     )

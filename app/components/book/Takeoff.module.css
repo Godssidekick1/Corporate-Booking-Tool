@@ -1,0 +1,68 @@
+/* The booking flow's loaders (Takeoff.tsx): a plane rolls down a runway, lifts
+   off and climbs away, on a loop. Drawn in SVG; every length in the keyframes
+   is in the scene's own units (viewBox 400 x 120), so it scales with the box.
+   App tokens from app/globals.css. */
+
+.scene { display: block; width: 100%; max-width: 420px; height: auto; overflow: visible; }
+.compact { max-width: 220px; }
+
+.ground { stroke: var(--color-line-strong); stroke-width: 1.5; }
+/* The centre-line dashes stream past: the sense of speed while the plane rolls. */
+.dash { stroke: var(--color-line-strong); stroke-width: 2; stroke-dasharray: 18 14; animation: runway 0.55s linear infinite; }
+@keyframes runway { to { stroke-dashoffset: 64; } }
+
+.cloud { fill: var(--color-info-bg); animation: drift 9s linear infinite; }
+.cloudSlow { animation-duration: 14s; animation-delay: -6s; }
+@keyframes drift { from { transform: translateX(60px); } to { transform: translateX(-420px); } }
+
+.plane { fill: var(--color-rail); transform-box: fill-box; transform-origin: 70% 60%; animation: takeoff 3.6s cubic-bezier(0.45, 0, 0.6, 1) infinite; }
+.window { fill: #fff; }
+@keyframes takeoff {
+  0%   { transform: translate(-80px, 0) rotate(0deg); opacity: 0; }
+  8%   { opacity: 1; }
+  44%  { transform: translate(150px, 0) rotate(0deg); }
+  54%  { transform: translate(200px, -5px) rotate(-9deg); }
+  84%  { transform: translate(320px, -58px) rotate(-14deg); opacity: 1; }
+  100% { transform: translate(370px, -78px) rotate(-14deg); opacity: 0; }
+}
+.shadow { fill: rgba(0, 8, 53, 0.12); transform-box: fill-box; transform-origin: center; animation: shadow 3.6s cubic-bezier(0.45, 0, 0.6, 1) infinite; }
+@keyframes shadow {
+  0%   { transform: translateX(-80px) scaleX(1); opacity: 0; }
+  8%   { opacity: 1; }
+  44%  { transform: translateX(150px) scaleX(1); opacity: 1; }
+  70%  { transform: translateX(260px) scaleX(0.4); opacity: 0; }
+  100% { transform: translateX(260px) scaleX(0.4); opacity: 0; }
+}
+
+/* Reduced motion: a plane caught just after lift-off, nothing moving. (The
+   global rule only shortens animations, which would leave it flown away.) */
+@media (prefers-reduced-motion: reduce) {
+  .plane { animation: none; transform: translate(190px, -14px) rotate(-10deg); }
+  .shadow, .dash, .cloud { animation: none; }
+  .shadow { opacity: 0; }
+}
+
+/* ── The search loader (results page) ── */
+.search { display: flex; flex-direction: column; gap: 14px; }
+.searchCard {
+  background: var(--color-surface); border: 1px solid var(--color-line); border-radius: 16px;
+  padding: 26px 24px 22px; display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center;
+}
+.searchTitle { margin: 0; font-size: 17px; font-weight: 700; color: var(--color-ink); letter-spacing: -0.2px; }
+.searchRoute { margin: -8px 0 0; font-size: 13px; color: var(--color-secondary); }
+.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; min-width: min(100%, 300px); text-align: left; }
+.step { display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--color-muted); transition: color 0.3s; }
+.step i { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--color-line-strong); flex-shrink: 0; display: grid; place-items: center; }
+.step i svg { width: 10px; height: 10px; opacity: 0; }
+.stepNow { color: var(--color-ink); font-weight: 600; }
+.stepNow i { border-color: var(--color-rail); border-top-color: transparent; animation: spin 0.8s linear infinite; }
+.stepDone { color: var(--color-secondary); }
+.stepDone i { background: var(--color-success-fg); border-color: var(--color-success-fg); color: #fff; }
+.stepDone i svg { opacity: 1; }
+.slow { margin: 0; font-size: 12px; color: var(--color-muted); }
+.ghost { height: 112px; border-radius: 14px; }
+
+/* ── A page or panel loading ── */
+.page { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 48px 20px; text-align: center; }
+.pageLabel { margin: 0; font-size: 14px; font-weight: 600; color: var(--color-ink); }
+.pageNote { margin: 0; font-size: 12.5px; color: var(--color-secondary); line-height: 1.55; max-width: 360px; }
