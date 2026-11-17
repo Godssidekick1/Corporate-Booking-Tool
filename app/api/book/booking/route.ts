@@ -1,6 +1,6 @@
 import { requireUser } from '@/app/lib/auth/session'
 import { amadeus, AmadeusError, CustomerInfo } from '@/app/lib/amadeus/client'
-import { providerFailure } from '@/app/lib/book/providerErrors'
+import { providerFailure, failureKind, alreadyOnFlightMessage } from '@/app/lib/book/providerErrors'
 import * as employees from '@/app/lib/repositories/employees'
 import { actingTraveller } from '@/app/lib/book/bookingActor'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
@@ -352,7 +352,20 @@ export const POST = route(async (req: NextRequest) => {
       } catch (failError) {
         console.error('Failed to mark booking as failed after an airline error', failError, { bookingId })
       }
-      return providerFailure(err, 'booking', user)
+      // The airline often gives no reason. One we can see: the traveller is
+      // already booked on this flight, and airlines refuse a further booking of
+      // the same person on one flight. Said plainly (trying again would fail
+      // the same way); never fatal to the answer.
+      let explained: { message: string; code: string } | undefined
+      if (!err.code && failureKind(err) !== 'fare_gone') {
+        try {
+          const same = await bookingsRepo.sameFlightAsBooking(db, bookingId)
+          if (same) explained = { code: 'ALREADY_ON_FLIGHT', message: alreadyOnFlightMessage(same) }
+        } catch (lookupError) {
+          console.error('[book/booking] could not check for bookings on the same flight', lookupError, { bookingId })
+        }
+      }
+      return providerFailure(err, 'booking', user, {}, explained)
     }
 
     console.error('Booking error:', err)

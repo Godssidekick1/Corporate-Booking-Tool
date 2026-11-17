@@ -7,7 +7,7 @@ import * as trips from '@/app/lib/repositories/trips'
 import * as bookings from '@/app/lib/repositories/bookings'
 import { route } from '@/app/lib/http/handler'
 import { amadeus, AmadeusError, CustomerInfo } from '@/app/lib/amadeus/client'
-import { providerFailure } from '@/app/lib/book/providerErrors'
+import { providerFailure, alreadyOnFlightQuestion } from '@/app/lib/book/providerErrors'
 import { NextRequest } from 'next/server'
 import { checkBookingAgainstPolicy, type RuleEngineResult } from '@/app/lib/rule-engine/checkBookingAgainstPolicy'
 import { buildPolicyInputsFromFlight } from '@/app/lib/rule-engine/buildPolicyInputs'
@@ -275,6 +275,25 @@ export const POST = route(async (req: NextRequest) => {
         ? { error: `This traveller already has a booking from ${what}. Your company does not allow a second one.`, code: 'DUPLICATE_BOOKING', existingBookingId: existing.id }
         : { error: `This traveller already has a booking from ${what}. Book this one as well?`, code: 'DUPLICATE_WARNING', existingBookingId: existing.id },
       { status: 409 })
+    }
+  }
+
+  // ── The traveller already on this flight ────────────────────────────────────
+  // Whatever the company's own duplicate setting (that one is about the same
+  // route and day): the airline itself usually refuses a further booking of a
+  // person already on a flight, at confirmation, with no reason given. Asked
+  // once, before the airline sees the passenger (the same "Book anyway" as the
+  // duplicate warning); confirming goes ahead.
+  if (day && body.confirmDuplicate !== true) {
+    const flights = ((itinerary as FlatFlightResult | undefined)?.legs ?? [])
+      .map(l => `${l.airlineCode ?? ''}${l.flightNumber ?? ''}`.toUpperCase())
+      .filter(f => f.length > 2)
+    const held = await bookings.sameFlightBookings(db, employee.id, flights, day)
+    if (held.length) {
+      return Response.json({
+        error: alreadyOnFlightQuestion({ flight: flights[0], day, others: held }),
+        code: 'DUPLICATE_WARNING', existingBookingId: held[0].id,
+      }, { status: 409 })
     }
   }
 

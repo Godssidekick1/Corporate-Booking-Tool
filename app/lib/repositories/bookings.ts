@@ -476,6 +476,46 @@ export async function sameTripBooking(
     limit 1`)
 }
 
+// The traveller's live bookings on the SAME FLIGHT: any of the flight numbers
+// given ("AI2654"), departing that day. Airlines refuse, at booking, a further
+// booking of a person already on a flight (17 Nov 2026: a third booking of one
+// passenger on AI 2654 came back "Failed" with no reason). So add-passenger
+// asks before the airline sees it, whatever the company's own duplicate check,
+// and a booking the airline turns down without a reason is explained by it.
+// exceptId: the booking being made, when it already has a row.
+export async function sameFlightBookings(
+  db: Queryable, employeeId: string, flights: readonly string[], day: string, exceptId: string | null = null,
+): Promise<{ id: string; pnr: string | null; status: string }[]> {
+  if (flights.length === 0) return []
+  return many(db, sql`
+    select id, pnr, status from bookings
+    where employee_id = ${employeeId}
+      and status not in ('cancelled', 'failed', 'rejected')
+      and (${exceptId}::uuid is null or id <> ${exceptId}::uuid)
+      and left(itinerary->'origin'->>'dateTime', 10) = ${day}
+      and exists (
+        select 1 from jsonb_array_elements(coalesce(itinerary->'legs', '[]'::jsonb)) leg
+        where upper(coalesce(leg->>'airlineCode', '') || coalesce(leg->>'flightNumber', '')) = any(${[...flights]})
+      )
+    order by created_at, id`)
+}
+
+// The same, for a booking already made: the traveller's OTHER live bookings on
+// any of its flights that day (the booking route explains an airline refusal
+// with it). Also returns the flight and day, for the message.
+export async function sameFlightAsBooking(
+  db: Queryable, bookingId: string,
+): Promise<{ flight: string; day: string; others: { id: string; pnr: string | null }[] } | null> {
+  const row = await maybeOne<{ employee_id: string; day: string | null; flights: string[] | null }>(db, sql`
+    select employee_id, left(itinerary->'origin'->>'dateTime', 10) as day,
+           array(select upper(coalesce(leg->>'airlineCode', '') || coalesce(leg->>'flightNumber', ''))
+                 from jsonb_array_elements(coalesce(itinerary->'legs', '[]'::jsonb)) leg) as flights
+    from bookings where id = ${bookingId}`)
+  if (!row?.day || !row.flights?.length) return null
+  const others = await sameFlightBookings(db, row.employee_id, row.flights, row.day, bookingId)
+  return others.length ? { flight: row.flights[0], day: row.day, others: others.map(o => ({ id: o.id, pnr: o.pnr })) } : null
+}
+
 // ═══ The booking row ════════════════════════════════════════════════════════
 
 // jsonb columns take domain objects as they are; JSON-encoded on the way in.

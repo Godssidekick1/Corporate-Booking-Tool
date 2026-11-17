@@ -137,6 +137,9 @@ d('book on behalf', () => {
         currency: 'INR', isRefundable: true, fareType: 'Retail', passengerBreakup: [], searchKey: 'SK',
         itinerary: ITINERARY, travellerId,
         customerInfo: { Email: 'c@example.test', Mobile: '9999999999', PassengerDetails: [{ FirstName: 'C', LastName: 'Olleague' }] },
+        // Every booking here is on the one sample flight: the "already on this
+        // flight" question (tests/routes/sameFlight.test.ts) is answered yes.
+        confirmDuplicate: true,
         ...extra,
       },
     })
