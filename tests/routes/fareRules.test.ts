@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
 import { POST as pricePost } from '@/app/api/book/price/route'
 import { POST as addPassengerPost } from '@/app/api/book/add-passenger/route'
+import { POST as fareRulesPost } from '@/app/api/book/fare-rules/route'
 import { GET as bookingGet } from '@/app/api/book/[bookingId]/route'
 import { GET as tmcBookingGet } from '@/app/api/tmc/bookings/[id]/route'
 import { GET as refundGet } from '@/app/api/tmc/queues/refunds/[id]/route'
@@ -12,10 +13,13 @@ import { sql, one, exec } from '@/app/lib/db/sql'
 import { FARE_RULE_AI_ECOVALU } from '../fixtures/amadeus/fareRule'
 import type { FareRules } from '@/app/lib/book/fareRules'
 
-// ── The airline's fare rules, fetched at pricing and kept with the booking ───
-// The price route asks for them once pricing has answered, holds them on the
-// quote and shows them (never the TMC's deal code); add-passenger copies them
-// onto the booking. A provider that gives none never stops a fare being priced.
+// ── The airline's fare rules: their own request, kept with the booking ───────
+// The price route no longer waits for them (7-12 s on the test system); it
+// keeps the search key on the quote. /api/book/fare-rules then asks the
+// airline with the quote's own keys, keeps the rules on the quote and shows
+// them (never the TMC's deal code); add-passenger copies them onto the booking,
+// asking once more if the quote has none. A provider that gives none never
+// stops a fare being priced or booked.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const fake = { pricing: vi.fn(), addPassenger: vi.fn(), fareRule: vi.fn() }
@@ -85,6 +89,9 @@ d('fare rules', () => {
   }
   const quoteRules = async (ref: string) => (await one<{ fare_rules: FareRules | null }>(db, sql`
     select fare_rules from price_quotes where amadeus_key = ${`KEY-${ref}`} and reference_no = ${ref}`)).fare_rules
+  const rulesFor = (ref: string, as: { id: string } = a.corpAdmin) => call(fareRulesPost, {
+    as, method: 'POST', url: '/api/book/fare-rules', body: { key: `KEY-${ref}`, referenceNo: ref },
+  })
 
   beforeAll(async () => {
     await resetDatabase()
@@ -92,20 +99,44 @@ d('fare rules', () => {
   })
   beforeEach(() => { for (const f of Object.values(fake)) f.mockReset() })
 
-  it('pricing asks for the rules, holds them on the quote, and shows them without the deal code', async () => {
+  it('pricing does not wait for the rules; their own request asks with the quote’s keys and keeps them', async () => {
     fake.fareRule.mockResolvedValue(WITH_DEAL)
     const res = await price('REF-FR-1')
     expect(res.status).toBe(200)
-    expect(fake.fareRule).toHaveBeenCalledWith({ key: 'SEARCH-KEY', pricingKey: 'PK', resultIndex: '1', provider: '1A' })
+    expect(fake.fareRule).not.toHaveBeenCalled()
+    expect(res.json).toMatchObject({ ok: true, fareRules: null })
 
-    const shown = (res.json as { fareRules: FareRules }).fareRules
+    const rules = await rulesFor('REF-FR-1')
+    expect(rules.status).toBe(200)
+    // The search's key, kept on the quote at pricing: never the browser's.
+    expect(fake.fareRule).toHaveBeenCalledWith({ key: 'SEARCH-KEY', pricingKey: 'PK', resultIndex: '1', provider: '1A' })
+    const shown = (rules.json as { fareRules: FareRules }).fareRules
     expect(shown.sectors[0]).toMatchObject({ origin: 'DEL', destination: 'BOM', carrier: 'AI', dealCode: null })
     expect(shown.sectors[0].pax[0].cancel.find(w => w.kind === 'before_departure')).toMatchObject({ amount: 5000, currency: 'INR' })
-    expect(JSON.stringify(res.json)).not.toContain('CORPDEAL7')
+    expect(JSON.stringify(rules.json)).not.toContain('CORPDEAL7')
 
     // The quote keeps the whole answer, deal code included, for the TMC.
-    const held = await quoteRules('REF-FR-1')
-    expect(held?.sectors[0].dealCode).toBe('CORPDEAL7')
+    expect((await quoteRules('REF-FR-1'))?.sectors[0].dealCode).toBe('CORPDEAL7')
+
+    // Asked again: the kept rules, without the airline.
+    fake.fareRule.mockClear()
+    expect(((await rulesFor('REF-FR-1')).json as { fareRules: FareRules }).fareRules.sectors).toHaveLength(1)
+    expect(fake.fareRule).not.toHaveBeenCalled()
+
+    // Pricing the same fare again keeps the rules already fetched.
+    expect((await price('REF-FR-1')).status).toBe(200)
+    expect((await quoteRules('REF-FR-1'))?.sectors[0].dealCode).toBe('CORPDEAL7')
+  })
+
+  it('only whoever priced the fare may ask; a missing quote is refused', async () => {
+    expect((await price('REF-FR-4')).status).toBe(200)
+    const stranger = await one<{ id: string }>(db, sql`
+      select id from employees where client_id = (select client_id from employees where id = ${a.corpAdmin.id})
+        and id <> ${a.corpAdmin.id} and status = 'active' order by id limit 1`)
+    expect((await rulesFor('REF-FR-4', stranger)).status).toBe(404)
+    expect((await rulesFor('REF-NOPE')).status).toBe(404)
+    expect((await call(fareRulesPost, { as: a.corpAdmin, method: 'POST', url: '/api/book/fare-rules', body: {} })).status).toBe(400)
+    expect(fake.fareRule).not.toHaveBeenCalled()
   })
 
   it('no rules from the airline still prices the fare', async () => {
@@ -113,12 +144,15 @@ d('fare rules', () => {
     const res = await price('REF-FR-2')
     expect(res.status).toBe(200)
     expect(res.json).toMatchObject({ ok: true, fareRules: null })
+    expect(((await rulesFor('REF-FR-2')).json)).toEqual({ ok: true, fareRules: null })
     expect(await quoteRules('REF-FR-2')).toBeNull()
   })
 
-  it('add-passenger copies the quote’s rules onto the booking', async () => {
-    fake.fareRule.mockResolvedValue(WITH_DEAL)
+  it('add-passenger asks once more when the quote has no rules, and copies them onto the booking', async () => {
+    // The fare page never got them: the quote has none.
     expect((await price('REF-FR-3')).status).toBe(200)
+    expect(await quoteRules('REF-FR-3')).toBeNull()
+    fake.fareRule.mockResolvedValue(WITH_DEAL)
     fake.addPassenger.mockResolvedValueOnce({ ReferenceNo: 'REF-FR-3' })
     const res = await call(addPassengerPost, {
       as: a.corpAdmin, method: 'POST', url: '/api/book/add-passenger',

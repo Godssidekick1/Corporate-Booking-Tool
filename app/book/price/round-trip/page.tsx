@@ -11,7 +11,7 @@ import { PageLoader } from '@/app/components/book/Takeoff'
 import type { FareRules } from '@/app/lib/book/fareRules'
 import { flowStorage, type PricedFare, type RoundTripPair } from '@/app/lib/book/flowStorage'
 import { useResultsHref } from '@/app/components/book/search/useResultsHref'
-import { priceFare, previewPolicy, type PolicyPreview, type PricedLine } from '@/app/lib/book/priceFare'
+import { fetchRulesFor, priceFare, previewPolicy, type PolicyPreview, type PricedLine } from '@/app/lib/book/priceFare'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
 import { journeysOf, type FlatFlightResult } from '@/app/lib/book/types'
 
@@ -33,6 +33,8 @@ interface Side {
   lines: PricedLine[]
   verdict: PolicyPreview | null
   fareRules: FareRules | null
+  // The rules are asked after the price (fetchRulesFor).
+  rulesLoading?: boolean
 }
 
 const inr = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`
@@ -55,7 +57,12 @@ export default function RoundTripFarePage() {
     const fare = flight.fareOptions.find(o => o.pricingKey === pricingKey) ?? flight.fareOptions[0]
     const outcome = await priceFare(flight, fare)
     if (!outcome.ok) { patch(dir, { loading: false, error: outcome.error }); return }
-    patch(dir, { loading: false, priced: outcome.priced, lines: outcome.lines, fareRules: outcome.fareRules })
+    patch(dir, { loading: false, priced: outcome.priced, lines: outcome.lines, fareRules: null, rulesLoading: true })
+    // The fare rules on their own request (they take 7-12 s); kept only if
+    // this side still has the same fare when they arrive.
+    const ref = outcome.priced.referenceNo
+    fetchRulesFor(outcome.priced).then(found => setSides(prev => (
+      prev && prev[dir].priced?.referenceNo === ref ? { ...prev, [dir]: { ...prev[dir], fareRules: found, rulesLoading: false } } : prev)))
     patch(dir, { verdict: await previewPolicy(flight, outcome.priced) })
   }, [patch])
 
@@ -149,7 +156,7 @@ export default function RoundTripFarePage() {
               )}
               {/* This flight's own rules: each booking of the pair is cancelled on its own. */}
               {(side.loading || side.priced) && (
-                <FareRulesPanel rules={side.fareRules} loading={side.loading} compact embedded />
+                <FareRulesPanel rules={side.fareRules} loading={side.loading || !!side.rulesLoading} compact embedded />
               )}
             </section>
           )

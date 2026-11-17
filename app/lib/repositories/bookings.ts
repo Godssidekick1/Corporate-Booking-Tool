@@ -366,34 +366,66 @@ export async function saveTravellerSnapshot(db: Queryable, bookingId: string, sn
 export type NewQuote = Pick<Row<'price_quotes'>,
   | 'client_id' | 'employee_id' | 'priced_by' | 'amadeus_key' | 'reference_no' | 'pricing_key' | 'provider'
   | 'result_index' | 'sell_total' | 'expires_at'
-> & { airline_components: unknown; commercials: unknown; fare_conditions: FareConditions | null; fare_rules: FareRules | null }
+> & {
+  airline_components: unknown; commercials: unknown; fare_conditions: FareConditions | null; fare_rules: FareRules | null
+  // The search it was priced from: the airline's fare-rule call needs it.
+  search_key: string | null
+}
 
 // Re-pricing the same itinerary is normal; the newest quote is the one that
 // counts, so the pair (amadeus_key, reference_no) is upserted. employee_id is
 // the traveller (their client prices it); priced_by is whoever asked, and only
 // they may book it.
+//
+// Fare rules arrive separately (/api/book/fare-rules), so pricing the same
+// itinerary again keeps the rules already fetched rather than wiping them.
 export async function saveQuote(db: Queryable, q: NewQuote): Promise<void> {
   await exec(db, sql`
     insert into price_quotes (client_id, employee_id, priced_by, amadeus_key, reference_no, pricing_key, provider,
-                              result_index, airline_components, commercials, sell_total, expires_at, fare_conditions, fare_rules)
+                              result_index, airline_components, commercials, sell_total, expires_at, fare_conditions, fare_rules,
+                              search_key)
     values (${q.client_id}, ${q.employee_id}, ${q.priced_by}, ${q.amadeus_key}, ${q.reference_no}, ${q.pricing_key},
             ${q.provider}, ${q.result_index}, ${json(q.airline_components)}, ${json(q.commercials)},
             ${q.sell_total}, ${q.expires_at}, ${q.fare_conditions ? json(q.fare_conditions) : null},
-            ${q.fare_rules ? json(q.fare_rules) : null})
+            ${q.fare_rules ? json(q.fare_rules) : null}, ${q.search_key})
     on conflict (amadeus_key, reference_no) do update set
       client_id = excluded.client_id, employee_id = excluded.employee_id, priced_by = excluded.priced_by,
       pricing_key = excluded.pricing_key, provider = excluded.provider,
       result_index = excluded.result_index, airline_components = excluded.airline_components,
       commercials = excluded.commercials, sell_total = excluded.sell_total,
-      expires_at = excluded.expires_at, fare_conditions = excluded.fare_conditions, fare_rules = excluded.fare_rules`)
+      expires_at = excluded.expires_at, fare_conditions = excluded.fare_conditions,
+      fare_rules = coalesce(excluded.fare_rules, price_quotes.fare_rules),
+      search_key = coalesce(excluded.search_key, price_quotes.search_key)`)
 }
 
-export type HeldQuote = Pick<Row<'price_quotes'>, 'airline_components' | 'commercials' | 'sell_total' | 'employee_id' | 'priced_by' | 'expires_at'>
-  & { fare_conditions: FareConditions | null; fare_rules: FareRules | null }
+// What the fare-rules request needs of a quote: whose it is, the keys the
+// airline asks for, and the rules if they are already here.
+export type QuoteForRules = Pick<Row<'price_quotes'>,
+  'id' | 'priced_by' | 'pricing_key' | 'provider' | 'result_index' | 'search_key' | 'expires_at'
+> & { fare_rules: FareRules | null }
+
+export async function quoteForRules(db: Queryable, amadeusKey: string, referenceNo: string): Promise<QuoteForRules | null> {
+  return maybeOne<QuoteForRules>(db, sql`
+    select id, priced_by, pricing_key, provider, result_index, search_key, expires_at, fare_rules from price_quotes
+    where amadeus_key = ${amadeusKey} and reference_no = ${referenceNo}`)
+}
+
+// Rules that arrived after the price: kept on the quote (add-passenger copies
+// them onto the booking). Never overwrites rules already there.
+export async function setQuoteFareRules(db: Queryable, quoteId: string, rules: FareRules): Promise<void> {
+  await exec(db, sql`update price_quotes set fare_rules = ${json(rules)} where id = ${quoteId} and fare_rules is null`)
+}
+
+export type HeldQuote = Pick<Row<'price_quotes'>,
+  'id' | 'airline_components' | 'commercials' | 'sell_total' | 'employee_id' | 'priced_by' | 'expires_at'
+  | 'pricing_key' | 'provider' | 'result_index' | 'search_key'
+> & { fare_conditions: FareConditions | null; fare_rules: FareRules | null }
 
 export async function heldQuote(db: Queryable, amadeusKey: string, referenceNo: string): Promise<HeldQuote | null> {
   return maybeOne<HeldQuote>(db, sql`
-    select airline_components, commercials, sell_total, employee_id, priced_by, expires_at, fare_conditions, fare_rules from price_quotes
+    select id, airline_components, commercials, sell_total, employee_id, priced_by, expires_at, fare_conditions, fare_rules,
+           pricing_key, provider, result_index, search_key
+    from price_quotes
     where amadeus_key = ${amadeusKey} and reference_no = ${referenceNo}`)
 }
 

@@ -16,6 +16,7 @@ import FareRow, { fareName } from '@/app/components/book/FareRow'
 import lay from '../FarePage.module.css'
 import { defaultFare } from '@/app/lib/book/resultFilters'
 import type { FareRules } from '@/app/lib/book/fareRules'
+import { fetchRulesFor } from '@/app/lib/book/priceFare'
 import type { DeskView } from '@/app/lib/commercials/deskView'
 import {
   FlatFlightResult, FareOption, formatTime, formatDayLabel, journeysOf, journeyLabel,
@@ -133,6 +134,10 @@ export default function SelectFarePage() {
   const [selectedFareIndex, setSelectedFareIndex] = useState(0)
   const [pricing, setPricing] = useState<PriceApiResult | null>(null)
   const [pricingLoading, setPricingLoading] = useState(true)
+  // The airline's fare rules, asked once the price is shown (they take 7-12 s
+  // and the price does not wait for them). Keyed by the quote they belong to,
+  // so a slow answer for a fare no longer chosen is never shown.
+  const [rules, setRules] = useState<{ ref: string; rules: FareRules | null; loading: boolean } | null>(null)
   const [error, setError] = useState('')
   const [continuing, setContinuing] = useState(false)
   // Keyed by fare option index — every card gets its own verdict so all of
@@ -257,6 +262,12 @@ export default function SelectFarePage() {
 
       setPricing(data)
 
+      // Then the fare rules, on their own request.
+      const ref = data.referenceNo!
+      setRules({ ref, rules: null, loading: true })
+      fetchRulesFor({ key: data.key!, referenceNo: ref }).then(found =>
+        setRules(prev => (prev?.ref === ref ? { ref, rules: found, loading: false } : prev)))
+
       // The selected card judged on the priced figure: the airline may have
       // moved the fare since search, and this is what the next page judges.
       const pricedSell = data.sellTotal ?? data.totalFare
@@ -337,6 +348,9 @@ export default function SelectFarePage() {
   }
 
   const hasMultipleFares = flight.fareOptions.length > 1
+  // The rules of the fare priced now (not of one chosen before it).
+  const currentRules = rules && rules.ref === pricing?.referenceNo ? rules.rules : null
+  const rulesLoading = !!rules && rules.ref === pricing?.referenceNo && rules.loading
   const activeFare = flight.fareOptions[selectedFareIndex] as FareOption | undefined
 
   const journeys = journeysOf(flight)
@@ -370,7 +384,7 @@ export default function SelectFarePage() {
   function fareDetailSections(fare: FareOption, mealsIncluded: boolean | undefined) {
     // The airline's full rules, once priced, say more than the one-line fees:
     // shown in their own panel, so the lines here would only repeat them.
-    const rulesShown = fare === activeFare && !pricingLoading && !!pricing?.fareRules?.sectors.length
+    const rulesShown = fare === activeFare && !pricingLoading && !!currentRules?.sectors.length
     const changeText = rulesShown ? null : penaltySummary(fare.changePenalties)
     const cancelText = rulesShown ? null : penaltySummary(fare.cancelPenalties)
     const bases = fare.fareBases ?? (fare.fareBasis ? [{ journeyNo: 1, code: fare.fareBasis }] : [])
@@ -576,7 +590,7 @@ export default function SelectFarePage() {
             Fetched with the live price: cancellation and change charges by
             how long before departure, and no-show. */}
         {activeFare && (pricingLoading || pricing?.ok) && (
-          <FareRulesPanel rules={pricing?.fareRules} loading={pricingLoading} compact />
+          <FareRulesPanel rules={currentRules} loading={pricingLoading || rulesLoading} compact />
         )}
 
         </div>

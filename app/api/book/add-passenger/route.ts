@@ -21,6 +21,11 @@ import { bookingRightsFor } from '@/app/lib/rule-engine/bookingRights'
 import { QUOTE_EXPIRED_MESSAGE } from '@/app/lib/book/quoteHold'
 import { firstPassengerNameProblem } from '@/app/lib/book/passengerNames'
 import type { FlatFlightResult } from '@/app/lib/book/types'
+import { rulesForQuote } from '@/app/lib/book/quoteFareRules'
+
+// add-passenger's own try at the fare rules runs beside the airline's passenger
+// call (a few seconds); this caps it so it can never hold a booking up long.
+const ADD_PASSENGER_RULES_WAIT_MS = 12_000
 
 // ── POST /api/book/add-passenger ─────────────────────────────────────────────
 // Third step in the booking chain (search → price → add-passenger → book →
@@ -417,6 +422,12 @@ export const POST = route(async (req: NextRequest) => {
       reason = `${reason}. Reason given: ${policyReason.code === 'other' ? policyReason.note : label}${policyReason.code !== 'other' && policyReason.note ? ` (${policyReason.note})` : ''}`
     }
 
+    // The fare's rules, if the fare page did not get them (the airline was
+    // slow): asked once more, alongside the passenger call so most of the wait
+    // is hidden behind it (12 s at most), and copied onto the booking below. The TMC's booking page and the
+    // refund penalty depend on them. Never fails the booking.
+    const rulesPending = rulesForQuote(db, quote, ADD_PASSENGER_RULES_WAIT_MS)
+
     const result = await amadeus.addPassenger(
       key,
       referenceNo,
@@ -480,7 +491,7 @@ export const POST = route(async (req: NextRequest) => {
         for_guest: forGuest,
         // The airline's rules as priced: the traveller's booking shows them,
         // and the TMC prices a refund's airline penalty from them.
-        fare_rules: quote.fare_rules ?? null,
+        fare_rules: await rulesPending,
       })
     } catch (insertError) {
       // The airline has the passenger data and we do not have a booking row.

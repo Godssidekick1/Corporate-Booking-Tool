@@ -71,8 +71,26 @@ export async function priceFare(flight: FlatFlightResult, fare: FareOption): Pro
   flowStorage.savePricedFare(priced)
   return {
     ok: true, priced, lines: (data.lines as PricedLine[] | undefined) ?? [],
-    // The airline's cancellation and change rules (null when it sent none).
+    // Fetched separately (fetchRulesFor); the price no longer carries them.
     fareRules: asFareRules(data.fareRules),
+  }
+}
+
+// The airline's fare rules for a fare just priced (POST /api/book/fare-rules),
+// asked once the price is on screen: they take 7-12 s and the price does not
+// wait for them. null when the airline gave none or did not answer.
+export async function fetchRulesFor(priced: Pick<PricedFare, 'key' | 'referenceNo'>, signal?: AbortSignal): Promise<FareRules | null> {
+  try {
+    const res = await fetch('/api/book/fare-rules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: priced.key, referenceNo: priced.referenceNo }),
+      signal,
+    })
+    const data = await res.json()
+    return data.ok ? asFareRules(data.fareRules) : null
+  } catch {
+    return null
   }
 }
 
