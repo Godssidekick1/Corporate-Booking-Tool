@@ -5,6 +5,7 @@ import { QUOTE_HOLD_MINUTES } from '@/app/lib/book/quoteHold'
 import { requireUser } from '@/app/lib/auth/session'
 import { db } from '@/app/lib/db'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
+import { startFareRules } from '@/app/lib/book/quoteFareRules'
 import { route } from '@/app/lib/http/handler'
 import { amadeus, AmadeusError, type PricingResponse } from '@/app/lib/amadeus/client'
 import { providerFailure, failureKind } from '@/app/lib/book/providerErrors'
@@ -166,6 +167,11 @@ if (!key || !pricingKey || !provider || !resultIndex) {
 }
 
   try {
+    // The airline's fare rules, started now beside the pricing call: they are
+    // slow (7-22 s) and need only the fare's keys, not the price. Not awaited
+    // here; /api/book/fare-rules joins this same call (app/lib/book/quoteFareRules.ts).
+    void startFareRules({ key: String(key), pricingKey: String(pricingKey), resultIndex: String(resultIndex), provider: String(provider) })
+
     const pricing = await amadeus.pricing(key, pricingKey, provider, resultIndex)
     const details = extractPricingDetails(pricing)
 
@@ -197,10 +203,9 @@ if (!key || !pricingKey || !provider || !resultIndex) {
       return Response.json({ ok: false, error: refusal, code: 'POLICY_DISALLOWED' }, { status: 422 })
     }
 
-    // The airline's fare rules are not asked here: they take 7-12 s on their
-    // own, and the price should not wait for them. The fare page asks
-    // /api/book/fare-rules once this answers; the search key is kept on the
-    // quote for that.
+    // The fare rules started above are not waited for: the price goes back
+    // now, and /api/book/fare-rules picks the rules up (the search key is kept
+    // on the quote for it).
 
     // ── Commercials ──────────────────────────────────────────────────────────
     // The full pipeline runs here, not at search: discount and processing fee

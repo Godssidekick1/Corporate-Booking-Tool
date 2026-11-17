@@ -12,14 +12,16 @@ import { db } from '@/app/lib/db'
 import { sql, one, exec } from '@/app/lib/db/sql'
 import { FARE_RULE_AI_ECOVALU } from '../fixtures/amadeus/fareRule'
 import type { FareRules } from '@/app/lib/book/fareRules'
+import { forgetFareRulesInFlight } from '@/app/lib/book/quoteFareRules'
 
 // ── The airline's fare rules: their own request, kept with the booking ───────
-// The price route no longer waits for them (7-12 s on the test system); it
-// keeps the search key on the quote. /api/book/fare-rules then asks the
-// airline with the quote's own keys, keeps the rules on the quote and shows
-// them (never the TMC's deal code); add-passenger copies them onto the booking,
-// asking once more if the quote has none. A provider that gives none never
-// stops a fare being priced or booked.
+// The price route starts the airline's fare-rule call beside pricing but does
+// not wait for it (7-22 s on the test system); it keeps the search key on the
+// quote. /api/book/fare-rules then joins that call (or asks with the quote's
+// own keys), keeps the rules on the quote and shows them (never the TMC's deal
+// code), saying why when there are none; add-passenger copies them onto the
+// booking, asking once more if the quote has none. A provider that gives none
+// never stops a fare being priced or booked.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const fake = { pricing: vi.fn(), addPassenger: vi.fn(), fareRule: vi.fn() }
@@ -97,19 +99,26 @@ d('fare rules', () => {
     await resetDatabase()
     a = await actors()
   })
-  beforeEach(() => { for (const f of Object.values(fake)) f.mockReset() })
+  beforeEach(() => { for (const f of Object.values(fake)) f.mockReset(); forgetFareRulesInFlight() })
 
-  it('pricing does not wait for the rules; their own request asks with the quote’s keys and keeps them', async () => {
-    fake.fareRule.mockResolvedValue(WITH_DEAL)
+  it('pricing starts the rules call without waiting; their own request joins it and keeps the rules', async () => {
+    // The airline's rules answer only after the price has gone back.
+    let answer!: (v: unknown) => void
+    fake.fareRule.mockReturnValue(new Promise(resolve => { answer = resolve }))
     const res = await price('REF-FR-1')
     expect(res.status).toBe(200)
-    expect(fake.fareRule).not.toHaveBeenCalled()
     expect(res.json).toMatchObject({ ok: true, fareRules: null })
-
-    const rules = await rulesFor('REF-FR-1')
-    expect(rules.status).toBe(200)
-    // The search's key, kept on the quote at pricing: never the browser's.
+    // Started beside pricing, with the search's keys.
+    expect(fake.fareRule).toHaveBeenCalledTimes(1)
     expect(fake.fareRule).toHaveBeenCalledWith({ key: 'SEARCH-KEY', pricingKey: 'PK', resultIndex: '1', provider: '1A' })
+
+    const pending = rulesFor('REF-FR-1')
+    answer(WITH_DEAL)
+    const rules = await pending
+    expect(rules.status).toBe(200)
+    // Joined the call already running: the airline was asked once.
+    expect(fake.fareRule).toHaveBeenCalledTimes(1)
+    expect(rules.json).toMatchObject({ ok: true, outcome: 'ok' })
     const shown = (rules.json as { fareRules: FareRules }).fareRules
     expect(shown.sectors[0]).toMatchObject({ origin: 'DEL', destination: 'BOM', carrier: 'AI', dealCode: null })
     expect(shown.sectors[0].pax[0].cancel.find(w => w.kind === 'before_departure')).toMatchObject({ amount: 5000, currency: 'INR' })
@@ -120,7 +129,9 @@ d('fare rules', () => {
 
     // Asked again: the kept rules, without the airline.
     fake.fareRule.mockClear()
-    expect(((await rulesFor('REF-FR-1')).json as { fareRules: FareRules }).fareRules.sectors).toHaveLength(1)
+    const again = await rulesFor('REF-FR-1')
+    expect(again.json).toMatchObject({ ok: true, outcome: 'kept' })
+    expect((again.json as { fareRules: FareRules }).fareRules.sectors).toHaveLength(1)
     expect(fake.fareRule).not.toHaveBeenCalled()
 
     // Pricing the same fare again keeps the rules already fetched.
@@ -130,6 +141,7 @@ d('fare rules', () => {
 
   it('only whoever priced the fare may ask; a missing quote is refused', async () => {
     expect((await price('REF-FR-4')).status).toBe(200)
+    fake.fareRule.mockClear()
     const stranger = await one<{ id: string }>(db, sql`
       select id from employees where client_id = (select client_id from employees where id = ${a.corpAdmin.id})
         and id <> ${a.corpAdmin.id} and status = 'active' order by id limit 1`)
@@ -144,7 +156,8 @@ d('fare rules', () => {
     const res = await price('REF-FR-2')
     expect(res.status).toBe(200)
     expect(res.json).toMatchObject({ ok: true, fareRules: null })
-    expect(((await rulesFor('REF-FR-2')).json)).toEqual({ ok: true, fareRules: null })
+    // Said as a failure (the page offers to try again), not as "no rules".
+    expect(((await rulesFor('REF-FR-2')).json)).toEqual({ ok: true, fareRules: null, outcome: 'error' })
     expect(await quoteRules('REF-FR-2')).toBeNull()
   })
 

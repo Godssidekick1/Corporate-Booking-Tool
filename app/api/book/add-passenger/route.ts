@@ -491,7 +491,7 @@ export const POST = route(async (req: NextRequest) => {
         for_guest: forGuest,
         // The airline's rules as priced: the traveller's booking shows them,
         // and the TMC prices a refund's airline penalty from them.
-        fare_rules: await rulesPending,
+        fare_rules: (await rulesPending).rules,
       })
     } catch (insertError) {
       // The airline has the passenger data and we do not have a booking row.

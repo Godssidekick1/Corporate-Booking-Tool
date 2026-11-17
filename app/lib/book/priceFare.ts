@@ -79,7 +79,11 @@ export async function priceFare(flight: FlatFlightResult, fare: FareOption): Pro
 // The airline's fare rules for a fare just priced (POST /api/book/fare-rules),
 // asked once the price is on screen: they take 7-12 s and the price does not
 // wait for them. null when the airline gave none or did not answer.
-export async function fetchRulesFor(priced: Pick<PricedFare, 'key' | 'referenceNo'>, signal?: AbortSignal): Promise<FareRules | null> {
+// What the fare page shows: the rules, or why there are none ('timeout' and
+// 'error' can be retried; 'none' means the airline has none on file).
+export interface RulesAnswer { rules: FareRules | null; problem: 'timeout' | 'error' | 'none' | null }
+
+export async function fetchRulesFor(priced: Pick<PricedFare, 'key' | 'referenceNo'>, signal?: AbortSignal): Promise<RulesAnswer> {
   try {
     const res = await fetch('/api/book/fare-rules', {
       method: 'POST',
@@ -90,11 +94,16 @@ export async function fetchRulesFor(priced: Pick<PricedFare, 'key' | 'referenceN
     const data = await res.json()
     // Said in the console (the dev server's log shows it): a refusal here
     // would otherwise look exactly like "the airline gave no rules".
-    if (!data.ok) console.warn('[fare rules] not shown:', res.status, data.error ?? '')
-    return data.ok ? asFareRules(data.fareRules) : null
+    if (!data.ok) {
+      console.warn('[fare rules] not shown:', res.status, data.error ?? '')
+      return { rules: null, problem: 'error' }
+    }
+    const rules = asFareRules(data.fareRules)
+    if (rules?.sectors.length) return { rules, problem: null }
+    return { rules, problem: data.outcome === 'timeout' ? 'timeout' : data.outcome === 'error' ? 'error' : 'none' }
   } catch (error) {
     console.warn('[fare rules] request failed:', error instanceof Error ? error.message : error)
-    return null
+    return { rules: null, problem: 'error' }
   }
 }
 

@@ -36,14 +36,12 @@ export const POST = route(async (req: Request) => {
     return Response.json({ ok: false, error: 'This fare is no longer priced. Choose it again.', code: 'QUOTE_NOT_FOUND' }, { status: 404 })
   }
 
-  // One line per request (the quote's id, never its keys): whether the rules
-  // were kept already, came from the airline and how long it took, or did not.
+  // One line per request (the quote's id, never its keys): what happened and
+  // how long this request waited (the call itself started with the price).
   const t0 = Date.now()
-  const kept = !!quote.fare_rules
-  const rules = await rulesForQuote(db, quote)
-  console.info(`[fare rules] quote ${quote.id}: ${kept ? 'already kept'
-    : !quote.search_key ? 'no search key (priced before it was kept)'
-    : rules ? `from the airline in ${Date.now() - t0} ms (${rules.sectors.length} sector${rules.sectors.length === 1 ? '' : 's'})`
-    : `none after ${Date.now() - t0} ms`}`)
-  return Response.json({ ok: true, fareRules: travellerFareRules(rules) })
+  const { rules, outcome } = await rulesForQuote(db, quote)
+  console.info(`[fare rules] quote ${quote.id}: ${outcome}${rules ? ` (${rules.sectors.length} sector${rules.sectors.length === 1 ? '' : 's'})` : ''}, waited ${Date.now() - t0} ms`)
+  // outcome tells the page why there are no rules: kept | ok | none | timeout
+  // | error | no_search_key.
+  return Response.json({ ok: true, fareRules: travellerFareRules(rules), outcome })
 })

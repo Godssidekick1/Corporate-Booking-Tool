@@ -32,9 +32,16 @@ function travelDay(v: string | null): string | null {
   return Number.isNaN(d.getTime()) ? v : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
-export default function FareRulesPanel({ rules, loading = false, compact = false, embedded = false, showDealCode = false, title = 'Fare rules' }: {
+// Why a fare page has no rules to show, when it knows (from /api/book/fare-rules).
+export type RulesProblem = 'timeout' | 'error' | 'none' | null
+
+export default function FareRulesPanel({ rules, loading = false, problem = null, onRetry, compact = false, embedded = false, showDealCode = false, title = 'Fare rules' }: {
   rules: FareRules | null | undefined
   loading?: boolean
+  // Said instead of the plain "no rules" line: the airline did not answer, or
+  // the request failed, which a retry may fix (onRetry offers it).
+  problem?: RulesProblem
+  onRetry?: () => void
   // The fare page: notes folded away and tighter spacing.
   compact?: boolean
   // Inside another card (the round trip's flight): a divider, not a second box.
@@ -50,11 +57,25 @@ export default function FareRulesPanel({ rules, loading = false, compact = false
         <span style={s.sub}>From the airline</span>
       </div>
 
-      {loading && <p style={s.muted}>Asking the airline for this fare’s rules…</p>}
-
-      {!loading && !rules?.sectors.length && (
+      {loading && (
         <p style={s.muted}>
-          The airline did not send rules for this fare.
+          Getting the cancellation and change rules from the airline. The airline can take up to half a minute to answer; the
+          price above is already confirmed.
+        </p>
+      )}
+
+      {!loading && !rules?.sectors.length && (problem === 'timeout' || problem === 'error') && (
+        <p style={s.muted}>
+          {problem === 'timeout'
+            ? 'The airline did not answer with this fare’s rules in time.'
+            : 'The airline’s rules for this fare could not be fetched.'}
+          {onRetry && <> <button type="button" onClick={onRetry} style={s.retry}>Try again</button></>}
+        </p>
+      )}
+
+      {!loading && !rules?.sectors.length && problem !== 'timeout' && problem !== 'error' && (
+        <p style={s.muted}>
+          The airline has no rules on file for this fare.
           {rules?.unavailable.length ? ` (${rules.unavailable[0]})` : ''} Ask your travel desk before relying on a refund.
         </p>
       )}
@@ -139,6 +160,7 @@ const s: Record<string, React.CSSProperties> = {
   title: { fontSize: 15, fontWeight: 700, color: 'var(--color-ink)', margin: 0 },
   sub: { fontSize: 11.5, color: 'var(--color-muted)' },
   muted: { fontSize: 12.5, color: 'var(--color-muted)', margin: '4px 0' },
+  retry: { background: 'none', border: 0, padding: 0, font: 'inherit', fontWeight: 600, color: 'var(--color-info-fg)', cursor: 'pointer', textDecoration: 'underline' },
   sector: { paddingTop: 4 },
   sectorDivider: { borderTop: '1px solid var(--color-line)', marginTop: 12, paddingTop: 12 },
   sectorHead: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '4px 12px', marginBottom: 8 },

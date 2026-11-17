@@ -33,8 +33,9 @@ interface Side {
   lines: PricedLine[]
   verdict: PolicyPreview | null
   fareRules: FareRules | null
-  // The rules are asked after the price (fetchRulesFor).
+  // The rules are asked after the price (fetchRulesFor), and why none came.
   rulesLoading?: boolean
+  rulesProblem?: 'timeout' | 'error' | 'none' | null
 }
 
 const inr = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`
@@ -60,9 +61,7 @@ export default function RoundTripFarePage() {
     patch(dir, { loading: false, priced: outcome.priced, lines: outcome.lines, fareRules: null, rulesLoading: true })
     // The fare rules on their own request (they take 7-12 s); kept only if
     // this side still has the same fare when they arrive.
-    const ref = outcome.priced.referenceNo
-    fetchRulesFor(outcome.priced).then(found => setSides(prev => (
-      prev && prev[dir].priced?.referenceNo === ref ? { ...prev, [dir]: { ...prev[dir], fareRules: found, rulesLoading: false } } : prev)))
+    askRules(dir, outcome.priced)
     patch(dir, { verdict: await previewPolicy(flight, outcome.priced) })
   }, [patch])
 
@@ -80,6 +79,16 @@ export default function RoundTripFarePage() {
     price('onward', onward, pair.onward.pricingKey)
     price('return', back, pair.return.pricingKey)
   }, [router, price])
+
+  // One side's fare rules; kept only if that side still has the same fare.
+  function askRules(dir: Dir, priced: PricedFare) {
+    const ref = priced.referenceNo
+    setSides(prev => (prev ? { ...prev, [dir]: { ...prev[dir], rulesLoading: true, rulesProblem: null } } : prev))
+    fetchRulesFor(priced).then(answer => setSides(prev => (
+      prev && prev[dir].priced?.referenceNo === ref
+        ? { ...prev, [dir]: { ...prev[dir], fareRules: answer.rules, rulesLoading: false, rulesProblem: answer.problem } }
+        : prev)))
+  }
 
   function changeFare(dir: Dir, pricingKey: string) {
     if (!sides) return
@@ -156,7 +165,9 @@ export default function RoundTripFarePage() {
               )}
               {/* This flight's own rules: each booking of the pair is cancelled on its own. */}
               {(side.loading || side.priced) && (
-                <FareRulesPanel rules={side.fareRules} loading={side.loading || !!side.rulesLoading} compact embedded />
+                <FareRulesPanel rules={side.fareRules} loading={side.loading || !!side.rulesLoading} compact embedded
+                  problem={side.rulesProblem ?? null}
+                  onRetry={side.priced ? () => askRules(dir, side.priced!) : undefined} />
               )}
             </section>
           )
