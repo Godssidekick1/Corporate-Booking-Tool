@@ -9,16 +9,18 @@ import type { FieldDef } from '@/app/lib/policy/fields'
 // A list rule is a set of codes, not one value, so it is edited as a stack of
 // pickers rather than as a cell in the limits table. Airlines are picked from
 // the reference list (searchable by code or name; a code nobody has searched
-// yet can still be typed). Fare types are one row of chips.
+// yet can still be typed). Fare types are one row of chips. readOnly shows the
+// same chips, nothing to add or remove (the company admin's view).
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface Props {
   fields: FieldDef[]
   values: Record<string, string[]>
-  onChange: (key: string, value: string[]) => void
+  onChange?: (key: string, value: string[]) => void
+  readOnly?: boolean
 }
 
-export default function ListFields({ fields, values, onChange }: Props) {
+export default function ListFields({ fields, values, onChange = () => {}, readOnly = false }: Props) {
   const blocked = values['blocked_airlines'] ?? []
   const clash = (values['preferred_airlines'] ?? []).filter(code => blocked.includes(code))
 
@@ -31,8 +33,8 @@ export default function ListFields({ fields, values, onChange }: Props) {
             {f.help && <span style={s.help}>{f.help}</span>}
           </div>
           {f.listOf === 'fare_types'
-            ? <FareTypeChips value={values[f.key] ?? []} onChange={v => onChange(f.key, v)} />
-            : <AirlineList value={values[f.key] ?? []} onChange={v => onChange(f.key, v)} />}
+            ? <FareTypeChips value={values[f.key] ?? []} onChange={v => onChange(f.key, v)} readOnly={readOnly} />
+            : <AirlineList value={values[f.key] ?? []} onChange={v => onChange(f.key, v)} readOnly={readOnly} />}
           {f.key === 'preferred_airlines' && clash.length > 0 && (
             <p style={s.warn}>{clash.join(', ')} {clash.length === 1 ? 'is' : 'are'} also blocked; blocked wins, so {clash.length === 1 ? 'it' : 'they'} will not be shown.</p>
           )}
@@ -42,7 +44,7 @@ export default function ListFields({ fields, values, onChange }: Props) {
   )
 }
 
-function AirlineList({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+function AirlineList({ value, onChange, readOnly }: { value: string[]; onChange: (v: string[]) => void; readOnly: boolean }) {
   // Names for the chips. Codes the list has never seen keep just their code.
   const [names, setNames] = useState<Record<string, string>>({})
   // Remounts the picker after each pick so it is empty for the next one.
@@ -78,19 +80,34 @@ function AirlineList({ value, onChange }: { value: string[]; onChange: (v: strin
           {value.map(code => (
             <span key={code} style={s.chip}>
               <strong>{code}</strong>{names[code] ? <span style={s.chipName}> · {names[code]}</span> : null}
-              <button type="button" aria-label={`Remove ${code}`} onClick={() => onChange(value.filter(v => v !== code))} style={s.chipX}>×</button>
+              {readOnly
+                ? <span style={{ width: 8 }} />
+                : <button type="button" aria-label={`Remove ${code}`} onClick={() => onChange(value.filter(v => v !== code))} style={s.chipX}>×</button>}
             </span>
           ))}
         </div>
       )}
-      <div style={s.picker}>
-        <AirlineDropdown key={pickKey} value="" onChange={add} placeholder="Add an airline: search by code or name" />
-      </div>
+      {readOnly && value.length === 0 && <span style={s.help}>None</span>}
+      {!readOnly && (
+        <div style={s.picker}>
+          <AirlineDropdown key={pickKey} value="" onChange={add} placeholder="Add an airline: search by code or name" />
+        </div>
+      )}
     </div>
   )
 }
 
-function FareTypeChips({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+function FareTypeChips({ value, onChange, readOnly }: { value: string[]; onChange: (v: string[]) => void; readOnly: boolean }) {
+  if (readOnly) {
+    return (
+      <div style={s.chips}>
+        {FARE_TYPES.filter(t => value.includes(t.code)).map(t => (
+          <span key={t.code} style={{ ...s.toggleChip, ...s.toggleChipOn, cursor: 'default' }}>{t.label}</span>
+        ))}
+        {value.length === 0 && <span style={s.help}>All fare types allowed</span>}
+      </div>
+    )
+  }
   return (
     <div style={s.chips}>
       {FARE_TYPES.map(t => {

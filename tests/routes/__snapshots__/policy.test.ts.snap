@@ -304,6 +304,20 @@ exports[`policy > settings/policy: admins only; the policy in force per band 1`]
       "code": null,
       "id": "ac33a703-6f77-49e5-974a-264606f6e66d",
       "name": "d",
+      "rules": [
+        {
+          "limit_bool": null,
+          "limit_key": "max_fare_domestic",
+          "limit_list": null,
+          "limit_value": 9000,
+        },
+        {
+          "limit_bool": false,
+          "limit_key": "refundable_fare_required",
+          "limit_list": null,
+          "limit_value": null,
+        },
+      ],
       "version": 2,
     },
     {
@@ -314,6 +328,7 @@ exports[`policy > settings/policy: admins only; the policy in force per band 1`]
       "code": null,
       "id": "835950da-a5f8-4455-a71b-fad5b340494d",
       "name": "e",
+      "rules": [],
       "version": 0,
     },
   ],
@@ -403,5 +418,6 @@ exports[`policy > settings/policy: admins only; the policy in force per band 1`]
       "reason": "no_policy_rules",
     },
   ],
+  "withinPolicyApproval": "required",
 }
 `;

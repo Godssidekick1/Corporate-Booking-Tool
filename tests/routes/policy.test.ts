@@ -194,6 +194,28 @@ d('policy', () => {
       .toMatchSnapshot()
   })
 
+  it('settings/policy: each group carries its whole rule set, and the company’s own within-policy setting', async () => {
+    type View = { groups: { id: string; rules: { limit_key: string }[] }[]; withinPolicyApproval: string | null }
+    const view = async () => (await call(settingsPolicy, { as: a.corpAdmin, url: '/api/settings/policy' })).json as View
+    // The group's rules match what the TMC's editor holds for it (its latest version).
+    const latest = await many<{ limit_key: string }>(db, sql`
+      select limit_key from policy_rules where policy_group_id = ${groupD} and deleted_at is null
+        and version = (select max(version) from policy_rules where policy_group_id = ${groupD} and deleted_at is null)`)
+    const shown = (await view()).groups.find(g => g.id === groupD)!.rules.map(r => r.limit_key).sort()
+    expect(shown).toEqual(latest.map(r => r.limit_key).sort())
+
+    // The company setting follows Corporate Settings, and is null when the groups decide.
+    const before = await one<{ within_policy_approval: string | null }>(db, sql`select within_policy_approval from clients where id = ${bcg}`)
+    try {
+      await exec(db, sql`update clients set within_policy_approval = 'auto' where id = ${bcg}`)
+      expect((await view()).withinPolicyApproval).toBe('auto')
+      await exec(db, sql`update clients set within_policy_approval = null where id = ${bcg}`)
+      expect((await view()).withinPolicyApproval).toBeNull()
+    } finally {
+      await exec(db, sql`update clients set within_policy_approval = ${before.within_policy_approval} where id = ${bcg}`)
+    }
+  })
+
   // ── The rule engine harness ────────────────────────────────────────────────
 
   it('rule-engine test: evaluates for the TMC that owns the traveller, and nobody else', async () => {

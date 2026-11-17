@@ -1,6 +1,6 @@
 'use client'
 
-import type { FieldDef } from '@/app/lib/policy/fields'
+import { formatFieldValue, type FieldDef } from '@/app/lib/policy/fields'
 
 // ── One section of a policy group, as a form ─────────────────────────────────
 // A row per field: what it is and a plain hint on the left, the value on the
@@ -14,6 +14,9 @@ import type { FieldDef } from '@/app/lib/policy/fields'
 //             choice of its own
 //   boolean   Yes / No
 // A field with inlineWith (the grace's unit) sits beside that field's input.
+//
+// readOnly: the same rows with each value as text (the company admin's view:
+// the TMC owns policy). Not set reads "No limit" or "Not set".
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Value = number | boolean | string[] | null | undefined
@@ -21,11 +24,27 @@ type Value = number | boolean | string[] | null | undefined
 interface Props {
   fields: FieldDef[]
   values: Record<string, Value>
-  onChange: (key: string, value: number | boolean | null) => void
-  onNumeric: (field: FieldDef, raw: string) => void
+  onChange?: (key: string, value: number | boolean | null) => void
+  onNumeric?: (field: FieldDef, raw: string) => void
+  readOnly?: boolean
 }
 
-export default function FieldForm({ fields, values, onChange, onNumeric }: Props) {
+const noop = () => {}
+
+// A value as the read-only view says it, with its unit (and the grace's).
+function valueText(f: FieldDef, value: Value, unitField: FieldDef | undefined, unitValue: Value): string {
+  if (value === null || value === undefined) return f.kind === 'numeric' ? 'No limit' : 'Not set'
+  const text = formatFieldValue(f, value)
+  if (f.kind !== 'numeric') return text
+  if (unitField) {
+    const unit = formatFieldValue(unitField, unitValue ?? unitField.options?.[0]?.value ?? null)
+    return unit === '₹' ? `₹${text}` : `${text} ${unit}`
+  }
+  if (f.unit === '₹') return `₹${text}`
+  return f.unit ? `${text} ${f.unit}` : text
+}
+
+export default function FieldForm({ fields, values, onChange = noop, onNumeric = noop, readOnly = false }: Props) {
   const inline = new Map(fields.filter(f => f.inlineWith).map(f => [f.inlineWith!, f]))
   return (
     <div style={s.form}>
@@ -35,12 +54,18 @@ export default function FieldForm({ fields, values, onChange, onNumeric }: Props
             <span style={s.label}>{f.label}</span>
             {f.help && <span style={s.help}>{f.help}</span>}
           </div>
+          {readOnly ? (
+            <span style={{ ...s.readValue, ...(values[f.key] === null || values[f.key] === undefined ? s.readUnset : {}) }}>
+              {valueText(f, values[f.key], inline.get(f.key), inline.has(f.key) ? values[inline.get(f.key)!.key] : undefined)}
+            </span>
+          ) : (
           <div style={s.control}>
             <Control field={f} value={values[f.key]} onChange={onChange} onNumeric={onNumeric} />
             {inline.has(f.key) && (
               <Control field={inline.get(f.key)!} value={values[inline.get(f.key)!.key]} onChange={onChange} onNumeric={onNumeric} compact />
             )}
           </div>
+          )}
         </div>
       ))}
     </div>
@@ -50,8 +75,8 @@ export default function FieldForm({ fields, values, onChange, onNumeric }: Props
 function Control({ field: f, value, onChange, onNumeric, compact = false }: {
   field: FieldDef
   value: Value
-  onChange: Props['onChange']
-  onNumeric: Props['onNumeric']
+  onChange: NonNullable<Props['onChange']>
+  onNumeric: NonNullable<Props['onNumeric']>
   compact?: boolean
 }) {
   if (f.kind === 'boolean') {
@@ -133,6 +158,8 @@ const s: Record<string, React.CSSProperties> = {
   label: { fontSize: 13, fontWeight: 600, color: '#111827' },
   help: { fontSize: 12, color: '#6B7280', lineHeight: 1.45 },
   control: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', flex: '0 1 auto' },
+  readValue: { fontSize: 14, fontWeight: 600, color: '#111827', fontVariantNumeric: 'tabular-nums', textAlign: 'right' },
+  readUnset: { fontWeight: 500, color: '#9CA3AF' },
 
   amount: {
     display: 'inline-flex', alignItems: 'center', height: 36, border: '1px solid #D1D5DB', borderRadius: 8,

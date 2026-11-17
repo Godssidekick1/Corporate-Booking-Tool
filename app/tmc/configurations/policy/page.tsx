@@ -4,15 +4,8 @@ import { useEffect, useRef, useState } from 'react'
 import SearchableSelect from '@/app/components/SearchableSelect'
 import { useLookup, clientOption } from '@/app/hooks/useLookup'
 import Tabs, { useUrlTab } from '@/app/components/Tabs'
-import {
-  CATEGORIES,
-  ALL_FIELDS,
-  formatFieldValue,
-  type CategoryDef,
-  type FieldDef,
-} from '@/app/lib/policy/fields'
-import ListFields from './ListFields'
-import FieldForm from './FieldForm'
+import { ALL_FIELDS, type FieldDef } from '@/app/lib/policy/fields'
+import PolicyAccordion, { type CellVal, type Grid } from '@/app/components/policy/PolicyAccordion'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -114,11 +107,9 @@ function ranksLabel(bandRanks: number[]): string {
 
 // ── Grid helpers ──────────────────────────────────────────────────────────────
 
-type CellVal = number | boolean | string[] | null
-// One row of limits per group, keyed by field. It used to be nested by rank —
-// Record<rank, Record<field, value>> — which is what let a group covering ranks
-// 1-3 hold three sets of limits free to disagree with each other.
-type Grid = Record<string, CellVal>
+// One row of limits per group, keyed by field (Grid). It used to be nested by
+// rank, which is what let a group covering ranks 1-3 hold three sets of limits
+// free to disagree with each other.
 
 function buildEmptyGrid(): Grid {
   const g: Grid = {}
@@ -156,25 +147,6 @@ function gridToRules(grid: Grid): RuleRow[] {
   return rows
 }
 
-// Booleans are deliberately excluded from both the numerator and the
-// denominator here — they're real config, just not counted as "completion"
-// factors, since a correctly-configured "false" isn't meaningfully less done
-// than a correctly-configured "true".
-// What a folded section holds, in a line: its set values, the first few.
-function sectionSummary(grid: Grid, category: CategoryDef): string {
-  const shown = category.fields
-    .filter(f => !f.inlineWith && f.kind !== 'boolean')
-    .filter(f => { const v = grid[f.key]; return v !== null && v !== undefined && !(Array.isArray(v) && v.length === 0) })
-    .map(f => {
-      // A value whose unit is a field of its own (the grace) says it.
-      const unit = category.fields.find(u => u.inlineWith === f.key)
-      const unitText = unit ? ' ' + formatFieldValue(unit, (grid[unit.key] ?? unit.options?.[0]?.value) as number) : ''
-      return `${f.label}: ${formatFieldValue(f, grid[f.key] as number | boolean | string[])}${unitText}`
-    })
-  if (shown.length === 0) return 'Nothing set'
-  return shown.length > 3 ? `${shown.slice(0, 3).join(' · ')} · +${shown.length - 3} more` : shown.join(' · ')
-}
-
 interface ClientOverride { clientId: string; name: string; withinPolicyApproval: 'auto' | 'required' }
 
 // The group's within-policy rule does not reach a company that set its own:
@@ -196,16 +168,6 @@ function OverrideNote({ overrides, groupValue }: { overrides: ClientOverride[]; 
       . Their own setting decides within-policy approval there, whatever this group says.
     </div>
   )
-}
-
-function countSetFields(grid: Grid, category: CategoryDef): { set: number; total: number } {
-  const countableFields = category.fields.filter(f => f.kind !== 'boolean')
-  let set = 0
-  for (const f of countableFields) {
-    const v = grid[f.key]
-    if (v !== null && v !== undefined && !(Array.isArray(v) && v.length === 0)) set++
-  }
-  return { set, total: countableFields.length }
 }
 
 // Small style helper that depends on state — kept OUTSIDE the `s` styles
@@ -234,9 +196,8 @@ export default function TmcPolicyPage() {
 
   const [grid, setGrid] = useState<Grid>({})
   const [version, setVersion] = useState(0)
-  // An accordion: one section open at a time, Fares first. Opening another
+  // (The accordion keeps which section is open: PolicyAccordion.)
   // folds the one before; the folded headers say what each one holds.
-  const [openCategory, setOpenCategory] = useState<string | null>('flight')
   // Linked companies whose own Corporate Setting decides within-policy
   // approval, whatever this group says.
   const [overrides, setOverrides] = useState<ClientOverride[]>([])
@@ -483,9 +444,6 @@ export default function TmcPolicyPage() {
     showSuccess('Policy group unlinked.')
   }
 
-  function toggleCategory(id: string) {
-    setOpenCategory(prev => (prev === id ? null : id))
-  }
 
   const linkedIds = new Set(links.map(l => l.policyGroupId))
   const linkableGroups = groups.filter(g => !linkedIds.has(g.id))
@@ -717,56 +675,12 @@ export default function TmcPolicyPage() {
                   <p style={s.muted}>Loading rules…</p>
                 </div>
               ) : (
-                <div style={s.categories}>
-                  {CATEGORIES.map((cat, ci) => {
-                    const open = openCategory === cat.id
-                    const { set, total } = countSetFields(grid, cat)
-                    return (
-                      <div key={cat.id} style={{ ...s.categoryBlock, marginTop: ci === 0 ? 0 : 12 }}>
-                        <button
-                          onClick={() => toggleCategory(cat.id)}
-                          aria-expanded={open}
-                          style={{ ...s.categoryHeader, background: cat.color }}
-                        >
-                          <div style={s.categoryHeaderLeft}>
-                            <span style={{ ...s.categoryDot, background: cat.textColor }} />
-                            <span style={{ ...s.categoryLabel, color: cat.textColor }}>{cat.label}</span>
-                            {total > 0 && (
-                              <span style={{ ...s.categoryBadge, color: cat.textColor, border: `1px solid ${cat.textColor}40`, background: cat.textColor + '12' }}>
-                                {set} / {total} set
-                              </span>
-                            )}
-                          </div>
-                          {!open && <span style={{ ...s.categorySummary, color: cat.textColor }}>{sectionSummary(grid, cat)}</span>}
-                          <span style={{ ...s.categoryChevron, color: cat.textColor, transform: open ? 'rotate(180deg)' : 'rotate(0deg)' }}>
-                            ▾
-                          </span>
-                        </button>
-
-                        {open && (
-                          <div style={s.tableInner}>
-                            {cat.description && <p style={s.categoryDesc}>{cat.description}</p>}
-                            {cat.fields.every(f => f.kind === 'list') ? (
-                              <ListFields
-                                fields={cat.fields}
-                                values={Object.fromEntries(cat.fields.map(f => [f.key, Array.isArray(grid[f.key]) ? grid[f.key] as string[] : []]))}
-                                onChange={(key, v) => handleCellChange(key, v)}
-                              />
-                            ) : (
-                              <FieldForm
-                                fields={cat.fields}
-                                values={grid}
-                                onChange={(key, v) => handleCellChange(key, v)}
-                                onNumeric={handleNumericInputChange}
-                              />
-                            )}
-                            {cat.id === 'booking_rights' && <OverrideNote overrides={overrides} groupValue={grid['within_policy_approval']} />}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
+                <PolicyAccordion
+                  grid={grid}
+                  onChange={(key, v) => handleCellChange(key, v)}
+                  onNumeric={handleNumericInputChange}
+                  extra={cat => cat.id === 'booking_rights' && <OverrideNote overrides={overrides} groupValue={grid['within_policy_approval']} />}
+                />
               )}
 
               {dirty && (
@@ -956,20 +870,9 @@ const s: Record<string, React.CSSProperties> = {
   rulesActions: { display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 },
   unsavedBadge: { fontSize: 11, fontWeight: 500, color: '#92400E', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 4, padding: '3px 8px' },
 
-  categories: { display: 'flex', flexDirection: 'column' },
-  categoryBlock: { border: '1px solid #E5E7EB', borderRadius: 9, overflow: 'hidden' },
-  categoryHeader: { width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', border: 'none', cursor: 'pointer', textAlign: 'left' },
-  categoryHeaderLeft: { display: 'flex', alignItems: 'center', gap: 10 },
-  categoryDot: { width: 6, height: 6, borderRadius: '50%', display: 'inline-block' },
-  categoryLabel: { fontSize: 13, fontWeight: 600 },
-  categoryBadge: { fontSize: 10, fontWeight: 600, border: '1px solid', borderRadius: 4, padding: '2px 7px' },
-  categoryChevron: { fontSize: 13, transition: 'transform 0.2s', display: 'block' },
-  categorySummary: { flex: 1, minWidth: 0, margin: '0 12px', fontSize: 12, opacity: 0.85, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'right' },
   overrideNote: { margin: '4px 16px 12px', padding: '10px 12px', fontSize: 12.5, lineHeight: 1.55, color: '#92400E', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8 },
   overrideDiffers: { fontWeight: 700, textDecoration: 'underline' },
-  categoryDesc: { fontSize: 12, color: '#6B7280', margin: '10px 16px 0', lineHeight: 1.5 },
 
-  tableInner: { display: 'flex', flexDirection: 'column', gap: 4 },
   tableWrap: { overflowX: 'auto' },
   table: { borderCollapse: 'collapse', width: '100%' },
   th: { padding: '8px 12px', textAlign: 'left', background: '#F9FAFB', borderBottom: '1px solid #E5E7EB', whiteSpace: 'nowrap', verticalAlign: 'top' },

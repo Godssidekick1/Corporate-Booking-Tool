@@ -2,6 +2,7 @@ import { requireUser } from '@/app/lib/auth/session'
 import { db } from '@/app/lib/db'
 import * as employees from '@/app/lib/repositories/employees'
 import * as policy from '@/app/lib/repositories/policy'
+import * as clients from '@/app/lib/repositories/clients'
 import { route } from '@/app/lib/http/handler'
 import { getLinkedPolicyGroups, groupsCoveringRank } from '@/app/lib/rule-engine/linkedPolicyGroups'
 
@@ -59,16 +60,21 @@ export const GET = route(async () => {
     return Response.json({ error: 'Only admins can view policy settings' }, { status: 403 })
   }
 
-  const [bandRows, groups] = await Promise.all([
+  const [bandRows, groups, modes] = await Promise.all([
     employees.bandsForClient(db, clientId),
     getLinkedPolicyGroups(db, clientId),
+    clients.approvalModes(db, clientId),
   ])
   const bands = bandRows.map(b => ({ code: b.code, label: b.label, rank: b.rank }))
+  // The company's own within-policy approval setting (Corporate Settings),
+  // which overrides the groups' when set; null when the groups decide.
+  const withinPolicyApproval = modes?.within_policy_approval ?? null
 
   if (groups.length === 0) {
     return Response.json({
       ok: true,
       managedByTmc: true,
+      withinPolicyApproval,
       bands,
       groups: [],
       rows: [],
@@ -160,13 +166,19 @@ export const GET = route(async () => {
   return Response.json({
     ok: true,
     managedByTmc: true,
+    withinPolicyApproval,
     bands,
+    // Each group with its whole rule set: the page shows one group at a time,
+    // including a group whose bands are unresolved (overlapping, say).
     groups: ruleSets.map(rs => ({
       id: rs.group.id,
       name: rs.group.name,
       code: rs.group.code,
       bandRanks: rs.group.bandRanks,
       version: rs.version,
+      rules: rs.rules.map(r => ({
+        limit_key: r.limit_key, limit_value: r.limit_value, limit_bool: r.limit_bool, limit_list: r.limit_list,
+      })),
     })),
     rows,
     unresolved,

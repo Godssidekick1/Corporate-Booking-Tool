@@ -1,34 +1,28 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { CATEGORIES, formatFieldValue } from '@/app/lib/policy/fields'
+import { useEffect, useMemo, useState } from 'react'
+import { ALL_FIELDS } from '@/app/lib/policy/fields'
+import PolicyAccordion, { type Grid } from '@/app/components/policy/PolicyAccordion'
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// ── Settings → Policy: the travel policy in force, read-only ─────────────────
+// The TMC owns policy (groups are its templates, shared across companies), so
+// the company admin reads it here and changes nothing. The same layout as the
+// TMC's editor (PolicyAccordion): pick a policy group, see its limits one
+// section at a time. Each group says which of the company's own bands it
+// covers. Bands with no policy in force are named above, with why.
+// ─────────────────────────────────────────────────────────────────────────────
 
-interface Band {
-  code: string
-  label: string
-  rank: number
-}
+interface Band { code: string; label: string; rank: number }
 
-interface PolicyGroupSummary {
+interface Rule { limit_key: string; limit_value: number | null; limit_bool: boolean | null; limit_list: string[] | null }
+
+interface Group {
   id: string
   name: string
   code: string | null
   bandRanks: number[]
   version: number
-}
-
-interface EffectiveRow {
-  band_code: string
-  band_rank: number
-  travel_type: string
-  limit_key: string
-  limit_value: number | null
-  limit_bool: boolean | null
-  limit_list?: string[] | null
-  policy_group_id: string
-  group_name: string
+  rules: Rule[]
 }
 
 interface UnresolvedBand {
@@ -39,233 +33,171 @@ interface UnresolvedBand {
   detail: string
 }
 
-type CellVal = number | boolean | string[] | null
-type Grid = Record<string, Record<string, CellVal>>
-
-function rowsToGrid(rows: EffectiveRow[]): Grid {
-  const grid: Grid = {}
-  for (const row of rows) {
-    if (!grid[row.band_code]) grid[row.band_code] = {}
-    grid[row.band_code][row.limit_key] = row.limit_value ?? row.limit_bool ?? row.limit_list ?? null
-  }
-  return grid
+interface PolicyView {
+  bands: Band[]
+  groups: Group[]
+  unresolved: UnresolvedBand[]
+  withinPolicyApproval: 'auto' | 'required' | null
 }
 
-// Collapses runs back into ranges so [1,2,3,7] reads "ranks 1–3, 7".
-function ranksLabel(bandRanks: number[]): string {
-  if (bandRanks.length === 0) return 'no ranks'
-
-  const parts: string[] = []
-  let runStart = bandRanks[0]
-  let previous = bandRanks[0]
-
-  for (let i = 1; i <= bandRanks.length; i++) {
-    const current = bandRanks[i]
-    if (current === previous + 1) { previous = current; continue }
-
-    if (runStart === previous) parts.push(String(runStart))
-    else if (previous === runStart + 1) parts.push(`${runStart}, ${previous}`)
-    else parts.push(`${runStart}–${previous}`)
-
-    runStart = current
-    previous = current
-  }
-
-  return `${bandRanks.length === 1 ? 'rank' : 'ranks'} ${parts.join(', ')}`
+// A group's limits as the accordion reads them. A field with no rule is "not
+// set" (a boolean takes its default), exactly as the TMC's editor shows it.
+function gridOf(rules: Rule[]): Grid {
+  const g: Grid = {}
+  for (const f of ALL_FIELDS) g[f.key] = f.kind === 'boolean' ? f.defaultBool ?? false : f.kind === 'list' ? [] : null
+  for (const r of rules) g[r.limit_key] = r.limit_value ?? r.limit_bool ?? r.limit_list ?? null
+  return g
 }
-
-// ── Component ─────────────────────────────────────────────────────────────────
 
 export default function SettingsPolicyPage() {
-  const [bands, setBands] = useState<Band[]>([])
-  const [groups, setGroups] = useState<PolicyGroupSummary[]>([])
-  const [grid, setGrid] = useState<Grid>({})
-  const [groupByBand, setGroupByBand] = useState<Record<string, string>>({})
-  const [unresolved, setUnresolved] = useState<UnresolvedBand[]>([])
-  const [loading, setLoading] = useState(true)
+  const [view, setView] = useState<PolicyView | null>(null)
   const [error, setError] = useState('')
+  const [selectedId, setSelectedId] = useState<string | null>(null)
 
   useEffect(() => {
-    let cancelled = false
-
-    async function loadPolicy() {
-      setLoading(true)
-      setError('')
-      try {
-        const res = await fetch('/api/settings/policy')
-        const data = await res.json()
-        if (cancelled) return
-        if (!res.ok) { setError(data.error || 'Failed to load policy'); return }
-
-        setBands(data.bands)
-        setGroups(data.groups)
-        setGrid(rowsToGrid(data.rows))
-        setUnresolved(data.unresolved)
-        setGroupByBand(
-          Object.fromEntries(
-            (data.rows as EffectiveRow[]).map(r => [r.band_code, r.group_name])
-          )
-        )
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-
-    loadPolicy()
-    return () => { cancelled = true }
+    let live = true
+    fetch('/api/settings/policy')
+      .then(async res => ({ res, data: await res.json() }))
+      .then(({ res, data }) => {
+        if (!live) return
+        if (!res.ok) { setError(data.error || 'Could not load the travel policy.'); return }
+        setView(data)
+        setSelectedId(data.groups[0]?.id ?? null)
+      })
+      .catch(() => { if (live) setError('Could not load the travel policy. Check your connection and try again.') })
+    return () => { live = false }
   }, [])
 
-  // Only render bands that actually resolved to a policy — an unresolved band
-  // gets a line in the notice below instead of a row of dashes that looks like
-  // a policy of "no limits".
-  const resolvedBands = bands.filter(b => grid[b.code])
+  const selected = view?.groups.find(g => g.id === selectedId) ?? null
+  const grid = useMemo(() => gridOf(selected?.rules ?? []), [selected])
+  // The company's bands each group reaches, in rank order.
+  const bandsOf = (g: Group) => (view?.bands ?? []).filter(b => g.bandRanks.includes(b.rank)).sort((a, b) => a.rank - b.rank)
 
   return (
     <div style={s.root}>
-      <div style={s.pageHeader}>
-        <div>
-          <h1 style={s.pageTitle}>Travel Policy</h1>
-          <p style={s.pageSub}>
-            Managed by your TMC. Contact them to request a change.
-          </p>
-        </div>
-        {groups.length > 0 && (
-          <div style={s.headerRight}>
-            {groups.map(g => (
-              <span key={g.id} style={s.groupChip}>
-                {g.name}
-                <span style={s.groupChipMeta}>
-                  {ranksLabel(g.bandRanks)}{g.version > 0 ? ` · v${g.version}` : ''}
-                </span>
-              </span>
-            ))}
-          </div>
-        )}
+      <div style={s.header}>
+        <h1 style={s.title}>Travel policy</h1>
+        <p style={s.sub}>Set by your travel management company for each band. To change anything here, contact them.</p>
       </div>
 
-      {error && <div style={s.errorBanner}>✕ {error}</div>}
+      {error && <div style={s.errorBanner} role="alert">{error}</div>}
 
-      {/* Distinct from "no policy linked": without bands there is nothing for a
-          rank range to match, so the fix is to configure bands, not to chase
-          the TMC for a policy group. */}
-      {!loading && bands.length === 0 && (
-        <div style={s.infoBanner}>
-          <strong>No employee bands are configured for your company.</strong>
-          {' '}Travel policy applies per band, so nothing can take effect until
-          bands exist. Ask your TMC to set them up.
+      {!view && !error && (
+        <div style={s.loading} aria-busy="true">
+          {[0, 1, 2].map(i => <div key={i} className="skeleton" style={{ height: i === 0 ? 64 : 44, borderRadius: 10 }} />)}
         </div>
       )}
 
-      {!loading && bands.length > 0 && unresolved.length > 0 && (
-        <div style={s.infoBanner}>
+      {view && view.bands.length === 0 && (
+        <div style={s.notice}>
+          <strong>No employee bands are set up for your company.</strong> Travel policy applies per band, so none is in force
+          until bands exist. Ask your travel management company to set them up.
+        </div>
+      )}
+
+      {view && view.bands.length > 0 && view.unresolved.length > 0 && (
+        <div style={s.notice}>
           <strong>
-            {unresolved.length === bands.length
+            {view.unresolved.length === view.bands.length
               ? 'No travel policy is in force yet.'
-              : `${unresolved.length} of your ${bands.length} bands have no policy in force.`}
+              : `${view.unresolved.length} of your ${view.bands.length} bands have no policy in force.`}
           </strong>
-          <ul style={s.unresolvedList}>
-            {unresolved.map(u => (
-              <li key={u.band_code}>
-                <strong>{u.band_code}</strong> ({u.band_label}) — {u.detail}
-              </li>
+          <ul style={s.noticeList}>
+            {view.unresolved.map(u => (
+              <li key={u.band_code}><strong>{u.band_code}</strong> ({u.band_label}): {u.detail}</li>
             ))}
           </ul>
-          Employees in these bands will not have their bookings checked against a
-          policy. Ask your TMC to link a policy group covering them.
+          Bookings by people in these bands are not checked against a policy. Ask your travel management company to link a
+          policy group that covers them.
         </div>
       )}
 
-      {loading ? (
-        <div style={s.loadingWrap}>
-          <p style={s.loadingText}>Loading policy…</p>
-        </div>
-      ) : resolvedBands.length === 0 ? null : (
-        <div style={s.tables}>
-          {CATEGORIES.map(cat => (
-            <div key={cat.id} style={s.tableSection}>
-              <div style={{ ...s.tableSectionHeader, background: cat.color }}>
-                <span style={{ ...s.tableSectionTitle, color: cat.textColor }}>{cat.label}</span>
+      {view && view.groups.length > 0 && (
+        <>
+          {/* One card per group: which of your bands it covers. */}
+          <div style={s.groups} role="tablist" aria-label="Policy groups">
+            {view.groups.map(g => {
+              const on = g.id === selectedId
+              const covered = bandsOf(g)
+              return (
+                <button key={g.id} type="button" role="tab" aria-selected={on} onClick={() => setSelectedId(g.id)}
+                  style={{ ...s.group, ...(on ? s.groupOn : {}) }}>
+                  <span style={s.groupName}>{g.name}</span>
+                  <span style={{ ...s.groupBands, ...(on ? s.groupBandsOn : {}) }}>
+                    {covered.length ? covered.map(b => b.code).join(', ') : 'None of your bands'}
+                    {g.version > 0 ? ` · v${g.version}` : ''}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+
+          {selected && (
+            <section style={s.panel} role="tabpanel" aria-label={selected.name}>
+              <div style={s.panelHead}>
+                <div>
+                  <h2 style={s.panelTitle}>{selected.name}</h2>
+                  <p style={s.panelSub}>
+                    {bandsOf(selected).length
+                      ? <>Applies to {bandsOf(selected).map((b, i) => <span key={b.code}>{i > 0 && ', '}<strong>{b.code}</strong> {b.label}</span>)}</>
+                      : 'Covers no band at your company, so it applies to nobody here.'}
+                  </p>
+                </div>
+                {selected.code && <span style={s.code}>{selected.code}</span>}
               </div>
-              <div style={s.tableWrap}>
-                <table style={s.table}>
-                  <thead>
-                    <tr>
-                      <th style={{ ...s.th, ...s.stickyCol, width: 170 }}>Band</th>
-                      {cat.fields.map(f => (
-                        <th key={f.key} style={s.th}>
-                          <span style={s.colLabel}>{f.label}</span>
-                          {f.unit && <span style={s.colUnit}> · {f.unit}</span>}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {resolvedBands.map((band, ri) => (
-                      <tr key={band.code} style={{ background: ri % 2 === 0 ? '#fff' : '#FAFAFA' }}>
-                        <td style={{ ...s.td, ...s.stickyCol }}>
-                          <div style={s.bandCell}>
-                            <span style={s.bandBadge}>{band.code}</span>
-                            <span style={s.bandLabel}>{band.label}</span>
-                            {groupByBand[band.code] && (
-                              <span style={s.bandGroup}>{groupByBand[band.code]}</span>
-                            )}
-                          </div>
-                        </td>
-                        {cat.fields.map(f => (
-                          <td key={f.key} style={s.td}>
-                            <span style={s.cellValue}>
-                              {formatFieldValue(f, grid[band.code]?.[f.key])}
-                            </span>
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ))}
-        </div>
+
+              {selected.rules.length === 0 ? (
+                <p style={s.empty}>No limits are set in this group yet.</p>
+              ) : (
+                <PolicyAccordion
+                  grid={grid} readOnly
+                  extra={cat => cat.id === 'booking_rights' && view.withinPolicyApproval && (
+                    <div style={s.override}>
+                      <strong>Your company&apos;s own setting applies here:</strong> within-policy bookings are{' '}
+                      {view.withinPolicyApproval === 'required' ? 'sent for approval' : 'approved automatically'}, whatever this group says.
+                    </div>
+                  )}
+                />
+              )}
+            </section>
+          )}
+        </>
       )}
 
-      <p style={s.footNote}>
-        Travel policy is configured by your TMC and applies to everyone in the
-        matching band. A dash (—) means no limit is set for that field.
+      <p style={s.foot}>
+        &ldquo;No limit&rdquo; and &ldquo;Not set&rdquo; mean the group places no restriction there. Bookings outside these limits
+        need approval or are refused, depending on your company&apos;s settings.
       </p>
     </div>
   )
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
-
 const s: Record<string, React.CSSProperties> = {
-  root: { fontFamily: "'Inter', -apple-system, sans-serif" },
-  pageHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px', gap: '16px' },
-  pageTitle: { fontSize: '20px', fontWeight: 600, color: '#0A0A14', margin: '0 0 4px', letterSpacing: '-0.3px' },
-  pageSub: { fontSize: '13px', color: '#6B7280', margin: 0 },
-  headerRight: { display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0, flexWrap: 'wrap', justifyContent: 'flex-end' },
-  groupChip: { display: 'inline-flex', flexDirection: 'column', gap: '1px', padding: '5px 11px', background: '#F5F7FF', border: '1px solid #E0E7FF', borderRadius: '7px', fontSize: '12px', fontWeight: 600, color: '#000835' },
-  groupChipMeta: { fontSize: '10px', fontWeight: 400, color: '#6B7280' },
-  infoBanner: { marginBottom: '16px', background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: '8px', padding: '12px 14px', fontSize: '12px', color: '#92400E', lineHeight: '1.6' },
-  unresolvedList: { margin: '6px 0', paddingLeft: '18px' },
-  errorBanner: { marginBottom: '16px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '8px', padding: '10px 14px', fontSize: '12px', color: '#DC2626' },
-  loadingWrap: { display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '80px' },
-  loadingText: { fontSize: '13px', color: '#9CA3AF' },
-  tables: { display: 'flex', flexDirection: 'column', gap: '20px' },
-  tableSection: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '10px', overflow: 'hidden' },
-  tableSectionHeader: { padding: '10px 16px', borderBottom: '1px solid #E5E7EB' },
-  tableSectionTitle: { fontSize: '12px', fontWeight: 600, letterSpacing: '0.3px' },
-  tableWrap: { overflowX: 'auto' },
-  table: { borderCollapse: 'collapse', width: '100%', minWidth: '500px' },
-  th: { padding: '8px 12px', textAlign: 'left', background: '#F9FAFB', borderBottom: '1px solid #E5E7EB', whiteSpace: 'nowrap', verticalAlign: 'top' },
-  colLabel: { display: 'block', fontSize: '11px', fontWeight: 600, color: '#374151' },
-  colUnit: { fontSize: '10px', color: '#9CA3AF', fontWeight: 400 },
-  stickyCol: { position: 'sticky', left: 0, zIndex: 1, background: '#F9FAFB', borderRight: '1px solid #E5E7EB' },
-  td: { padding: '8px 12px', borderBottom: '1px solid #F3F4F6', verticalAlign: 'middle' },
-  bandCell: { display: 'flex', alignItems: 'center', gap: '7px', flexWrap: 'wrap' },
-  bandBadge: { display: 'inline-block', padding: '2px 6px', background: '#EEF2FF', color: '#3730A3', fontSize: '10px', fontWeight: 700, borderRadius: '4px' },
-  bandLabel: { fontSize: '12px', color: '#374151', fontWeight: 500 },
-  bandGroup: { fontSize: '10px', color: '#9CA3AF' },
-  cellValue: { fontSize: '12px', color: '#111827' },
-  footNote: { fontSize: '11px', color: '#9CA3AF', lineHeight: '1.6', margin: '20px 0 0' },
+  root: { fontFamily: "'Inter', -apple-system, sans-serif", maxWidth: 960 },
+  header: { marginBottom: 18 },
+  title: { fontSize: 20, fontWeight: 600, color: '#0A0A14', margin: '0 0 4px', letterSpacing: '-0.3px' },
+  sub: { fontSize: 13, color: '#6B7280', margin: 0 },
+  errorBanner: { marginBottom: 16, background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: 12.5, color: '#DC2626' },
+  loading: { display: 'flex', flexDirection: 'column', gap: 10 },
+  notice: { marginBottom: 16, background: '#FEF3C7', border: '1px solid #FDE68A', borderRadius: 8, padding: '12px 14px', fontSize: 12.5, color: '#92400E', lineHeight: 1.6 },
+  noticeList: { margin: '6px 0', paddingLeft: 18 },
+
+  groups: { display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 14 },
+  group: {
+    display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2, minWidth: 160, textAlign: 'left',
+    padding: '9px 14px', background: '#fff', color: '#111827', border: '1px solid #E5E7EB', borderRadius: 10, cursor: 'pointer',
+  },
+  groupOn: { background: '#000835', borderColor: '#000835', color: '#fff' },
+  groupName: { fontSize: 13, fontWeight: 600, color: 'inherit' },
+  groupBands: { fontSize: 11.5, color: '#6B7280' },
+  groupBandsOn: { color: '#C9CDEA' },
+
+  panel: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: 12, padding: 16 },
+  panelHead: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 14 },
+  panelTitle: { fontSize: 15, fontWeight: 600, color: '#111827', margin: '0 0 3px' },
+  panelSub: { fontSize: 12.5, color: '#6B7280', margin: 0, lineHeight: 1.5 },
+  code: { fontSize: 11, fontWeight: 700, color: '#3730A3', background: '#EEF2FF', borderRadius: 5, padding: '3px 8px', whiteSpace: 'nowrap' },
+  empty: { fontSize: 13, color: '#6B7280', margin: '8px 0' },
+  override: { margin: '4px 16px 12px', fontSize: 12, color: '#4C1D95', background: '#F5F3FF', border: '1px solid #DDD6FE', borderRadius: 8, padding: '8px 12px', lineHeight: 1.5 },
+  foot: { fontSize: 11.5, color: '#9CA3AF', lineHeight: 1.6, margin: '18px 0 0' },
 }
