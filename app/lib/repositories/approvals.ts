@@ -384,6 +384,14 @@ export async function supersede(db: Queryable, approvalIds: readonly string[]): 
     update approvals set status = 'superseded', actioned_at = now() where id = any(${[...approvalIds]})`)
 }
 
+// A booking sent back to its traveller (the fare rose beyond policy on a
+// refresh): its open steps close, saying why. Returns how many.
+export async function supersedePendingForBooking(db: Queryable, bookingId: string, note: string): Promise<number> {
+  return exec(db, sql`
+    update approvals set status = 'superseded', actioned_at = now(), decision_note = ${note}
+    where booking_id = ${bookingId} and status = 'pending'`)
+}
+
 export type ApprovalStep = Pick<Row<'approvals'>, 'id' | 'tier' | 'status' | 'reason' | 'decision_note' | 'approver_id'>
 
 // The step a traveller cares about: the highest tier -- the one pending now,

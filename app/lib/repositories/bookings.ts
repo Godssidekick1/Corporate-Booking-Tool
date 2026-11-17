@@ -650,15 +650,45 @@ export async function approvalSummaries(db: Queryable, bookingIds: readonly stri
     from bookings where id = any(${[...bookingIds]}) order by id`)
 }
 
+// traveler_snapshot: the passenger counts a fresh search needs (refindFare);
+// sell_total: what was sent for approval, to measure a rise against.
 export type RefreshTarget = Pick<Row<'bookings'>,
   | 'id' | 'employee_id' | 'client_id' | 'status' | 'provider' | 'search_key' | 'pricing_key'
-  | 'result_index' | 'itinerary' | 'fare_breakdown'
+  | 'result_index' | 'itinerary' | 'fare_breakdown' | 'traveler_snapshot' | 'sell_total' | 'total_cost'
 >
 
 export async function refreshTarget(db: Queryable, bookingId: string): Promise<RefreshTarget | null> {
   return maybeOne<RefreshTarget>(db, sql`
-    select id, employee_id, client_id, status, provider, search_key, pricing_key, result_index, itinerary, fare_breakdown
+    select id, employee_id, client_id, status, provider, search_key, pricing_key, result_index, itinerary, fare_breakdown,
+           traveler_snapshot, sell_total, total_cost
     from bookings where id = ${bookingId}`)
+}
+
+// A booking sent back to its traveller (reapproval_needed): what asking again needs.
+export type ReapprovalTarget = Pick<Row<'bookings'>,
+  'id' | 'employee_id' | 'client_id' | 'status' | 'sell_total' | 'total_cost' | 'policy_verdict'>
+
+export async function reapprovalTarget(db: Queryable, bookingId: string): Promise<ReapprovalTarget | null> {
+  return maybeOne<ReapprovalTarget>(db, sql`
+    select id, employee_id, client_id, status, sell_total, total_cost, policy_verdict
+    from bookings where id = ${bookingId}`)
+}
+
+// The traveller's reason for going ahead outside policy, given when asking again.
+export async function setPolicyReason(db: Queryable, bookingId: string, code: string, note: string | null): Promise<void> {
+  await exec(db, sql`
+    update bookings set policy_reason_code = ${code}, policy_reason_note = ${note}, updated_at = now() where id = ${bookingId}`)
+}
+
+// The keys of a fare found again in a fresh search (app/lib/book/refindFare.ts):
+// later re-pricing, and confirming, use these instead of the expired ones.
+export async function applyRefoundKeys(
+  db: Queryable, bookingId: string, k: { searchKey: string; pricingKey: string; resultIndex: string; provider: string },
+): Promise<void> {
+  await exec(db, sql`
+    update bookings set search_key = ${k.searchKey}, pricing_key = ${k.pricingKey}, result_index = ${k.resultIndex},
+      provider = ${k.provider}, updated_at = now()
+    where id = ${bookingId}`)
 }
 
 export interface RefreshedFare {

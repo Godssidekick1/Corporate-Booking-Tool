@@ -291,14 +291,16 @@ d('approvals', () => {
 
   it('refresh-fare: re-prices, and the booking and step carry the new figures', async () => {
     const step = await pendingFor(first.bookingId)
-    fake.pricing.mockResolvedValueOnce(pricing('K1-NEW', 'REF-K1', 12000))
+    // A fall: the approver carries on with the new price. (A rise that stays
+    // out of policy goes back to the traveller: tests/routes/refreshFare.test.ts.)
+    fake.pricing.mockResolvedValueOnce(pricing('K1-NEW', 'REF-K1', 10000))
     const res = await call(refreshFare, {
       as: approver, method: 'POST', url: `/api/approvals/${step.id}/refresh-fare`, params: { approvalId: step.id }, body: {},
     })
     expect(res.status).toBe(200)
     const saved = await one<{ amadeus_key: string; total_cost: number; sell_total: number }>(db, sql`
       select amadeus_key, total_cost, sell_total from bookings where id = ${first.bookingId}`)
-    expect(saved).toMatchObject({ amadeus_key: 'K1-NEW', total_cost: 12000 })
+    expect(saved).toMatchObject({ amadeus_key: 'K1-NEW', total_cost: 10000 })
     // The approver is an ordinary employee: what comes back is what the company
     // spends, never the airline's figure or its per-passenger split. The two
     // totals differ here, so the first assertion cannot pass by coincidence.
@@ -306,7 +308,7 @@ d('approvals', () => {
     expect(res.json).toMatchObject({ ok: true, totalCost: saved.sell_total })
     const body = res.json as { fareBreakdown: Record<string, unknown> }
     expect(body.fareBreakdown).not.toHaveProperty('passengerBreakup')
-    expect(JSON.stringify(res.json)).not.toContain('12000')
+    expect(JSON.stringify(res.json)).not.toContain('10000')
     expect((await call(refreshFare, {
       as: traveller, method: 'POST', url: `/api/approvals/${step.id}/refresh-fare`, params: { approvalId: step.id }, body: {},
     })).status).toBe(403)

@@ -11,6 +11,7 @@ import { db } from '@/app/lib/db'
 import * as clientsRepo from '@/app/lib/repositories/clients'
 import { extractPricingDetails } from '@/app/api/book/price/route'
 import { priceAgain, fareRoseTooFar } from '@/app/lib/book/repriceBooking'
+import { refindFare } from '@/app/lib/book/refindFare'
 import { startApprovalForBooking } from '@/app/lib/approval-engine/resolveApprovalTier'
 
 // ── POST /api/book/book ───────────────────────────────────────────────────────
@@ -281,7 +282,35 @@ export const POST = route(async (req: NextRequest) => {
         // is a brand new search. Surface that plainly instead of letting
         // a raw GDS error reach the traveler.
         const isAlsoStale = pricingErr instanceof AmadeusError && /session/i.test(pricingErr.message)
+        // A brand new search, then: the same flight and fare found again
+        // (app/lib/book/refindFare.ts), and the rest of this recovery carries
+        // on with its keys -- the fare-rise check, passengers, Booking.
         if (isAlsoStale) {
+          try {
+            const target = await bookingsRepo.refreshTarget(db, bookingId)
+            const again = target ? await refindFare(target) : null
+            if (again?.found) {
+              freshPricing = again.pricing
+              await bookingsRepo.applyRefoundKeys(db, bookingId, again)
+              console.info('[book/booking] the stale fare was found again in a fresh search', { bookingId })
+            } else if (again) {
+              try {
+                await bookingsRepo.markFailed(db, bookingId)
+              } catch (goneUpdateError) {
+                console.error('Failed to mark booking as failed after its fare was gone', goneUpdateError, { bookingId })
+              }
+              return Response.json({
+                error: again.reason === 'flight_gone'
+                  ? 'This flight is no longer offered on that day, so the booking can’t be confirmed. Please search again and choose another flight.'
+                  : 'This fare is no longer sold on this flight, so the booking can’t be confirmed. Please search again and choose another fare.',
+                code: 'FARE_UNAVAILABLE',
+              }, { status: 409 })
+            }
+          } catch (refindError) {
+            console.error('[book/booking] could not find the fare again', refindError, { bookingId })
+          }
+        }
+        if (isAlsoStale && !freshPricing) {
           console.error('Recovery re-pricing also failed with a session/expiry error — search_key itself is stale, not just the session', {
             bookingId,
             searchKey: booking.search_key,
@@ -297,7 +326,8 @@ export const POST = route(async (req: NextRequest) => {
             code: 'SEARCH_EXPIRED',
           }, { status: 409 })
         }
-        throw pricingErr
+        // Found again: carry on below with the fresh price.
+        if (!freshPricing) throw pricingErr
       }
 
       // ── The fare rose after it was approved ────────────────────────────
