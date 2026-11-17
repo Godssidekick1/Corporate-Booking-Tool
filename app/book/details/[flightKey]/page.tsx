@@ -12,7 +12,7 @@ import {
 } from '@/app/lib/book/types'
 import { CountrySelect, RegionSelect, CitySelect, findCountry, useCountries } from '@/app/components/places/PlacePickers'
 import { genderForTitle } from '@/app/lib/places/profileFormat'
-import { mealCodesFor, mealLabel, fromProfilePreference, NO_MEAL_PREFERENCE } from '@/app/lib/book/mealCodes'
+import { mealGroupsFor, mealGuidance, mealsOrderable, mealLabel, fromProfilePreference, NO_MEAL_PREFERENCE } from '@/app/lib/book/mealCodes'
 import { ButtonBusy, BusyOverlay } from '@/app/components/FlowLoader'
 import { PageLoader } from '@/app/components/book/Takeoff'
 import { classifyTrip } from '@/app/lib/rule-engine/classifyTrip'
@@ -156,6 +156,23 @@ interface LegInfo {
 //
 // legIndex stays a flat counter across every direction, because that is what
 // /api/book/seatmap takes and what AddPassenger's SeatListDetails are grouped by.
+// The special meals for one passenger type: the most asked for first, the rest
+// in a group that says not every flight carries them (app/lib/book/mealCodes.ts).
+function MealOptions({ paxType }: { paxType: string }) {
+  const { common, more } = mealGroupsFor(paxType)
+  const option = (meal: (typeof common)[number]) => (
+    <option key={meal.code} value={meal.code}>
+      {meal.label}{meal.note ? ` — ${meal.note}` : ''}
+    </option>
+  )
+  return (
+    <>
+      <optgroup label="Most asked for">{common.map(option)}</optgroup>
+      {more.length > 0 && <optgroup label="More options (not every flight carries these)">{more.map(option)}</optgroup>}
+    </>
+  )
+}
+
 function buildLegs(flight: FlatFlightResult): LegInfo[] {
   const legs: LegInfo[] = []
   let legIndex = 0
@@ -343,6 +360,17 @@ export default function BookingDetailsPage() {
   // sample seen, so the permissive default matches reality and the worst case
   // is an honoured request on a fare that would not have carried one.
   const mealIncluded = priced?.mealIncluded !== false
+  // Whether a special meal can be asked for, and what to say (app/lib/book/
+  // mealCodes.ts): never on a low-cost carrier, and a warning under a day out.
+  // A split round trip judges each flight on its own.
+  const mealHelp = mealGuidance({
+    isLcc: flight?.isLcc, mealIncluded, departure: flight ? journeysOf(flight)[0]?.origin?.dateTime : null,
+  })
+  const returnMealHelp = pairReturn ? mealGuidance({
+    isLcc: pairReturn.flight.isLcc, mealIncluded: pairReturn.priced.mealIncluded !== false,
+    departure: journeysOf(pairReturn.flight)[0]?.origin?.dateTime,
+  }) : null
+  const mealsCanBeChosen = mealHelp.orderable || !!returnMealHelp?.orderable
 
   // ── Passenger state ─────────────────────────────────────────────────────
   const [passengers, setPassengers] = useState<PassengerForm[]>([])
@@ -900,8 +928,10 @@ export default function BookingDetailsPage() {
               // '' regardless of what is on the form — there is no ancillary
               // purchase flow (SSRInfo and SSRAmount are both sent empty), so a
               // special meal on a meal-less fare is a request the airline has
-              // no reason to honour and we have no way to pay for.
-              MealCode: mealIncluded ? p.mealCode : '',
+              // no reason to honour and we have no way to pay for. A low-cost
+              // carrier sells its meals, so it gets '' too. Judged per flight:
+              // a split round trip may pair a full-service and a low-cost one.
+              MealCode: mealsOrderable(itinerary?.isLcc, fare.mealIncluded) ? p.mealCode : '',
               SeatListDetails: toSeatListDetails(seats[i]),
             })),
           },
@@ -1031,14 +1061,14 @@ export default function BookingDetailsPage() {
   // and the traveller deliberately chose the standard tray. Only the first is
   // worth a word of explanation.
   const chosenMeals = passengers.map(p => mealLabel(p.mealCode)).filter(Boolean) as string[]
-  const mealsSummary = !mealIncluded
-    ? 'Not included with this fare'
+  const mealsSummary = !mealsCanBeChosen
+    ? (flight?.isLcc ? 'Sold on board by the airline' : 'Not included with this fare')
     : chosenMeals.length === 0
       ? 'No preference'
       // Names, not codes: "VGML, AVML" is a row only the person who wrote the
       // mapping can read.
       : chosenMeals.join(', ')
-  const mealsStatus: 'done' | 'todo' = mealIncluded && chosenMeals.length > 0 ? 'done' : 'todo'
+  const mealsStatus: 'done' | 'todo' = mealsCanBeChosen && chosenMeals.length > 0 ? 'done' : 'todo'
 
   const contactHasErrors = Boolean(fieldErrors['contact-email'] || fieldErrors['contact-mobile'] || fieldErrors['contact-place'])
   const contactStatus = contactHasErrors ? 'error' : (email && mobile) ? 'done' : 'todo'
@@ -1385,11 +1415,21 @@ export default function BookingDetailsPage() {
             open={openStep === 'meals'}
             onToggle={() => setOpenStep(openStep === 'meals' ? null : 'meals')}
           >
-            {mealIncluded ? (
+            {mealsCanBeChosen ? (
               <>
-                <p style={s.stepIntro}>
-                  This fare includes a meal. One standard option per traveller, at no extra cost.
-                </p>
+                <p style={s.stepIntro}>{(mealHelp.orderable ? mealHelp : returnMealHelp!).text}</p>
+                {/* A split round trip where only one flight takes requests:
+                    say which, rather than let a choice look like it covers both. */}
+                {returnMealHelp && mealHelp.orderable !== returnMealHelp.orderable && (
+                  <p style={s.stepIntro}>
+                    {mealHelp.orderable
+                      ? 'This applies to the onward flight. On the return flight a special meal can’t be pre-ordered.'
+                      : 'This applies to the return flight. On the onward flight a special meal can’t be pre-ordered.'}
+                  </p>
+                )}
+                {(mealHelp.warning ?? returnMealHelp?.warning) && (
+                  <p style={s.mealWarning} role="note">{mealHelp.warning ?? returnMealHelp?.warning}</p>
+                )}
                 {passengers.map((passenger, i) => {
                   const paxName = [passenger.firstName, passenger.lastName].filter(Boolean).join(' ')
                   return (
@@ -1413,11 +1453,7 @@ export default function BookingDetailsPage() {
                         {/* Filtered by passenger type: a baby meal is not an
                             option for an adult, and offering it is how one gets
                             requested by accident. */}
-                        {mealCodesFor(passenger.paxType).map(meal => (
-                          <option key={meal.code} value={meal.code}>
-                            {meal.label}{meal.note ? ` — ${meal.note}` : ''}
-                          </option>
-                        ))}
+                        <MealOptions paxType={passenger.paxType} />
                       </select>
                     </div>
                   )
@@ -1429,10 +1465,7 @@ export default function BookingDetailsPage() {
                  PAID meal and we populate neither, so a chargeable meal is
                  genuinely not orderable here — a greyed-out control implies it
                  might become available if you did something differently. */
-              <p style={s.stepIntro}>
-                This fare does not include a meal, so a preference cannot be requested.
-                Meals may be available to buy on board.
-              </p>
+              <p style={s.stepIntro}>{mealHelp.text}</p>
             )}
           </Step>
 
@@ -1902,6 +1935,10 @@ const s: Record<string, React.CSSProperties> = {
   mealWho: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' as const, minWidth: 0 },
   mealWhoName: { fontSize: '13px', fontWeight: 600, color: '#111827' },
   mealSelect: { marginBottom: 0 },
+  mealWarning: {
+    margin: '0 0 14px', padding: '8px 12px', fontSize: '12.5px', lineHeight: 1.5, borderRadius: 8,
+    background: 'var(--color-warn-bg)', border: '1px solid var(--color-warn-line)', color: 'var(--color-warn-fg)',
+  },
   paxNextBtn: {
     marginTop: '14px', alignSelf: 'flex-start' as const, background: '#fff', color: '#000835',
     border: '1px solid #D1D5DB', borderRadius: '8px', padding: '7px 14px',

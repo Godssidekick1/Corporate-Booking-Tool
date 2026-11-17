@@ -33,22 +33,25 @@ export interface MealCode {
   // Restricts the option to a passenger type. A baby meal offered for an adult
   // is noise in a list someone has to read.
   paxType?: 'ADT' | 'CHD' | 'INF'
+  // Among the few most asked for, listed first. The rest sit under "More
+  // options": standard IATA codes, but not every flight loads every one.
+  common?: true
 }
 
 export const MEAL_CODES: MealCode[] = [
   // Dietary and religious — the ones most often needed.
-  { code: 'AVML', label: 'Asian vegetarian', note: 'Indian-style, spiced' },
-  { code: 'VLML', label: 'Vegetarian', note: 'Allows dairy and egg' },
-  { code: 'VGML', label: 'Vegan', note: 'No dairy or egg' },
-  { code: 'VJML', label: 'Jain vegetarian', note: 'No root vegetables' },
+  { code: 'AVML', label: 'Asian vegetarian', note: 'Indian-style, spiced', common: true },
+  { code: 'VLML', label: 'Vegetarian', note: 'Allows dairy and egg', common: true },
+  { code: 'VGML', label: 'Vegan', note: 'No dairy or egg', common: true },
+  { code: 'VJML', label: 'Jain vegetarian', note: 'No root vegetables', common: true },
   { code: 'HNML', label: 'Hindu non-vegetarian' },
-  { code: 'MOML', label: 'Muslim / halal' },
+  { code: 'MOML', label: 'Muslim / halal', common: true },
   { code: 'KSML', label: 'Kosher', note: 'Usually needs 24–48 hours notice' },
   { code: 'SFML', label: 'Seafood' },
 
   // Medical and dietary restriction.
   { code: 'GFML', label: 'Gluten intolerant' },
-  { code: 'DBML', label: 'Diabetic' },
+  { code: 'DBML', label: 'Diabetic', common: true },
   { code: 'NLML', label: 'Non-lactose' },
   { code: 'LSML', label: 'Low salt' },
   { code: 'LFML', label: 'Low fat' },
@@ -60,8 +63,8 @@ export const MEAL_CODES: MealCode[] = [
   { code: 'RVML', label: 'Raw vegetarian' },
 
   // Age-specific.
-  { code: 'CHML', label: 'Child meal', paxType: 'CHD' },
-  { code: 'BBML', label: 'Baby meal', paxType: 'INF' },
+  { code: 'CHML', label: 'Child meal', paxType: 'CHD', common: true },
+  { code: 'BBML', label: 'Baby meal', paxType: 'INF', common: true },
 ]
 
 // Which codes to offer a given passenger. An adult never sees a baby meal; an
@@ -88,5 +91,57 @@ export function fromProfilePreference(preference: string | null | undefined): st
     case 'Vegan': return 'VGML'
     case 'Eggetarian': return 'VLML'
     default: return NO_MEAL_PREFERENCE
+  }
+}
+
+// ── What to offer, and when ──────────────────────────────────────────────────
+// Not every flight carries all nineteen codes, and the provider has no way to
+// ask which ones a given flight takes (a question for them: see
+// docs/provider-questions.md). So the list leads with the few most asked for,
+// and says plainly when a meal cannot be pre-ordered at all.
+
+export function mealGroupsFor(paxType: string): { common: MealCode[]; more: MealCode[] } {
+  const all = mealCodesFor(paxType)
+  return { common: all.filter(m => m.common), more: all.filter(m => !m.common) }
+}
+
+// Whether a special meal can be asked for on this flight at all. A low-cost
+// carrier sells meals (a paid add-on, which we do not sell), and a fare
+// without a meal has none to swap. Either way MealCode goes as ''.
+export function mealsOrderable(isLcc: boolean | undefined, mealIncluded: boolean | undefined): boolean {
+  return !isLcc && mealIncluded !== false
+}
+
+export interface MealGuidance {
+  orderable: boolean
+  text: string
+  // Only when it matters: less than a day before departure.
+  warning: string | null
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000
+
+export function mealGuidance(o: {
+  isLcc?: boolean
+  mealIncluded?: boolean
+  departure?: string | null   // the first departure, as the itinerary has it
+  now?: Date
+}): MealGuidance {
+  if (o.isLcc) {
+    return { orderable: false, warning: null,
+      text: 'Meals on this airline are sold on board or as a paid add-on, so they can’t be pre-ordered here.' }
+  }
+  if (o.mealIncluded === false) {
+    return { orderable: false, warning: null,
+      text: 'This fare does not include a meal, so a preference cannot be requested. Meals may be available to buy on board.' }
+  }
+  const leaves = o.departure ? new Date(o.departure).getTime() : NaN
+  const toGo = leaves - (o.now ?? new Date()).getTime()
+  return {
+    orderable: true,
+    text: 'This fare includes a meal. The most asked-for special meals are listed first; the others are standard airline codes that not every flight carries.',
+    warning: toGo > 0 && toGo < DAY_MS
+      ? 'This flight leaves in less than a day. Airlines usually need 24–48 hours’ notice for a special meal, so it may not be loaded.'
+      : null,
   }
 }

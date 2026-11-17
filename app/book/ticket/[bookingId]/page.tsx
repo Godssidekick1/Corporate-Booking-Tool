@@ -647,7 +647,9 @@ export default function TicketPage() {
                       {mealLabel(t.MealCode) && (
                         <div style={s.stubRow}>
                           <span style={s.stubLabel}>Meal</span>
-                          <span style={s.stubValue}>{mealLabel(t.MealCode)}</span>
+                          {/* Requested, not confirmed: the airline's answer
+                              (SSRDetails) is not read yet (docs/provider-questions.md). */}
+                          <span style={s.stubValue}>{mealLabel(t.MealCode)} (requested)</span>
                         </div>
                       )}
                       <div style={s.stubRow}>

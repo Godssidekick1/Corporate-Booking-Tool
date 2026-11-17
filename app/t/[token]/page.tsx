@@ -243,7 +243,7 @@ export default function PublicTicketPage() {
                 {/* Already masked by the API — the full number never reaches
                     this page, so there is nothing here to reveal. */}
                 {p.passport && <span style={s.paxDetail}>Passport {p.passport}</span>}
-                {mealLabel(p.mealCode) && <span style={s.paxDetail}>Meal: {mealLabel(p.mealCode)}</span>}
+                {mealLabel(p.mealCode) && <span style={s.paxDetail}>Meal requested: {mealLabel(p.mealCode)}</span>}
                 {p.seats.map((seat, si) => (
                   <span key={si} style={s.paxDetail}>Seat {seat.SeatDesignator}</span>
                 ))}

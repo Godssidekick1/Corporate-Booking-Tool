@@ -517,7 +517,7 @@ export default function ConfirmBookingPage() {
                         {/* The meal they asked for, checkable before the
                             booking is confirmed rather than discovered in the
                             air. */}
-                        {mealLabel(t.MealCode) && <> · {mealLabel(t.MealCode)}</>}
+                        {mealLabel(t.MealCode) && <> · {mealLabel(t.MealCode)} meal requested</>}
                       </p>
                     </div>
                     {orderedSeats.length > 0 && (
