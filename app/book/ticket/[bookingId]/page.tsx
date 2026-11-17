@@ -13,6 +13,7 @@ import FareRulesPanel from '@/app/components/book/FareRulesPanel'
 import type { FareRules } from '@/app/lib/book/fareRules'
 import DeskFareStrip from '@/app/components/book/DeskFareStrip'
 import { PageLoader } from '@/app/components/book/Takeoff'
+import TicketPrinter from '@/app/components/book/TicketPrinter'
 import type { DeskView } from '@/app/lib/commercials/deskView'
 
 // ── /book/ticket/[bookingId] ──────────────────────────────────────────────────
@@ -427,7 +428,7 @@ export default function TicketPage() {
         {/* A full-page state rather than an overlay: there is nothing behind it
             worth seeing yet, because the ticket is what this page is. */}
         {ticketing && (
-          <PageLoader label="Issuing your ticket…"
+          <TicketPrinter label="Issuing your ticket…"
             note="The airline is confirming your ticket numbers. Please don't close or refresh this page." />
         )}
 

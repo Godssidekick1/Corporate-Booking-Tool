@@ -1,0 +1,58 @@
+/* The ticketing loader (TicketPrinter.tsx): a printer feeds a boarding pass
+   out of its slot in short mechanical steps, its light blinking, the pass is
+   torn away, and the next one starts. Lengths are in the drawing's own units
+   (viewBox 240 x 210). Local keyframes: CSS modules rename animation names,
+   so the app's global ones are not reachable from here. */
+
+.wrap { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 40px 20px; text-align: center; }
+.scene { display: block; width: 100%; max-width: 260px; height: auto; overflow: visible; }
+
+.body { fill: var(--color-rail); }
+.top { fill: #1b2459; }
+.slot { fill: #00041c; }
+.vent { stroke: #3a4275; stroke-width: 2; stroke-linecap: round; }
+.led { fill: #34d399; animation: blink 0.9s steps(2, jump-none) infinite; }
+@keyframes blink { 50% { fill: #065f46; } }
+
+/* The print head's glow along the slot while paper passes it. */
+.head { fill: #93c5fd; opacity: 0; animation: head 3.6s linear infinite; }
+@keyframes head {
+  0%, 4% { opacity: 0; }
+  8%, 58% { opacity: 0.9; }
+  12%, 22%, 32%, 42%, 52% { opacity: 0.45; }
+  62%, 100% { opacity: 0; }
+}
+
+/* The pass: starts inside the printer (hidden by the clip), feeds out in
+   steps, rests, then is torn away. */
+.paper { animation: feed 3.6s infinite; }
+@keyframes feed {
+  0% { transform: translateY(-134px); opacity: 1; animation-timing-function: steps(12, end); }
+  60% { transform: translateY(0); opacity: 1; animation-timing-function: ease-in; }
+  78% { transform: translateY(0) rotate(0deg); opacity: 1; animation-timing-function: ease-in; }
+  92% { transform: translate(18px, 26px) rotate(7deg); opacity: 0; }
+  100% { transform: translateY(-134px); opacity: 0; }
+}
+.paper { transform-box: view-box; transform-origin: 120px 80px; }
+
+.sheet { fill: #fff; stroke: var(--color-line-strong); stroke-width: 1; }
+.band { fill: var(--color-info-bg); }
+.plane { fill: var(--color-rail); }
+.ink { fill: #cbd2e1; }
+.inkDark { fill: #8a93a8; }
+.tear { stroke: var(--color-line-strong); stroke-width: 1.2; stroke-dasharray: 3 3; }
+.notch { fill: var(--color-canvas); }
+.bar { fill: #0a0a14; }
+
+/* A soft shadow under the printer. */
+.shadow { fill: rgba(0, 8, 53, 0.08); }
+
+.label { margin: 6px 0 0; font-size: 15px; font-weight: 700; color: var(--color-ink); }
+.note { margin: 0; font-size: 12.5px; color: var(--color-secondary); line-height: 1.55; max-width: 380px; }
+
+/* Reduced motion: a pass half out of the printer, nothing moving. */
+@media (prefers-reduced-motion: reduce) {
+  .paper { animation: none; transform: translateY(-50px); }
+  .led, .head { animation: none; }
+  .head { opacity: 0.6; }
+}
