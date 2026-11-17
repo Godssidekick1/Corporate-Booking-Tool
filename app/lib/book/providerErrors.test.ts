@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { AmadeusError } from '@/app/lib/amadeus/client'
-import { failureKind, plainMessage, providerFailure, supportReference } from './providerErrors'
+import { failureKind, plainMessage, providerFailure, supportReference, outcomeUnknown } from './providerErrors'
 
 const err = (message: string, requestId = '3f2a9c1b-0000-4000-8000-000000000000') =>
   new AmadeusError(message, 'E1', 'Cat', { Status: 'Failure', Error: { Description: message } }, requestId, { secret: 'body' })
@@ -23,6 +23,23 @@ describe('provider errors', () => {
     expect(plainMessage(err('Fare Not Found'), 'ticket')).toMatch(/^The ticket could not be issued/)
     expect(plainMessage(err('Session expired'), 'price')).toBe('This search has expired. Please search again.')
     expect(plainMessage(err('Queue busy'), 'search')).toMatch(/^We couldn’t get flights/)
+  })
+
+  it('no answer: never "try again" where the airline may have acted', () => {
+    const timeout = new AmadeusError('No answer from Amadeus Flight/Booking within 90 s', 'TIMEOUT', 'timeout')
+    const network = new AmadeusError('Could not reach Amadeus Flight/Booking: socket hang up', 'NETWORK', 'network')
+    expect(failureKind(timeout)).toBe('timeout')
+    expect(failureKind(network)).toBe('network')
+    for (const step of ['booking', 'ticket', 'cancel'] as const) {
+      for (const e of [timeout, network]) {
+        expect(plainMessage(e, step)).toMatch(/can’t yet tell/)
+        expect(outcomeUnknown(e, step)).toBe(true)
+      }
+    }
+    // Where nothing changed at the airline, trying again is the right advice.
+    expect(plainMessage(timeout, 'price')).toMatch(/didn’t answer in time/)
+    expect(plainMessage(network, 'search')).toMatch(/couldn’t reach the airline.*try again/)
+    expect(outcomeUnknown(timeout, 'price')).toBe(false)
   })
 
   it('a traveller gets the plain line and a reference, nothing of the provider', async () => {

@@ -1,6 +1,6 @@
 import { requireUser } from '@/app/lib/auth/session'
 import { amadeus, AmadeusError, CustomerInfo } from '@/app/lib/amadeus/client'
-import { providerFailure, failureKind, alreadyOnFlightMessage } from '@/app/lib/book/providerErrors'
+import { providerFailure, failureKind, alreadyOnFlightMessage, outcomeUnknown } from '@/app/lib/book/providerErrors'
 import * as employees from '@/app/lib/repositories/employees'
 import { actingTraveller } from '@/app/lib/book/bookingActor'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
@@ -193,6 +193,26 @@ export const POST = route(async (req: NextRequest) => {
 
   const provider = booking.provider
 
+  // ── An earlier attempt the airline never answered ─────────────────────────
+  // The airline may have made the booking anyway. Ask it first, and record
+  // what it says; book again only if it says the booking failed. If it still
+  // can't say, refuse rather than risk a second PNR.
+  if (booking.provider_unconfirmed === 'booking') {
+    const { state, response } = await amadeus.bookingStatus(booking.provider_order_id, provider)
+    if ((state === 'held' || state === 'ticketed') && response) {
+      await bookingsRepo.clearUnconfirmed(db, bookingId)
+      return finalizeHeld(bookingId, user.id, response)
+    }
+    if (state === 'unknown') {
+      return Response.json({
+        error: 'We still can’t tell from the airline whether this booking went through, so it hasn’t been sent again. Please try again in a few minutes, or contact your travel desk.',
+        code: 'OUTCOME_UNKNOWN',
+      }, { status: 409 })
+    }
+    // Failed or cancelled at the airline: nothing was made, so booking again is safe.
+    await bookingsRepo.clearUnconfirmed(db, bookingId)
+  }
+
   try {
     let bookingKey: string = booking.amadeus_key
     let bookingReferenceNo: string = booking.provider_order_id
@@ -345,6 +365,22 @@ export const POST = route(async (req: NextRequest) => {
       return await finalizeHeld(bookingId, user.id, retryResult)
     }
   } catch (err) {
+    // No answer (or a dropped connection): the airline may have made the
+    // booking. Ask it now; record a booking it has; never call it failed on a
+    // guess. Still unknown: marked, so the next attempt asks before booking.
+    if (err instanceof AmadeusError && outcomeUnknown(err, 'booking')) {
+      const latest = await bookingsRepo.holdTarget(db, bookingId)
+      const { state, response } = await amadeus.bookingStatus(latest?.provider_order_id ?? booking.provider_order_id, provider)
+      if ((state === 'held' || state === 'ticketed') && response) return finalizeHeld(bookingId, user.id, response)
+      if (state === 'unknown') {
+        try {
+          await bookingsRepo.markUnconfirmed(db, bookingId, 'booking')
+        } catch (markError) {
+          console.error('[book/booking] could not mark the booking as unconfirmed', markError, { bookingId })
+        }
+        return providerFailure(err, 'booking', user, { status: 'unconfirmed' })
+      }
+    }
     if (err instanceof AmadeusError) {
       // Recording the failure must not replace the airline's answer with ours.
       try {

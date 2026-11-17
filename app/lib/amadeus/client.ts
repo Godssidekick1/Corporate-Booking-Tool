@@ -659,6 +659,18 @@ function generateSearchKey(): string {
 
 // ── Core HTTP helper ──────────────────────────────────────────────────────────
 
+// How long each call may take before it counts as unanswered. Generous: the
+// test system takes 7-9 s to search or price and up to ~20 s for fare rules;
+// these are for a hung call, not a slow one.
+const DEFAULT_TIME_LIMIT_MS = 60_000
+const TIME_LIMIT_MS: Record<string, number> = {
+  'flight/Authenticate': 20_000,
+  'Flight/GetBookingDetails': 30_000,
+  'Flight/Booking': 90_000,
+  'Flight/Ticket': 90_000,
+  'Flight/CancelBooking': 90_000,
+}
+
 async function post<T extends AmadeusEnvelope>(
   endpoint: string,
   body: Record<string, unknown>,
@@ -669,12 +681,31 @@ async function post<T extends AmadeusEnvelope>(
 const url = `${BASE_URL}/${endpoint}`
 
 console.info('[amadeus] request', { requestId, endpoint, body: sanitizeAmadeusDiagnostic(body) })
-  
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
+
+  // Every call has a time limit: a hung airline call used to hold a page (and
+  // the person) indefinitely. A call with no answer, or that cannot reach the
+  // airline at all, becomes an AmadeusError the routes already turn into plain
+  // words (code TIMEOUT or NETWORK). For Booking and Ticket "no answer" is not
+  // "not done": the routes ask the airline what happened (bookingStatus).
+  const limit = TIME_LIMIT_MS[endpoint] ?? DEFAULT_TIME_LIMIT_MS
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), limit)
+  let res: Response
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    })
+  } catch (error) {
+    if (ctrl.signal.aborted) {
+      throw new AmadeusError(`No answer from Amadeus ${endpoint} within ${Math.round(limit / 1000)} s`, 'TIMEOUT', 'timeout', undefined, requestId, body)
+    }
+    throw new AmadeusError(`Could not reach Amadeus ${endpoint}: ${error instanceof Error ? error.message : String(error)}`, 'NETWORK', 'network', undefined, requestId, body)
+  } finally {
+    clearTimeout(timer)
+  }
 
   if (!res.ok) {
     throw new AmadeusError(
@@ -917,6 +948,38 @@ export const amadeus = {
   },
 
   // ── 6. Get booking details ─────────────────────────────────────────────────
+  // ── What the airline holds for a booking, after a call went unanswered ─────
+  // GetBookingDetails answers in Booking's own shape (AirBookingResponse), with
+  // BookingStatus "Ticketed", "Failed", and so on (seen 2026-11-17), and its
+  // own Status "Failure" for a failed booking -- which is an answer here, not
+  // an error. Anything this cannot read, or a failed lookup, is 'unknown'.
+  async bookingStatus(referenceNo: string, provider: string): Promise<{
+    state: 'held' | 'ticketed' | 'failed' | 'cancelled' | 'unknown'
+    response: BookingResponse | null
+  }> {
+    try {
+      const json = await withSession<AmadeusEnvelope & BookingResponse>(
+        'Flight/GetBookingDetails',
+        (sessionId) => ({
+          SessionID: sessionId, ReferenceNo: referenceNo, ClientCode: CLIENT_CODE, Provider: provider,
+          Key: '', PnrNo: '', FirstName: '', LastName: '', From: '', To: '',
+        }),
+        'GetBookingDetails',
+        { acceptedStatuses: ['Success', 'Failure'] },
+      )
+      const status = String(json.AirBookingResponse?.[0]?.BookingStatus ?? '').trim().toLowerCase()
+      const state = status === 'ticketed' ? 'ticketed'
+        : ['hold', 'held', 'booked', 'confirmed'].includes(status) ? 'held'
+        : status === 'failed' ? 'failed'
+        : ['cancelled', 'canceled'].includes(status) ? 'cancelled'
+        : 'unknown'
+      return { state, response: json }
+    } catch (error) {
+      console.warn('[amadeus] could not read the booking status', { referenceNo, error: error instanceof Error ? error.message : error })
+      return { state: 'unknown', response: null }
+    }
+  },
+
   async getBookingDetails(
     referenceNo: string,
     provider: string,

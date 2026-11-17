@@ -31,9 +31,34 @@ const EXPIRED = 'This search has expired. Please search again.'
 
 // What kind of failure the provider's text describes. Only the kinds with a
 // different message for the person are told apart; the rest is "generic".
-export type FailureKind = 'no_results' | 'fare_gone' | 'expired' | 'generic'
+export type FailureKind = 'no_results' | 'fare_gone' | 'expired' | 'timeout' | 'network' | 'generic'
+
+// No answer within the call's time limit, or the airline not reachable at all
+// (app/lib/amadeus/client.ts post). For a step that changes something at the
+// airline, "no answer" is not "not done": said as such, and never "try again".
+const NO_ANSWER: Record<BookingStep, string> = {
+  search: 'The airline didn’t answer in time. Please search again in a moment.',
+  price: 'The airline didn’t answer in time. Please choose the fare again in a moment.',
+  passenger: 'The airline didn’t answer in time. Please send the details again in a moment.',
+  passenger_edit: 'The airline didn’t answer in time. Please save the details again in a moment.',
+  booking: 'We didn’t hear back from the airline in time, so we can’t yet tell whether this booking went through. Please don’t book it again: open this booking in a few minutes, or contact your travel desk.',
+  ticket: 'We didn’t hear back from the airline in time, so we can’t yet tell whether the ticket was issued. Please don’t try again yet: open this booking in a few minutes, or contact your travel desk.',
+  cancel: 'We didn’t hear back from the airline in time, so we can’t yet tell whether the cancellation went through. Please check this booking again in a few minutes before trying again.',
+}
+const UNREACHABLE = 'We couldn’t reach the airline just now. Please try again in a moment.'
+// The steps after which the airline may have acted even without answering.
+export const CHANGES_SOMETHING: readonly BookingStep[] = ['booking', 'ticket', 'cancel']
+
+// Whether a failure leaves the outcome at the airline unknown (and so worth
+// asking the airline about, never repeating blindly).
+export function outcomeUnknown(err: AmadeusError, step: BookingStep): boolean {
+  const kind = failureKind(err)
+  return CHANGES_SOMETHING.includes(step) && (kind === 'timeout' || kind === 'network')
+}
 
 export function failureKind(err: AmadeusError): FailureKind {
+  if (err.code === 'TIMEOUT') return 'timeout'
+  if (err.code === 'NETWORK') return 'network'
   const text = `${err.message} ${err.code}`.toLowerCase()
   if (/result not found|no (flight|result|availability)s? (found|available)/.test(text)) return 'no_results'
   if (/fare not found|fare (is )?no longer|fare not available|seats? not available|sold out|no seats? (left|available)/.test(text)) return 'fare_gone'
@@ -43,6 +68,11 @@ export function failureKind(err: AmadeusError): FailureKind {
 
 export function plainMessage(err: AmadeusError, step: BookingStep): string {
   const kind = failureKind(err)
+  if (kind === 'timeout' || (kind === 'network' && CHANGES_SOMETHING.includes(step))) return NO_ANSWER[step]
+  // Elsewhere a lost connection changed nothing worth worrying about: trying
+  // again is safe. (Booking, Ticket and Cancel are above: a connection can
+  // drop after the airline has acted.)
+  if (kind === 'network') return UNREACHABLE
   if (kind === 'fare_gone' && step !== 'search' && step !== 'passenger_edit' && step !== 'ticket' && step !== 'cancel') return FARE_GONE
   if (kind === 'expired' && (step === 'price' || step === 'passenger')) return EXPIRED
   return GENERIC[step]

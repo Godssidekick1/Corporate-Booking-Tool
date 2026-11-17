@@ -684,6 +684,20 @@ export async function applyRefreshedFare(db: Queryable, bookingId: string, f: Re
     returning policy_verdict, policy_verdict_detail, fare_breakdown`)
 }
 
+// A Booking or Ticket call the airline did not answer: the next attempt asks
+// the airline what happened before doing anything (db/migrations/20261117000100).
+export async function markUnconfirmed(db: Queryable, bookingId: string, step: 'booking' | 'ticket'): Promise<void> {
+  await exec(db, sql`
+    update bookings set provider_unconfirmed = ${step}, provider_unconfirmed_at = now(), updated_at = now()
+    where id = ${bookingId}`)
+}
+
+export async function clearUnconfirmed(db: Queryable, bookingId: string): Promise<void> {
+  await exec(db, sql`
+    update bookings set provider_unconfirmed = null, provider_unconfirmed_at = null
+    where id = ${bookingId} and provider_unconfirmed is not null`)
+}
+
 // Approval outcomes: approved, rejected, approval_misconfigured, pending_approval.
 export async function setStatus(db: Queryable, bookingId: string, status: string): Promise<void> {
   await exec(db, sql`update bookings set status = ${status}, updated_at = now() where id = ${bookingId}`)
@@ -696,13 +710,13 @@ export async function setStatus(db: Queryable, bookingId: string, status: string
 
 export type HoldTarget = Pick<Row<'bookings'>,
   | 'id' | 'employee_id' | 'booked_by' | 'client_id' | 'status' | 'provider' | 'provider_order_id' | 'amadeus_key'
-  | 'pricing_key' | 'search_key' | 'result_index' | 'total_cost' | 'sell_total' | 'traveler_snapshot'
+  | 'pricing_key' | 'search_key' | 'result_index' | 'total_cost' | 'sell_total' | 'traveler_snapshot' | 'provider_unconfirmed'
 >
 
 export async function holdTarget(db: Queryable, bookingId: string): Promise<HoldTarget | null> {
   return maybeOne<HoldTarget>(db, sql`
     select id, employee_id, booked_by, client_id, status, provider, provider_order_id, amadeus_key, pricing_key,
-           search_key, result_index, total_cost, sell_total, traveler_snapshot
+           search_key, result_index, total_cost, sell_total, traveler_snapshot, provider_unconfirmed
     from bookings where id = ${bookingId}`)
 }
 
@@ -731,13 +745,13 @@ export async function refreshProviderSession(
 
 export type TicketTarget = Pick<Row<'bookings'>,
   | 'id' | 'employee_id' | 'booked_by' | 'status' | 'provider' | 'provider_order_id' | 'amadeus_key' | 'pricing_key'
-  | 'pnr' | 'itinerary' | 'share_token'
+  | 'pnr' | 'itinerary' | 'share_token' | 'provider_unconfirmed'
 >
 
 export async function ticketTarget(db: Queryable, bookingId: string): Promise<TicketTarget | null> {
   return maybeOne<TicketTarget>(db, sql`
     select id, employee_id, booked_by, status, provider, provider_order_id, amadeus_key, pricing_key, pnr,
-           itinerary, share_token
+           itinerary, share_token, provider_unconfirmed
     from bookings where id = ${bookingId}`)
 }
 

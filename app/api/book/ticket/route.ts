@@ -1,7 +1,7 @@
 import { requireUser } from '@/app/lib/auth/session'
 import { actingTraveller } from '@/app/lib/book/bookingActor'
 import { amadeus, AmadeusError } from '@/app/lib/amadeus/client'
-import { providerFailure } from '@/app/lib/book/providerErrors'
+import { providerFailure, outcomeUnknown } from '@/app/lib/book/providerErrors'
 import { airlinePnrFrom } from '@/app/lib/book/airlinePnr'
 import * as employees from '@/app/lib/repositories/employees'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
@@ -133,11 +133,15 @@ export const POST = route(async (req: NextRequest) => {
     }, { status: 500 })
   }
 
-  try {
-    const result = await amadeus.ticket(resultKey, referenceNo, pricingKey, provider, booking.pnr ?? '')
+  // Records a ticket the airline has issued: from Ticket's answer, or from
+  // GetBookingDetails (the same AirBookingResponse shape) when Ticket went
+  // unanswered and the airline says it issued one anyway.
+  // The booking, checked above; named so the functions below keep the check.
+  const held = booking
 
+  async function recordTicket(result: Awaited<ReturnType<typeof amadeus.ticket>>): Promise<Response> {
     const flightResult = result.AirBookingResponse?.[0]
-    const pnr = flightResult?.PNR ?? booking.pnr
+    const pnr = flightResult?.PNR ?? held.pnr
 
     // A ticket without a PNR is a ticket nobody can use at a desk, so this is
     // worth one log line rather than a null quietly written to the row.
@@ -171,7 +175,7 @@ export const POST = route(async (req: NextRequest) => {
     //
     // Only minted once. Re-ticketing a booking must not invalidate a link the
     // traveller has already sent to someone.
-    const shareToken = booking.share_token ?? crypto.randomUUID().replace(/-/g, '')
+    const shareToken = held.share_token ?? crypto.randomUUID().replace(/-/g, '')
 
     // The ticket exists at the airline now. A failure to record it gets its
     // own answer, carrying the ticket numbers -- not the generic error path.
@@ -201,7 +205,49 @@ export const POST = route(async (req: NextRequest) => {
       ticketNumbers,
       status: 'ticketed',
     })
+  }
+
+  // The airline as the judge of a ticket it may have issued. 'ticketed' is
+  // recorded; still unknown is refused rather than risk a second ticket.
+  async function airlineTicketed(): Promise<{ state: string; response: Awaited<ReturnType<typeof amadeus.ticket>> | null }> {
+    const { state, response } = await amadeus.bookingStatus(referenceNo!, provider!)
+    return { state, response: response as unknown as Awaited<ReturnType<typeof amadeus.ticket>> | null }
+  }
+
+  // ── An earlier attempt the airline never answered ─────────────────────────
+  if (booking.provider_unconfirmed === 'ticket') {
+    const { state, response } = await airlineTicketed()
+    if (state === 'ticketed' && response) {
+      await bookingsRepo.clearUnconfirmed(db, bookingId)
+      return recordTicket(response)
+    }
+    if (state === 'unknown') {
+      return Response.json({
+        error: 'We still can’t tell from the airline whether the ticket was issued, so it hasn’t been asked again. Please try again in a few minutes, or contact your travel desk.',
+        code: 'OUTCOME_UNKNOWN',
+      }, { status: 409 })
+    }
+    // Not ticketed at the airline: issuing it now is safe.
+    await bookingsRepo.clearUnconfirmed(db, bookingId)
+  }
+
+  try {
+    const result = await amadeus.ticket(resultKey, referenceNo, pricingKey, provider, booking.pnr ?? '')
+    return await recordTicket(result)
   } catch (err) {
+    // No answer (or a dropped connection): the ticket may have been issued.
+    if (err instanceof AmadeusError && outcomeUnknown(err, 'ticket')) {
+      const { state, response } = await airlineTicketed()
+      if (state === 'ticketed' && response) return recordTicket(response)
+      if (state === 'unknown') {
+        try {
+          await bookingsRepo.markUnconfirmed(db, bookingId, 'ticket')
+        } catch (markError) {
+          console.error('[ticket] could not mark the booking as unconfirmed', markError, { bookingId })
+        }
+        return providerFailure(err, 'ticket', user, { status: 'unconfirmed' })
+      }
+    }
     if (err instanceof AmadeusError) return providerFailure(err, 'ticket', user)
 
     console.error('Ticket error:', err)
