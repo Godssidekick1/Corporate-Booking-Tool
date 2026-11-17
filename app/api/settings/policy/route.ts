@@ -176,9 +176,11 @@ export const GET = route(async () => {
       code: rs.group.code,
       bandRanks: rs.group.bandRanks,
       version: rs.version,
+      // In key order: rules saved together share a timestamp, and their ids
+      // are random, so the stored order is not stable.
       rules: rs.rules.map(r => ({
         limit_key: r.limit_key, limit_value: r.limit_value, limit_bool: r.limit_bool, limit_list: r.limit_list,
-      })),
+      })).sort((x, y) => x.limit_key.localeCompare(y.limit_key)),
     })),
     rows,
     unresolved,
