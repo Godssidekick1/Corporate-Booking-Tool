@@ -66,6 +66,18 @@ body {
   font-family: var(--font-sans);
 }
 
+/* ── Scale ───────────────────────────────────────────────────────────────────
+   The app reads best at 90% on a laptop or desktop screen (user, 2026-11-17:
+   at 100% the booking pages felt oversized and a loader's last line fell off
+   the screen). Done once here with CSS zoom, rather than resizing every inline
+   style. Phones and tablets keep 100%, and so does print (tickets, credit
+   notes). The root's background is the canvas, so nothing shows past a page
+   whose height is set in viewport units. */
+html { background: var(--color-canvas); }
+@media screen and (min-width: 1024px) {
+  html { zoom: 0.9; }
+}
+
 /* ── Page frame ──────────────────────────────────────────────────────────────
    The space between the rail and a page, and the page's width, in one place:
    a page's root takes className="page-frame" (plus "medium" or "narrow").
