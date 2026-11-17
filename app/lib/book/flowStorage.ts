@@ -24,6 +24,9 @@ const ON_BEHALF_KEY = 'cbt:book:onBehalf'
 const OWNER_KEY = 'cbt:book:owner'
 // A domestic round trip's two picks (flight key and fare), booked as a pair.
 const PAIR_KEY = 'cbt:book:pair'
+// What the search showed for a booking's fare (plus its seats), by booking id:
+// the confirm page says so when the price has moved since.
+const SEARCHED_KEY_PREFIX = 'cbt:book:searched:'
 
 // A domestic round trip's results: the two one-way columns and the airlines'
 // special return fares, each with the availability key its pricing needs.
@@ -271,6 +274,18 @@ export const flowStorage = {
       if (list?.results.some(r => r.flightKey === flightKey)) return list.availabilityKey
     }
     return stored.availabilityKey
+  },
+
+  // The results list is reused for a while (Back to results), and a fare's
+  // price can move in that time. Kept per booking at add-passenger; the
+  // confirm page compares it with what the booking now costs.
+  setSearchedPrice(bookingId: string, amount: number) {
+    if (Number.isFinite(amount) && amount > 0) safeSet(SEARCHED_KEY_PREFIX + bookingId, Math.round(amount))
+  },
+
+  searchedPrice(bookingId: string): number | null {
+    const v = safeGet<number>(SEARCHED_KEY_PREFIX + bookingId)
+    return typeof v === 'number' ? v : null
   },
 
   savePair(pair: RoundTripPair) {

@@ -91,6 +91,14 @@ describe('the stored list the results page reuses', () => {
     expect(flowStorage.freshResults(Q, 60_000, now + 61_000)).toBeNull()
   })
 
+  it('keeps what the search showed per booking, for the confirm page’s price check', () => {
+    flowStorage.setSearchedPrice('b1', 6409.6)
+    flowStorage.setSearchedPrice('b2', NaN)
+    expect(flowStorage.searchedPrice('b1')).toBe(6410)
+    expect(flowStorage.searchedPrice('b2')).toBeNull()
+    expect(flowStorage.searchedPrice('nope')).toBeNull()
+  })
+
   it('a new search from the form drops the list but keeps the way back', () => {
     expect(flowStorage.resultsHref()).toBe('/book/flights')
     save()

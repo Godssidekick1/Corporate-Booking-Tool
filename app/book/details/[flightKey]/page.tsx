@@ -342,6 +342,13 @@ function travelerLabel(passenger: PassengerForm, index: number): string {
   return name || `Traveler ${index + 1}`
 }
 
+// What the search showed for a fare of this flight (the company's price, as on
+// the results). NaN when the search had no figure: then nothing is compared.
+function searchedAmount(flight: FlatFlightResult, pricingKey: string): number {
+  const fare = flight.fareOptions.find(o => o.pricingKey === pricingKey)
+  return Number(fare?.sellEstimate ?? fare?.totalFare ?? NaN)
+}
+
 export default function BookingDetailsPage() {
   const router = useRouter()
   const exits = useFlowExits()
@@ -960,6 +967,9 @@ export default function BookingDetailsPage() {
         return
       }
 
+      // What the search showed for this fare, for the confirm page's check.
+      if (flight && priced) flowStorage.setSearchedPrice(data.bookingId, searchedAmount(flight, priced.pricingKey) + totalSeatFees)
+
       // A round trip: the onward is saved; now its return, linked to it.
       if (pairReturn) {
         setPairOnwardId(data.bookingId)
@@ -995,6 +1005,7 @@ export default function BookingDetailsPage() {
         setError(`Your onward flight is saved, but the return could not be added: ${data.error || 'the airline did not accept it.'} Try the return again, or cancel the onward flight.`)
         return
       }
+      flowStorage.setSearchedPrice(data.bookingId, searchedAmount(pairReturn.flight, pairReturn.priced.pricingKey) + feesOf(returnSeats))
       flowStorage.clearTripId()
       router.push(`/book/confirm/${onwardId}`)
     }

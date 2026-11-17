@@ -395,6 +395,22 @@ export default function ConfirmBookingPage() {
   // paisa absorbs the per-line rounding; anything larger is a real disagreement.
   const reconciles = Math.abs((fareLine + commercialDelta + seatFees) - sellTotal) < 0.01
 
+  // ── Has the price moved since the search? ─────────────────────────────────
+  // The results list is reused for a while (Back to results), and the airline
+  // prices live on the fare page, so what the booking costs can differ from
+  // what the search showed. Compared per booking (both flights of a round
+  // trip), seats included on both sides; said only when it differs. Nothing
+  // to compare (another tab, an older booking): nothing said.
+  const members = booking.pair && booking.pair.length > 1
+    ? booking.pair.map(m => ({ id: m.id, now: m.sell_total }))
+    : [{ id: bookingId, now: booking.sell_total }]
+  const searched = members.map(m => flowStorage.searchedPrice(m.id))
+  const priceMove = searched.every(v => v !== null) && members.every(m => typeof m.now === 'number')
+    ? { then: searched.reduce<number>((n, v) => n + (v ?? 0), 0), now: Math.round(members.reduce((n, m) => n + (m.now ?? 0), 0)) }
+    : null
+  const moved = priceMove && Math.abs(priceMove.now - priceMove.then) >= 1 ? priceMove : null
+  const inrText = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`
+
   return (
     <div style={s.page}>
       <div style={s.root}>
@@ -405,6 +421,18 @@ export default function ConfirmBookingPage() {
             <p style={{ ...s.sub, marginTop: 4 }}>Booked by <strong>{booking.booked_by_name}</strong>. Either of you can confirm it.</p>
           )}
         </div>
+
+        {moved && (
+          <div style={s.noticeCard} role="status">
+            <p style={{ ...s.noticeText, fontWeight: 700, fontSize: '13px', marginBottom: '4px' }}>
+              The fare has {moved.now > moved.then ? 'gone up' : 'come down'} since you searched
+            </p>
+            <p style={s.noticeText}>
+              The search showed {inrText(moved.then)}; with the airline&apos;s live price it is {inrText(moved.now)}{' '}
+              ({inrText(Math.abs(moved.now - moved.then))} {moved.now > moved.then ? 'more' : 'less'}). Check the fare below before you confirm.
+            </p>
+          </div>
+        )}
 
         {/* ── Policy verdict ───────────────────────────────────────── */}
         {booking.policy_verdict && (
