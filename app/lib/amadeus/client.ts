@@ -146,6 +146,14 @@ function assertSuccess(
   }
 }
 
+// What a log line must never carry, by field name, at any depth: credentials
+// and session ids, and a passenger's personal details (every request and every
+// failure's raw answer is logged, and AddPassengerDetails and Booking carry
+// passports, dates of birth and contact details). Routes, fares, flight
+// numbers and statuses stay: they are what a failure is diagnosed by.
+const SECRET_OR_PERSONAL =
+  /password|username|sessionid|email|mobile|phone|dateofbirth|^dob$|passport|firstname|middlename|lastname|address|zipcode|ffno|frequentflyer|expirydate|issuingcountry|nationality|^gender$/i
+
 export function sanitizeAmadeusDiagnostic(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sanitizeAmadeusDiagnostic)
   if (!value || typeof value !== 'object') return value
@@ -153,7 +161,7 @@ export function sanitizeAmadeusDiagnostic(value: unknown): unknown {
   return Object.fromEntries(
     Object.entries(value).map(([key, entry]) => [
       key,
-      /password|sessionid/i.test(key) ? '[REDACTED]' : sanitizeAmadeusDiagnostic(entry),
+      SECRET_OR_PERSONAL.test(key) ? '[REDACTED]' : sanitizeAmadeusDiagnostic(entry),
     ])
   )
 }
