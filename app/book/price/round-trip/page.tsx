@@ -220,7 +220,7 @@ const s: Record<string, React.CSSProperties> = {
   summaryFlight: { display: 'flex', flexDirection: 'column', gap: 3, paddingBottom: 12, borderBottom: '1px solid #F3F4F6' },
   summaryName: { fontSize: 13.5, color: '#111827' },
   summaryLine: { display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13, color: '#374151', fontVariantNumeric: 'tabular-nums' },
-  summaryVerdict: { alignSelf: 'flex-start', marginTop: 4, fontSize: 11.5, fontWeight: 600, border: '1px solid', borderRadius: 6, padding: '2px 8px' },
+  summaryVerdict: { alignSelf: 'flex-start', marginTop: 4, fontSize: 11.5, fontWeight: 600, borderWidth: 1, borderStyle: 'solid', borderRadius: 6, padding: '2px 8px' },
   summaryTotal: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, fontSize: 14.5, fontWeight: 700, color: '#111827' },
   primaryBtn: { height: 48, background: '#000835', color: '#fff', border: 0, borderRadius: 11, fontWeight: 700, fontSize: 15, cursor: 'pointer' },
   note: { fontSize: 12, color: '#6B7280', margin: 0, lineHeight: 1.5 },

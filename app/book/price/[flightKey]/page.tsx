@@ -794,7 +794,7 @@ const s: Record<string, React.CSSProperties> = {
   summaryFare: { display: 'flex', flexDirection: 'column', gap: '3px', fontSize: '13.5px', color: '#111827', paddingBottom: '12px', marginBottom: '6px', borderBottom: '1px solid #F3F4F6' },
   summaryFareLabel: { fontSize: '10.5px', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.5px' },
   summaryFareRoute: { fontSize: '12.5px', color: '#6B7280' },
-  summaryVerdict: { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '12px', fontSize: '13px', fontWeight: 600, border: '1px solid', borderRadius: '10px', padding: '9px 12px' },
+  summaryVerdict: { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '12px', fontSize: '13px', fontWeight: 600, borderWidth: '1px', borderStyle: 'solid', borderRadius: '10px', padding: '9px 12px' },
 
   paxBreakup: { marginTop: '12px', paddingTop: '12px', borderTop: '1px dashed #E5E7EB' },
   paxBreakupTitle: { fontSize: '11px', fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.4px', margin: '0 0 8px' },

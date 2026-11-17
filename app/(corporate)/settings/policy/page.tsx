@@ -185,7 +185,9 @@ const s: Record<string, React.CSSProperties> = {
   groups: { display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 14 },
   group: {
     display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2, minWidth: 160, textAlign: 'left',
-    padding: '9px 14px', background: '#fff', color: '#111827', border: '1px solid #E5E7EB', borderRadius: 10, cursor: 'pointer',
+    // Border as three properties, not the shorthand: the chosen state changes
+    // only the colour, and React warns when a shorthand and its part are mixed.
+    padding: '9px 14px', background: '#fff', color: '#111827', borderWidth: 1, borderStyle: 'solid', borderColor: '#E5E7EB', borderRadius: 10, cursor: 'pointer',
   },
   groupOn: { background: '#000835', borderColor: '#000835', color: '#fff' },
   groupName: { fontSize: 13, fontWeight: 600, color: 'inherit' },
