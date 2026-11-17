@@ -342,6 +342,8 @@ export default function TicketPage() {
     ticketingRef.current = true
     setTicketing(true)
     setError('')
+    // The printer at the top of the screen, wherever the confirm page left us.
+    window.scrollTo(0, 0)
     try {
       const res = await fetch('/api/book/ticket', {
         method: 'POST',
@@ -371,6 +373,9 @@ export default function TicketPage() {
     } finally {
       setTicketing(false)
       ticketingRef.current = false
+      // The ticket from its top: issuing replaces the printer with the whole
+      // ticket, and the page must not open on its middle.
+      window.scrollTo(0, 0)
     }
   }
 
@@ -394,6 +399,20 @@ export default function TicketPage() {
                 has no search box on it. */}
             <Link href="/book/flights" style={s.errorLink}>← Start a new search</Link>
           </div>
+        </div>
+      </div>
+    )
+  }
+
+  // While the airline issues the ticket, the printer is the whole page: the
+  // ticket below it is not ready, and showing it under the printer let the page
+  // be scrolled into its middle and stay there when the printer went away.
+  if (ticketing) {
+    return (
+      <div style={s.page}>
+        <div style={s.root}>
+          <TicketPrinter label="Issuing your ticket…"
+            note="The airline is confirming your ticket numbers. Please don't close or refresh this page." />
         </div>
       </div>
     )
@@ -425,13 +444,6 @@ export default function TicketPage() {
   return (
     <div style={s.page}>
       <div style={s.root}>
-        {/* A full-page state rather than an overlay: there is nothing behind it
-            worth seeing yet, because the ticket is what this page is. */}
-        {ticketing && (
-          <TicketPrinter label="Issuing your ticket…"
-            note="The airline is confirming your ticket numbers. Please don't close or refresh this page." />
-        )}
-
         {/* The travel desk only: the airline's fare, markup, discount, fee and margin. */}
         <DeskFareStrip desk={booking.desk} currency={currency || 'INR'} />
 
