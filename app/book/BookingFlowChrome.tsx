@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { flowStorage, type OnBehalf } from '@/app/lib/book/flowStorage'
+import CorporateShell from '@/app/components/CorporateShell'
 
 // ── Booking flow chrome ──────────────────────────────────────────────────────
 // A step indicator and two permanent exits, wrapped around every page of the
@@ -93,8 +94,10 @@ export default function BookingFlowChrome({ children }: { children: React.ReactN
 
   // The trips list at /book is not a step in this flow — it is where trips are
   // created. Wrapping it in a booking stepper would claim the traveller is
-  // mid-booking when they have not started one.
-  if (activeIndex === -1) return <>{children}</>
+  // mid-booking when they have not started one. It is the sidebar's "Book
+  // travel" page, so it sits in the same frame as the rest of the company's
+  // pages (rail and all); it used to have neither the rail nor a way back.
+  if (activeIndex === -1) return <CorporateShell>{children}</CorporateShell>
 
   return (
     <div style={s.shell}>
