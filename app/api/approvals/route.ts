@@ -147,6 +147,10 @@ export const GET = route(async (req: NextRequest) => {
         // What the fare was chosen from (sell-side search figures), when the
         // search was kept: the cheapest fare on the flight and that day.
         ...(booking.choice_context ? { choice: booking.choice_context } : {}),
+        // The price approval was asked at, only when a refresh has moved the
+        // fare since: the card shows "requested at ₹X · up ₹Y (+Z%)".
+        ...(booking.requested_total != null && Math.abs(Number(booking.requested_total) - Number(booking.total_cost)) >= 0.5
+          ? { requestedTotal: Number(booking.requested_total) } : {}),
       } : null,
       // A trip sign-off: the trip and what is in it, sell-side.
       trip: tripCard ? {

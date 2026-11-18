@@ -76,7 +76,7 @@ interface DeskBooking {
 const STATUS_LABEL: Record<string, string> = {
   ticketed: 'Ticketed', held: 'Confirmed', approved: 'Approved, not booked', pending_approval: 'Awaiting approval',
   cancelled: 'Cancelled', cancel_requested: 'Cancelling', rejected: 'Rejected', failed: 'Failed',
-  approval_misconfigured: 'Approval not set up', reapproval_needed: 'Sent back: fare rose',
+  approval_misconfigured: 'Approval not set up',
 }
 const STEP_LABEL: Record<string, string> = {
   pending: 'Waiting', approved: 'Approved', rejected: 'Rejected', withdrawn: 'Withdrawn',

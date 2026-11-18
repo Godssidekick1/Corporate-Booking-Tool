@@ -21,6 +21,14 @@ function adminUrl(): string {
   return u.toString()
 }
 
+// The test database as its OWNER, for what the app's own login may not do:
+// running a migration file in a test (the data part of it is under test).
+export function testOwnerUrl(): string {
+  const u = new URL(adminUrl())
+  u.pathname = `/${TEST_DB}`
+  return u.toString()
+}
+
 export function templateUrl(): string {
   const u = new URL(adminUrl())
   u.pathname = `/${TEMPLATE}`

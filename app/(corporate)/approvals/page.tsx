@@ -52,6 +52,8 @@ interface ApprovalItem {
     forGuest?: boolean
     // What the fare was chosen from, when the search was kept.
     choice?: ChoiceContext
+    // The price approval was asked at, when a refresh has moved it since.
+    requestedTotal?: number
   } | null
   traveler: {
     fullName: string
@@ -65,7 +67,7 @@ interface ApprovalItem {
 interface RefreshAnswer {
   ok: boolean
   error?: string
-  outcome?: 'continue' | 'returned_to_traveller' | 'fare_gone' | 'flight_gone'
+  outcome?: 'continue' | 'fare_gone' | 'flight_gone'
   change?: 'up' | 'down' | 'same'
   previousTotal?: number
   newTotal?: number
@@ -124,10 +126,8 @@ export default function ApprovalsPage() {
   const [actingOn, setActingOn] = useState<string | null>(null)
   const [refreshingId, setRefreshingId] = useState<string | null>(null)
   const [noteDraft, setNoteDraft] = useState<Record<string, string>>({})
-  // The last refresh's answer per card, and a page-level line for a booking
-  // that left the queue because it went back to the traveller.
+  // The last refresh's answer per card.
   const [refreshed, setRefreshed] = useState<Record<string, RefreshAnswer>>({})
-  const [notice, setNotice] = useState('')
   // Which cards show the flight in full.
   const [detailsOpen, setDetailsOpen] = useState<Record<string, boolean>>({})
 
@@ -190,7 +190,6 @@ export default function ApprovalsPage() {
   async function handleRefreshFare(approvalId: string) {
     setRefreshingId(approvalId)
     setError('')
-    setNotice('')
     try {
       const res = await fetch(`/api/approvals/${approvalId}/refresh-fare`, { method: 'POST' })
       const data = await res.json() as RefreshAnswer
@@ -198,14 +197,9 @@ export default function ApprovalsPage() {
         setError(data.error || 'Could not refresh the fare for this booking.')
         return
       }
-      // What changed, in words (POST /api/approvals/[id]/refresh-fare):
-      // sent back to the traveller leaves this queue, so it is said at the
-      // top; everything else is said on the card, which stays.
-      if (data.outcome === 'returned_to_traveller') {
-        setNotice(data.message ?? 'The fare rose out of policy, so the booking went back to the traveller.')
-      } else {
-        setRefreshed(prev => ({ ...prev, [approvalId]: data }))
-      }
+      // What this check found, said on the card. A refresh never takes the
+      // booking away: the approver decides on the new price (user, 2026-11-18).
+      setRefreshed(prev => ({ ...prev, [approvalId]: data }))
       // The refreshed price/verdict is now saved server-side — reload the
       // queue so this card shows the new numbers rather than patching
       // fields in locally and risking drift from what's actually stored.
@@ -284,7 +278,6 @@ export default function ApprovalsPage() {
       </div>
 
       {error && <div style={s.errorBanner}><span style={s.bannerIcon}>⚠</span> {error}</div>}
-      {notice && <div style={s.noticeBanner} role="status">{notice}</div>}
 
       {loading ? (
         <div style={s.loadingRow}><div style={s.spinner} /></div>
@@ -372,6 +365,9 @@ export default function ApprovalsPage() {
                     <div style={s.pricePanel}>
                       <div style={s.boxLabel}>What the company pays</div>
                       <div style={s.priceValue}>₹{item.booking?.totalCost?.toLocaleString('en-IN') ?? '—'}</div>
+                      {item.booking?.requestedTotal != null && (
+                        <PriceMove requested={item.booking.requestedTotal} now={item.booking.totalCost} />
+                      )}
                       {item.booking?.choice && <ChoiceLines choice={item.booking.choice} />}
                       {refreshed[item.approvalId] && <RefreshLine answer={refreshed[item.approvalId]} />}
                       {tab === 'pending' && (
@@ -474,17 +470,31 @@ function ChoiceLines({ choice }: { choice: ChoiceContext }) {
   )
 }
 
-// What the last "Refresh fare" found, in one line under the price.
+// How far the price has moved since approval was asked for, kept on the
+// booking (requested_total), so it stays after a reload: the approver weighs
+// the rise and decides (user, 2026-11-18).
+function PriceMove({ requested, now }: { requested: number; now: number }) {
+  const diff = now - requested
+  const inr = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`
+  const pct = requested > 0 ? Math.round((Math.abs(diff) / requested) * 1000) / 10 : null
+  return (
+    <div style={s.move}>
+      <span style={s.moveFrom}>Requested at {inr(requested)}</span>
+      <span style={{ ...s.refreshLine, ...(diff > 0 ? s.refreshUp : s.refreshOk) }}>
+        {diff > 0 ? 'Up' : 'Down'} {inr(Math.abs(diff))}{pct != null ? ` (${diff > 0 ? '+' : '−'}${pct}%)` : ''}
+      </span>
+    </div>
+  )
+}
+
+// What the last "Refresh fare" found, in one line under the price. How much
+// it moved is PriceMove's; this says the check happened, or the fare is gone.
 function RefreshLine({ answer }: { answer: RefreshAnswer }) {
   const gone = answer.outcome === 'fare_gone' || answer.outcome === 'flight_gone'
-  const inr = (n?: number) => (n == null ? '' : `₹${Math.round(n).toLocaleString('en-IN')}`)
   const text = gone
     ? (answer.outcome === 'flight_gone' ? 'No longer offered on that day.' : 'This fare is no longer sold.')
-    : answer.change === 'same'
-      ? 'Checked just now: unchanged.'
-      : `Checked just now: ${answer.change === 'up' ? 'up' : 'down'} from ${inr(answer.previousTotal)}.`
-  const tone = gone ? s.refreshGone : answer.change === 'up' ? s.refreshUp : s.refreshOk
-  return <div style={{ ...s.refreshLine, ...tone }} title={answer.message}>{text}</div>
+    : answer.change === 'same' ? 'Checked just now: unchanged.' : 'Checked just now: price updated.'
+  return <div style={{ ...s.refreshLine, ...(gone ? s.refreshGone : s.refreshChecked) }} title={answer.message}>{text}</div>
 }
 
 // A trip sign-off's body: what the trip is for, what it spent against its
@@ -615,6 +625,9 @@ const s: Record<string, React.CSSProperties> = {
   refreshOk: { color: '#166534', background: '#F0FDF4' },
   refreshUp: { color: '#92400E', background: '#FEF3C7' },
   refreshGone: { color: '#991B1B', background: '#FEF2F2' },
+  refreshChecked: { color: '#374151', background: '#F3F4F6' },
+  move: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '3px' },
+  moveFrom: { fontSize: '11.5px', color: '#6B7280' },
   costRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' },
   costLabel: { fontSize: '11.5px', color: '#9CA3AF' },
   costValue: { fontSize: '15px', fontWeight: 700, color: '#0A0A14' },
@@ -632,10 +645,6 @@ const s: Record<string, React.CSSProperties> = {
   readyChip: {
     fontSize: '11.5px', fontWeight: 600, color: '#3730A3', background: '#EEF2FF', border: '1px solid #E0E7FF',
     borderRadius: '999px', padding: '4px 10px', cursor: 'pointer',
-  },
-  noticeBanner: {
-    background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: '10px', padding: '11px 14px',
-    fontSize: '13px', color: '#065F46', marginBottom: '16px', lineHeight: 1.5,
   },
 
   noteInput: {

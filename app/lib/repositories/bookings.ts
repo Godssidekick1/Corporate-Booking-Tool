@@ -547,7 +547,8 @@ export async function insert(db: Queryable, b: NewBooking): Promise<{ id: string
       client_id, employee_id, booked_by, booking_type, status, total_cost, sell_total, provider,
       provider_order_id, amadeus_key, pricing_key, result_index, search_key, trip_id, is_ndc,
       policy_status, policy_verdict, policy_reason_code, policy_reason_note, resolved_deal_codes, resolved_fop, commercials, itinerary,
-      traveler_snapshot, fare_breakdown, policy_verdict_detail, purpose, for_guest, fare_rules, choice_context)
+      traveler_snapshot, fare_breakdown, policy_verdict_detail, purpose, for_guest, fare_rules, choice_context,
+      requested_total)
     values (
       ${b.client_id}, ${b.employee_id}, ${b.booked_by}, ${b.booking_type}, ${b.status}, ${b.total_cost},
       ${b.sell_total}, ${b.provider}, ${b.provider_order_id}, ${b.amadeus_key}, ${b.pricing_key},
@@ -556,7 +557,9 @@ export async function insert(db: Queryable, b: NewBooking): Promise<{ id: string
       ${json(b.resolved_deal_codes)}, ${json(b.resolved_fop)}, ${json(b.commercials)}, ${json(b.itinerary)},
       ${json(b.traveler_snapshot)}, ${json(b.fare_breakdown)}, ${json(b.policy_verdict_detail)},
       ${b.purpose ?? 'business'}, ${b.for_guest ?? false}, ${b.fare_rules ? json(b.fare_rules) : null},
-      ${b.choice_context ? json(b.choice_context) : null})
+      ${b.choice_context ? json(b.choice_context) : null},
+      -- The price approval is asked at (refreshes compare against it).
+      ${b.sell_total})
     returning id`)
 }
 
@@ -643,13 +646,13 @@ export async function approvalTarget(db: Queryable, bookingId: string): Promise<
 // What an approver's queue shows of each booking: the SELL side, under the
 // name total_cost. The airline figure is not fetched at all.
 export type ApprovalSummary = Pick<Row<'bookings'>,
-  'id' | 'employee_id' | 'booking_type' | 'total_cost' | 'itinerary' | 'policy_verdict' | 'status' | 'purpose' | 'for_guest' | 'choice_context'> & BookedByName
+  'id' | 'employee_id' | 'booking_type' | 'total_cost' | 'itinerary' | 'policy_verdict' | 'status' | 'purpose' | 'for_guest' | 'choice_context' | 'requested_total'> & BookedByName
 
 export async function approvalSummaries(db: Queryable, bookingIds: readonly string[]): Promise<ApprovalSummary[]> {
   if (bookingIds.length === 0) return []
   return many<ApprovalSummary>(db, sql`
     select id, employee_id, booking_type, ${SELL_TOTAL} as total_cost, itinerary, policy_verdict, status,
-           purpose, for_guest, choice_context, ${BOOKED_BY_NAME}
+           purpose, for_guest, choice_context, requested_total, ${BOOKED_BY_NAME}
     from bookings where id = any(${[...bookingIds]}) order by id`)
 }
 
@@ -657,30 +660,21 @@ export async function approvalSummaries(db: Queryable, bookingIds: readonly stri
 // sell_total: what was sent for approval, to measure a rise against.
 export type RefreshTarget = Pick<Row<'bookings'>,
   | 'id' | 'employee_id' | 'client_id' | 'status' | 'provider' | 'search_key' | 'pricing_key'
-  | 'result_index' | 'itinerary' | 'fare_breakdown' | 'traveler_snapshot' | 'sell_total' | 'total_cost'
+  | 'result_index' | 'itinerary' | 'fare_breakdown' | 'traveler_snapshot' | 'sell_total' | 'total_cost' | 'requested_total'
 >
 
 export async function refreshTarget(db: Queryable, bookingId: string): Promise<RefreshTarget | null> {
   return maybeOne<RefreshTarget>(db, sql`
     select id, employee_id, client_id, status, provider, search_key, pricing_key, result_index, itinerary, fare_breakdown,
-           traveler_snapshot, sell_total, total_cost
+           traveler_snapshot, sell_total, total_cost, requested_total
     from bookings where id = ${bookingId}`)
 }
 
-// A booking sent back to its traveller (reapproval_needed): what asking again needs.
-export type ReapprovalTarget = Pick<Row<'bookings'>,
-  'id' | 'employee_id' | 'client_id' | 'status' | 'sell_total' | 'total_cost' | 'policy_verdict'>
-
-export async function reapprovalTarget(db: Queryable, bookingId: string): Promise<ReapprovalTarget | null> {
-  return maybeOne<ReapprovalTarget>(db, sql`
-    select id, employee_id, client_id, status, sell_total, total_cost, policy_verdict
-    from bookings where id = ${bookingId}`)
-}
-
-// The traveller's reason for going ahead outside policy, given when asking again.
-export async function setPolicyReason(db: Queryable, bookingId: string, code: string, note: string | null): Promise<void> {
-  await exec(db, sql`
-    update bookings set policy_reason_code = ${code}, policy_reason_note = ${note}, updated_at = now() where id = ${bookingId}`)
+// A new approval round at a new price (a fare rise at confirmation): the
+// price asked for is now this one. A refresh never calls this; the approver
+// weighs a refreshed price against the one asked for.
+export async function setRequestedTotal(db: Queryable, bookingId: string, total: number): Promise<void> {
+  await exec(db, sql`update bookings set requested_total = ${total}, updated_at = now() where id = ${bookingId}`)
 }
 
 // The keys of a fare found again in a fresh search (app/lib/book/refindFare.ts):

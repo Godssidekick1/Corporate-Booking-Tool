@@ -4,8 +4,10 @@ import { GET as rulesGet, POST as rulesPost } from '@/app/api/tmc/policy-rules/r
 import { POST as pricePost } from '@/app/api/book/price/route'
 import { POST as addPassenger } from '@/app/api/book/add-passenger/route'
 import { POST as refreshFare } from '@/app/api/approvals/[approvalId]/refresh-fare/route'
-import { POST as reapproval } from '@/app/api/book/[bookingId]/reapproval/route'
-import { GET as actionableGet } from '@/app/api/bookings/actionable/route'
+import { PATCH as decide } from '@/app/api/approvals/[approvalId]/route'
+import { readFileSync } from 'node:fs'
+import pg from 'pg'
+import { testOwnerUrl } from '../harness/testDatabase'
 import { GET as approvalsGet } from '@/app/api/approvals/route'
 import * as bookingsRepo from '@/app/lib/repositories/bookings'
 import { AmadeusError } from '@/app/lib/amadeus/client'
@@ -15,12 +17,12 @@ import { resetDatabase } from '../harness/db'
 import { db } from '@/app/lib/db'
 import { sql, many, one, exec } from '@/app/lib/db/sql'
 
-// ── Refresh fare after a long wait, and asking again ─────────────────────────
+// ── Refresh fare after a long wait ───────────────────────────────────────────
 // An approval waits hours; a search's keys live ~25 minutes. Refresh re-finds
 // the fare in a fresh search when the stored keys are stale
-// (app/lib/book/refindFare.ts). A rise that leaves the fare out of policy
-// beyond its grace goes back to the traveller (reapproval_needed), who asks
-// again with a reason (POST /api/book/[bookingId]/reapproval).
+// (app/lib/book/refindFare.ts). Whatever the new price or verdict, the
+// approver decides on it (user, 2026-11-18): they see how much it moved since
+// approval was asked for (bookings.requested_total) and the new verdict.
 //
 // The traveller is an L1 colleague in policy group d, whose domestic cap is
 // set to ₹12,000: a ₹10,800 fare is within policy, ₹20,000 is far beyond it.
@@ -157,65 +159,77 @@ d('refresh fare after a long wait', () => {
   const refresh = (approvalId: string, as: { id: string } = approver) => call(refreshFare, {
     as, method: 'POST', url: `/api/approvals/${approvalId}/refresh-fare`, params: { approvalId }, body: {},
   })
-  const askAgain = (bookingId: string, body: unknown, as: { id: string } = colleague) => call(reapproval, {
-    as, method: 'POST', url: `/api/book/${bookingId}/reapproval`, params: { bookingId }, body,
-  })
   const bookingRow = (id: string) => one<{ status: string; total_cost: number; sell_total: number; search_key: string; pricing_key: string; result_index: string }>(db, sql`
     select status, total_cost, sell_total, search_key, pricing_key, result_index from bookings where id = ${id}`)
 
-  let returned: string
+  type Refreshed = { outcome: string; change: string; previousTotal: number; newTotal: number; requestedTotal: number;
+    sinceRequest: { amount: number; percent: number }; policyVerdict: string; message: string }
 
-  it('a rise that leaves the fare out of policy goes back to the traveller; nothing waits for the approver', async () => {
-    returned = await book('UP')
-    const step = await pendingFor(returned)
-    const before = await bookingRow(returned)
+  it('a rise that leaves the fare out of policy stays with the approver: the new price, how much it rose, the new verdict', async () => {
+    const id = await book('UP')
+    const step = await pendingFor(id)
+    const asked = (await bookingRow(id)).sell_total
     fake.pricing.mockResolvedValueOnce(pricing('UP-NEW', 20000))
 
     const res = await refresh(step.id)
     expect(res.status).toBe(200)
-    expect(res.json).toMatchObject({ ok: true, outcome: 'returned_to_traveller', change: 'up', previousTotal: before.sell_total })
-    expect((res.json as { message: string }).message).toMatch(/gone back to them to ask for approval again/)
+    const body = res.json as Refreshed
+    expect(body).toMatchObject({ outcome: 'continue', change: 'up', previousTotal: asked, requestedTotal: asked, policyVerdict: 'red' })
+    expect(body.sinceRequest.amount).toBeCloseTo(body.newTotal - asked, 2)
+    expect(body.sinceRequest.percent).toBeGreaterThan(0)
+    expect(body.message).toMatch(/^The fare is now ₹[\d,]+, up ₹[\d,]+ \([\d.]+%\) from ₹[\d,]+ when approval was asked for\. It is outside the traveller’s policy\.$/)
 
-    expect((await bookingRow(returned)).status).toBe('reapproval_needed')
-    const steps = await many<{ status: string; decision_note: string }>(db, sql`
-      select status, decision_note from approvals where booking_id = ${returned}`)
-    expect(steps).toHaveLength(1)
-    expect(steps[0].status).toBe('superseded')
-    expect(steps[0].decision_note).toMatch(/now outside the travel policy/)
-    expect(await many(db, sql`
-      select action from audit_log where entity_id = ${returned} and action = 'booking.returned_to_traveller'`)).toHaveLength(1)
+    // Still the approver's: the same step, now carrying the new verdict.
+    expect((await bookingRow(id)).status).toBe('pending_approval')
+    expect(await one(db, sql`select id, status, verdict from approvals where booking_id = ${id}`))
+      .toEqual({ id: step.id, status: 'pending', verdict: 'red' })
 
-    // The step is closed: refreshing it again is refused.
-    expect((await refresh(step.id)).status).toBe(409)
-    // And it waits on the traveller: it is in their "needs your action" list.
-    const actionable = await call(actionableGet, { as: colleague, url: '/api/bookings/actionable' })
-    expect((actionable.json as { bookings: { id: string; status: string }[] }).bookings)
-      .toContainEqual(expect.objectContaining({ id: returned, status: 'reapproval_needed' }))
+    // The card shows the price asked for beside today's.
+    const queue = await call(approvalsGet, { as: approver, url: '/api/approvals' })
+    const card = (queue.json as { pending: { bookingId: string; booking: { totalCost: number; requestedTotal?: number } }[] }).pending
+      .find(p => p.bookingId === id)!
+    expect(card.booking).toMatchObject({ requestedTotal: asked, totalCost: body.newTotal })
+
+    // A second check still measures from the price asked for.
+    fake.pricing.mockResolvedValueOnce(pricing('UP-NEWER', 21000))
+    const again = (await refresh(step.id)).json as Refreshed
+    expect(again).toMatchObject({ previousTotal: body.newTotal, requestedTotal: asked })
+
+    // And the approver can approve it at that price.
+    expect((await call(decide, { as: approver, method: 'PATCH', url: `/api/approvals/${step.id}`, params: { approvalId: step.id },
+      body: { decision: 'approve' } })).json).toMatchObject({ ok: true, bookingStatus: 'approved' })
   })
 
-  it('asking again: a reason is required, then a new round starts at the new price', async () => {
-    const noReason = await askAgain(returned, {})
-    expect(noReason).toMatchObject({ status: 400, json: { code: 'POLICY_REASON_REQUIRED' } })
-    expect((await askAgain(returned, { reasonCode: 'other' })).status).toBe(400)   // "other" needs a note
+  it('an unmoved price: no "requested at" line on the card', async () => {
+    const id = await book('SAME')
+    const step = await pendingFor(id)
+    fake.pricing.mockResolvedValueOnce(pricing('SAME-NEW', 10800))
+    expect((await refresh(step.id)).json).toMatchObject({ change: 'same', sinceRequest: { amount: 0 } })
+    const queue = await call(approvalsGet, { as: approver, url: '/api/approvals' })
+    const card = (queue.json as { pending: { bookingId: string; booking: Record<string, unknown> }[] }).pending.find(p => p.bookingId === id)!
+    expect(card.booking).not.toHaveProperty('requestedTotal')
+  })
 
-    // Someone at another client cannot act on it.
-    const outsider = await one<{ id: string }>(db, sql`
-      select id from employees where client_id is not null and client_id <> ${a.corpAdmin.client_id} and status = 'active' order by id limit 1`)
-    expect((await askAgain(returned, { reasonCode: 'schedule_need' }, outsider)).status).toBeGreaterThanOrEqual(403)
-    expect((await bookingRow(returned)).status).toBe('reapproval_needed')
+  it('the migration hands a booking sent back before this change to its approver again', async () => {
+    const id = await book('SENTBACK')
+    const step = await pendingFor(id)
+    // As the old refresh left it: sent back, the step closed with its note, audited.
+    await exec(db, sql`update bookings set status = 'reapproval_needed', sell_total = 10956, requested_total = null where id = ${id}`)
+    await exec(db, sql`update approvals set status = 'superseded', actioned_at = now(),
+      decision_note = 'The fare rose from ₹10,922 to ₹10,956 and is now outside the travel policy, so it went back to the traveller to ask for approval again.'
+      where id = ${step.id}`)
+    await exec(db, sql`insert into audit_log (action, entity_type, entity_id, client_id, metadata)
+      values ('booking.returned_to_traveller', 'booking', ${id}, ${a.corpAdmin.client_id}, ${JSON.stringify({ previousTotal: 10921.9, newTotal: 10956.1 })}::jsonb)`)
 
-    const res = await askAgain(returned, { reasonCode: 'schedule_need', note: 'client meeting moved' })
-    expect(res).toEqual({ status: 200, json: { ok: true, bookingId: returned, status: 'pending_approval' } })
-    expect((await bookingRow(returned)).status).toBe('pending_approval')
-    const fresh = await one<{ approver_id: string; reason: string | null }>(db, sql`
-      select approver_id, reason from approvals where booking_id = ${returned} and status = 'pending'`)
-    expect(fresh.approver_id).toBe(approver.id)
-    // The approver reads why it came back, and the reason given.
-    expect(fresh.reason).toMatch(/^Asked again after the fare rose to ₹[\d,]+\. Reason given: .+ \(client meeting moved\)$/)
+    // Run as a migration runs: by the owner (the app's login cannot alter tables).
+    const owner = new pg.Client({ connectionString: testOwnerUrl() })
+    await owner.connect()
+    try { await owner.query(readFileSync('db/migrations/20261118000100_requested_total.sql', 'utf8')) } finally { await owner.end() }
 
-    // Asked once; asking again is refused.
-    expect(await askAgain(returned, { reasonCode: 'schedule_need' }))
-      .toMatchObject({ status: 409, json: { code: 'NOT_RETURNED' } })
+    expect(await one(db, sql`select status, requested_total from bookings where id = ${id}`))
+      .toEqual({ status: 'pending_approval', requested_total: 10921.9 })
+    expect(await one(db, sql`select status, actioned_at, decision_note from approvals where id = ${step.id}`))
+      .toEqual({ status: 'pending', actioned_at: null, decision_note: null })
   })
 
   it('stale keys: the fare is found again in a fresh search, priced there, and the new keys kept', async () => {

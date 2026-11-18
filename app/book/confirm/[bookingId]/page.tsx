@@ -16,7 +16,6 @@ import DeskFareStrip from '@/app/components/book/DeskFareStrip'
 import { CancellationNotice, CancelBookingButton, type CancellationInfo } from '@/app/components/book/CancelBooking'
 import FareRulesPanel from '@/app/components/book/FareRulesPanel'
 import lay from '@/app/book/price/FarePage.module.css'
-import AskAgainCard from '@/app/components/book/AskAgainCard'
 import type { FareRules } from '@/app/lib/book/fareRules'
 import type { DeskView } from '@/app/lib/commercials/deskView'
 
@@ -51,7 +50,7 @@ function TerminalExits() {
 const PAIR_STATUS: Record<string, string> = {
   pending_approval: 'Awaiting approval', approved: 'Approved', held: 'Confirmed', ticketed: 'Ticketed',
   rejected: 'Rejected', cancelled: 'Cancelled', cancel_requested: 'Cancelling', failed: 'Not confirmed',
-  approval_misconfigured: 'Approval not set up', reapproval_needed: 'Needs your decision',
+  approval_misconfigured: 'Approval not set up',
 }
 
 interface PairMember {
@@ -766,17 +765,6 @@ export default function ConfirmBookingPage() {
               </button>
               <CancelBookingButton bookingId={booking.id} ticketed={false} onCancelled={() => loadBooking()} />
             </>
-          )}
-
-          {/* Sent back by an approver's refresh: the fare rose out of policy. */}
-          {booking.status === 'reapproval_needed' && (
-            <AskAgainCard
-              bookingId={booking.id}
-              newTotal={booking.total_cost}
-              note={latestApproval?.decision_note ?? null}
-              onAsked={() => loadBooking()}
-              cancel={<CancelBookingButton bookingId={booking.id} ticketed={false} onCancelled={() => loadBooking()} />}
-            />
           )}
 
           {(booking.status === 'cancelled' || booking.status === 'cancel_requested') && (

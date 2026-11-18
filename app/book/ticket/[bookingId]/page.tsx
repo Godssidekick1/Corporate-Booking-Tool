@@ -290,7 +290,6 @@ export default function TicketPage() {
         // Already done — nothing to do, page renders normally below.
       } else if (
         data.booking.status === 'pending_approval' || data.booking.status === 'approved' ||
-        data.booking.status === 'reapproval_needed' ||
         // The confirm page says when, by whom and what it cost.
         data.booking.status === 'cancelled' || data.booking.status === 'cancel_requested'
       ) {

@@ -353,6 +353,8 @@ export const POST = route(async (req: NextRequest) => {
         } else {
           const inr = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`
           await bookingsRepo.applyRefreshedFare(db, bookingId, repriced.fare)
+          // A new round asks at the new price: refreshes measure from here.
+          await bookingsRepo.setRequestedTotal(db, bookingId, repriced.sellTotal)
           await bookingsRepo.setStatus(db, bookingId, 'pending_approval')
           const outcome = await startApprovalForBooking(db, {
             bookingId, clientId: booking.client_id, employeeId: booking.employee_id, travelType: 'flight',

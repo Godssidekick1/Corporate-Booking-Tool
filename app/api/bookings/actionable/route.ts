@@ -16,9 +16,7 @@ import { route } from '@/app/lib/http/handler'
 // need to go ask their admin to fix it.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// 'reapproval_needed': sent back because the fare rose out of policy; the
-// traveller asks again or chooses another flight.
-const ACTIONABLE_STATUSES = ['approved', 'pending_approval', 'rejected', 'approval_misconfigured', 'reapproval_needed']
+const ACTIONABLE_STATUSES = ['approved', 'pending_approval', 'rejected', 'approval_misconfigured']
 
 export const GET = route(async () => {
   const user = await requireUser()

@@ -26,9 +26,7 @@ import type { CancellationResponse } from '@/app/lib/amadeus/client'
 // yet (docs/go-live-checklist.md).
 // ─────────────────────────────────────────────────────────────────────────────
 
-// reapproval_needed: sent back to the traveller after the fare rose; nothing is
-// held at the airline, so it is withdrawn like any other unconfirmed booking.
-export const WITHDRAWABLE = ['pending_approval', 'approved', 'approval_misconfigured', 'priced', 'passenger_added', 'reapproval_needed'] as const
+export const WITHDRAWABLE = ['pending_approval', 'approved', 'approval_misconfigured', 'priced', 'passenger_added'] as const
 export const WITH_PROVIDER = ['held', 'ticketed'] as const
 
 export const MAX_REASON = 500

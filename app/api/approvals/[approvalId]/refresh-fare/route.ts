@@ -3,7 +3,6 @@ import { db } from '@/app/lib/db'
 import * as approvals from '@/app/lib/repositories/approvals'
 import * as bookings from '@/app/lib/repositories/bookings'
 import * as employees from '@/app/lib/repositories/employees'
-import * as audit from '@/app/lib/repositories/audit'
 import { route } from '@/app/lib/http/handler'
 import { NextRequest } from 'next/server'
 import { amadeus, AmadeusError, type PricingResponse } from '@/app/lib/amadeus/client'
@@ -20,17 +19,13 @@ import { travellerFareBreakdown } from '@/app/lib/book/travellerView'
 // 2026-11-17). Now, when those keys are stale (or missing), the fare is found
 // again in a fresh search (app/lib/book/refindFare.ts) and priced there.
 //
-// The fresh price becomes the booking's (commercials and policy again), and
-// the answer says what changed:
-//   continue                the approver decides on the new price (the
-//                           fare is within policy, or within its grace)
-//   returned_to_traveller   the fare rose AND is now out of policy beyond
-//                           its grace: the approver does not decide on a
-//                           price the traveller never asked for. The
-//                           booking goes back to the traveller
-//                           (reapproval_needed), the open steps close, and
-//                           the traveller asks again with a reason or
-//                           chooses another flight (user, 2026-11-17).
+// The fresh price becomes the booking's (commercials and policy again). The
+// approver always decides on it (user, 2026-11-18): a refresh never sends a
+// booking back to the traveller, whatever the price or verdict. The answer
+// says what changed:
+//   continue                the new price and verdict, how much it moved
+//                           since approval was asked for (requested_total),
+//                           and since this refresh's previous price
 //   fare_gone / flight_gone no longer sold; nothing changes, the approver
 //                           decides (usually: reject, see the ready note).
 // Never the airline's figure: the approver is an ordinary employee.
@@ -124,27 +119,6 @@ export const POST = route(async (
     return Response.json({ error: 'Got a fresh price but could not save it — please try again.' }, { status: 500 })
   }
 
-  // ── Up, and now out of policy beyond its grace: back to the traveller ─────
-  if (repriced.verdict === 'red' && change === 'up') {
-    const note = `The fare rose from ${inr(previousTotal)} to ${inr(newTotal)} and is now outside the travel policy, so it went back to the traveller to ask for approval again.`
-    await bookings.setStatus(db, booking.id, 'reapproval_needed')
-    await approvals.supersedePendingForBooking(db, booking.id, note)
-    try {
-      await audit.append(db, {
-        action: 'booking.returned_to_traveller', entityType: 'booking', entityId: booking.id, userId: user.id,
-        clientId: booking.client_id,
-        metadata: { previousTotal, newTotal, reason: repriced.reason, refound: !!refound },
-      })
-    } catch (auditError) {
-      console.error('[refresh-fare] could not audit a booking sent back', auditError)
-    }
-    return Response.json({
-      ok: true, outcome: 'returned_to_traveller', change, previousTotal, newTotal, totalCost: newTotal,
-      policyVerdict: updated.policy_verdict, reason: repriced.reason,
-      message: `The fare went up from ${inr(previousTotal)} to ${inr(newTotal)} and is now outside the traveller’s policy. It has gone back to them to ask for approval again or choose another flight; nothing is waiting for you.`,
-    })
-  }
-
   // The approval row's cached verdict and reason follow the price acted on.
   try {
     await approvals.setVerdict(db, approvalId, repriced.verdict, repriced.reason)
@@ -152,16 +126,26 @@ export const POST = route(async (
     console.error('[refresh-fare] refreshed the fare but could not update the approval row', approvalUpdateError, { approvalId })
   }
 
+  // Since approval was asked for: what the approver weighs.
+  const requested = Number(booking.requested_total ?? previousTotal)
+  const sinceRequest = Math.round((newTotal - requested) * 100) / 100
+  const percent = requested > 0 ? Math.round((sinceRequest / requested) * 1000) / 10 : null
+  const policyWords = repriced.verdict === 'green' ? ' It is within policy.'
+    : repriced.verdict === 'amber' ? ' It is within the policy’s grace and needs approval.'
+    : repriced.verdict === 'red' ? ' It is outside the traveller’s policy.' : ''
+
   // THE SELL SIDE ONLY: never the airline's figure or its per-passenger split.
   return Response.json({
     ok: true, outcome: 'continue', change, previousTotal, newTotal,
     totalCost: newTotal,
+    requestedTotal: requested,
+    sinceRequest: { amount: sinceRequest, percent },
     policyVerdict: updated.policy_verdict,
     policyVerdictDetail: updated.policy_verdict_detail,
     fareBreakdown: travellerFareBreakdown(updated.fare_breakdown),
     reason: repriced.reason,
-    message: change === 'same'
+    message: (Math.abs(sinceRequest) < 0.5
       ? `The fare is unchanged at ${inr(newTotal)}.`
-      : `The fare went ${change} from ${inr(previousTotal)} to ${inr(newTotal)}${repriced.verdict === 'green' ? ' and is within policy' : repriced.verdict === 'amber' ? ' and needs approval (within the policy’s grace)' : ''}.`,
+      : `The fare is now ${inr(newTotal)}, ${sinceRequest > 0 ? 'up' : 'down'} ${inr(Math.abs(sinceRequest))}${percent != null ? ` (${Math.abs(percent)}%)` : ''} from ${inr(requested)} when approval was asked for.`) + policyWords,
   })
 })
