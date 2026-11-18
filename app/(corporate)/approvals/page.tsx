@@ -57,6 +57,26 @@ interface ApprovalItem {
 }
 
 
+// The refresh route's answer (app/api/approvals/[approvalId]/refresh-fare).
+interface RefreshAnswer {
+  ok: boolean
+  error?: string
+  outcome?: 'continue' | 'returned_to_traveller' | 'fare_gone' | 'flight_gone'
+  change?: 'up' | 'down' | 'same'
+  previousTotal?: number
+  newTotal?: number
+  message?: string
+}
+
+// Ready-written notes for the common cases (user, 2026-11-17). Clicking one
+// fills the note box; the approver can change it before deciding.
+const READY_NOTES: { label: string; text: string }[] = [
+  { label: 'Fare rose out of policy', text: 'The fare has gone up and is now outside the travel policy. Please search again and choose a fare within policy, or ask again with a reason.' },
+  { label: 'No longer sold', text: 'This fare is no longer sold. Please search again and choose another flight.' },
+  { label: 'Choose a cheaper fare', text: 'Please choose a cheaper fare on the same day.' },
+  { label: 'Approved at current fare', text: 'Approved at the current fare.' },
+]
+
 const STATUS_META: Record<string, { label: string; color: string; bg: string }> = {
   approved: { label: 'Approved', color: '#166534', bg: '#F0FDF4' },
   rejected: { label: 'Rejected', color: '#991B1B', bg: '#FEF2F2' },
@@ -100,6 +120,20 @@ export default function ApprovalsPage() {
   const [actingOn, setActingOn] = useState<string | null>(null)
   const [refreshingId, setRefreshingId] = useState<string | null>(null)
   const [noteDraft, setNoteDraft] = useState<Record<string, string>>({})
+  // The last refresh's answer per card, and a page-level line for a booking
+  // that left the queue because it went back to the traveller.
+  const [refreshed, setRefreshed] = useState<Record<string, RefreshAnswer>>({})
+  const [notice, setNotice] = useState('')
+
+  // A ready note fills the box, or is added to what is already there; the
+  // text stays editable before Approve or Reject.
+  function addReadyNote(approvalId: string, text: string) {
+    setNoteDraft(prev => {
+      const current = (prev[approvalId] ?? '').trim()
+      if (current.includes(text)) return prev
+      return { ...prev, [approvalId]: current ? `${current} ${text}` : text }
+    })
+  }
 
   // Once the approver has decided on at least one item this visit, this
   // page's pending list is no longer a safe place to land on via browser
@@ -150,12 +184,21 @@ export default function ApprovalsPage() {
   async function handleRefreshFare(approvalId: string) {
     setRefreshingId(approvalId)
     setError('')
+    setNotice('')
     try {
       const res = await fetch(`/api/approvals/${approvalId}/refresh-fare`, { method: 'POST' })
-      const data = await res.json()
+      const data = await res.json() as RefreshAnswer
       if (!data.ok) {
         setError(data.error || 'Could not refresh the fare for this booking.')
         return
+      }
+      // What changed, in words (POST /api/approvals/[id]/refresh-fare):
+      // sent back to the traveller leaves this queue, so it is said at the
+      // top; everything else is said on the card, which stays.
+      if (data.outcome === 'returned_to_traveller') {
+        setNotice(data.message ?? 'The fare rose out of policy, so the booking went back to the traveller.')
+      } else {
+        setRefreshed(prev => ({ ...prev, [approvalId]: data }))
       }
       // The refreshed price/verdict is now saved server-side — reload the
       // queue so this card shows the new numbers rather than patching
@@ -200,12 +243,12 @@ export default function ApprovalsPage() {
   const urgentCount = urgentTotal
 
   return (
-    <div className="page-frame narrow" style={s.page}>
+    <div className="page-frame medium" style={s.page}>
       <div style={s.header}>
         <div style={s.headerRow}>
           <div>
             <h1 style={s.heading}>Approvals</h1>
-            <p style={s.sub}>Bookings waiting on your sign-off, and what you've decided in the last 30 days.</p>
+            <p style={s.sub}>Bookings waiting on your sign-off, and what you’ve decided in the last 30 days.</p>
           </div>
           <button
             type="button"
@@ -235,6 +278,7 @@ export default function ApprovalsPage() {
       </div>
 
       {error && <div style={s.errorBanner}><span style={s.bannerIcon}>⚠</span> {error}</div>}
+      {notice && <div style={s.noticeBanner} role="status">{notice}</div>}
 
       {loading ? (
         <div style={s.loadingRow}><div style={s.spinner} /></div>
@@ -279,37 +323,53 @@ export default function ApprovalsPage() {
 
                 {item.kind === 'trip' && item.trip && <TripSignOffSummary trip={item.trip} />}
 
-                {item.kind === 'booking' && itinerary?.origin && itinerary?.destination && (
-                  <div style={s.routeRow}>
-                    <span style={s.routeCode}>{itinerary.origin.code}</span>
-                    <span style={s.routeArrow}>→</span>
-                    <span style={s.routeCode}>{itinerary.destination.code}</span>
-                    <span style={s.routeMeta}>
-                      {formatDayLabel(itinerary.origin.dateTime)} · {formatTime(itinerary.origin.dateTime)}
-                      {itinerary.airline && ` · ${itinerary.airline.name}`}
-                    </span>
+                {item.kind === 'booking' && (
+                  <div style={s.body}>
+                    <div style={s.bodyMain}>
+                      {itinerary?.origin && itinerary?.destination && (
+                        <div style={s.routeRow}>
+                          <div>
+                            <div style={s.routeCodes}>
+                              <span style={s.routeCode}>{itinerary.origin.code}</span>
+                              <span style={s.routeArrow}>→</span>
+                              <span style={s.routeCode}>{itinerary.destination.code}</span>
+                            </div>
+                            <div style={s.routeCities}>{itinerary.origin.city} to {itinerary.destination.city}</div>
+                          </div>
+                          <div style={s.routeMeta}>
+                            <div style={s.routeWhen}>{formatDayLabel(itinerary.origin.dateTime)} · {formatTime(itinerary.origin.dateTime)}</div>
+                            {itinerary.airline && <div>{itinerary.airline.name}</div>}
+                          </div>
+                        </div>
+                      )}
+                      {item.reason && (
+                        <div style={s.reasonBox}>
+                          <div style={s.boxLabel}>Why it needs approval</div>
+                          {item.reason}
+                        </div>
+                      )}
+                    </div>
+
+                    <div style={s.pricePanel}>
+                      <div style={s.boxLabel}>What the company pays</div>
+                      <div style={s.priceValue}>₹{item.booking?.totalCost?.toLocaleString('en-IN') ?? '—'}</div>
+                      {refreshed[item.approvalId] && <RefreshLine answer={refreshed[item.approvalId]} />}
+                      {tab === 'pending' && (
+                        <button
+                          type="button"
+                          onClick={() => handleRefreshFare(item.approvalId)}
+                          disabled={refreshingId === item.approvalId || actingOn === item.approvalId}
+                          style={{ ...s.refreshFareBtn, opacity: refreshingId === item.approvalId ? 0.6 : 1 }}
+                          title="Get today's price and policy check for this fare before deciding"
+                        >
+                          {refreshingId === item.approvalId ? 'Checking today’s price…' : '↻ Refresh fare'}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )}
 
-                {item.kind === 'booking' && <div style={s.costRow}>
-                  <span style={s.costLabel}>Total cost</span>
-                  <div style={s.costRight}>
-                    <span style={s.costValue}>₹{item.booking?.totalCost?.toLocaleString('en-IN') ?? '—'}</span>
-                    {tab === 'pending' && (
-                      <button
-                        type="button"
-                        onClick={() => handleRefreshFare(item.approvalId)}
-                        disabled={refreshingId === item.approvalId || actingOn === item.approvalId}
-                        style={{ ...s.refreshFareBtn, opacity: refreshingId === item.approvalId ? 0.6 : 1 }}
-                        title="Get the current price and policy check for this fare before deciding"
-                      >
-                        {refreshingId === item.approvalId ? 'Refreshing…' : '↻ Refresh fare'}
-                      </button>
-                    )}
-                  </div>
-                </div>}
-
-                {item.reason && (
+                {item.kind === 'trip' && item.reason && (
                   <div style={s.reasonBox}>{item.reason}</div>
                 )}
 
@@ -318,13 +378,22 @@ export default function ApprovalsPage() {
                 )}
 
                 {tab === 'pending' && (
-                  <>
+                  <div style={s.decide}>
+                    <div style={s.readyNotes} aria-label="Ready-written notes">
+                      <span style={s.readyLabel}>Quick notes</span>
+                      {READY_NOTES.map(n => (
+                        <button key={n.label} type="button" onClick={() => addReadyNote(item.approvalId, n.text)} style={s.readyChip} title={n.text}>
+                          {n.label}
+                        </button>
+                      ))}
+                    </div>
                     <textarea
-                      placeholder="Optional note (visible to the traveler)"
+                      placeholder="Note to the traveller (optional). Pick a quick note above, or write your own."
                       value={noteDraft[item.approvalId] ?? ''}
                       onChange={e => setNoteDraft(prev => ({ ...prev, [item.approvalId]: e.target.value }))}
                       style={s.noteInput}
                       rows={2}
+                      maxLength={1000}
                     />
                     <div style={s.actionRow}>
                       <button
@@ -344,7 +413,7 @@ export default function ApprovalsPage() {
                         {actingOn === item.approvalId ? 'Saving…' : 'Approve'}
                       </button>
                     </div>
-                  </>
+                  </div>
                 )}
               </div>
             )
@@ -357,6 +426,19 @@ export default function ApprovalsPage() {
         : <Pagination page={historyPage} pageSize={pageSize} total={historyTotal} onPageChange={setHistoryPage} busy={loading} noun="decisions" />}
     </div>
   )
+}
+
+// What the last "Refresh fare" found, in one line under the price.
+function RefreshLine({ answer }: { answer: RefreshAnswer }) {
+  const gone = answer.outcome === 'fare_gone' || answer.outcome === 'flight_gone'
+  const inr = (n?: number) => (n == null ? '' : `₹${Math.round(n).toLocaleString('en-IN')}`)
+  const text = gone
+    ? (answer.outcome === 'flight_gone' ? 'No longer offered on that day.' : 'This fare is no longer sold.')
+    : answer.change === 'same'
+      ? 'Checked just now: unchanged.'
+      : `Checked just now: ${answer.change === 'up' ? 'up' : 'down'} from ${inr(answer.previousTotal)}.`
+  const tone = gone ? s.refreshGone : answer.change === 'up' ? s.refreshUp : s.refreshOk
+  return <div style={{ ...s.refreshLine, ...tone }} title={answer.message}>{text}</div>
 }
 
 // A trip sign-off's body: what the trip is for, what it spent against its
@@ -455,25 +537,51 @@ const s: Record<string, React.CSSProperties> = {
   badges: { display: 'flex', gap: '6px', flexShrink: 0, flexWrap: 'wrap' as const, justifyContent: 'flex-end' as const },
   badge: { fontSize: '10.5px', fontWeight: 700, padding: '3px 9px', borderRadius: '6px', whiteSpace: 'nowrap' as const },
 
+  body: { display: 'flex', flexWrap: 'wrap', gap: '14px', marginBottom: '12px' },
+  bodyMain: { flex: '1 1 380px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: '10px' },
   routeRow: {
-    display: 'flex', alignItems: 'center', gap: '8px', background: '#F9FAFB', border: '1px solid #F3F4F6',
-    borderRadius: '10px', padding: '10px 12px', marginBottom: '10px', fontSize: '13px',
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px',
+    background: '#F9FAFB', border: '1px solid #F3F4F6', borderRadius: '12px', padding: '12px 14px',
   },
-  routeCode: { fontWeight: 700, color: '#111827' },
-  routeArrow: { color: '#9CA3AF', fontSize: '12px' },
-  routeMeta: { fontSize: '11.5px', color: '#9CA3AF', marginLeft: 'auto' },
+  routeCodes: { display: 'flex', alignItems: 'center', gap: '8px' },
+  routeCode: { fontSize: '17px', fontWeight: 700, color: '#111827', letterSpacing: '0.3px' },
+  routeArrow: { color: '#9CA3AF', fontSize: '13px' },
+  routeCities: { fontSize: '11.5px', color: '#6B7280', marginTop: '2px' },
+  routeMeta: { fontSize: '11.5px', color: '#6B7280', textAlign: 'right' as const },
+  routeWhen: { fontSize: '12.5px', fontWeight: 600, color: '#111827', marginBottom: '2px' },
+  boxLabel: { fontSize: '10.5px', fontWeight: 700, color: '#6B7280', textTransform: 'uppercase' as const, letterSpacing: '0.5px', marginBottom: '4px' },
 
+  pricePanel: {
+    flex: '0 1 240px', minWidth: '200px', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '6px',
+    border: '1px solid #E5E7EB', borderRadius: '12px', padding: '12px 14px',
+  },
+  priceValue: { fontSize: '22px', fontWeight: 700, color: '#0A0A14', letterSpacing: '-0.3px', fontVariantNumeric: 'tabular-nums' as const },
+  refreshLine: { fontSize: '11.5px', fontWeight: 600, borderRadius: '6px', padding: '3px 8px' },
+  refreshOk: { color: '#166534', background: '#F0FDF4' },
+  refreshUp: { color: '#92400E', background: '#FEF3C7' },
+  refreshGone: { color: '#991B1B', background: '#FEF2F2' },
   costRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' },
   costLabel: { fontSize: '11.5px', color: '#9CA3AF' },
-  costRight: { display: 'flex', alignItems: 'center', gap: '10px' },
   costValue: { fontSize: '15px', fontWeight: 700, color: '#0A0A14' },
   refreshFareBtn: {
-    fontSize: '11px', fontWeight: 600, color: '#374151', background: '#F9FAFB',
-    border: '1px solid #E5E7EB', borderRadius: '7px', padding: '5px 10px', cursor: 'pointer', whiteSpace: 'nowrap' as const,
+    marginTop: '2px', fontSize: '12px', fontWeight: 600, color: '#000835', background: '#fff',
+    border: '1px solid #C7D2FE', borderRadius: '8px', padding: '6px 12px', cursor: 'pointer', whiteSpace: 'nowrap' as const,
   },
 
-  reasonBox: { fontSize: '12px', color: '#6B7280', lineHeight: 1.5, background: '#F9FAFB', borderRadius: '8px', padding: '10px 12px', marginBottom: '10px' },
+  reasonBox: { fontSize: '12.5px', color: '#374151', lineHeight: 1.5, background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '10px', padding: '10px 12px' },
   noteBox: { fontSize: '12px', color: '#6B7280', fontStyle: 'italic' as const, marginBottom: '10px' },
+
+  decide: { borderTop: '1px solid #F3F4F6', paddingTop: '12px', marginTop: '4px' },
+  readyNotes: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px', marginBottom: '8px' },
+  readyLabel: { fontSize: '11px', fontWeight: 600, color: '#6B7280', marginRight: '2px' },
+  readyChip: {
+    fontSize: '11.5px', fontWeight: 600, color: '#3730A3', background: '#EEF2FF', border: '1px solid #E0E7FF',
+    borderRadius: '999px', padding: '4px 10px', cursor: 'pointer',
+  },
+  noticeBanner: {
+    background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: '10px', padding: '11px 14px',
+    fontSize: '13px', color: '#065F46', marginBottom: '16px', lineHeight: 1.5,
+  },
 
   noteInput: {
     width: '100%', fontSize: '12.5px', color: '#111827', background: '#F9FAFB', border: '1px solid #E5E7EB',

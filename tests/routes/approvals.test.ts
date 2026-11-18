@@ -287,6 +287,12 @@ d('approvals', () => {
     expect(await decideAs(approver, step.id, { decision: 'maybe' }))
       .toEqual({ status: 400, json: { error: 'decision must be "approve" or "reject"' } })
     expect((await decideAs(approver, '00000000-0000-0000-0000-000000000000', { decision: 'approve' })).status).toBe(404)
+    // The note goes to the traveller: text, of a sensible length.
+    expect(await decideAs(approver, step.id, { decision: 'approve', note: { html: '<b>x</b>' } }))
+      .toEqual({ status: 400, json: { error: 'The note must be text.' } })
+    expect(await decideAs(approver, step.id, { decision: 'approve', note: 'x'.repeat(1001) }))
+      .toEqual({ status: 400, json: { error: 'The note can be at most 1000 characters.' } })
+    expect((await pendingFor(first.bookingId)).id).toBe(step.id)   // nothing decided
   })
 
   it('refresh-fare: re-prices, and the booking and step carry the new figures', async () => {

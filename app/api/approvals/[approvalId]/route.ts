@@ -30,9 +30,11 @@ import type { Verdict } from '@/app/lib/rule-engine/evaluateBooking'
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface DecisionBody {
-  decision: 'approve' | 'reject'
-  note?: string
+  decision?: unknown
+  note?: string | null
 }
+
+const MAX_NOTE = 1000
 
 export const PATCH = route(async (
   req: NextRequest,
@@ -61,11 +63,19 @@ export const PATCH = route(async (
     return Response.json({ error: `This approval has already been ${approval.status}` }, { status: 409 })
   }
 
-  const body: DecisionBody = await req.json()
-  const { decision, note } = body
+  const body = await req.json().catch(() => ({})) as DecisionBody
+  const { decision } = body
 
   if (decision !== 'approve' && decision !== 'reject') {
     return Response.json({ error: 'decision must be "approve" or "reject"' }, { status: 400 })
+  }
+  // The note goes to the traveller: text, and not a document.
+  if (body.note !== undefined && body.note !== null && typeof body.note !== 'string') {
+    return Response.json({ error: 'The note must be text.' }, { status: 400 })
+  }
+  const note = body.note?.trim() || undefined
+  if (note && note.length > MAX_NOTE) {
+    return Response.json({ error: `The note can be at most ${MAX_NOTE} characters.` }, { status: 400 })
   }
 
   if (approval.trip_id) return decideTrip(approval, approval.trip_id, decision, note ?? null, user.id)
