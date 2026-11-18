@@ -29,7 +29,7 @@ export default function AuthShell({ tagline, children }: { tagline: string; chil
 
 export const authStyles: Record<string, CSSProperties> = {
   root: {
-    display: 'flex', minHeight: '100vh',
+    display: 'flex', minHeight: 'var(--full-height, 100vh)',
     fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
     background: '#F7F8FC',
   },

@@ -73,9 +73,12 @@ body {
    style. Phones and tablets keep 100%, and so does print (tickets, credit
    notes). The root's background is the canvas, so nothing shows past a page
    whose height is set in viewport units. */
-html { background: var(--color-canvas); }
+html { background: var(--color-canvas); --full-height: 100vh; }
 @media screen and (min-width: 1024px) {
-  html { zoom: 0.9; }
+  /* The zoom shrinks viewport units too: 100vh draws 90% of the screen.
+     --full-height is the whole screen under the zoom, for a full-height
+     area with a colour of its own (the sign-in pages' panel). */
+  html { zoom: 0.9; --full-height: calc(100vh / 0.9); }
 }
 
 /* ── Page frame ──────────────────────────────────────────────────────────────

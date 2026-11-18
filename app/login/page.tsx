@@ -273,7 +273,7 @@ export default function SignInPage() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  root: { display: 'flex', minHeight: '100vh', fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif", backgroundColor: '#F7F8FC' },
+  root: { display: 'flex', minHeight: 'var(--full-height, 100vh)', fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif", backgroundColor: '#F7F8FC' },
 
   signingIn: {
     position: 'fixed', inset: 0, zIndex: 60,
