@@ -6,6 +6,8 @@ import { POST as addPassenger } from '@/app/api/book/add-passenger/route'
 import { POST as refreshFare } from '@/app/api/approvals/[approvalId]/refresh-fare/route'
 import { POST as reapproval } from '@/app/api/book/[bookingId]/reapproval/route'
 import { GET as actionableGet } from '@/app/api/bookings/actionable/route'
+import { GET as approvalsGet } from '@/app/api/approvals/route'
+import * as bookingsRepo from '@/app/lib/repositories/bookings'
 import { AmadeusError } from '@/app/lib/amadeus/client'
 import { call } from '../harness/call'
 import { actors, type Actors } from '../harness/actors'
@@ -130,18 +132,18 @@ d('refresh fare after a long wait', () => {
   afterAll(() => { vi.useRealTimers() })
   beforeEach(() => { for (const f of Object.values(fake)) f.mockReset() })
 
-  async function book(key: string): Promise<string> {
+  async function book(key: string, searchKey = 'SK'): Promise<string> {
     fake.pricing.mockResolvedValueOnce(pricing(key, 10800))
     expect((await call(pricePost, {
       as: colleague, method: 'POST', url: '/api/book/price',
-      body: { key: 'SK', pricingKey: 'PK', provider: 'test', resultIndex: '1', itinerary: ITINERARY },
+      body: { key: searchKey, pricingKey: 'PK', provider: 'test', resultIndex: '1', itinerary: ITINERARY },
     })).status).toBe(200)
     fake.addPassenger.mockResolvedValueOnce({ ReferenceNo: `REF-${key}` })
     const res = await call(addPassenger, {
       as: colleague, method: 'POST', url: '/api/book/add-passenger',
       body: {
         key, pricingKey: 'PK', provider: 'test', resultIndex: '1', referenceNo: `REF-${key}`, totalFare: 10800,
-        currency: 'INR', isRefundable: true, fareType: 'Retail', passengerBreakup: [], searchKey: 'SK', itinerary: ITINERARY,
+        currency: 'INR', isRefundable: true, fareType: 'Retail', passengerBreakup: [], searchKey, itinerary: ITINERARY,
         customerInfo: { Email: 't@example.test', Mobile: '9999999999', PassengerDetails: [{ FirstName: 'T', LastName: 'Raveller' }] },
         confirmDuplicate: true,
       },
@@ -265,5 +267,43 @@ d('refresh fare after a long wait', () => {
     const res = await refresh(step.id)
     expect(res).toMatchObject({ status: 200, json: { ok: true, outcome: 'fare_gone' } })
     expect((await bookingRow(id)).status).toBe('pending_approval')
+  })
+
+  it('the approver sees what the fare was chosen from: the cheaper fare on the flight, the cheapest that day', async () => {
+    // What the traveller's search showed (kept two hours; saved onto the booking).
+    await bookingsRepo.saveSearchFares(db, {
+      search_key: 'SK-CHOICE', client_id: a.corpAdmin.client_id!, traveller_id: colleague.id,
+      flights: [
+        { flightKey: 'k', label: 'AI 101', departure: '2030-11-10T08:00:00', origin: 'DEL', destination: 'BOM', journeys: 1,
+          fares: [{ pricingKey: 'PK', total: 10500 }, { pricingKey: 'PK-SAVER', total: 9000 }] },
+        { flightKey: '6e', label: '6E 201', departure: '2030-11-10T06:00:00', origin: 'DEL', destination: 'BOM', journeys: 1,
+          fares: [{ pricingKey: 'X', total: 7000 }] },
+        { flightKey: 'blr', label: '6E 9', departure: '2030-11-10T07:00:00', origin: 'DEL', destination: 'BLR', journeys: 1,
+          fares: [{ pricingKey: 'Y', total: 3000 }] },
+      ],
+    })
+    const id = await book('CHOICE', 'SK-CHOICE')
+    const expected = {
+      chosen: { total: 10500, name: 'Retail', refundable: true, label: 'AI 101', departure: '2030-11-10T08:00:00' },
+      flightsShown: 2,
+      cheaperOnFlight: { total: 9000, fares: 2 },
+      cheapestFlight: { total: 7000, label: '6E 201', departure: '2030-11-10T06:00:00' },
+    }
+    const saved = await one<{ choice_context: unknown }>(db, sql`select choice_context from bookings where id = ${id}`)
+    expect(saved.choice_context).toMatchObject(expected)
+
+    // The approver's card carries it, with the flight's full itinerary.
+    const queue = await call(approvalsGet, { as: approver, url: '/api/approvals' })
+    const card = (queue.json as { pending: { bookingId: string; booking: { choice?: unknown; itinerary: { journeys?: unknown[] } } }[] }).pending
+      .find(p => p.bookingId === id)!
+    expect(card.booking.choice).toMatchObject(expected)
+    expect(card.booking.itinerary.journeys).toHaveLength(1)
+
+    // Without a kept search there is no comparison, and the card says nothing.
+    const bare = await book('NOCHOICE', 'SK-NOT-KEPT')
+    expect((await one<{ choice_context: unknown }>(db, sql`select choice_context from bookings where id = ${bare}`)).choice_context).toBeNull()
+    const again = await call(approvalsGet, { as: approver, url: '/api/approvals' })
+    expect((again.json as { pending: { bookingId: string; booking: Record<string, unknown> }[] }).pending
+      .find(p => p.bookingId === bare)!.booking).not.toHaveProperty('choice')
   })
 })

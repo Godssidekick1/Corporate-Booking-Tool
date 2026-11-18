@@ -98,3 +98,54 @@ export function cheaperNearby(
   }
   return best
 }
+
+// ── What the chosen fare was picked from (bookings.choice_context) ───────────
+// For the approver: was there a cheaper sensible option? Not the whole search
+// (the approver is not redoing it), just the two comparisons that answer it:
+// the cheapest fare on the same flight, and the cheapest flight on the same
+// route and shape. All figures are the search's sell estimates, so the
+// comparison is like with like, and never the airline's figure.
+
+export interface ChoiceContext {
+  chosen: { total: number; name: string | null; refundable: boolean | null; label: string; departure: string }
+  flightsShown: number
+  // Null when the chosen fare is already the cheapest on its flight.
+  cheaperOnFlight: { total: number; fares: number } | null
+  // Null when the chosen flight already carries the cheapest fare.
+  cheapestFlight: { total: number; label: string; departure: string } | null
+  savedAt: string
+}
+
+export function choiceContext(
+  shown: ShownFlight[],
+  flightKey: string,
+  pricingKey: string,
+  fare: { name?: string | null; refundable?: boolean | null },
+  now: Date = new Date(),
+): ChoiceContext | null {
+  const chosen = shown.find(f => f.flightKey === flightKey)
+  const chosenFare = chosen?.fares.find(f => f.pricingKey === pricingKey)
+  if (!chosen || !chosenFare) return null
+  const comparable = shown.filter(f =>
+    f.origin === chosen.origin && f.destination === chosen.destination && f.journeys === chosen.journeys && f.fares.length > 0)
+  const cheapestOf = (f: ShownFlight) => Math.min(...f.fares.map(x => x.total))
+
+  const flightLow = cheapestOf(chosen)
+  let best: ShownFlight | null = null
+  for (const f of comparable) if (!best || cheapestOf(f) < cheapestOf(best)) best = f
+  const bestTotal = best ? cheapestOf(best) : chosenFare.total
+
+  return {
+    chosen: {
+      total: chosenFare.total, name: fare.name ?? null, refundable: fare.refundable ?? null,
+      label: chosen.label, departure: chosen.departure,
+    },
+    flightsShown: comparable.length,
+    // At least a rupee: rounding is not a cheaper fare.
+    cheaperOnFlight: flightLow < chosenFare.total - 1 ? { total: flightLow, fares: chosen.fares.length } : null,
+    cheapestFlight: best && best.flightKey !== chosen.flightKey && bestTotal < flightLow - 1
+      ? { total: bestTotal, label: best.label, departure: best.departure }
+      : null,
+    savedAt: now.toISOString(),
+  }
+}

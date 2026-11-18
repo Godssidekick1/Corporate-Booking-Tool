@@ -7,6 +7,8 @@ import { formatTime, formatDayLabel } from '@/app/lib/book/types'
 import { FlightRow, type TripCardTrip, type TripCardFlight } from '@/app/components/trips/TripCard'
 import { money } from '@/app/lib/trips/status'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
+import FlightDetails from '@/app/components/book/FlightDetails'
+import type { ChoiceContext } from '@/app/lib/policy/lowestLogicalFare'
 
 // ── /approvals ────────────────────────────────────────────────────────────
 // A manager/finance/admin's approval queue: bookings currently waiting on
@@ -48,6 +50,8 @@ interface ApprovalItem {
     // Booked on the traveller's behalf (travel desk or a colleague).
     bookedByName?: string | null
     forGuest?: boolean
+    // What the fare was chosen from, when the search was kept.
+    choice?: ChoiceContext
   } | null
   traveler: {
     fullName: string
@@ -124,6 +128,8 @@ export default function ApprovalsPage() {
   // that left the queue because it went back to the traveller.
   const [refreshed, setRefreshed] = useState<Record<string, RefreshAnswer>>({})
   const [notice, setNotice] = useState('')
+  // Which cards show the flight in full.
+  const [detailsOpen, setDetailsOpen] = useState<Record<string, boolean>>({})
 
   // A ready note fills the box, or is added to what is already there; the
   // text stays editable before Approve or Reject.
@@ -342,6 +348,19 @@ export default function ApprovalsPage() {
                           </div>
                         </div>
                       )}
+                      {/* The flight as the traveller saw it: times, terminals,
+                          stops and layovers, flight numbers, baggage. */}
+                      {itinerary?.origin && (
+                        <button
+                          type="button"
+                          onClick={() => setDetailsOpen(prev => ({ ...prev, [item.approvalId]: !prev[item.approvalId] }))}
+                          style={s.detailsToggle}
+                          aria-expanded={!!detailsOpen[item.approvalId]}
+                        >
+                          {detailsOpen[item.approvalId] ? 'Hide flight details ▴' : 'Flight details: times, terminals, stops, baggage ▾'}
+                        </button>
+                      )}
+                      {detailsOpen[item.approvalId] && <FlightDetails itinerary={itinerary} />}
                       {item.reason && (
                         <div style={s.reasonBox}>
                           <div style={s.boxLabel}>Why it needs approval</div>
@@ -353,6 +372,7 @@ export default function ApprovalsPage() {
                     <div style={s.pricePanel}>
                       <div style={s.boxLabel}>What the company pays</div>
                       <div style={s.priceValue}>₹{item.booking?.totalCost?.toLocaleString('en-IN') ?? '—'}</div>
+                      {item.booking?.choice && <ChoiceLines choice={item.booking.choice} />}
                       {refreshed[item.approvalId] && <RefreshLine answer={refreshed[item.approvalId]} />}
                       {tab === 'pending' && (
                         <button
@@ -424,6 +444,32 @@ export default function ApprovalsPage() {
       {tab === 'pending'
         ? <Pagination page={pendingPage} pageSize={pageSize} total={pendingTotal} onPageChange={setPendingPage} busy={loading} noun="approvals" />
         : <Pagination page={historyPage} pageSize={pageSize} total={historyTotal} onPageChange={setHistoryPage} busy={loading} noun="decisions" />}
+    </div>
+  )
+}
+
+// What the fare was chosen from (bookings.choice_context): its name and
+// refundability, then the two comparisons that answer "was there a cheaper
+// sensible option?". Search prices at the time of booking, sell-side.
+function ChoiceLines({ choice }: { choice: ChoiceContext }) {
+  const inr = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`
+  const at = (iso: string) => /T(d{2}:d{2})/.exec(iso)?.[1] ?? ''
+  const fareBits = [choice.chosen.name, choice.chosen.refundable == null ? null : choice.chosen.refundable ? 'Refundable' : 'Non-refundable']
+    .filter(Boolean)
+  return (
+    <div style={s.choice}>
+      {fareBits.length > 0 && <div style={s.choiceFare}>{fareBits.join(' · ')}</div>}
+      <div style={choice.cheaperOnFlight ? s.choiceWarn : s.choiceOk}>
+        {choice.cheaperOnFlight
+          ? `A cheaper fare on this flight: ${inr(choice.cheaperOnFlight.total)} (${inr(choice.chosen.total - choice.cheaperOnFlight.total)} less)`
+          : 'The cheapest fare on this flight'}
+      </div>
+      <div style={choice.cheapestFlight ? s.choiceWarn : s.choiceOk}>
+        {choice.cheapestFlight
+          ? `Cheapest that day: ${choice.cheapestFlight.label} at ${at(choice.cheapestFlight.departure)}, ${inr(choice.cheapestFlight.total)}`
+          : `The cheapest of ${choice.flightsShown} flight${choice.flightsShown === 1 ? '' : 's'} that day`}
+      </div>
+      <div style={s.choiceFoot}>Search prices when booked</div>
     </div>
   )
 }
@@ -556,6 +602,15 @@ const s: Record<string, React.CSSProperties> = {
     border: '1px solid #E5E7EB', borderRadius: '12px', padding: '12px 14px',
   },
   priceValue: { fontSize: '22px', fontWeight: 700, color: '#0A0A14', letterSpacing: '-0.3px', fontVariantNumeric: 'tabular-nums' as const },
+  detailsToggle: {
+    alignSelf: 'flex-start', background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+    fontSize: '12.5px', fontWeight: 600, color: '#3730A3',
+  },
+  choice: { display: 'flex', flexDirection: 'column', gap: '3px', fontSize: '11.5px', lineHeight: 1.45, width: '100%' },
+  choiceFare: { fontSize: '12px', fontWeight: 600, color: '#374151', marginBottom: '2px' },
+  choiceOk: { color: '#166534' },
+  choiceWarn: { color: '#92400E' },
+  choiceFoot: { fontSize: '10.5px', color: '#9CA3AF' },
   refreshLine: { fontSize: '11.5px', fontWeight: 600, borderRadius: '6px', padding: '3px 8px' },
   refreshOk: { color: '#166534', background: '#F0FDF4' },
   refreshUp: { color: '#92400E', background: '#FEF3C7' },

@@ -144,6 +144,9 @@ export const GET = route(async (req: NextRequest) => {
         bookedByName: booking.booked_by_name,
         // A guest's booking is tagged; personal trips never reach approval.
         forGuest: booking.for_guest,
+        // What the fare was chosen from (sell-side search figures), when the
+        // search was kept: the cheapest fare on the flight and that day.
+        ...(booking.choice_context ? { choice: booking.choice_context } : {}),
       } : null,
       // A trip sign-off: the trip and what is in it, sell-side.
       trip: tripCard ? {

@@ -5,6 +5,7 @@ import { requireUser } from '@/app/lib/auth/session'
 import { db } from '@/app/lib/db'
 import * as trips from '@/app/lib/repositories/trips'
 import * as bookings from '@/app/lib/repositories/bookings'
+import { choiceContext, type ChoiceContext } from '@/app/lib/policy/lowestLogicalFare'
 import { route } from '@/app/lib/http/handler'
 import { amadeus, AmadeusError, CustomerInfo } from '@/app/lib/amadeus/client'
 import { providerFailure, alreadyOnFlightQuestion } from '@/app/lib/book/providerErrors'
@@ -336,6 +337,8 @@ export const POST = route(async (req: NextRequest) => {
     let policyStatus = 'not_evaluated'
     let policyVerdict: string | null = null
     let policyVerdictDetail: unknown = null
+    // What the fare was chosen from, for the approver (bookings.choice_context).
+    let choice: ChoiceContext | null = null
     let reason = 'Policy could not be evaluated for this booking.'
     // Needed later for startApprovalForBooking's chain lookup (chains are
     // scoped by band + travel_type) — declared here so it's in scope
@@ -377,6 +380,13 @@ export const POST = route(async (req: NextRequest) => {
       try {
         // What this traveller's search showed, for the lowest logical fare.
         const shown = searchKey ? await bookings.searchFares(db, searchKey, employee.id) : null
+        if (shown) {
+          const option = flight.fareOptions?.find(o => o.pricingKey === pricingKey)
+          choice = choiceContext(shown, flight.flightKey, pricingKey, {
+            name: option?.brandedFareName || option?.brandedFareDescription || fareType || null,
+            refundable,
+          })
+        }
         ruleResult = await checkBookingAgainstPolicy(db, {
           employeeId: employee.id,
           travelType: inputs.travelType,
@@ -520,6 +530,7 @@ export const POST = route(async (req: NextRequest) => {
         // The airline's rules as priced: the traveller's booking shows them,
         // and the TMC prices a refund's airline penalty from them.
         fare_rules: (await rulesPending).rules,
+        choice_context: choice,
       })
     } catch (insertError) {
       // The airline has the passenger data and we do not have a booking row.

@@ -536,6 +536,8 @@ export type NewBooking = Pick<Row<'bookings'>,
   // The airline's rules, from the quote (null when it gave none).
   fare_rules?: FareRules | null
   for_guest?: boolean
+  // What the fare was chosen from, for the approver (null without a search).
+  choice_context?: unknown
 }
 
 // Written once, right after the airline accepts the passengers (add-passenger).
@@ -545,7 +547,7 @@ export async function insert(db: Queryable, b: NewBooking): Promise<{ id: string
       client_id, employee_id, booked_by, booking_type, status, total_cost, sell_total, provider,
       provider_order_id, amadeus_key, pricing_key, result_index, search_key, trip_id, is_ndc,
       policy_status, policy_verdict, policy_reason_code, policy_reason_note, resolved_deal_codes, resolved_fop, commercials, itinerary,
-      traveler_snapshot, fare_breakdown, policy_verdict_detail, purpose, for_guest, fare_rules)
+      traveler_snapshot, fare_breakdown, policy_verdict_detail, purpose, for_guest, fare_rules, choice_context)
     values (
       ${b.client_id}, ${b.employee_id}, ${b.booked_by}, ${b.booking_type}, ${b.status}, ${b.total_cost},
       ${b.sell_total}, ${b.provider}, ${b.provider_order_id}, ${b.amadeus_key}, ${b.pricing_key},
@@ -553,7 +555,8 @@ export async function insert(db: Queryable, b: NewBooking): Promise<{ id: string
       ${b.policy_reason_code}, ${b.policy_reason_note},
       ${json(b.resolved_deal_codes)}, ${json(b.resolved_fop)}, ${json(b.commercials)}, ${json(b.itinerary)},
       ${json(b.traveler_snapshot)}, ${json(b.fare_breakdown)}, ${json(b.policy_verdict_detail)},
-      ${b.purpose ?? 'business'}, ${b.for_guest ?? false}, ${b.fare_rules ? json(b.fare_rules) : null})
+      ${b.purpose ?? 'business'}, ${b.for_guest ?? false}, ${b.fare_rules ? json(b.fare_rules) : null},
+      ${b.choice_context ? json(b.choice_context) : null})
     returning id`)
 }
 
@@ -640,13 +643,13 @@ export async function approvalTarget(db: Queryable, bookingId: string): Promise<
 // What an approver's queue shows of each booking: the SELL side, under the
 // name total_cost. The airline figure is not fetched at all.
 export type ApprovalSummary = Pick<Row<'bookings'>,
-  'id' | 'employee_id' | 'booking_type' | 'total_cost' | 'itinerary' | 'policy_verdict' | 'status' | 'purpose' | 'for_guest'> & BookedByName
+  'id' | 'employee_id' | 'booking_type' | 'total_cost' | 'itinerary' | 'policy_verdict' | 'status' | 'purpose' | 'for_guest' | 'choice_context'> & BookedByName
 
 export async function approvalSummaries(db: Queryable, bookingIds: readonly string[]): Promise<ApprovalSummary[]> {
   if (bookingIds.length === 0) return []
   return many<ApprovalSummary>(db, sql`
     select id, employee_id, booking_type, ${SELL_TOTAL} as total_cost, itinerary, policy_verdict, status,
-           purpose, for_guest, ${BOOKED_BY_NAME}
+           purpose, for_guest, choice_context, ${BOOKED_BY_NAME}
     from bookings where id = any(${[...bookingIds]}) order by id`)
 }
 
