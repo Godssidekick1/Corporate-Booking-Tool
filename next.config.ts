@@ -39,6 +39,11 @@ const nextConfig: NextConfig = {
     root: __dirname,
   },
   poweredByHeader: false,
+  // Coding agents are told about Next.js security upgrades (set by
+  // `next upgrade --agent=security`, 16.4.3 → 16.4.6).
+  experimental: {
+    agentUpgrade: "security",
+  },
   async headers() {
     return [{ source: "/:path*", headers: SECURITY_HEADERS }];
   },
