@@ -15,6 +15,7 @@ import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
 import DeskFareStrip from '@/app/components/book/DeskFareStrip'
 import { CancellationNotice, CancelBookingButton, type CancellationInfo } from '@/app/components/book/CancelBooking'
 import FareRulesPanel from '@/app/components/book/FareRulesPanel'
+import lay from '@/app/book/price/FarePage.module.css'
 import AskAgainCard from '@/app/components/book/AskAgainCard'
 import type { FareRules } from '@/app/lib/book/fareRules'
 import type { DeskView } from '@/app/lib/commercials/deskView'
@@ -414,7 +415,7 @@ export default function ConfirmBookingPage() {
 
   return (
     <div style={s.page}>
-      <div style={s.root}>
+      <div className={lay.root}>
         <div style={s.header}>
           <h1 style={s.heading}>Review & confirm</h1>
           <p style={s.sub}>This is the final step before booking with the airline — check the details below carefully.</p>
@@ -435,425 +436,434 @@ export default function ConfirmBookingPage() {
           </div>
         )}
 
-        {/* ── Policy verdict ───────────────────────────────────────── */}
-        {booking.policy_verdict && (
-          <div style={{
-            ...s.verdictCard,
-            background: VERDICT_META[booking.policy_verdict].bg,
-            borderColor: VERDICT_META[booking.policy_verdict].border,
-          }}>
-            <div style={s.verdictHeader}>
-              <span style={{ ...s.verdictDot, background: VERDICT_META[booking.policy_verdict].color }} />
-              <span style={{ ...s.verdictLabel, color: VERDICT_META[booking.policy_verdict].color }}>
-                {VERDICT_META[booking.policy_verdict].label}
-              </span>
-            </div>
-            {(booking.policy_verdict_detail?.breaches?.length ?? 0) > 0 && (
-              <ul style={s.verdictList}>
-                {booking.policy_verdict_detail!.breaches!.map((b, i) => (
-                  <li key={i} style={{ ...s.verdictListItem, color: VERDICT_META[booking.policy_verdict!].color }}>
-                    {breachLine(b)}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        )}
-
-        {/* ── Flight ───────────────────────────────────────────────── */}
-        {booking.itinerary && (
-          <div style={s.card}>
-            <h2 style={s.cardTitle}>Flight</h2>
-            <div style={s.routeRow}>
-              <div style={s.routePoint}>
-                <span style={s.routeTime}>{formatTime(booking.itinerary.origin?.dateTime)}</span>
-                <span style={s.routeCode}>{booking.itinerary.origin?.code}</span>
+        <div className={lay.layout}>
+          <div className={lay.main}>
+          {/* ── Flight ───────────────────────────────────────────────── */}
+          {booking.itinerary && (
+            <div style={s.card}>
+              <h2 style={s.cardTitle}>Flight</h2>
+              <div style={s.routeRow}>
+                <div style={s.routePoint}>
+                  <span style={s.routeTime}>{formatTime(booking.itinerary.origin?.dateTime)}</span>
+                  <span style={s.routeCode}>{booking.itinerary.origin?.code}</span>
+                </div>
+                <div style={s.routeMiddle}>
+                  <span style={s.routeDuration}>{booking.itinerary.duration ?? ''}</span>
+                  <div style={s.routeLine} />
+                  <span style={s.routeStops}>
+                    {(booking.itinerary.stopCount ?? 0) === 0 ? 'Non-stop' : `${booking.itinerary.stopCount} stop(s)`}
+                  </span>
+                </div>
+                <div style={{ ...s.routePoint, alignItems: 'flex-end' as const }}>
+                  <span style={s.routeTime}>{formatTime(booking.itinerary.destination?.dateTime)}</span>
+                  <span style={s.routeCode}>{booking.itinerary.destination?.code}</span>
+                </div>
               </div>
-              <div style={s.routeMiddle}>
-                <span style={s.routeDuration}>{booking.itinerary.duration ?? ''}</span>
-                <div style={s.routeLine} />
-                <span style={s.routeStops}>
-                  {(booking.itinerary.stopCount ?? 0) === 0 ? 'Non-stop' : `${booking.itinerary.stopCount} stop(s)`}
-                </span>
-              </div>
-              <div style={{ ...s.routePoint, alignItems: 'flex-end' as const }}>
-                <span style={s.routeTime}>{formatTime(booking.itinerary.destination?.dateTime)}</span>
-                <span style={s.routeCode}>{booking.itinerary.destination?.code}</span>
-              </div>
+              <p style={s.mutedLine}>{booking.itinerary.airline?.name ?? 'Airline'}</p>
             </div>
-            <p style={s.mutedLine}>{booking.itinerary.airline?.name ?? 'Airline'}</p>
-          </div>
-        )}
+          )}
 
-        {/* ── Travelers ────────────────────────────────────────────── */}
-        {travelers.length > 0 && (
-          <div style={s.card}>
-            <div style={s.cardTitleRow}>
-              <h2 style={s.cardTitle}>
-                Travelers {travelerCountParts.length > 0 && (
-                  <span style={s.travelerCount}>({travelerCountParts.join(', ')})</span>
-                )}
-              </h2>
-              {/* The Edit link pointed at /book/passengers/edit/[bookingId] —
-                  a route that has never existed. With no not-found.tsx under
-                  /book it 404'd into the bare root layout, which has no
-                  navigation at all, so clicking Edit on a booking awaiting
-                  approval stranded the traveller completely.
-                  Removed rather than stubbed: editing passenger details after
-                  add-passenger has run means changing data the airline already
-                  holds, which needs a provider call nobody has specified. A
-                  link that does nothing is better than one that breaks, and a
-                  link that is absent is better than both. */}
-            </div>
+          {/* ── Travelers ────────────────────────────────────────────── */}
+          {travelers.length > 0 && (
+            <div style={s.card}>
+              <div style={s.cardTitleRow}>
+                <h2 style={s.cardTitle}>
+                  Travelers {travelerCountParts.length > 0 && (
+                    <span style={s.travelerCount}>({travelerCountParts.join(', ')})</span>
+                  )}
+                </h2>
+                {/* The Edit link pointed at /book/passengers/edit/[bookingId] —
+                    a route that has never existed. With no not-found.tsx under
+                    /book it 404'd into the bare root layout, which has no
+                    navigation at all, so clicking Edit on a booking awaiting
+                    approval stranded the traveller completely.
+                    Removed rather than stubbed: editing passenger details after
+                    add-passenger has run means changing data the airline already
+                    holds, which needs a provider call nobody has specified. A
+                    link that does nothing is better than one that breaks, and a
+                    link that is absent is better than both. */}
+              </div>
 
-            <div style={s.travelerList}>
-              {travelers.map((t, i) => {
-                const orderedSeats = seatsInLegOrder(t.SeatListDetails)
-                return (
-                  <div key={i} style={s.travelerRow}>
-                    <div>
-                      <p style={s.travelerName}>{t.Title} {t.FirstName} {t.LastName}</p>
-                      <p style={s.mutedLine}>
-                        {PAX_TYPE_LABEL[t.PaxType] ?? t.PaxType}
-                        {/* The meal they asked for, checkable before the
-                            booking is confirmed rather than discovered in the
-                            air. */}
-                        {mealLabel(t.MealCode) && <> · {mealLabel(t.MealCode)} meal requested</>}
-                      </p>
-                    </div>
-                    {orderedSeats.length > 0 && (
-                      <div style={s.seatTags}>
-                        {orderedSeats.map((seat, si) => (
-                          <span key={si} style={s.seatTag}>
-                            {legLabels[si] ? `${legLabels[si].origin}→${legLabels[si].destination} ${seat.SeatDesignator}` : seat.SeatDesignator}
-                            {/* The fee was already in the payload and dropped,
-                                so "Seat selection ₹1,400" had nothing to
-                                itemise it against. */}
-                            {Number(seat.SeatFee) > 0 && (
-                              <span style={s.seatTagFee}> · {currency} {Number(seat.SeatFee).toLocaleString('en-IN')}</span>
-                            )}
-                          </span>
-                        ))}
+              <div style={s.travelerList}>
+                {travelers.map((t, i) => {
+                  const orderedSeats = seatsInLegOrder(t.SeatListDetails)
+                  return (
+                    <div key={i} style={s.travelerRow}>
+                      <div>
+                        <p style={s.travelerName}>{t.Title} {t.FirstName} {t.LastName}</p>
+                        <p style={s.mutedLine}>
+                          {PAX_TYPE_LABEL[t.PaxType] ?? t.PaxType}
+                          {/* The meal they asked for, checkable before the
+                              booking is confirmed rather than discovered in the
+                              air. */}
+                          {mealLabel(t.MealCode) && <> · {mealLabel(t.MealCode)} meal requested</>}
+                        </p>
                       </div>
-                    )}
+                      {orderedSeats.length > 0 && (
+                        <div style={s.seatTags}>
+                          {orderedSeats.map((seat, si) => (
+                            <span key={si} style={s.seatTag}>
+                              {legLabels[si] ? `${legLabels[si].origin}→${legLabels[si].destination} ${seat.SeatDesignator}` : seat.SeatDesignator}
+                              {/* The fee was already in the payload and dropped,
+                                  so "Seat selection ₹1,400" had nothing to
+                                  itemise it against. */}
+                              {Number(seat.SeatFee) > 0 && (
+                                <span style={s.seatTagFee}> · {currency} {Number(seat.SeatFee).toLocaleString('en-IN')}</span>
+                              )}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+
+              <div style={s.contactBlock}>
+                {booking.traveler_snapshot?.Email && (
+                  <p style={s.mutedLine}>{booking.traveler_snapshot.Email}</p>
+                )}
+                {booking.traveler_snapshot?.Mobile && (
+                  <p style={s.mutedLine}>{booking.traveler_snapshot.Mobile}</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ── A round trip: both flights, each its own booking ────────── */}
+          {booking.pair && booking.pair.length > 1 && (
+            <div style={s.card}>
+              <p style={s.pairTitle}>Round trip · two bookings</p>
+              {booking.pair.map(m => {
+                const it = m.itinerary
+                const time = (iso?: string) => /T(\d{2}:\d{2})/.exec(iso ?? '')?.[1] ?? ''
+                return (
+                  <div key={m.id} style={s.pairRow}>
+                    <span style={s.pairDir}>{m.direction === 'onward' ? 'Onward' : 'Return'}</span>
+                    <span style={s.pairRoute}>
+                      {it?.origin?.code} {time(it?.origin?.dateTime)} → {it?.destination?.code} {time(it?.destination?.dateTime)}
+                      {' · '}{it?.airline?.name ?? it?.airline?.code} {it?.legs?.[0]?.flightNumber ?? ''}
+                    </span>
+                    <span style={s.pairStatus}>{PAIR_STATUS[m.status] ?? m.status}{m.pnr ? ` · PNR ${m.pnr}` : ''}</span>
+                    <span style={s.pairPrice}>{m.sell_total !== null ? `₹${Math.round(m.sell_total).toLocaleString('en-IN')}` : ''}</span>
                   </div>
                 )
               })}
+              <p style={s.waitingSub}>One approval covers both. Each is confirmed and ticketed on its own, and either can be cancelled alone.</p>
             </div>
-
-            <div style={s.contactBlock}>
-              {booking.traveler_snapshot?.Email && (
-                <p style={s.mutedLine}>{booking.traveler_snapshot.Email}</p>
-              )}
-              {booking.traveler_snapshot?.Mobile && (
-                <p style={s.mutedLine}>{booking.traveler_snapshot.Mobile}</p>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ── Fare ─────────────────────────────────────────────────── */}
-        <div style={s.card}>
-          <h2 style={s.cardTitle}>Fare</h2>
-
-          {/* ── Only when there is a split worth showing ──────────────────────
-              `> 1`, not `> 0`. The per-passenger list exists to show how a total
-              divides between travellers and pax types. With ONE passenger there
-              is no division: the row reads "Adult · Base 21,255 + Tax 10,095 ·
-              31,350" directly above a breakdown reading "Base fare 21,255 /
-              Taxes & surcharges 10,095 / Fare 31,350" — the same three numbers
-              twice, which makes a reader hunt for the difference between them
-              before concluding there isn't one.
-
-              The price page already guards this correctly; this page did not. */}
-          {booking.fare_breakdown?.passengerBreakup && booking.fare_breakdown.passengerBreakup.length > 1 && (
-            <div style={s.paxFareList}>
-              {booking.fare_breakdown.passengerBreakup.map((pax, i) => (
-                <div key={i} style={s.paxFareRow}>
-                  <span style={s.paxFareLabel}>
-                    {PAX_TYPE_LABEL[pax.PaxType] ?? pax.PaxType}
-                    {booking.fare_breakdown!.passengerBreakup!.filter(p => p.PaxType === pax.PaxType).length > 1
-                      ? ` ${i + 1}` : ''}
-                  </span>
-                  <span style={s.paxFareBreakdown}>
-                    Base {booking.fare_breakdown?.currency ?? ''} {pax.BaseFare?.toLocaleString('en-IN')}
-                    {' + Tax '}{booking.fare_breakdown?.currency ?? ''} {pax.Tax?.toLocaleString('en-IN')}
-                  </span>
-                  <span style={s.paxFareValue}>
-                    {booking.fare_breakdown?.currency ?? ''} {pax.TotalFare?.toLocaleString('en-IN')}
-                  </span>
-                </div>
-              ))}
-              <div style={s.fareDivider} />
+          )}
+          {booking.awaitingReturn && booking.status === 'pending_approval' && (
+            <div style={s.noticeCard}>
+              <p style={s.noticeText}>
+                This is the onward flight of a round trip, saved without its return because the return could not be added.
+                It has not been sent for approval. Cancel it below, or search again to book the round trip.
+              </p>
             </div>
           )}
 
-          {/* Base and taxes as the TRAVELLER's numbers. The markup rides inside
-              base, so base + taxes is exactly the Fare line below — and there is
-              no airline figure anywhere on this page to subtract it out of.
-              Absent on bookings made before commercial rules existed, which have
-              no frozen components to derive them from. */}
-          {booking.fare && (
-            <>
-              <div style={s.fareRow}>
-                <span style={s.fareLabel}>Base fare</span>
-                <span style={s.fareValue}>{currency} {booking.fare.base.toLocaleString('en-IN')}</span>
+          {/* ── The airline's rules for this fare, as priced ─────────────── */}
+          {booking.fare_rules && <FareRulesPanel rules={booking.fare_rules} compact />}
+          </div>
+
+          {/* The verdict, the price and what to do next: in view while the
+              details scroll (app/book/price/FarePage.module.css). The cards
+              keep their own spacing, so the column adds none. */}
+          <aside className={lay.side} style={{ gap: 0 }}>
+          {/* ── Policy verdict ───────────────────────────────────────── */}
+          {booking.policy_verdict && (
+            <div style={{
+              ...s.verdictCard,
+              background: VERDICT_META[booking.policy_verdict].bg,
+              borderColor: VERDICT_META[booking.policy_verdict].border,
+            }}>
+              <div style={s.verdictHeader}>
+                <span style={{ ...s.verdictDot, background: VERDICT_META[booking.policy_verdict].color }} />
+                <span style={{ ...s.verdictLabel, color: VERDICT_META[booking.policy_verdict].color }}>
+                  {VERDICT_META[booking.policy_verdict].label}
+                </span>
               </div>
-              <div style={s.fareRow}>
-                <button
-                  type="button"
-                  onClick={() => setTaxesOpen(o => !o)}
-                  style={s.fareDisclosure}
-                  aria-expanded={taxesOpen}
-                >
-                  Taxes &amp; surcharges <span style={s.fareChevron}>{taxesOpen ? '▴' : '▾'}</span>
-                </button>
-                <span style={s.fareValue}>{currency} {(booking.fare.taxTotal ?? 0).toLocaleString('en-IN')}</span>
+              {(booking.policy_verdict_detail?.breaches?.length ?? 0) > 0 && (
+                <ul style={s.verdictList}>
+                  {booking.policy_verdict_detail!.breaches!.map((b, i) => (
+                    <li key={i} style={{ ...s.verdictListItem, color: VERDICT_META[booking.policy_verdict!].color }}>
+                      {breachLine(b)}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {/* ── Fare ─────────────────────────────────────────────────── */}
+          <div style={s.card}>
+            <h2 style={s.cardTitle}>Fare</h2>
+
+            {/* ── Only when there is a split worth showing ──────────────────────
+                `> 1`, not `> 0`. The per-passenger list exists to show how a total
+                divides between travellers and pax types. With ONE passenger there
+                is no division: the row reads "Adult · Base 21,255 + Tax 10,095 ·
+                31,350" directly above a breakdown reading "Base fare 21,255 /
+                Taxes & surcharges 10,095 / Fare 31,350" — the same three numbers
+                twice, which makes a reader hunt for the difference between them
+                before concluding there isn't one.
+
+                The price page already guards this correctly; this page did not. */}
+            {booking.fare_breakdown?.passengerBreakup && booking.fare_breakdown.passengerBreakup.length > 1 && (
+              <div style={s.paxFareList}>
+                {booking.fare_breakdown.passengerBreakup.map((pax, i) => (
+                  <div key={i} style={s.paxFareRow}>
+                    <span style={s.paxFareLabel}>
+                      {PAX_TYPE_LABEL[pax.PaxType] ?? pax.PaxType}
+                      {booking.fare_breakdown!.passengerBreakup!.filter(p => p.PaxType === pax.PaxType).length > 1
+                        ? ` ${i + 1}` : ''}
+                    </span>
+                    <span style={s.paxFareBreakdown}>
+                      Base {booking.fare_breakdown?.currency ?? ''} {pax.BaseFare?.toLocaleString('en-IN')}
+                      {' + Tax '}{booking.fare_breakdown?.currency ?? ''} {pax.Tax?.toLocaleString('en-IN')}
+                    </span>
+                    <span style={s.paxFareValue}>
+                      {booking.fare_breakdown?.currency ?? ''} {pax.TotalFare?.toLocaleString('en-IN')}
+                    </span>
+                  </div>
+                ))}
+                <div style={s.fareDivider} />
               </div>
-              {/* Behind a disclosure: a traveller wants one tax number, a finance
-                  team wants the codes. The codes are the airline's own — YQ the
-                  fuel surcharge, K3 the Indian GST on air travel — and say
-                  nothing about what we added, because base already carries it. */}
-              {taxesOpen && (booking.fare.taxLines ?? []).map(tax => (
-                <div key={tax.code} style={s.fareSubRow}>
-                  <span style={s.fareSubLabel}>{TAX_LABELS[tax.code] ?? tax.code}</span>
-                  <span style={s.fareSubValue}>{currency} {tax.amount.toLocaleString('en-IN')}</span>
+            )}
+
+            {/* Base and taxes as the TRAVELLER's numbers. The markup rides inside
+                base, so base + taxes is exactly the Fare line below — and there is
+                no airline figure anywhere on this page to subtract it out of.
+                Absent on bookings made before commercial rules existed, which have
+                no frozen components to derive them from. */}
+            {booking.fare && (
+              <>
+                <div style={s.fareRow}>
+                  <span style={s.fareLabel}>Base fare</span>
+                  <span style={s.fareValue}>{currency} {booking.fare.base.toLocaleString('en-IN')}</span>
                 </div>
-              ))}
+                <div style={s.fareRow}>
+                  <button
+                    type="button"
+                    onClick={() => setTaxesOpen(o => !o)}
+                    style={s.fareDisclosure}
+                    aria-expanded={taxesOpen}
+                  >
+                    Taxes &amp; surcharges <span style={s.fareChevron}>{taxesOpen ? '▴' : '▾'}</span>
+                  </button>
+                  <span style={s.fareValue}>{currency} {(booking.fare.taxTotal ?? 0).toLocaleString('en-IN')}</span>
+                </div>
+                {/* Behind a disclosure: a traveller wants one tax number, a finance
+                    team wants the codes. The codes are the airline's own — YQ the
+                    fuel surcharge, K3 the Indian GST on air travel — and say
+                    nothing about what we added, because base already carries it. */}
+                {taxesOpen && (booking.fare.taxLines ?? []).map(tax => (
+                  <div key={tax.code} style={s.fareSubRow}>
+                    <span style={s.fareSubLabel}>{TAX_LABELS[tax.code] ?? tax.code}</span>
+                    <span style={s.fareSubValue}>{currency} {tax.amount.toLocaleString('en-IN')}</span>
+                  </div>
+                ))}
+              </>
+            )}
+
+            <div style={{ ...s.fareRow, ...s.fareRowSubtotal }}>
+              <span style={s.fareLabel}>Fare</span>
+              <span style={s.fareValue}>{currency} {fareLine.toLocaleString('en-IN')}</span>
+            </div>
+
+            {/* Discount and processing fee. The server sends only the lines a
+                traveller may see. Both appear here — this card is the complete
+                record of what was bought, and a breakdown missing a component
+                cannot be reconciled against the amount charged, which is the one
+                job it has. */}
+            {(booking.commercial_lines ?? []).map(line => (
+              <div key={line.source} style={s.fareRow}>
+                <span style={s.fareLabel}>{line.label}</span>
+                <span style={{ ...s.fareValue, ...(line.sign === -1 ? s.fareCredit : {}) }}>
+                  {line.sign === -1 ? '− ' : '+ '}
+                  {currency} {line.amount.toLocaleString('en-IN')}
+                </span>
+              </div>
+            ))}
+
+            {/* Rendered whenever seats were chosen, including when they were free.
+                This was `!!seatFees`, so a booking with free seat selections showed
+                no seat line at all — indistinguishable from having chosen none. */}
+            {seatCount > 0 && (
+              <div style={s.fareRow}>
+                <span style={s.fareLabel}>
+                  Seat selection
+                  <span style={s.fareLabelAside}> · {seatCount} seat{seatCount === 1 ? '' : 's'}</span>
+                </span>
+                <span style={s.fareValue}>
+                  {seatFees > 0 ? `${currency} ${seatFees.toLocaleString('en-IN')}` : 'Included'}
+                </span>
+              </div>
+            )}
+
+            <div style={{ ...s.fareRow, ...s.fareRowTotal }}>
+              <span style={s.fareTotalLabel}>Total</span>
+              <span style={s.fareTotalValue}>{currency} {sellTotal.toLocaleString('en-IN')}</span>
+            </div>
+
+            <DeskFareStrip desk={booking.desk} currency={currency} />
+
+            {/* The parts are supposed to sum to the total. If they do not, say so
+                rather than printing a total that quietly disagrees with the
+                breakdown above it — a number nobody can reconcile is worse than a
+                visible discrepancy, because only one of the two gets questioned. */}
+            {!reconciles && (
+              <p style={s.fareMismatch}>
+                This breakdown does not add up to the total charged. Please contact your travel
+                desk before relying on it.
+              </p>
+            )}
+            {booking.fare_breakdown && (
+              <div style={s.metaTags}>
+                <span style={{ ...s.tag, color: booking.fare_breakdown.isRefundable ? '#065F46' : '#9CA3AF', background: booking.fare_breakdown.isRefundable ? '#ECFDF5' : '#F3F4F6' }}>
+                  {booking.fare_breakdown.isRefundable ? 'Refundable' : 'Non-refundable'}
+                </span>
+                {booking.fare_breakdown.fareType && <span style={s.tag}>{booking.fare_breakdown.fareType}</span>}
+              </div>
+            )}
+          </div>
+
+          {error && (
+            <div style={s.errorBanner}>
+              <span style={s.bannerIcon}>⚠</span> {error}
+            </div>
+          )}
+
+          {errorCode === 'SEARCH_EXPIRED' && (
+            <button
+              type="button"
+              onClick={() => router.push('/book/flights')}
+              style={s.confirmBtn}
+            >
+              Search again →
+            </button>
+          )}
+
+          {/* ── Action area — depends on approval status ────────────────── */}
+          {booking.status === 'pending_approval' && !booking.awaitingReturn && (
+            <>
+              <div style={s.waitingCard}>
+                <div style={s.spinnerSmall} />
+                <div>
+                  <p style={s.waitingTitle}>
+                    Waiting for approval{latestApproval?.approverName ? ` from ${latestApproval.approverName}` : ''}
+                  </p>
+                  <p style={s.waitingSub}>
+                    You’ll be able to confirm this booking with the airline as soon as it’s approved. This page updates automatically, or check back from your dashboard any time.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => router.replace(exits.home.href)}
+                style={s.dashboardBtn}
+              >
+                Go back to {exits.home.label.toLowerCase()}
+              </button>
+              <CancelBookingButton bookingId={booking.id} ticketed={false} onCancelled={() => loadBooking()} />
             </>
           )}
 
-          <div style={{ ...s.fareRow, ...s.fareRowSubtotal }}>
-            <span style={s.fareLabel}>Fare</span>
-            <span style={s.fareValue}>{currency} {fareLine.toLocaleString('en-IN')}</span>
-          </div>
+          {/* Sent back by an approver's refresh: the fare rose out of policy. */}
+          {booking.status === 'reapproval_needed' && (
+            <AskAgainCard
+              bookingId={booking.id}
+              newTotal={booking.total_cost}
+              note={latestApproval?.decision_note ?? null}
+              onAsked={() => loadBooking()}
+              cancel={<CancelBookingButton bookingId={booking.id} ticketed={false} onCancelled={() => loadBooking()} />}
+            />
+          )}
 
-          {/* Discount and processing fee. The server sends only the lines a
-              traveller may see. Both appear here — this card is the complete
-              record of what was bought, and a breakdown missing a component
-              cannot be reconciled against the amount charged, which is the one
-              job it has. */}
-          {(booking.commercial_lines ?? []).map(line => (
-            <div key={line.source} style={s.fareRow}>
-              <span style={s.fareLabel}>{line.label}</span>
-              <span style={{ ...s.fareValue, ...(line.sign === -1 ? s.fareCredit : {}) }}>
-                {line.sign === -1 ? '− ' : '+ '}
-                {currency} {line.amount.toLocaleString('en-IN')}
-              </span>
-            </div>
-          ))}
+          {(booking.status === 'cancelled' || booking.status === 'cancel_requested') && (
+            <>
+              {booking.cancellation
+                ? <CancellationNotice cancellation={booking.cancellation} status={booking.status} currency={booking.fare_breakdown?.currency ?? 'INR'} />
+                : (
+                  <div style={s.rejectedCard}>
+                    <p style={s.rejectedTitle}>This booking is cancelled</p>
+                  </div>
+                )}
+              <TerminalExits />
+            </>
+          )}
 
-          {/* Rendered whenever seats were chosen, including when they were free.
-              This was `!!seatFees`, so a booking with free seat selections showed
-              no seat line at all — indistinguishable from having chosen none. */}
-          {seatCount > 0 && (
-            <div style={s.fareRow}>
-              <span style={s.fareLabel}>
-                Seat selection
-                <span style={s.fareLabelAside}> · {seatCount} seat{seatCount === 1 ? '' : 's'}</span>
-              </span>
-              <span style={s.fareValue}>
-                {seatFees > 0 ? `${currency} ${seatFees.toLocaleString('en-IN')}` : 'Included'}
-              </span>
+          {booking.status === 'rejected' && (
+            <div style={s.rejectedCard}>
+              <p style={s.rejectedTitle}>This booking was rejected</p>
+              {latestApproval?.decision_note && (
+                <p style={s.rejectedNote}>“{latestApproval.decision_note}”</p>
+              )}
+              <p style={s.waitingSub}>
+                Contact your manager or TMC if you have questions, or start a new search to try again.
+              </p>
+              {/* Each of the three terminal cards below invited the traveller to
+                  do something — "start a new search", "contact your TMC" — and
+                  then offered no way to do it. All three were rendered with no
+                  link and no button at all, so the only exit was a browser back
+                  that is intercepted on this page and silently replaces to the
+                  dashboard. Saying "start a new search" without a search link is
+                  the part that made them dead ends. */}
+              <TerminalExits />
             </div>
           )}
 
-          <div style={{ ...s.fareRow, ...s.fareRowTotal }}>
-            <span style={s.fareTotalLabel}>Total</span>
-            <span style={s.fareTotalValue}>{currency} {sellTotal.toLocaleString('en-IN')}</span>
-          </div>
-
-          <DeskFareStrip desk={booking.desk} currency={currency} />
-
-          {/* The parts are supposed to sum to the total. If they do not, say so
-              rather than printing a total that quietly disagrees with the
-              breakdown above it — a number nobody can reconcile is worse than a
-              visible discrepancy, because only one of the two gets questioned. */}
-          {!reconciles && (
-            <p style={s.fareMismatch}>
-              This breakdown does not add up to the total charged. Please contact your travel
-              desk before relying on it.
-            </p>
-          )}
-          {booking.fare_breakdown && (
-            <div style={s.metaTags}>
-              <span style={{ ...s.tag, color: booking.fare_breakdown.isRefundable ? '#065F46' : '#9CA3AF', background: booking.fare_breakdown.isRefundable ? '#ECFDF5' : '#F3F4F6' }}>
-                {booking.fare_breakdown.isRefundable ? 'Refundable' : 'Non-refundable'}
-              </span>
-              {booking.fare_breakdown.fareType && <span style={s.tag}>{booking.fare_breakdown.fareType}</span>}
+          {booking.status === 'approval_misconfigured' && (
+            <div style={s.rejectedCard}>
+              <p style={s.rejectedTitle}>Approval routing isn’t set up correctly</p>
+              <p style={s.waitingSub}>
+                This booking needs approval but we couldn’t find who should approve it (e.g. no manager is assigned to you yet). Contact your TMC or corporate admin.
+              </p>
+              <TerminalExits />
+              <CancelBookingButton bookingId={booking.id} ticketed={false} onCancelled={() => loadBooking()} />
             </div>
           )}
-        </div>
 
-        {error && (
-          <div style={s.errorBanner}>
-            <span style={s.bannerIcon}>⚠</span> {error}
-          </div>
-        )}
-
-        {errorCode === 'SEARCH_EXPIRED' && (
-          <button
-            type="button"
-            onClick={() => router.push('/book/flights')}
-            style={s.confirmBtn}
-          >
-            Search again →
-          </button>
-        )}
-
-        {/* ── A round trip: both flights, each its own booking ────────── */}
-        {booking.pair && booking.pair.length > 1 && (
-          <div style={s.card}>
-            <p style={s.pairTitle}>Round trip · two bookings</p>
-            {booking.pair.map(m => {
-              const it = m.itinerary
-              const time = (iso?: string) => /T(\d{2}:\d{2})/.exec(iso ?? '')?.[1] ?? ''
-              return (
-                <div key={m.id} style={s.pairRow}>
-                  <span style={s.pairDir}>{m.direction === 'onward' ? 'Onward' : 'Return'}</span>
-                  <span style={s.pairRoute}>
-                    {it?.origin?.code} {time(it?.origin?.dateTime)} → {it?.destination?.code} {time(it?.destination?.dateTime)}
-                    {' · '}{it?.airline?.name ?? it?.airline?.code} {it?.legs?.[0]?.flightNumber ?? ''}
-                  </span>
-                  <span style={s.pairStatus}>{PAIR_STATUS[m.status] ?? m.status}{m.pnr ? ` · PNR ${m.pnr}` : ''}</span>
-                  <span style={s.pairPrice}>{m.sell_total !== null ? `₹${Math.round(m.sell_total).toLocaleString('en-IN')}` : ''}</span>
-                </div>
-              )
-            })}
-            <p style={s.waitingSub}>One approval covers both. Each is confirmed and ticketed on its own, and either can be cancelled alone.</p>
-          </div>
-        )}
-        {booking.awaitingReturn && booking.status === 'pending_approval' && (
-          <div style={s.noticeCard}>
-            <p style={s.noticeText}>
-              This is the onward flight of a round trip, saved without its return because the return could not be added.
-              It has not been sent for approval. Cancel it below, or search again to book the round trip.
-            </p>
-          </div>
-        )}
-
-        {/* ── The airline's rules for this fare, as priced ─────────────── */}
-        {booking.fare_rules && <FareRulesPanel rules={booking.fare_rules} compact />}
-
-        {/* ── Action area — depends on approval status ────────────────── */}
-        {booking.status === 'pending_approval' && !booking.awaitingReturn && (
-          <>
-            <div style={s.waitingCard}>
-              <div style={s.spinnerSmall} />
-              <div>
-                <p style={s.waitingTitle}>
-                  Waiting for approval{latestApproval?.approverName ? ` from ${latestApproval.approverName}` : ''}
-                </p>
-                <p style={s.waitingSub}>
-                  You'll be able to confirm this booking with the airline as soon as it's approved. This page updates automatically, or check back from your dashboard any time.
-                </p>
-              </div>
+          {booking.status === 'failed' && errorCode !== 'SEARCH_EXPIRED' && (
+            <div style={s.rejectedCard}>
+              <p style={s.rejectedTitle}>This booking couldn’t be completed</p>
+              <p style={s.waitingSub}>
+                Something went wrong confirming this with the airline. Contact your TMC or corporate admin if this keeps happening.
+              </p>
+              <TerminalExits />
             </div>
-            <button
-              type="button"
-              onClick={() => router.replace(exits.home.href)}
-              style={s.dashboardBtn}
-            >
-              Go back to {exits.home.label.toLowerCase()}
-            </button>
-            <CancelBookingButton bookingId={booking.id} ticketed={false} onCancelled={() => loadBooking()} />
-          </>
-        )}
+          )}
 
-        {/* Sent back by an approver's refresh: the fare rose out of policy. */}
-        {booking.status === 'reapproval_needed' && (
-          <AskAgainCard
-            bookingId={booking.id}
-            newTotal={booking.total_cost}
-            note={latestApproval?.decision_note ?? null}
-            onAsked={() => loadBooking()}
-            cancel={<CancelBookingButton bookingId={booking.id} ticketed={false} onCancelled={() => loadBooking()} />}
-          />
-        )}
-
-        {(booking.status === 'cancelled' || booking.status === 'cancel_requested') && (
-          <>
-            {booking.cancellation
-              ? <CancellationNotice cancellation={booking.cancellation} status={booking.status} currency={booking.fare_breakdown?.currency ?? 'INR'} />
-              : (
-                <div style={s.rejectedCard}>
-                  <p style={s.rejectedTitle}>This booking is cancelled</p>
+          {booking.status === 'approved' && (
+            <>
+              {latestApproval?.decision_note && (
+                <div style={s.approverNoteCard}>
+                  <p style={s.approverNoteLabel}>
+                    Note from {latestApproval.approverName ?? 'your approver'}
+                  </p>
+                  <p style={s.approverNoteText}>“{latestApproval.decision_note}”</p>
                 </div>
               )}
-            <TerminalExits />
-          </>
-        )}
-
-        {booking.status === 'rejected' && (
-          <div style={s.rejectedCard}>
-            <p style={s.rejectedTitle}>This booking was rejected</p>
-            {latestApproval?.decision_note && (
-              <p style={s.rejectedNote}>“{latestApproval.decision_note}”</p>
-            )}
-            <p style={s.waitingSub}>
-              Contact your manager or TMC if you have questions, or start a new search to try again.
-            </p>
-            {/* Each of the three terminal cards below invited the traveller to
-                do something — "start a new search", "contact your TMC" — and
-                then offered no way to do it. All three were rendered with no
-                link and no button at all, so the only exit was a browser back
-                that is intercepted on this page and silently replaces to the
-                dashboard. Saying "start a new search" without a search link is
-                the part that made them dead ends. */}
-            <TerminalExits />
-          </div>
-        )}
-
-        {booking.status === 'approval_misconfigured' && (
-          <div style={s.rejectedCard}>
-            <p style={s.rejectedTitle}>Approval routing isn't set up correctly</p>
-            <p style={s.waitingSub}>
-              This booking needs approval but we couldn't find who should approve it (e.g. no manager is assigned to you yet). Contact your TMC or corporate admin.
-            </p>
-            <TerminalExits />
-            <CancelBookingButton bookingId={booking.id} ticketed={false} onCancelled={() => loadBooking()} />
-          </div>
-        )}
-
-        {booking.status === 'failed' && errorCode !== 'SEARCH_EXPIRED' && (
-          <div style={s.rejectedCard}>
-            <p style={s.rejectedTitle}>This booking couldn't be completed</p>
-            <p style={s.waitingSub}>
-              Something went wrong confirming this with the airline. Contact your TMC or corporate admin if this keeps happening.
-            </p>
-            <TerminalExits />
-          </div>
-        )}
-
-        {booking.status === 'approved' && (
-          <>
-            {latestApproval?.decision_note && (
-              <div style={s.approverNoteCard}>
-                <p style={s.approverNoteLabel}>
-                  Note from {latestApproval.approverName ?? 'your approver'}
+              <div style={s.noticeCard}>
+                <p style={s.noticeText}>
+                  Clicking below will confirm this booking directly with the airline. This step typically can’t be undone —
+                  double-check the traveler’s name and dates match their passport exactly.
                 </p>
-                <p style={s.approverNoteText}>“{latestApproval.decision_note}”</p>
               </div>
-            )}
-            <div style={s.noticeCard}>
-              <p style={s.noticeText}>
-                Clicking below will confirm this booking directly with the airline. This step typically can't be undone —
-                double-check the traveler's name and dates match their passport exactly.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={handleConfirmBooking}
-              disabled={confirming}
-              style={{ ...s.confirmBtn, opacity: confirming ? 0.7 : 1 }}
-            >
-              {confirming ? <ButtonBusy label="Booking…" /> : booking.pair && booking.pair.length > 1 ? 'Confirm both flights →' : 'Confirm booking →'}
-            </button>
-            {!confirming && (
-              <CancelBookingButton bookingId={booking.id} ticketed={false} onCancelled={() => loadBooking()} />
-            )}
-          </>
-        )}
+              <button
+                type="button"
+                onClick={handleConfirmBooking}
+                disabled={confirming}
+                style={{ ...s.confirmBtn, opacity: confirming ? 0.7 : 1 }}
+              >
+                {confirming ? <ButtonBusy label="Booking…" /> : booking.pair && booking.pair.length > 1 ? 'Confirm both flights →' : 'Confirm booking →'}
+              </button>
+              {!confirming && (
+                <CancelBookingButton bookingId={booking.id} ticketed={false} onCancelled={() => loadBooking()} />
+              )}
+            </>
+          )}
+          </aside>
+        </div>
       </div>
 
       {/* The heaviest wait in the flow and the only irreversible one: this call

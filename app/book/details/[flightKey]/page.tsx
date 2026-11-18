@@ -19,6 +19,7 @@ import { classifyTrip } from '@/app/lib/rule-engine/classifyTrip'
 import { breachLine } from '@/app/lib/policy/breachText'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
 import DeskFareStrip from '@/app/components/book/DeskFareStrip'
+import lay from '@/app/book/price/FarePage.module.css'
 import { previewPolicy } from '@/app/lib/book/priceFare'
 import { passengerNameProblems } from '@/app/lib/book/passengerNames'
 import { passengerProblems } from '@/app/lib/book/passengerChecks'
@@ -1130,7 +1131,7 @@ export default function BookingDetailsPage() {
 
   return (
     <div style={s.page}>
-      <div style={s.root}>
+      <div className={lay.root}>
         <Link href={`/book/price/${encodeURIComponent(flightKey)}`} style={s.backLink}>← Back to fare</Link>
 
         <div style={s.header}>
@@ -1142,87 +1143,9 @@ export default function BookingDetailsPage() {
           </p>
         </div>
 
-        {/* ── Flight + fare summary strip ─────────────────────────── */}
-        <div style={s.summaryCard}>
-          <div style={s.summaryRoute}>
-            <span style={s.summaryCode}>{flight.origin?.code}</span>
-            <span style={s.summaryArrow}>→</span>
-            <span style={s.summaryCode}>{flight.destination?.code}</span>
-            <span style={s.summaryMeta}>
-              {formatTime(flight.origin?.dateTime)} · {formatDayLabel(flight.origin?.dateTime)}
-            </span>
-          </div>
-          <div style={s.summaryFare}>{priced.currency} {(priced.sellTotal ?? priced.totalFare).toLocaleString('en-IN')}</div>
-        </div>
-        {pairReturn && (
-          <div style={s.summaryCard}>
-            <div style={s.summaryRoute}>
-              <span style={s.summaryMeta}>Return</span>
-              <span style={s.summaryCode}>{pairReturn.flight.origin?.code}</span>
-              <span style={s.summaryArrow}>→</span>
-              <span style={s.summaryCode}>{pairReturn.flight.destination?.code}</span>
-              <span style={s.summaryMeta}>
-                {formatTime(pairReturn.flight.origin?.dateTime)} · {formatDayLabel(pairReturn.flight.origin?.dateTime)}
-              </span>
-              {returnVerdict?.ok && returnVerdict.verdict && (
-                <span style={{ ...s.summaryMeta, color: VERDICT_META[returnVerdict.verdict].color, fontWeight: 600 }}>
-                  {VERDICT_META[returnVerdict.verdict].label}
-                </span>
-              )}
-            </div>
-            <div style={s.summaryFare}>{pairReturn.priced.currency} {(pairReturn.priced.sellTotal ?? pairReturn.priced.totalFare).toLocaleString('en-IN')}</div>
-          </div>
-        )}
-        {pairReturn && (
-          <p style={s.cardSub}>
-            A round trip: two bookings from one form, sent for approval together. Seats can be chosen on both flights below.
-          </p>
-        )}
-        <DeskFareStrip desk={priced.desk} currency={priced.currency} />
-
-        {/* ── Live policy verdict ──────────────────────────────────── */}
-        {verdict?.ok && verdict.verdict && (
-          <div
-            style={{
-              ...s.verdictCard,
-              background: VERDICT_META[verdict.verdict].bg,
-              borderColor: VERDICT_META[verdict.verdict].border,
-              opacity: verdictLoading ? 0.6 : 1,
-            }}
-          >
-            <div style={s.verdictHeader}>
-              <span style={{ ...s.verdictDot, background: VERDICT_META[verdict.verdict].color }} />
-              <span style={{ ...s.verdictLabel, color: VERDICT_META[verdict.verdict].color }}>
-                {VERDICT_META[verdict.verdict].label}
-              </span>
-              {verdictLoading && <span style={s.verdictUpdating}>updating…</span>}
-            </div>
-            {(verdict.breaches?.length ?? 0) > 0 && (
-              <ul style={s.verdictList}>
-                {verdict.breaches!.map((b, i) => (
-                  <li key={i} style={{ ...s.verdictListItem, color: VERDICT_META[verdict.verdict!].color }}>
-                    {breachLine(b)}
-                  </li>
-                ))}
-              </ul>
-            )}
-            <p style={s.verdictFootnote}>
-              {who?.policy === 'guidance'
-                ? (verdict.verdict === 'green'
-                  ? 'Within policy. No approval is needed at this client.'
-                  : 'Guidance only: no approval is needed at this client, but going ahead outside policy needs a reason.')
-                : who
-                  ? `${who.name.split(' ')[0]}'s own approval chain decides whether this needs approval before it is confirmed.`
-                  : verdict.verdict === 'green'
-                    ? (controls?.withinPolicyApproval === 'required'
-                      ? 'Your company sends every booking for approval: this goes to your approver before it is confirmed.'
-                      : 'Within policy: no approval is needed.')
-                    : 'This will need approval before it can be confirmed with the airline.'}
-            </p>
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit}>
+        <div className={lay.layout}>
+          <div className={lay.main}>
+        <form id="passenger-details" onSubmit={handleSubmit}>
           <Step
             title="Travellers"
             summary={travellersSummary}
@@ -1680,23 +1603,108 @@ export default function BookingDetailsPage() {
             </div>
           )}
 
+        </form>
+          </div>
+
+          {/* The flight, the price, the policy and the button: in view while
+              the steps scroll (app/book/price/FarePage.module.css). */}
+          <aside className={lay.side}>
+            {/* ── Flight + fare summary strip ─────────────────────────── */}
+            <div style={s.summaryCard}>
+              <div style={s.summaryRoute}>
+                <span style={s.summaryCode}>{flight.origin?.code}</span>
+                <span style={s.summaryArrow}>→</span>
+                <span style={s.summaryCode}>{flight.destination?.code}</span>
+                <span style={s.summaryMeta}>
+                  {formatTime(flight.origin?.dateTime)} · {formatDayLabel(flight.origin?.dateTime)}
+                </span>
+              </div>
+              <div style={s.summaryFare}>{priced.currency} {(priced.sellTotal ?? priced.totalFare).toLocaleString('en-IN')}</div>
+            </div>
+            {pairReturn && (
+              <div style={s.summaryCard}>
+                <div style={s.summaryRoute}>
+                  <span style={s.summaryMeta}>Return</span>
+                  <span style={s.summaryCode}>{pairReturn.flight.origin?.code}</span>
+                  <span style={s.summaryArrow}>→</span>
+                  <span style={s.summaryCode}>{pairReturn.flight.destination?.code}</span>
+                  <span style={s.summaryMeta}>
+                    {formatTime(pairReturn.flight.origin?.dateTime)} · {formatDayLabel(pairReturn.flight.origin?.dateTime)}
+                  </span>
+                  {returnVerdict?.ok && returnVerdict.verdict && (
+                    <span style={{ ...s.summaryMeta, color: VERDICT_META[returnVerdict.verdict].color, fontWeight: 600 }}>
+                      {VERDICT_META[returnVerdict.verdict].label}
+                    </span>
+                  )}
+                </div>
+                <div style={s.summaryFare}>{pairReturn.priced.currency} {(pairReturn.priced.sellTotal ?? pairReturn.priced.totalFare).toLocaleString('en-IN')}</div>
+              </div>
+            )}
+            {pairReturn && (
+              <p style={{ ...s.cardSub, margin: 0 }}>
+                A round trip: two bookings from one form, sent for approval together. Seats can be chosen on both flights below.
+              </p>
+            )}
+            <DeskFareStrip desk={priced.desk} currency={priced.currency} />
+
+            {/* ── Live policy verdict ──────────────────────────────────── */}
+            {verdict?.ok && verdict.verdict && (
+              <div
+                style={{
+                  ...s.verdictCard,
+                  background: VERDICT_META[verdict.verdict].bg,
+                  borderColor: VERDICT_META[verdict.verdict].border,
+                  opacity: verdictLoading ? 0.6 : 1,
+                }}
+              >
+                <div style={s.verdictHeader}>
+                  <span style={{ ...s.verdictDot, background: VERDICT_META[verdict.verdict].color }} />
+                  <span style={{ ...s.verdictLabel, color: VERDICT_META[verdict.verdict].color }}>
+                    {VERDICT_META[verdict.verdict].label}
+                  </span>
+                  {verdictLoading && <span style={s.verdictUpdating}>updating…</span>}
+                </div>
+                {(verdict.breaches?.length ?? 0) > 0 && (
+                  <ul style={s.verdictList}>
+                    {verdict.breaches!.map((b, i) => (
+                      <li key={i} style={{ ...s.verdictListItem, color: VERDICT_META[verdict.verdict!].color }}>
+                        {breachLine(b)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p style={s.verdictFootnote}>
+                  {who?.policy === 'guidance'
+                    ? (verdict.verdict === 'green'
+                      ? 'Within policy. No approval is needed at this client.'
+                      : 'Guidance only: no approval is needed at this client, but going ahead outside policy needs a reason.')
+                    : who
+                      ? `${who.name.split(' ')[0]}'s own approval chain decides whether this needs approval before it is confirmed.`
+                      : verdict.verdict === 'green'
+                        ? (controls?.withinPolicyApproval === 'required'
+                          ? 'Your company sends every booking for approval: this goes to your approver before it is confirmed.'
+                          : 'Within policy: no approval is needed.')
+                        : 'This will need approval before it can be confirmed with the airline.'}
+                </p>
+              </div>
+            )}
           {redBlocked && (
-            <div style={s.errorBanner}>
+            <div style={{ ...s.errorBanner, marginBottom: 0 }}>
               <span style={s.bannerIcon}>⚠</span> This fare is outside {who ? `${who.name.split(' ')[0]}'s` : 'your'} travel policy, and your company does not allow those to be booked. Go back and choose another fare.
             </div>
           )}
 
           {duplicateAsk && (
-            <div style={s.reasonBox}>
+            <div style={{ ...s.reasonBox, marginBottom: 0 }}>
               <p style={s.reasonTitle}>{duplicateAsk}</p>
-              <button type="submit" onClick={() => { confirmDuplicate.current = true; setDuplicateAsk('') }} style={s.secondaryInline}>
+              <button type="submit" form="passenger-details" onClick={() => { confirmDuplicate.current = true; setDuplicateAsk('') }} style={s.secondaryInline}>
                 Book anyway
               </button>
             </div>
           )}
 
           {error && (
-            <div style={s.errorBanner}>
+            <div style={{ ...s.errorBanner, marginBottom: 0 }}>
               <span style={s.bannerIcon}>⚠</span> {error}
             </div>
           )}
@@ -1716,10 +1724,11 @@ export default function BookingDetailsPage() {
               {cancellingOnward ? 'Cancelling…' : 'Cancel the onward flight'}
             </button>
           )}
-          <button type="submit" disabled={submitting || redBlocked} style={{ ...s.continueBtn, opacity: submitting || redBlocked ? 0.7 : 1 }}>
+          <button type="submit" form="passenger-details" disabled={submitting || redBlocked} style={{ ...s.continueBtn, opacity: submitting || redBlocked ? 0.7 : 1 }}>
             {submitting ? <ButtonBusy label="Saving travellers…" /> : pairOnwardId ? 'Try the return again →' : 'Continue to review →'}
           </button>
-        </form>
+          </aside>
+        </div>
       </div>
 
       {/* AddPassengerDetails is a real provider call, and the one after it holds
@@ -1798,15 +1807,15 @@ const s: Record<string, React.CSSProperties> = {
     borderRadius: '8px', padding: '10px 14px', margin: '0 0 14px', letterSpacing: '0.3px',
   },
 
-  summaryCard: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', border: '1px solid #E5E7EB', borderRadius: '12px', padding: '14px 18px', marginBottom: '20px' },
-  summaryRoute: { display: 'flex', alignItems: 'center', gap: '8px' },
+  summaryCard: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', border: '1px solid #E5E7EB', borderRadius: '12px', padding: '14px 18px', gap: '10px' },
+  summaryRoute: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px 8px', minWidth: 0 },
   summaryCode: { fontSize: '14px', fontWeight: 700, color: '#111827' },
   summaryArrow: { fontSize: '12px', color: '#9CA3AF' },
   summaryMeta: { fontSize: '11px', color: '#9CA3AF', marginLeft: '8px' },
   summaryFare: { fontSize: '15px', fontWeight: 700, color: '#0A0A14' },
 
   verdictCard: {
-    border: '1px solid', borderRadius: '14px', padding: '16px', marginBottom: '20px',
+    border: '1px solid', borderRadius: '14px', padding: '16px',
     transition: 'background 0.3s ease, border-color 0.3s ease, opacity 0.2s ease',
   },
   verdictHeader: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' },
@@ -1816,9 +1825,9 @@ const s: Record<string, React.CSSProperties> = {
   verdictList: { margin: '8px 0 0', paddingLeft: '18px', display: 'flex', flexDirection: 'column' as const, gap: '4px' },
   verdictListItem: { fontSize: '12px', lineHeight: 1.5 },
   verdictFootnote: { fontSize: '11px', color: '#6B7280', margin: '10px 0 0', lineHeight: 1.5 },
-  holdNote: { fontSize: '12px', color: '#6B7280', margin: '0 0 8px', textAlign: 'right' as const },
+  holdNote: { fontSize: '12px', color: '#6B7280', margin: 0, textAlign: 'center' as const },
   holdNoteSoon: { color: '#B45309', fontWeight: 600 },
-  holdExpired: { fontSize: '12.5px', color: '#B91C1C', margin: '0 0 8px', textAlign: 'right' as const, fontWeight: 600 },
+  holdExpired: { fontSize: '12.5px', color: '#B91C1C', margin: 0, textAlign: 'center' as const, fontWeight: 600 },
   secondaryInline: {
     marginTop: 8, background: '#fff', border: '1px solid #D97706', color: '#92400E', borderRadius: 8,
     padding: '6px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
