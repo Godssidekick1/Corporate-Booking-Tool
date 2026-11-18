@@ -302,6 +302,12 @@ d('refresh fare after a long wait', () => {
       flightsShown: 2,
       cheaperOnFlight: { total: 9000, fares: 2 },
       cheapestFlight: { total: 7000, label: '6E 201', departure: '2030-11-10T06:00:00' },
+      // The options passed over, cheapest first: the approver weighs them.
+      cheaper: [
+        { sameFlight: false, label: '6E 201', departure: '2030-11-10T06:00:00', total: 7000, saving: 3500 },
+        { sameFlight: true, label: 'AI 101', departure: '2030-11-10T08:00:00', total: 9000, saving: 1500 },
+      ],
+      cheaperCount: 2,
     }
     const saved = await one<{ choice_context: unknown }>(db, sql`select choice_context from bookings where id = ${id}`)
     expect(saved.choice_context).toMatchObject(expected)

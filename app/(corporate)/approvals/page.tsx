@@ -8,7 +8,7 @@ import { FlightRow, type TripCardTrip, type TripCardFlight } from '@/app/compone
 import { money } from '@/app/lib/trips/status'
 import { VERDICT_META } from '@/app/lib/policy/verdictLabels'
 import FlightDetails from '@/app/components/book/FlightDetails'
-import type { ChoiceContext } from '@/app/lib/policy/lowestLogicalFare'
+import type { ChoiceContext, CheaperOption } from '@/app/lib/policy/lowestLogicalFare'
 
 // ── /approvals ────────────────────────────────────────────────────────────
 // A manager/finance/admin's approval queue: bookings currently waiting on
@@ -360,6 +360,12 @@ export default function ApprovalsPage() {
                           {item.reason}
                         </div>
                       )}
+                      {item.booking?.choice && (
+                        <CheaperOptions
+                          choice={item.booking.choice}
+                          onSuggest={tab === 'pending' ? text => addReadyNote(item.approvalId, text) : undefined}
+                        />
+                      )}
                     </div>
 
                     <div style={s.pricePanel}>
@@ -444,28 +450,88 @@ export default function ApprovalsPage() {
   )
 }
 
+const inr = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`
+const hhmm = (iso: string) => /T(\d{2}:\d{2})/.exec(iso)?.[1] ?? ''
+
 // What the fare was chosen from (bookings.choice_context): its name and
 // refundability, then the two comparisons that answer "was there a cheaper
 // sensible option?". Search prices at the time of booking, sell-side.
 function ChoiceLines({ choice }: { choice: ChoiceContext }) {
-  const inr = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`
-  const at = (iso: string) => /T(d{2}:d{2})/.exec(iso)?.[1] ?? ''
   const fareBits = [choice.chosen.name, choice.chosen.refundable == null ? null : choice.chosen.refundable ? 'Refundable' : 'Non-refundable']
     .filter(Boolean)
+  // Saved before the list existed: the two comparisons only.
+  const legacy = choice.cheaper === undefined
+  const count = choice.cheaperCount ?? choice.cheaper?.length ?? 0
+  const most = choice.cheaper?.reduce((m, o) => Math.max(m, o.saving), 0) ?? 0
   return (
     <div style={s.choice}>
       {fareBits.length > 0 && <div style={s.choiceFare}>{fareBits.join(' · ')}</div>}
-      <div style={choice.cheaperOnFlight ? s.choiceWarn : s.choiceOk}>
-        {choice.cheaperOnFlight
-          ? `A cheaper fare on this flight: ${inr(choice.cheaperOnFlight.total)} (${inr(choice.chosen.total - choice.cheaperOnFlight.total)} less)`
-          : 'The cheapest fare on this flight'}
-      </div>
-      <div style={choice.cheapestFlight ? s.choiceWarn : s.choiceOk}>
-        {choice.cheapestFlight
-          ? `Cheapest that day: ${choice.cheapestFlight.label} at ${at(choice.cheapestFlight.departure)}, ${inr(choice.cheapestFlight.total)}`
-          : `The cheapest of ${choice.flightsShown} flight${choice.flightsShown === 1 ? '' : 's'} that day`}
-      </div>
+      {legacy ? (
+        <>
+          <div style={choice.cheaperOnFlight ? s.choiceWarn : s.choiceOk}>
+            {choice.cheaperOnFlight
+              ? `A cheaper fare on this flight: ${inr(choice.cheaperOnFlight.total)} (${inr(choice.chosen.total - choice.cheaperOnFlight.total)} less)`
+              : 'The cheapest fare on this flight'}
+          </div>
+          <div style={choice.cheapestFlight ? s.choiceWarn : s.choiceOk}>
+            {choice.cheapestFlight
+              ? `Cheapest that day: ${choice.cheapestFlight.label} at ${hhmm(choice.cheapestFlight.departure)}, ${inr(choice.cheapestFlight.total)}`
+              : `The cheapest of ${choice.flightsShown} flight${choice.flightsShown === 1 ? '' : 's'} that day`}
+          </div>
+        </>
+      ) : (
+        <div style={count ? s.choiceWarn : s.choiceOk}>
+          {count
+            ? `Not the cheapest: ${count} cheaper option${count === 1 ? '' : 's'}, up to ${inr(most)} less`
+            : `Chose the cheapest of ${choice.flightsShown} flight${choice.flightsShown === 1 ? '' : 's'} that day`}
+        </div>
+      )}
       <div style={s.choiceFoot}>Search prices when booked</div>
+    </div>
+  )
+}
+
+// The cheaper options the traveller passed over (bookings.choice_context),
+// for the approver to weigh: approve anyway, or reject with a nudge. "Suggest
+// this" writes that nudge into the note, where it stays editable.
+function CheaperOptions({ choice, onSuggest }: { choice: ChoiceContext; onSuggest?: (text: string) => void }) {
+  const options = choice.cheaper ?? []
+  if (options.length === 0) return null
+  const more = (choice.cheaperCount ?? options.length) - options.length
+  const suggestion = (o: CheaperOption) => o.sameFlight
+    ? `Please choose the ${o.fare ?? 'cheaper'} fare on the same flight (${inr(o.total)}), ${inr(o.saving)} less than the fare you chose.`
+    : `Please book ${o.label} at ${hhmm(o.departure)}${o.fare ? ` (${o.fare})` : ''} for ${inr(o.total)} instead, ${inr(o.saving)} less than the fare you chose.`
+  return (
+    <div style={s.cheaperBox}>
+      <div style={s.boxLabel}>Cheaper options the traveller didn’t choose</div>
+      <ul style={s.cheaperList}>
+        {options.map((o, i) => (
+          <li key={i} style={s.cheaperRow}>
+            <div style={s.cheaperWho}>
+              <span style={s.cheaperLabel}>{o.label}</span>
+              {o.sameFlight && <span style={s.sameFlightTag}>Same flight</span>}
+              {o.fare && <span style={s.cheaperFare}>{o.fare}</span>}
+            </div>
+            <div style={s.cheaperWhen}>
+              {hhmm(o.departure)}{o.arrival ? `–${hhmm(o.arrival)}` : ''}
+              {typeof o.stops === 'number' ? ` · ${o.stops === 0 ? 'Non-stop' : `${o.stops} stop${o.stops > 1 ? 's' : ''}`}` : ''}
+              {o.duration ? ` · ${o.duration}` : ''}
+              {o.refundable === false ? ' · Non-refundable' : o.refundable ? ' · Refundable' : ''}
+            </div>
+            <div style={s.cheaperPrice}>
+              {o.policy && <span style={{ ...s.policyDot, background: VERDICT_META[o.policy].color }} title={VERDICT_META[o.policy].label} />}
+              <span style={s.cheaperTotal}>{inr(o.total)}</span>
+              <span style={s.cheaperSaving}>{inr(o.saving)} less</span>
+            </div>
+            {onSuggest && (
+              <button type="button" onClick={() => onSuggest(suggestion(o))} style={s.suggestBtn} title={suggestion(o)}>
+                Suggest this
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+      {more > 0 && <div style={s.choiceFoot}>and {more} more, dearer than these</div>}
     </div>
   )
 }
@@ -621,6 +687,25 @@ const s: Record<string, React.CSSProperties> = {
   choiceOk: { color: '#166534' },
   choiceWarn: { color: '#92400E' },
   choiceFoot: { fontSize: '10.5px', color: '#9CA3AF' },
+  cheaperBox: { border: '1px solid #E5E7EB', borderRadius: '10px', padding: '10px 12px' },
+  cheaperList: { listStyle: 'none', margin: '2px 0 0', padding: 0, display: 'flex', flexDirection: 'column' },
+  cheaperRow: {
+    display: 'grid', gridTemplateColumns: 'minmax(120px, 1.1fr) minmax(140px, 1.6fr) auto auto', alignItems: 'center',
+    gap: '6px 12px', padding: '7px 0', borderTop: '1px solid #F3F4F6', fontSize: '12.5px',
+  },
+  cheaperWho: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 6px', minWidth: 0 },
+  cheaperLabel: { fontWeight: 700, color: '#111827' },
+  sameFlightTag: { fontSize: '10px', fontWeight: 700, color: '#3730A3', background: '#EEF2FF', borderRadius: '4px', padding: '1px 5px' },
+  cheaperFare: { fontSize: '11.5px', color: '#6B7280' },
+  cheaperWhen: { fontSize: '12px', color: '#4B5563', fontVariantNumeric: 'tabular-nums' },
+  cheaperPrice: { display: 'flex', alignItems: 'center', gap: '6px', justifySelf: 'end', whiteSpace: 'nowrap' },
+  policyDot: { width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0 },
+  cheaperTotal: { fontWeight: 700, color: '#111827', fontVariantNumeric: 'tabular-nums' },
+  cheaperSaving: { fontSize: '11.5px', fontWeight: 600, color: '#166534' },
+  suggestBtn: {
+    fontSize: '11.5px', fontWeight: 600, color: '#3730A3', background: '#fff', border: '1px solid #C7D2FE',
+    borderRadius: '7px', padding: '4px 9px', cursor: 'pointer', whiteSpace: 'nowrap',
+  },
   refreshLine: { fontSize: '11.5px', fontWeight: 600, borderRadius: '6px', padding: '3px 8px' },
   refreshOk: { color: '#166534', background: '#F0FDF4' },
   refreshUp: { color: '#92400E', background: '#FEF3C7' },

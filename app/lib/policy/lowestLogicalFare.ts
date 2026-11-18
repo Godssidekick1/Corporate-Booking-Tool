@@ -26,7 +26,20 @@ export interface ShownFlight {
   destination: string
   journeys: number         // one-way 1, round trip 2
   label: string            // "AI 101", for the reason line
-  fares: { pricingKey: string; total: number }[]
+  fares: ShownFare[]
+  // For the approver's list of cheaper options (choiceContext). Optional:
+  // searches saved before these existed carry none of them.
+  arrival?: string         // the outbound's, local to the destination
+  stops?: number           // the outbound's
+  duration?: string        // the outbound's, as the airline gives it ("02:10")
+}
+
+export interface ShownFare {
+  pricingKey: string
+  total: number
+  name?: string            // the brand (ECO VALUE), else the fare type
+  refundable?: boolean
+  policy?: 'green' | 'amber' | 'red'   // the traveller's verdict, as search judged it
 }
 
 export interface CheaperNearby {
@@ -48,15 +61,25 @@ export function shownFlights(results: FlatFlightResult[]): ShownFlight[] {
     // means cheaper to the company: a fare with a bigger discount can be the
     // cheaper one at the same airline price.
     const fares = r.fareOptions
-      .map(f => ({ pricingKey: f.pricingKey, total: f.sellEstimate ?? f.totalFare }))
-      .filter((f): f is { pricingKey: string; total: number } => typeof f.total === 'number' && Boolean(f.pricingKey))
+      .map(f => ({
+        pricingKey: f.pricingKey, total: f.sellEstimate ?? f.totalFare,
+        ...(f.brandedFareName || f.brandedFareDescription || f.fareType ? { name: f.brandedFareName || f.brandedFareDescription || f.fareType } : {}),
+        ...(typeof f.refundable === 'boolean' ? { refundable: f.refundable } : {}),
+        ...(f.policy ? { policy: f.policy } : {}),
+      }))
+      .filter((f): f is ShownFare => typeof f.total === 'number' && Boolean(f.pricingKey))
     if (fares.length === 0) return []
     const leg = r.legs?.[0]
     const label = [leg?.airlineCode ?? r.airline?.code, leg?.flightNumber].filter(Boolean).join(' ')
     const returnDeparture = r.journeys?.[1]?.origin?.dateTime
+    const arrival = out?.destination?.dateTime ?? r.destination?.dateTime
+    const duration = out?.totalDuration ?? out?.duration
     return [{
       flightKey: r.flightKey, departure, origin, destination, journeys: r.journeys?.length || 1, label, fares,
       ...(returnDeparture ? { returnDeparture } : {}),
+      ...(arrival ? { arrival } : {}),
+      ...(typeof out?.stopCount === 'number' ? { stops: out.stopCount } : {}),
+      ...(duration ? { duration } : {}),
     }]
   })
 }
@@ -113,8 +136,30 @@ export interface ChoiceContext {
   cheaperOnFlight: { total: number; fares: number } | null
   // Null when the chosen flight already carries the cheapest fare.
   cheapestFlight: { total: number; label: string; departure: string } | null
+  // The cheaper options the traveller passed over, cheapest first: other
+  // fares on the same flight, and each other flight's cheapest fare below the
+  // chosen one. At most CHEAPER_SHOWN; cheaperCount says how many there were.
+  // Absent on bookings saved before this existed.
+  cheaper?: CheaperOption[]
+  cheaperCount?: number
   savedAt: string
 }
+
+export interface CheaperOption {
+  sameFlight: boolean
+  label: string
+  departure: string
+  arrival?: string
+  stops?: number
+  duration?: string
+  total: number
+  saving: number
+  fare?: string
+  refundable?: boolean
+  policy?: 'green' | 'amber' | 'red'
+}
+
+export const CHEAPER_SHOWN = 5
 
 export function choiceContext(
   shown: ShownFlight[],
@@ -135,11 +180,37 @@ export function choiceContext(
   for (const f of comparable) if (!best || cheapestOf(f) < cheapestOf(best)) best = f
   const bestTotal = best ? cheapestOf(best) : chosenFare.total
 
+  // Every cheaper option, by at least a rupee (rounding is not cheaper): the
+  // same flight's other fares one by one (Saver vs Flex is the choice there),
+  // and from each other flight only its cheapest fare (one row per flight).
+  const option = (f: ShownFlight, x: ShownFare): CheaperOption => ({
+    sameFlight: f.flightKey === chosen.flightKey, label: f.label, departure: f.departure,
+    ...(f.arrival ? { arrival: f.arrival } : {}),
+    ...(typeof f.stops === 'number' ? { stops: f.stops } : {}),
+    ...(f.duration ? { duration: f.duration } : {}),
+    total: x.total, saving: Math.round((chosenFare.total - x.total) * 100) / 100,
+    ...(x.name ? { fare: x.name } : {}),
+    ...(typeof x.refundable === 'boolean' ? { refundable: x.refundable } : {}),
+    ...(x.policy ? { policy: x.policy } : {}),
+  })
+  const cheaperAll: CheaperOption[] = []
+  for (const f of comparable) {
+    if (f.flightKey === chosen.flightKey) {
+      for (const x of f.fares) if (x.pricingKey !== chosenFare.pricingKey && x.total < chosenFare.total - 1) cheaperAll.push(option(f, x))
+    } else {
+      const low = f.fares.reduce((m, x) => (x.total < m.total ? x : m))
+      if (low.total < chosenFare.total - 1) cheaperAll.push(option(f, low))
+    }
+  }
+  cheaperAll.sort((x, y) => x.total - y.total || x.departure.localeCompare(y.departure))
+
   return {
     chosen: {
       total: chosenFare.total, name: fare.name ?? null, refundable: fare.refundable ?? null,
       label: chosen.label, departure: chosen.departure,
     },
+    cheaper: cheaperAll.slice(0, CHEAPER_SHOWN),
+    cheaperCount: cheaperAll.length,
     flightsShown: comparable.length,
     // At least a rupee: rounding is not a cheaper fare.
     cheaperOnFlight: flightLow < chosenFare.total - 1 ? { total: flightLow, fares: chosen.fares.length } : null,
