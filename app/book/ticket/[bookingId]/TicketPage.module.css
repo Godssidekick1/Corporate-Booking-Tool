@@ -1,0 +1,14 @@
+/* The ticket page's layout: the printable ticket stays document-width on the
+   left; the booking's references and what to do with it sit beside it, in
+   view while the ticket scrolls. Stacks on narrower screens. Printing is
+   unaffected: globals.css prints .ticket-sheet alone, and the side column is
+   .no-print. Only what needs a media query lives here. */
+
+.layout { display: grid; grid-template-columns: minmax(0, 600px) 320px; gap: 24px; justify-content: center; align-items: start; }
+.main { min-width: 0; }
+.side { position: sticky; top: calc(var(--book-chrome-h, 0px) + 16px); display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
+@media (max-width: 960px) {
+  .layout { grid-template-columns: minmax(0, 600px); }
+  .side { position: static; }
+}

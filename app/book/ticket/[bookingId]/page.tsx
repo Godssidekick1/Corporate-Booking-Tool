@@ -9,6 +9,7 @@ import { formatTime, formatDayLabel, journeyLabel, baggageLabel } from '@/app/li
 import { mealLabel } from '@/app/lib/book/mealCodes'
 import { JUST_BOOKED_KEY } from '@/app/lib/book/flowStorage'
 import { CancelBookingButton } from '@/app/components/book/CancelBooking'
+import tl from './TicketPage.module.css'
 import FareRulesPanel from '@/app/components/book/FareRulesPanel'
 import type { FareRules } from '@/app/lib/book/fareRules'
 import DeskFareStrip from '@/app/components/book/DeskFareStrip'
@@ -187,6 +188,7 @@ export default function TicketPage() {
   // Generated server-side so the qrcode library never enters this bundle.
   const [qr, setQr] = useState<{ qr: string | null; url: string | null }>({ qr: null, url: null })
   const [copied, setCopied] = useState(false)
+  const [copiedPnr, setCopiedPnr] = useState(false)
 
   useEffect(() => {
     loadAndMaybeTicket()
@@ -444,7 +446,7 @@ export default function TicketPage() {
 
   return (
     <div style={s.page}>
-      <div style={s.root}>
+      <div style={{ ...s.root, maxWidth: '1000px' }}>
         {/* The travel desk only: the airline's fare, markup, discount, fee and margin. */}
         <DeskFareStrip desk={booking.desk} currency={currency || 'INR'} />
 
@@ -484,7 +486,7 @@ export default function TicketPage() {
           <>
             <div style={s.successHero}>
               <div style={s.successIcon}>✓</div>
-              <h1 style={s.successHeading}>You're booked!</h1>
+              <h1 style={s.successHeading}>You’re booked!</h1>
               {/* The claim that "a copy has also been sent to your email" was
                   here and is not true — no booking email is sent anywhere in
                   this app, the only mail being invites and password resets. A
@@ -495,297 +497,342 @@ export default function TicketPage() {
               <p style={s.successSub}>Your e-ticket is below. Download it or save the share link — you&apos;ll need it at the airport.</p>
             </div>
 
-            {/* ── E-ticket / boarding-pass style card ─────────────────── */}
-            {/* ticket-sheet is what the print rules in globals.css key on —
-                everything else on the page is hidden when this is printed.
-                A class rather than an inline style because @media has nothing
-                to hook onto in an inline style object. */}
-            <div className="ticket-sheet" style={s.ticketCard}>
-              <div style={s.ticketHeaderBand}>
-                <span style={s.airlineName}>{it?.airline?.name ?? 'Airline'}</span>
-                <span style={s.eTicketTag}>E-TICKET</span>
-              </div>
+            <div className={tl.layout}>
+              <div className={tl.main}>
+                {/* ── E-ticket / boarding-pass style card ─────────────────── */}
+                {/* ticket-sheet is what the print rules in globals.css key on —
+                    everything else on the page is hidden when this is printed.
+                    A class rather than an inline style because @media has nothing
+                    to hook onto in an inline style object. */}
+                <div className="ticket-sheet" style={s.ticketCard}>
+                  <div style={s.ticketHeaderBand}>
+                    <span style={s.airlineName}>{it?.airline?.name ?? 'Airline'}</span>
+                    <span style={s.eTicketTag}>E-TICKET</span>
+                  </div>
 
-              <div style={s.ticketBody}>
-                {/* Main coupon: one route block per DIRECTION.
-                    This rendered a single strip from the flat origin/destination
-                    fields, which are aliases for the outbound — so on a round
-                    trip the return flight would not have appeared on the
-                    e-ticket at all. */}
-                <div style={s.coupon}>
-                  {ticketJourneys.map((journey, ji) => (
-                    <div key={journey.journeyNo}>
-                      {ticketJourneys.length > 1 && (
-                        <span style={s.couponJourneyLabel}>{journeyLabel(journey.journeyNo)}</span>
-                      )}
-                      <div style={{ ...s.routeRow, ...(ji > 0 ? { marginTop: '4px' } : {}) }}>
-                        <div style={s.routePoint}>
-                          <span style={s.routeTime}>{formatTime(journey.origin?.dateTime)}</span>
-                          <span style={s.routeCode}>{journey.origin?.code}</span>
-                          <span style={s.routeCity}>{journey.origin?.city}</span>
-                          {/* The airport's own name and terminal. Both are on
-                              the frozen itinerary and neither was rendered —
-                              on the one document actually read at an airport. */}
-                          {journey.origin?.name && journey.origin.name !== journey.origin.code && (
-                            <span style={s.routeAirport}>{journey.origin.name}</span>
+                  <div style={s.ticketBody}>
+                    {/* Main coupon: one route block per DIRECTION.
+                        This rendered a single strip from the flat origin/destination
+                        fields, which are aliases for the outbound — so on a round
+                        trip the return flight would not have appeared on the
+                        e-ticket at all. */}
+                    <div style={s.coupon}>
+                      {ticketJourneys.map((journey, ji) => (
+                        <div key={journey.journeyNo}>
+                          {ticketJourneys.length > 1 && (
+                            <span style={s.couponJourneyLabel}>{journeyLabel(journey.journeyNo)}</span>
                           )}
-                          {journey.origin?.terminal && (
-                            <span style={s.routeTerminal}>Terminal {journey.origin.terminal}</span>
-                          )}
-                        </div>
+                          <div style={{ ...s.routeRow, ...(ji > 0 ? { marginTop: '4px' } : {}) }}>
+                            <div style={s.routePoint}>
+                              <span style={s.routeTime}>{formatTime(journey.origin?.dateTime)}</span>
+                              <span style={s.routeCode}>{journey.origin?.code}</span>
+                              <span style={s.routeCity}>{journey.origin?.city}</span>
+                              {/* The airport's own name and terminal. Both are on
+                                  the frozen itinerary and neither was rendered —
+                                  on the one document actually read at an airport. */}
+                              {journey.origin?.name && journey.origin.name !== journey.origin.code && (
+                                <span style={s.routeAirport}>{journey.origin.name}</span>
+                              )}
+                              {journey.origin?.terminal && (
+                                <span style={s.routeTerminal}>Terminal {journey.origin.terminal}</span>
+                              )}
+                            </div>
 
-                        <div style={s.routeMiddle}>
-                          <span style={s.routeDate}>{formatDayLabel(journey.origin?.dateTime)}</span>
-                          <div style={s.routeLineWrap}>
-                            <div style={s.routeDot} />
-                            <div style={s.routeLine} />
-                            <span style={s.routePlane}>✈</span>
-                            <div style={s.routeLine} />
-                            <div style={s.routeDot} />
+                            <div style={s.routeMiddle}>
+                              <span style={s.routeDate}>{formatDayLabel(journey.origin?.dateTime)}</span>
+                              <div style={s.routeLineWrap}>
+                                <div style={s.routeDot} />
+                                <div style={s.routeLine} />
+                                <span style={s.routePlane}>✈</span>
+                                <div style={s.routeLine} />
+                                <div style={s.routeDot} />
+                              </div>
+                              <span style={s.routeStops}>
+                                {journey.totalDuration ?? journey.duration ? `${journey.totalDuration ?? journey.duration} · ` : ''}
+                                {journey.stopCount === 0 ? 'Non-stop' : `${journey.stopCount} stop(s)`}
+                              </span>
+                            </div>
+
+                            <div style={{ ...s.routePoint, alignItems: 'flex-end' as const }}>
+                              <span style={s.routeTime}>{formatTime(journey.destination?.dateTime)}</span>
+                              <span style={s.routeCode}>{journey.destination?.code}</span>
+                              <span style={s.routeCity}>{journey.destination?.city}</span>
+                              {journey.destination?.name && journey.destination.name !== journey.destination.code && (
+                                <span style={{ ...s.routeAirport, textAlign: 'right' as const }}>{journey.destination.name}</span>
+                              )}
+                              {journey.destination?.terminal && (
+                                <span style={s.routeTerminal}>Terminal {journey.destination.terminal}</span>
+                              )}
+                            </div>
                           </div>
-                          <span style={s.routeStops}>
-                            {journey.totalDuration ?? journey.duration ? `${journey.totalDuration ?? journey.duration} · ` : ''}
-                            {journey.stopCount === 0 ? 'Non-stop' : `${journey.stopCount} stop(s)`}
-                          </span>
-                        </div>
 
-                        <div style={{ ...s.routePoint, alignItems: 'flex-end' as const }}>
-                          <span style={s.routeTime}>{formatTime(journey.destination?.dateTime)}</span>
-                          <span style={s.routeCode}>{journey.destination?.code}</span>
-                          <span style={s.routeCity}>{journey.destination?.city}</span>
-                          {journey.destination?.name && journey.destination.name !== journey.destination.code && (
-                            <span style={{ ...s.routeAirport, textAlign: 'right' as const }}>{journey.destination.name}</span>
+                          {/* Connections, itemised. A connecting flight read as
+                              "1 stop(s)" and nothing more — where, when and for how
+                              long were all in the data and none of it was shown. */}
+                          {(journey.stops ?? []).length > 0 && (
+                            <div style={s.stopList}>
+                              {journey.stops!.map((stop, si) => {
+                                const wait = layoverBetween(stop.arrivalDateTime, stop.departureDateTime)
+                                return (
+                                  <p key={si} style={s.stopLine}>
+                                    Connection at <strong>{stop.city} ({stop.code})</strong>
+                                    {' · arrives '}{formatTime(stop.arrivalDateTime)}
+                                    {stop.departureDateTime && <>{', departs '}{formatTime(stop.departureDateTime)}</>}
+                                    {wait && <>{' · '}{wait} layover</>}
+                                  </p>
+                                )
+                              })}
+                            </div>
                           )}
-                          {journey.destination?.terminal && (
-                            <span style={s.routeTerminal}>Terminal {journey.destination.terminal}</span>
-                          )}
-                        </div>
-                      </div>
 
-                      {/* Connections, itemised. A connecting flight read as
-                          "1 stop(s)" and nothing more — where, when and for how
-                          long were all in the data and none of it was shown. */}
-                      {(journey.stops ?? []).length > 0 && (
-                        <div style={s.stopList}>
-                          {journey.stops!.map((stop, si) => {
-                            const wait = layoverBetween(stop.arrivalDateTime, stop.departureDateTime)
+                          {(journey.legs ?? []).length > 0 && (
+                            <div style={s.legChips}>
+                              {journey.legs!.map((leg, li) => (
+                                <span key={li} style={s.legChip}>
+                                  {leg.airlineCode} {leg.flightNumber}
+                                  {leg.bookingCode && <span style={s.legChipClass}> · class {leg.bookingCode}</span>}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Weight or pieces, whichever this fare actually filed —
+                              an international allowance sold by the piece leaves the
+                              weight at "0", which this printed as a confident
+                              "Baggage 0 kg" on the one document a traveller packs
+                              against. baggageLabel returns null when neither is
+                              filed and the row is then absent, which says nothing
+                              rather than saying something false. */}
+                          {(() => {
+                            const bag = baggageLabel(journey.checkInBaggageKg, journey.checkInBaggagePieces)
+                            if (!it?.cabin && !bag) return null
                             return (
-                              <p key={si} style={s.stopLine}>
-                                Connection at <strong>{stop.city} ({stop.code})</strong>
-                                {' · arrives '}{formatTime(stop.arrivalDateTime)}
-                                {stop.departureDateTime && <>{', departs '}{formatTime(stop.departureDateTime)}</>}
-                                {wait && <>{' · '}{wait} layover</>}
-                              </p>
+                              <div style={s.metaRow}>
+                                {it?.cabin && (
+                                  <div style={s.metaItem}>
+                                    <span style={s.metaLabel}>Class</span>
+                                    <span style={s.metaValue}>{it.cabin}</span>
+                                  </div>
+                                )}
+                                {bag && (
+                                  <div style={s.metaItem}>
+                                    <span style={s.metaLabel}>Check-in baggage</span>
+                                    <span style={s.metaValue}>{bag}</span>
+                                  </div>
+                                )}
+                              </div>
                             )
-                          })}
+                          })()}
                         </div>
-                      )}
+                      ))}
+                    </div>
 
-                      {(journey.legs ?? []).length > 0 && (
-                        <div style={s.legChips}>
-                          {journey.legs!.map((leg, li) => (
-                            <span key={li} style={s.legChip}>
-                              {leg.airlineCode} {leg.flightNumber}
-                              {leg.bookingCode && <span style={s.legChipClass}> · class {leg.bookingCode}</span>}
-                            </span>
-                          ))}
+                    {/* Perforated divider with cutout notches */}
+                    <div style={s.perforationWrap}>
+                      <div style={s.notchLeft} />
+                      <div style={s.perforationLine} />
+                      <div style={s.notchRight} />
+                    </div>
+
+                    {/* One stub per traveler: their own seat(s), ticket number,
+                        and barcode — a shared flight header above covers what's
+                        genuinely common to everyone on this PNR. */}
+                    {travelers.map((t, i) => {
+                      const orderedSeats = seatsInLegOrder(t.SeatListDetails)
+                      const isLast = i === travelers.length - 1
+                      return (
+                        <div key={i} style={s.stub}>
+                          <div style={s.stubRow}>
+                            <span style={s.stubLabel}>Passenger</span>
+                            <span style={s.stubValue}>{t.Title} {t.FirstName} {t.LastName}</span>
+                          </div>
+                          {/* The meal that was actually requested of the airline —
+                              worth printing, since this is the document someone has
+                              in hand if it turns out not to have been loaded. */}
+                          {mealLabel(t.MealCode) && (
+                            <div style={s.stubRow}>
+                              <span style={s.stubLabel}>Meal</span>
+                              {/* Requested, not confirmed: the airline's answer
+                                  (SSRDetails) is not read yet (docs/provider-questions.md). */}
+                              <span style={s.stubValue}>{mealLabel(t.MealCode)} (requested)</span>
+                            </div>
+                          )}
+                          <div style={s.stubRow}>
+                            <span style={s.stubLabel}>PNR</span>
+                            <span style={s.stubValue}>{booking.pnr || '—'}</span>
+                          </div>
+                          {ticketNumbers[i] && (
+                            <div style={s.stubRow}>
+                              <span style={s.stubLabel}>Ticket no.</span>
+                              <span style={s.stubValue}>{ticketNumbers[i]}</span>
+                            </div>
+                          )}
+                          {orderedSeats.length > 0 && (
+                            <div style={s.seatsByLeg}>
+                              {orderedSeats.map((seat, si) => {
+                                // legLabels[si] assumes seats sort into the same
+                                // order as the itinerary's leg sequence — true
+                                // whenever both are chronological, which holds
+                                // for any real itinerary (legs happen in order).
+                                const leg = legLabels[si]
+                                return (
+                                  <div key={si} style={s.stubRow}>
+                                    <span style={s.stubLabel}>
+                                      {leg ? `${leg.origin} → ${leg.destination}` : `Seat ${si + 1}`}
+                                    </span>
+                                    <span style={s.stubValue}>{seat.SeatDesignator}</span>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )}
+                          {/* A real, scannable QR pointing at the public ticket, so
+                              a phone that is not signed in can open it at a gate.
+                              What sat here before was BarcodeStrip: a hash-seeded
+                              row of divs encoding nothing, unscannable by anything.
+                              Looking like a boarding pass is worse than looking like
+                              nothing, because someone eventually tries it, so it
+                              is gone: until the QR arrives, or if it cannot be
+                              made, the stub carries no code at all. */}
+                          {qr.qr && (
+                            <div style={s.barcodeWrap}>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={qr.qr} alt="Scan to open this ticket" style={s.qrImage} />
+                            </div>
+                          )}
+                          {qr.qr && <p style={s.qrCaption}>Scan to open this ticket</p>}
+                          {!isLast && <div style={s.stubDivider} />}
                         </div>
-                      )}
+                      )
+                    })}
+                  </div>
+                </div>
 
-                      {/* Weight or pieces, whichever this fare actually filed —
-                          an international allowance sold by the piece leaves the
-                          weight at "0", which this printed as a confident
-                          "Baggage 0 kg" on the one document a traveller packs
-                          against. baggageLabel returns null when neither is
-                          filed and the row is then absent, which says nothing
-                          rather than saying something false. */}
-                      {(() => {
-                        const bag = baggageLabel(journey.checkInBaggageKg, journey.checkInBaggagePieces)
-                        if (!it?.cabin && !bag) return null
+                {/* ── Travelers ────────────────────────────────────────────── */}
+                {travelers.length > 0 && (
+                  <div style={s.card}>
+                    <h2 style={s.cardTitle}>
+                      Travelers <span style={s.travelerCount}>({travelers.length})</span>
+                    </h2>
+                    <div style={s.travelerList}>
+                      {travelers.map((t, i) => {
+                        const orderedSeats = seatsInLegOrder(t.SeatListDetails)
                         return (
-                          <div style={s.metaRow}>
-                            {it?.cabin && (
-                              <div style={s.metaItem}>
-                                <span style={s.metaLabel}>Class</span>
-                                <span style={s.metaValue}>{it.cabin}</span>
-                              </div>
-                            )}
-                            {bag && (
-                              <div style={s.metaItem}>
-                                <span style={s.metaLabel}>Check-in baggage</span>
-                                <span style={s.metaValue}>{bag}</span>
-                              </div>
-                            )}
+                          <div key={i} style={s.travelerRow}>
+                            <div style={s.travelerNameCol}>
+                              <span style={s.travelerName}>{t.Title} {t.FirstName} {t.LastName}</span>
+                              {ticketNumbers[i] && <span style={s.travelerTicketNo}>{ticketNumbers[i]}</span>}
+                            </div>
+                            <div style={s.travelerRightCol}>
+                              {orderedSeats.map((seat, si) => (
+                                <span key={si} style={s.travelerSeat}>
+                                  {legLabels[si] ? `${legLabels[si].origin} ${seat.SeatDesignator}` : seat.SeatDesignator}
+                                </span>
+                              ))}
+                              <span style={s.travelerType}>{PAX_TYPE_LABEL[t.PaxType] ?? t.PaxType}</span>
+                            </div>
                           </div>
                         )
-                      })()}
+                      })}
                     </div>
-                  ))}
-                </div>
-
-                {/* Perforated divider with cutout notches */}
-                <div style={s.perforationWrap}>
-                  <div style={s.notchLeft} />
-                  <div style={s.perforationLine} />
-                  <div style={s.notchRight} />
-                </div>
-
-                {/* One stub per traveler: their own seat(s), ticket number,
-                    and barcode — a shared flight header above covers what's
-                    genuinely common to everyone on this PNR. */}
-                {travelers.map((t, i) => {
-                  const orderedSeats = seatsInLegOrder(t.SeatListDetails)
-                  const isLast = i === travelers.length - 1
-                  return (
-                    <div key={i} style={s.stub}>
-                      <div style={s.stubRow}>
-                        <span style={s.stubLabel}>Passenger</span>
-                        <span style={s.stubValue}>{t.Title} {t.FirstName} {t.LastName}</span>
-                      </div>
-                      {/* The meal that was actually requested of the airline —
-                          worth printing, since this is the document someone has
-                          in hand if it turns out not to have been loaded. */}
-                      {mealLabel(t.MealCode) && (
-                        <div style={s.stubRow}>
-                          <span style={s.stubLabel}>Meal</span>
-                          {/* Requested, not confirmed: the airline's answer
-                              (SSRDetails) is not read yet (docs/provider-questions.md). */}
-                          <span style={s.stubValue}>{mealLabel(t.MealCode)} (requested)</span>
-                        </div>
-                      )}
-                      <div style={s.stubRow}>
-                        <span style={s.stubLabel}>PNR</span>
-                        <span style={s.stubValue}>{booking.pnr || '—'}</span>
-                      </div>
-                      {ticketNumbers[i] && (
-                        <div style={s.stubRow}>
-                          <span style={s.stubLabel}>Ticket no.</span>
-                          <span style={s.stubValue}>{ticketNumbers[i]}</span>
-                        </div>
-                      )}
-                      {orderedSeats.length > 0 && (
-                        <div style={s.seatsByLeg}>
-                          {orderedSeats.map((seat, si) => {
-                            // legLabels[si] assumes seats sort into the same
-                            // order as the itinerary's leg sequence — true
-                            // whenever both are chronological, which holds
-                            // for any real itinerary (legs happen in order).
-                            const leg = legLabels[si]
-                            return (
-                              <div key={si} style={s.stubRow}>
-                                <span style={s.stubLabel}>
-                                  {leg ? `${leg.origin} → ${leg.destination}` : `Seat ${si + 1}`}
-                                </span>
-                                <span style={s.stubValue}>{seat.SeatDesignator}</span>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      )}
-                      {/* A real, scannable QR pointing at the public ticket, so
-                          a phone that is not signed in can open it at a gate.
-                          What sat here before was BarcodeStrip: a hash-seeded
-                          row of divs encoding nothing, unscannable by anything.
-                          Looking like a boarding pass is worse than looking like
-                          nothing, because someone eventually tries it, so it
-                          is gone: until the QR arrives, or if it cannot be
-                          made, the stub carries no code at all. */}
-                      {qr.qr && (
-                        <div style={s.barcodeWrap}>
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={qr.qr} alt="Scan to open this ticket" style={s.qrImage} />
-                        </div>
-                      )}
-                      {qr.qr && <p style={s.qrCaption}>Scan to open this ticket</p>}
-                      {!isLast && <div style={s.stubDivider} />}
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-
-            {/* ── Travelers ────────────────────────────────────────────── */}
-            {travelers.length > 0 && (
-              <div style={s.card}>
-                <h2 style={s.cardTitle}>
-                  Travelers <span style={s.travelerCount}>({travelers.length})</span>
-                </h2>
-                <div style={s.travelerList}>
-                  {travelers.map((t, i) => {
-                    const orderedSeats = seatsInLegOrder(t.SeatListDetails)
-                    return (
-                      <div key={i} style={s.travelerRow}>
-                        <div style={s.travelerNameCol}>
-                          <span style={s.travelerName}>{t.Title} {t.FirstName} {t.LastName}</span>
-                          {ticketNumbers[i] && <span style={s.travelerTicketNo}>{ticketNumbers[i]}</span>}
-                        </div>
-                        <div style={s.travelerRightCol}>
-                          {orderedSeats.map((seat, si) => (
-                            <span key={si} style={s.travelerSeat}>
-                              {legLabels[si] ? `${legLabels[si].origin} ${seat.SeatDesignator}` : seat.SeatDesignator}
-                            </span>
-                          ))}
-                          <span style={s.travelerType}>{PAX_TYPE_LABEL[t.PaxType] ?? t.PaxType}</span>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-                {booking.traveler_snapshot?.Email && (
-                  <p style={s.mutedLine}>{booking.traveler_snapshot.Email}</p>
+                    {booking.traveler_snapshot?.Email && (
+                      <p style={s.mutedLine}>{booking.traveler_snapshot.Email}</p>
+                    )}
+                  </div>
                 )}
+
+                {/* ── Fare (kept minimal — this is a ticket, not an invoice) ── */}
+                <div style={s.fareFooter}>
+                  <span>Total paid</span>
+                  <span style={s.fareFooterValue}>{booking.sell_total != null ? `${currency} ${booking.sell_total.toLocaleString('en-IN')}` : '—'}</span>
+                </div>
+
+                {booking.ticket_footer_text && <p style={s.companyFooter}>{booking.ticket_footer_text}</p>}
               </div>
-            )}
 
-            {/* ── Fare (kept minimal — this is a ticket, not an invoice) ── */}
-            <div style={s.fareFooter}>
-              <span>Total paid</span>
-              <span style={s.fareFooterValue}>{booking.sell_total != null ? `${currency} ${booking.sell_total.toLocaleString('en-IN')}` : '—'}</span>
-            </div>
+              {/* The references and what to do with the ticket, beside it.
+                  Never printed: globals.css prints .ticket-sheet alone. */}
+              <aside className={`${tl.side} no-print`}>
+                <div style={s.refCard}>
+                  <span style={s.refStatus}>✓ Ticketed</span>
+                  <div style={s.refLabel}>Booking reference (PNR)</div>
+                  <div style={s.refRow}>
+                    <span style={s.refValue}>{booking.pnr || '—'}</span>
+                    {booking.pnr && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(booking.pnr!)
+                            setCopiedPnr(true)
+                            setTimeout(() => setCopiedPnr(false), 2000)
+                          } catch {
+                            // Clipboard access can be refused; the PNR is on screen.
+                          }
+                        }}
+                        style={s.refCopy}
+                      >
+                        {copiedPnr ? 'Copied' : 'Copy'}
+                      </button>
+                    )}
+                  </div>
+                  {ticketNumbers.some(Boolean) && (
+                    <>
+                      <div style={{ ...s.refLabel, marginTop: 12 }}>Ticket numbers</div>
+                      <ul style={s.refList}>
+                        {travelers.map((t, i) => ticketNumbers[i] && (
+                          <li key={i} style={s.refItem}>
+                            <span>{t.FirstName} {t.LastName}</span>
+                            <span style={s.refMono}>{ticketNumbers[i]}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                </div>
+                <div className="no-print" style={s.ticketActions}>
+                  <button type="button" onClick={() => window.print()} style={s.ticketActionPrimary}>
+                    Download / print
+                  </button>
+                  {/* The same link the QR encodes, as text — for sending to someone
+                      who cannot scan a screen they are not standing in front of. */}
+                  {qr.url && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(qr.url!)
+                          setCopied(true)
+                          setTimeout(() => setCopied(false), 2000)
+                        } catch {
+                          // Clipboard access can be refused; the QR is still there.
+                        }
+                      }}
+                      style={s.ticketAction}
+                    >
+                      {copied ? 'Link copied' : 'Copy share link'}
+                    </button>
+                  )}
+                </div>
 
-            {booking.ticket_footer_text && <p style={s.companyFooter}>{booking.ticket_footer_text}</p>}
+                {/* What cancelling or changing this ticket costs, from the airline. */}
+                {booking.fare_rules && (
+                  <div className="no-print"><FareRulesPanel rules={booking.fare_rules} compact /></div>
+                )}
 
-            <div className="no-print" style={s.ticketActions}>
-              <button type="button" onClick={() => window.print()} style={s.ticketActionPrimary}>
-                Download / print
-              </button>
-              {/* The same link the QR encodes, as text — for sending to someone
-                  who cannot scan a screen they are not standing in front of. */}
-              {qr.url && (
-                <button
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(qr.url!)
-                      setCopied(true)
-                      setTimeout(() => setCopied(false), 2000)
-                    } catch {
-                      // Clipboard access can be refused; the QR is still there.
-                    }
-                  }}
-                  style={s.ticketAction}
-                >
-                  {copied ? 'Link copied' : 'Copy share link'}
-                </button>
-              )}
-            </div>
+                <div className="no-print" style={s.doneLinks}>
+                  <Link href={exits.trips.href} style={s.doneLink}>{exits.trips.label === 'My trips' ? 'View my tickets' : exits.trips.label} →</Link>
+                  <Link href={exits.home.href} style={s.doneLinkSecondary}>← Back to {exits.home.label.toLowerCase()}</Link>
+                </div>
 
-            {/* What cancelling or changing this ticket costs, from the airline. */}
-            {booking.fare_rules && (
-              <div className="no-print"><FareRulesPanel rules={booking.fare_rules} compact /></div>
-            )}
-
-            <div className="no-print" style={s.doneLinks}>
-              <Link href={exits.trips.href} style={s.doneLink}>{exits.trips.label === 'My trips' ? 'View my tickets' : exits.trips.label} →</Link>
-              <Link href={exits.home.href} style={s.doneLinkSecondary}>← Back to {exits.home.label.toLowerCase()}</Link>
-            </div>
-
-            <div className="no-print">
-              <CancelBookingButton
-                bookingId={booking.id}
-                ticketed
-                onCancelled={() => router.replace(`/book/confirm/${bookingId}`)}
-              />
+                <div className="no-print">
+                  <CancelBookingButton
+                    bookingId={booking.id}
+                    ticketed
+                    onCancelled={() => router.replace(`/book/confirm/${bookingId}`)}
+                  />
+                </div>
+              </aside>
             </div>
           </>
         )}
@@ -829,7 +876,7 @@ const s: Record<string, React.CSSProperties> = {
   loadingText: { fontSize: '14px', fontWeight: 600, color: '#111827', margin: 0 },
   loadingNote: { fontSize: '12.5px', color: '#9CA3AF', margin: 0, maxWidth: '320px', textAlign: 'center', lineHeight: 1.55 },
 
-  errorCard: { padding: '20px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '14px' },
+  errorCard: { padding: '20px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '14px', maxWidth: '600px', margin: '0 auto' },
   errorTitle: { fontSize: '13px', color: '#DC2626', margin: '0 0 8px', lineHeight: 1.5 },
   errorNote: { fontSize: '12px', color: '#7F1D1D', margin: '0 0 14px', lineHeight: 1.5 },
   errorLink: { fontSize: '13px', color: '#DC2626', fontWeight: 600, textDecoration: 'underline' },
@@ -898,7 +945,22 @@ const s: Record<string, React.CSSProperties> = {
   legChips: { marginTop: '10px', display: 'flex', flexWrap: 'wrap' as const, gap: '6px' },
   legChip: { fontSize: '10.5px', color: '#374151', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: '6px', padding: '3px 8px' },
   legChipClass: { color: '#9CA3AF' },
-  ticketActions: { display: 'flex', gap: '10px', flexWrap: 'wrap' as const, marginTop: '16px' },
+  ticketActions: { display: 'flex', flexDirection: 'column' as const, gap: '8px' },
+  refCard: { background: '#fff', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '16px 18px' },
+  refStatus: {
+    display: 'inline-block', fontSize: '11px', fontWeight: 700, color: '#166534', background: '#DCFCE7',
+    borderRadius: '999px', padding: '3px 10px', marginBottom: '12px',
+  },
+  refLabel: { fontSize: '10.5px', fontWeight: 700, color: '#6B7280', textTransform: 'uppercase' as const, letterSpacing: '0.5px', marginBottom: '4px' },
+  refRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' },
+  refValue: { fontSize: '22px', fontWeight: 700, color: '#0A0A14', letterSpacing: '1.5px', fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace" },
+  refCopy: {
+    fontSize: '12px', fontWeight: 600, color: '#000835', background: '#fff', border: '1px solid #C7D2FE',
+    borderRadius: '8px', padding: '5px 12px', cursor: 'pointer',
+  },
+  refList: { listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column' as const, gap: '6px' },
+  refItem: { display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '12.5px', color: '#374151' },
+  refMono: { fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace", color: '#111827', fontWeight: 600 },
   ticketActionPrimary: {
     flex: 1, minWidth: '160px', padding: '12px', background: '#000835', color: '#fff',
     border: 'none', borderRadius: '10px', fontSize: '13px', fontWeight: 600, cursor: 'pointer',
