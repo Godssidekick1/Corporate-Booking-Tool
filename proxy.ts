@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { principalForToken, permissionsOf, SESSION_COOKIE, TMC_ROLES } from '@/app/lib/auth/session'
 import { tmcRedirect } from '@/app/lib/navigation/tmcAccess'
+import { PROTECTED, matchesBase } from '@/app/lib/navigation/protectedPaths'
 
 // ── proxy.ts: the page gate ──────────────────────────────────────────────────
 // Runs before every PAGE request (API routes authenticate themselves; see the
@@ -25,14 +26,8 @@ import { tmcRedirect } from '@/app/lib/navigation/tmcAccess'
 // membership itself.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Exact-or-child-segment match: /book/flights matches /book, /bookmark does not.
-function matchesBase(pathname: string, base: string): boolean {
-  return pathname === base || pathname.startsWith(base + '/')
-}
-
-// Keep this an explicit allow-list. A new page is NOT protected until it is
-// added here (its data still is, by its API routes).
-const PROTECTED = ['/dashboard', '/settings', '/tmc', '/book', '/bookings', '/approvals', '/reports', '/profile', '/platform', '/trips', '/organization']
+// The signed-in pages: app/lib/navigation/protectedPaths.ts (an explicit
+// allow-list, shared with the idle sign-out).
 
 // The corporate side's own pages. TMC staff have their counterparts under /tmc
 // and belong to no client, so these render empty for them (an employee

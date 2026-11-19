@@ -9,13 +9,18 @@ import { requestMeta } from '@/app/lib/auth/request'
 // cookie survives somewhere), clears the cookie, and sends the browser to
 // /login. 303 so a form POST becomes a GET. Callers that use fetch pass
 // redirect: 'manual' and navigate themselves.
+//
+// ?reason=idle: the page signed itself out after 10 minutes without input
+// (app/components/IdleSignOut.tsx); audited as such, and the login page
+// says why.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const POST = route(async (req: NextRequest) => {
   const me = await currentUser()
-  if (me) await signOut(me, requestMeta(req))
+  const idle = req.nextUrl.searchParams.get('reason') === 'idle'
+  if (me) await signOut(me, requestMeta(req), idle ? 'idle' : 'signed_out')
 
-  const res = NextResponse.redirect(new URL('/login', req.nextUrl.origin), 303)
+  const res = NextResponse.redirect(new URL(idle ? '/login?reason=idle' : '/login', req.nextUrl.origin), 303)
   clearSessionCookie(res)
   return res
 })

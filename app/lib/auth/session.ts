@@ -29,12 +29,16 @@ import { newToken, tokenId, isToken } from './tokens'
 const SECURE = process.env.NODE_ENV === 'production'
 export const SESSION_COOKIE = SECURE ? '__Host-cbt_session' : 'cbt_session'
 
-// Idle: signed out after a day without a request. Absolute: after two weeks
-// whatever happens, so a stolen cookie has a bounded life.
-export const IDLE_SECONDS = 24 * 60 * 60
+// Idle: signed out after 10 minutes without activity (user, 2026-11-19).
+// The page signs out itself after 10 minutes without a person's input, with a
+// warning a minute before (app/components/IdleSignOut.tsx); this is the
+// server's side, for a closed tab or a sleeping machine. Absolute: after two
+// weeks whatever happens, so a stolen cookie has a bounded life.
+export const IDLE_SECONDS = 10 * 60
 export const ABSOLUTE_SECONDS = 14 * 24 * 60 * 60
-// How often a busy session writes its last_seen_at.
-const TOUCH_EVERY_SECONDS = 5 * 60
+// How often a busy session writes its last_seen_at: often enough that the
+// idle limit holds to within half a minute.
+const TOUCH_EVERY_SECONDS = 30
 
 export interface PrincipalEmployee {
   id: string

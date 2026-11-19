@@ -1,12 +1,20 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useSyncExternalStore } from 'react'
 import { useRouter } from 'next/navigation'
 import PasswordInput from '@/app/components/PasswordInput'
 import { flowStorage } from '@/app/lib/book/flowStorage'
 import { sealPassword } from '@/app/lib/auth/sealClient'
 
+// Signed out by the idle timer (app/components/IdleSignOut.tsx): /login?reason=idle.
+// Read from the address after hydration (the server renders it as false).
+const noSubscribe = () => () => {}
+function useSignedOutIdle(): boolean {
+  return useSyncExternalStore(noSubscribe, () => new URLSearchParams(window.location.search).get('reason') === 'idle', () => false)
+}
+
 export default function SignInPage() {
+  const signedOutIdle = useSignedOutIdle()
   const router = useRouter()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -186,6 +194,11 @@ export default function SignInPage() {
             <>
               <h1 style={styles.heading}>Welcome back</h1>
               <p style={styles.subheading}>Sign in to your account</p>
+              {signedOutIdle && (
+                <p style={styles.idleNote} role="status">
+                  You were signed out after 10 minutes of inactivity, to keep your account safe. Sign in again to continue.
+                </p>
+              )}
 
               <form onSubmit={handleSubmit} style={styles.form}>
                 <div style={styles.field}>
@@ -329,6 +342,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   resetSentNote: { fontSize: '13px', color: '#374151', lineHeight: '1.6', margin: '0 0 4px' },
   input: { height: '42px', padding: '0 12px', fontSize: '14px', color: '#0A0A14', backgroundColor: '#FFFFFF', border: '1px solid #D1D5DB', borderRadius: '8px', outline: 'none' },
+  idleNote: { fontSize: '13px', color: '#1E3A8A', backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: '8px', padding: '10px 12px', margin: '-16px 0 24px', lineHeight: 1.5 },
   error: { fontSize: '13px', color: '#DC2626', backgroundColor: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '6px', padding: '10px 12px', margin: 0 },
   button: { height: '42px', backgroundColor: '#000835', color: '#FFFFFF', fontSize: '14px', fontWeight: '600', border: 'none', borderRadius: '8px', cursor: 'pointer', marginTop: '4px' },
 }

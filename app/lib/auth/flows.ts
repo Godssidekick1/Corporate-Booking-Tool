@@ -134,10 +134,12 @@ export async function signIn(rawEmail: unknown, password: unknown, meta: Request
   }
 }
 
-export async function signOut(me: Principal, meta: RequestMeta): Promise<void> {
+// 'idle': the page signed itself out after 10 minutes without input
+// (app/components/IdleSignOut.tsx), recorded as such.
+export async function signOut(me: Principal, meta: RequestMeta, why: 'signed_out' | 'idle' = 'signed_out'): Promise<void> {
   await transaction(async tx => {
-    await accounts.revokeSession(tx, me.sessionId, 'signed_out')
-    await record(tx, 'auth.signout', me.id, me.id, meta)
+    await accounts.revokeSession(tx, me.sessionId, why)
+    await record(tx, why === 'idle' ? 'auth.signout_idle' : 'auth.signout', me.id, me.id, meta)
   })
 }
 

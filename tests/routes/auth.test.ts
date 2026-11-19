@@ -4,6 +4,8 @@ import { POST as signin } from '@/app/api/auth/signin/route'
 import { POST as challenge } from '@/app/api/auth/signin/challenge/route'
 import { sealSecret } from '@/app/lib/auth/sealClient'
 import { POST as signout } from '@/app/api/auth/signout/route'
+import { POST as keepalive } from '@/app/api/auth/keepalive/route'
+import { tokenId } from '@/app/lib/auth/tokens'
 import { POST as verify } from '@/app/api/auth/verify/route'
 import { POST as forgot } from '@/app/api/auth/password/forgot/route'
 import { POST as setPassword } from '@/app/api/auth/password/set/route'
@@ -174,6 +176,56 @@ d('/api/auth and the page gate', () => {
     const ended = await one<{ n: number }>(db, sql`
       select count(*)::int as n from sessions where account_id = ${person.id} and revoked_reason = 'signed_out'`)
     expect(ended.n).toBeGreaterThan(0)
+  })
+
+  // ── idle: 10 minutes (user, 2026-11-19) ─────────────────────────────────────
+
+  const seconds = (later: string, earlier: string) => (Date.parse(later) - Date.parse(earlier)) / 1000
+
+  it('idle: a new session lasts 10 minutes without activity', async () => {
+    const token = await signedIn(person)
+    const row = await one<{ created_at: string; idle_expires_at: string }>(db, sql`
+      select created_at, idle_expires_at from sessions where id = ${tokenId(token)}`)
+    expect(seconds(row.idle_expires_at, row.created_at)).toBeCloseTo(600, -1)
+  })
+
+  it('idle: activity moves the 10 minutes on; past them the session is refused', async () => {
+    const token = await signedIn(person)
+    const id = tokenId(token)
+    // Last seen two minutes ago, eight minutes left.
+    await exec(db, sql`
+      update sessions set last_seen_at = now() - interval '2 minutes', idle_expires_at = now() + interval '8 minutes'
+      where id = ${id}`)
+    expect(await principalForToken(token)).not.toBeNull()
+    const moved = await one<{ left: number }>(db, sql`
+      select extract(epoch from idle_expires_at - now())::int as left from sessions where id = ${id}`)
+    expect(moved.left).toBeGreaterThan(590)
+    expect(moved.left).toBeLessThanOrEqual(600)
+    // Past the 10 minutes: refused.
+    await exec(db, sql`update sessions set idle_expires_at = now() - interval '1 second' where id = ${id}`)
+    expect(await principalForToken(token)).toBeNull()
+  })
+
+  it('keepalive: 200 with a session (telling the page the limit), 401 without', async () => {
+    actAs(person)
+    const ok = await post(keepalive, '/api/auth/keepalive', {})
+    expect(ok.status).toBe(200)
+    expect(await ok.json()).toEqual({ ok: true, idleSeconds: 600 })
+    actAs(null)
+    expect((await post(keepalive, '/api/auth/keepalive', {})).status).toBe(401)
+  })
+
+  it('signout after idle: recorded as idle, and the login page is told why', async () => {
+    actAs(person)
+    const res = await post(signout, '/api/auth/signout?reason=idle', {})
+    expect(res.status).toBe(303)
+    expect(location(res)).toBe('/login?reason=idle')
+    const idle = await one<{ n: number }>(db, sql`
+      select count(*)::int as n from sessions where account_id = ${person.id} and revoked_reason = 'idle'`)
+    expect(idle.n).toBeGreaterThan(0)
+    const audited = await one<{ n: number }>(db, sql`
+      select count(*)::int as n from audit_log where action = 'auth.signout_idle' and user_id = ${person.id}`)
+    expect(audited.n).toBeGreaterThan(0)
   })
 
   // ── forgot / verify / set ──────────────────────────────────────────────────
