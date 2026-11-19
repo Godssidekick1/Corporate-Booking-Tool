@@ -26,6 +26,8 @@ export const PER_MINUTE = {
   csv: 10,
   // The public ticket / QR link, per IP: no sign-in in front of it.
   ticket: 60,
+  // A sealed sign-in's one-off key, per IP (app/lib/auth/sealed.ts).
+  signinChallenge: 30,
 } as const
 
 export type LimitName = keyof typeof PER_MINUTE

@@ -275,3 +275,29 @@ export async function clearAttempts(db: Queryable, key: string): Promise<void> {
 export async function pruneAttempts(db: Queryable, olderThanSeconds: number): Promise<void> {
   await exec(onSystem(db), sql`delete from auth_attempts where at < now() - make_interval(secs => ${olderThanSeconds})`)
 }
+
+// ── signin_challenges ────────────────────────────────────────────────────────
+// One-time keys for a sealed password (app/lib/auth/sealed.ts). The private
+// half is stored as a JWK and leaves only through takeChallenge, once.
+
+export async function insertChallenge(db: Queryable, privateKey: unknown, seconds: number): Promise<string> {
+  return (await one<{ id: string }>(onSystem(db), sql`
+    insert into signin_challenges (private_key, expires_at)
+    values (${JSON.stringify(privateKey)}::jsonb, now() + make_interval(secs => ${seconds}))
+    returning id`)).id
+}
+
+// Marks a live, unused challenge used and returns its private key: null when
+// it is unknown, expired or already used. One statement, so two requests
+// carrying the same challenge cannot both open it.
+export async function takeChallenge(db: Queryable, id: string): Promise<unknown | null> {
+  const row = await maybeOne<{ private_key: unknown }>(onSystem(db), sql`
+    update signin_challenges set used_at = now()
+    where id = ${id} and used_at is null and expires_at > now()
+    returning private_key`)
+  return row?.private_key ?? null
+}
+
+export async function pruneChallenges(db: Queryable): Promise<void> {
+  await exec(onSystem(db), sql`delete from signin_challenges where expires_at < now() - interval '1 hour'`)
+}

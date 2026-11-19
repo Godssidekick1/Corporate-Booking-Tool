@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest'
 import { NextRequest } from 'next/server'
 import { POST as signin } from '@/app/api/auth/signin/route'
+import { POST as challenge } from '@/app/api/auth/signin/challenge/route'
+import { sealSecret } from '@/app/lib/auth/sealClient'
 import { POST as signout } from '@/app/api/auth/signout/route'
 import { POST as verify } from '@/app/api/auth/verify/route'
 import { POST as forgot } from '@/app/api/auth/password/forgot/route'
@@ -57,6 +59,13 @@ const location = (res: Response) => {
   return to ? new URL(to).pathname + new URL(to).search : null
 }
 
+// A sign-in body as the page sends it: the password sealed to a fresh
+// challenge (app/lib/auth/sealClient.ts), never as text.
+async function creds(email: string | null | undefined, password: string): Promise<{ email: string; sealed: unknown }> {
+  const res = await post(challenge, '/api/auth/signin/challenge', {})
+  return { email: email ?? '', sealed: await sealSecret(password, email ?? '', await res.json()) }
+}
+
 async function withPassword(a: Actor, password = PASSWORD, mustChange = false): Promise<void> {
   await exec(db, sql`
     insert into accounts (id, email) values (${a.id}, ${a.email!.toLowerCase()}) on conflict do nothing`)
@@ -66,7 +75,7 @@ async function withPassword(a: Actor, password = PASSWORD, mustChange = false): 
 }
 
 async function signedIn(a: Actor): Promise<string> {
-  const res = await post(signin, '/api/auth/signin', { email: a.email, password: PASSWORD })
+  const res = await post(signin, '/api/auth/signin', await creds(a.email, PASSWORD))
   if (res.status !== 200) throw new Error(`[tests] sign-in failed: ${res.status}`)
   return cookieFrom(res)!.value
 }
@@ -87,14 +96,14 @@ d('/api/auth and the page gate', () => {
 
   it('signin: 400 without credentials, 401 on a wrong password', async () => {
     expect((await post(signin, '/api/auth/signin', {})).status).toBe(400)
-    const bad = await post(signin, '/api/auth/signin', { email: person.email, password: 'nope' })
+    const bad = await post(signin, '/api/auth/signin', await creds(person.email, 'nope'))
     expect(bad.status).toBe(401)
     expect(await bad.json()).toEqual({ error: MESSAGES.badCredentials })
     expect(cookieFrom(bad)).toBeNull()
   })
 
   it('signin: sets an HttpOnly, SameSite=Lax, path-wide session cookie that expires', async () => {
-    const res = await post(signin, '/api/auth/signin', { email: person.email, password: PASSWORD })
+    const res = await post(signin, '/api/auth/signin', await creds(person.email, PASSWORD))
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({
       ok: true, user: { id: person.id, email: person.email!.toLowerCase() }, mustChangePassword: false, destination: '/dashboard',
@@ -110,7 +119,7 @@ d('/api/auth and the page gate', () => {
   it("signin: refuses an employee of a deactivated client, and sets no cookie", async () => {
     await exec(db, sql`update clients set status = 'inactive' where id = ${person.client_id}`)
     try {
-      const res = await post(signin, '/api/auth/signin', { email: person.email, password: PASSWORD })
+      const res = await post(signin, '/api/auth/signin', await creds(person.email, PASSWORD))
       expect(res.status).toBe(403)
       expect(await res.json()).toEqual({ error: MESSAGES.inactive })
       expect(cookieFrom(res)).toBeNull()
@@ -121,30 +130,30 @@ d('/api/auth and the page gate', () => {
 
   it('signin: an admin-set password sends the person to replace it', async () => {
     await withPassword(a.corpAdmin, PASSWORD, true)
-    const res = await post(signin, '/api/auth/signin', { email: a.corpAdmin.email, password: PASSWORD })
+    const res = await post(signin, '/api/auth/signin', await creds(a.corpAdmin.email, PASSWORD))
     expect(await res.json()).toMatchObject({ mustChangePassword: true, destination: '/auth/set-password' })
     await withPassword(a.corpAdmin)
   })
 
   it('signin: too many failures is a 429', async () => {
-    for (let i = 0; i < 5; i++) await post(signin, '/api/auth/signin', { email: person.email, password: 'nope' })
-    expect((await post(signin, '/api/auth/signin', { email: person.email, password: PASSWORD })).status).toBe(429)
+    for (let i = 0; i < 5; i++) await post(signin, '/api/auth/signin', await creds(person.email, 'nope'))
+    expect((await post(signin, '/api/auth/signin', await creds(person.email, PASSWORD))).status).toBe(429)
   })
 
   // ── CSRF ───────────────────────────────────────────────────────────────────
 
   it('a write from another site is refused before the handler runs', async () => {
-    const res = await post(signin, '/api/auth/signin', { email: person.email, password: PASSWORD },
+    const res = await post(signin, '/api/auth/signin', await creds(person.email, PASSWORD),
       { 'sec-fetch-site': 'cross-site' })
     expect(res.status).toBe(403)
     expect(await res.json()).toEqual({ error: 'Cross-site request refused' })
-    const byOrigin = await post(signin, '/api/auth/signin', { email: person.email, password: PASSWORD },
+    const byOrigin = await post(signin, '/api/auth/signin', await creds(person.email, PASSWORD),
       { origin: 'https://evil.example', host: 'localhost' })
     expect(byOrigin.status).toBe(403)
     // Same origin, and a request from no browser at all, both pass.
-    expect((await post(signin, '/api/auth/signin', { email: person.email, password: PASSWORD },
+    expect((await post(signin, '/api/auth/signin', await creds(person.email, PASSWORD),
       { 'sec-fetch-site': 'same-origin' })).status).toBe(200)
-    expect((await post(signin, '/api/auth/signin', { email: person.email, password: PASSWORD },
+    expect((await post(signin, '/api/auth/signin', await creds(person.email, PASSWORD),
       { origin: 'http://localhost', host: 'localhost' })).status).toBe(200)
   })
 

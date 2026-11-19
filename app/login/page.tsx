@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import PasswordInput from '@/app/components/PasswordInput'
 import { flowStorage } from '@/app/lib/book/flowStorage'
+import { sealPassword } from '@/app/lib/auth/sealClient'
 
 export default function SignInPage() {
   const router = useRouter()
@@ -90,10 +91,21 @@ export default function SignInPage() {
     setLoading(true)
     let navigating = false
     try {
+      // The password leaves the page sealed, never as text (app/lib/auth/
+      // sealClient.ts), and the field is emptied the moment it is sealed.
+      let sealed
+      try {
+        sealed = await sealPassword(password, email)
+      } catch (sealError) {
+        setError(sealError instanceof Error ? sealError.message : 'Could not start a secure sign-in. Please try again.')
+        return
+      } finally {
+        setPassword('')
+      }
       const res = await fetch('/api/auth/signin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, sealed }),
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error || 'Sign in failed'); return }

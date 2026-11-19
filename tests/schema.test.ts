@@ -88,9 +88,9 @@ d('schema', () => {
     const policies = await rows<{ table: string; qual: string; check: string }>(`
       select tablename as table, qual, with_check as check from pg_policies
        where schemaname = 'public' and policyname = 'app_access'
-         and tablename in ('accounts', 'sessions', 'auth_tokens', 'auth_attempts', 'platform_admins', 'rate_limits')
+         and tablename in ('accounts', 'sessions', 'auth_tokens', 'auth_attempts', 'platform_admins', 'rate_limits', 'signin_challenges')
        order by 1`)
-    expect(policies.map(p => p.table)).toEqual(['accounts', 'auth_attempts', 'auth_tokens', 'platform_admins', 'rate_limits', 'sessions'])
+    expect(policies.map(p => p.table)).toEqual(['accounts', 'auth_attempts', 'auth_tokens', 'platform_admins', 'rate_limits', 'sessions', 'signin_challenges'])
     for (const p of policies) {
       expect(p.qual, p.table).toBe(`(app_scope() = 'system'::text)`)
       expect(p.check, p.table).toBe(`(app_scope() = 'system'::text)`)
