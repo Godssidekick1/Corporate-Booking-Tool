@@ -38,6 +38,12 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: __dirname,
   },
+  // A self-contained server for deployment (scripts/publish.mjs): .next/
+  // standalone holds server.js and only the node_modules it needs, so the
+  // target machine needs Node and nothing from npm. Tracing is rooted here for
+  // the same reason as Turbopack's root above.
+  output: "standalone",
+  outputFileTracingRoot: __dirname,
   poweredByHeader: false,
   // Coding agents are told about Next.js security upgrades (set by
   // `next upgrade --agent=security`, 16.4.3 → 16.4.6).

@@ -15,6 +15,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "scale": "vitest run -c vitest.scale.config.mts",
+    "release": "node scripts/publish.mjs",
     "db:app-login": "node scripts/create-app-login.mjs",
     "db:create": "node scripts/create-database.mjs",
     "db:baseline": "node scripts/capture-baseline.mjs",

@@ -62,3 +62,6 @@ tests/scale/last-run.md
 
 # demo TMC sign-ins (npm run demo:seed) -- holds a password
 demo-logins.txt
+
+# npm run publish: deployment packages (built from the last commit)
+/publish/

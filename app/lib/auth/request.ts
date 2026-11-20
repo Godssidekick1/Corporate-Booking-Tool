@@ -3,15 +3,26 @@ import type { RequestMeta } from './session'
 
 // ── Facts about the request, for sessions, throttling and the audit log ──────
 
-// The client's IP. Behind a proxy (Vercel, IIS with ARR, nginx) the socket
-// address is the proxy's, and the client's is the first X-Forwarded-For
-// entry, which that proxy sets. DEPLOYMENT REQUIREMENT: the app must only be
-// reachable through such a proxy, or a client can send its own
-// X-Forwarded-For and pick the IP it is throttled under. The per-email limits
-// do not depend on this.
+// ── The client's IP, as the proxy saw it ─────────────────────────────────────
+// DEPLOYMENT REQUIREMENT: the app is reachable only through the proxy (it
+// listens on localhost, docs/deploy-windows.md), so the last entry is always
+// the proxy's own. (Vercel replaces the header with the one address it saw:
+// first and last are the same there.) The per-email limits do not depend on
+// any of this.
+//
+// Behind a reverse proxy (IIS with ARR, docs/deploy-windows.md) the proxy
+// APPENDS the address it saw to X-Forwarded-For. Everything before that came
+// from the client and can be anything: reading the first entry (as this did)
+// let anyone send "X-Forwarded-For: <random>" and look like a new IP on every
+// sign-in attempt, slipping past the per-IP throttles. So the address is read
+// from the right, TRUSTED_PROXY_HOPS entries in (default 1: one proxy, ours).
+// ─────────────────────────────────────────────────────────────────────────────
+
 export function clientIp(req: NextRequest): string | null {
-  const forwarded = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-  return forwarded || req.headers.get('x-real-ip') || null
+  const hops = Math.max(1, Number(process.env.TRUSTED_PROXY_HOPS) || 1)
+  const chain = (req.headers.get('x-forwarded-for') ?? '').split(',').map(s => s.trim()).filter(Boolean)
+  const fromProxy = chain.length >= hops ? chain[chain.length - hops] : null
+  return fromProxy || req.headers.get('x-real-ip') || null
 }
 
 export function requestMeta(req: NextRequest): RequestMeta {
