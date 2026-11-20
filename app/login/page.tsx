@@ -4,7 +4,7 @@ import { useState, useSyncExternalStore } from 'react'
 import { useRouter } from 'next/navigation'
 import PasswordInput from '@/app/components/PasswordInput'
 import { flowStorage } from '@/app/lib/book/flowStorage'
-import { sealPassword } from '@/app/lib/auth/sealClient'
+import { sealSignIn } from '@/app/lib/auth/sealClient'
 
 // Signed out by the idle timer (app/components/IdleSignOut.tsx): /login?reason=idle.
 // Read from the address after hydration (the server renders it as false).
@@ -99,11 +99,11 @@ export default function SignInPage() {
     setLoading(true)
     let navigating = false
     try {
-      // The password leaves the page sealed, never as text (app/lib/auth/
-      // sealClient.ts), and the field is emptied the moment it is sealed.
+      // The email and password leave the page sealed together, never as text
+      // (app/lib/auth/sealClient.ts); the password field is emptied at once.
       let sealed
       try {
-        sealed = await sealPassword(password, email)
+        sealed = await sealSignIn({ email, password })
       } catch (sealError) {
         setError(sealError instanceof Error ? sealError.message : 'Could not start a secure sign-in. Please try again.')
         return
@@ -113,7 +113,7 @@ export default function SignInPage() {
       const res = await fetch('/api/auth/signin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, sealed }),
+        body: JSON.stringify({ sealed }),
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error || 'Sign in failed'); return }

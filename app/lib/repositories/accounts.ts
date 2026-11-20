@@ -277,8 +277,10 @@ export async function pruneAttempts(db: Queryable, olderThanSeconds: number): Pr
 }
 
 // ── signin_challenges ────────────────────────────────────────────────────────
-// One-time keys for a sealed password (app/lib/auth/sealed.ts). The private
-// half is stored as a JWK and leaves only through takeChallenge, once.
+// One-time keys for a sealed sign-in (app/lib/auth/sealed.ts). The private
+// half is stored as a JWK and leaves exactly once: taking a challenge DELETES
+// it, so no key outlives its use, and nothing in the database can open a
+// request captured earlier.
 
 export async function insertChallenge(db: Queryable, privateKey: unknown, seconds: number): Promise<string> {
   return (await one<{ id: string }>(onSystem(db), sql`
@@ -287,17 +289,18 @@ export async function insertChallenge(db: Queryable, privateKey: unknown, second
     returning id`)).id
 }
 
-// Marks a live, unused challenge used and returns its private key: null when
-// it is unknown, expired or already used. One statement, so two requests
-// carrying the same challenge cannot both open it.
+// Removes a live challenge and returns its private key: null when it is
+// unknown, expired or already taken. One statement, so two requests carrying
+// the same challenge cannot both open it.
 export async function takeChallenge(db: Queryable, id: string): Promise<unknown | null> {
   const row = await maybeOne<{ private_key: unknown }>(onSystem(db), sql`
-    update signin_challenges set used_at = now()
-    where id = ${id} and used_at is null and expires_at > now()
+    delete from signin_challenges where id = ${id} and expires_at > now()
     returning private_key`)
   return row?.private_key ?? null
 }
 
+// Expired challenges, used or not, go as soon as they expire: run on every
+// new challenge (an indexed delete of a handful of rows).
 export async function pruneChallenges(db: Queryable): Promise<void> {
-  await exec(onSystem(db), sql`delete from signin_challenges where expires_at < now() - interval '1 hour'`)
+  await exec(onSystem(db), sql`delete from signin_challenges where expires_at <= now()`)
 }

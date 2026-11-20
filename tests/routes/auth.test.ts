@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach } from 'vitest'
 import { NextRequest } from 'next/server'
 import { POST as signin } from '@/app/api/auth/signin/route'
 import { POST as challenge } from '@/app/api/auth/signin/challenge/route'
-import { sealSecret } from '@/app/lib/auth/sealClient'
+import { sealCredentials } from '@/app/lib/auth/sealClient'
 import { POST as signout } from '@/app/api/auth/signout/route'
 import { POST as keepalive } from '@/app/api/auth/keepalive/route'
 import { tokenId } from '@/app/lib/auth/tokens'
@@ -63,9 +63,9 @@ const location = (res: Response) => {
 
 // A sign-in body as the page sends it: the password sealed to a fresh
 // challenge (app/lib/auth/sealClient.ts), never as text.
-async function creds(email: string | null | undefined, password: string): Promise<{ email: string; sealed: unknown }> {
+async function creds(email: string | null | undefined, password: string): Promise<{ sealed: unknown }> {
   const res = await post(challenge, '/api/auth/signin/challenge', {})
-  return { email: email ?? '', sealed: await sealSecret(password, email ?? '', await res.json()) }
+  return { sealed: await sealCredentials({ email: email ?? '', password }, await res.json()) }
 }
 
 async function withPassword(a: Actor, password = PASSWORD, mustChange = false): Promise<void> {
