@@ -19,7 +19,7 @@
 //   - the packages the database scripts need (pg) are present.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { execFileSync } from 'node:child_process'
+import { execFileSync, execSync } from 'node:child_process'
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 
@@ -28,9 +28,18 @@ const label = (process.argv[2] ?? 'uat').replace(/[^a-z0-9-]/gi, '')
 const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/+$/, '')
 
 function fail(message) { console.error(`\n[publish] ${message}\n`); process.exit(1) }
+// One command line through the shell (npm is a .cmd on Windows, which needs
+// one). Only fixed text and the sanitised label ever reach it.
 function run(cmd, args, cwd, env = {}) {
-  console.log(`[publish] ${cmd} ${args.join(' ')}`)
-  execFileSync(cmd, args, { cwd, stdio: 'inherit', shell: process.platform === 'win32', env: { ...process.env, ...env } })
+  const line = [cmd, ...args].join(' ')
+  console.log(`[publish] ${line}`)
+  execSync(line, { cwd, stdio: 'inherit', env: { ...process.env, ...env } })
+}
+// The temporary checkout: unregistered from git, then its folder removed
+// (Windows can leave it behind).
+function dropWorktree(dir) {
+  try { git('worktree', 'remove', '--force', dir) } catch { /* not registered */ }
+  rmSync(dir, { recursive: true, force: true })
 }
 const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
 
@@ -49,7 +58,7 @@ const outDir = join(root, 'publish', name)
 const work = join(root, '..', `.cbt-publish-${sha}`)
 
 rmSync(outDir, { recursive: true, force: true })
-if (existsSync(work)) { try { git('worktree', 'remove', '--force', work) } catch { rmSync(work, { recursive: true, force: true }) } }
+if (existsSync(work)) dropWorktree(work)
 
 try {
   git('worktree', 'add', '--detach', work, 'HEAD')
@@ -102,5 +111,5 @@ try {
   }
   console.log(`\n[publish] Done.\n  folder  ${outDir}\n  zip     ${zip}\n  next    copy the zip to the server and follow DEPLOY.md inside it\n`)
 } finally {
-  try { git('worktree', 'remove', '--force', work) } catch { /* already gone */ }
+  dropWorktree(work)
 }

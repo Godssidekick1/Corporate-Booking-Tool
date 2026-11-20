@@ -74,6 +74,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Deployment packages (npm run release / db:update-kit): built output.
+    "publish/**",
   ]),
 ]);
 

@@ -1,121 +1,219 @@
-# Deploying on a Windows server
+# Deploying on a Windows server (IIS)
 
-What arrives: the code (this folder, without `node_modules`, `.next` or any
-`.env` file) and a database dump, `cbt-database-YYYY-MM-DD.dump`
-(PostgreSQL custom format, made with PostgreSQL 18's `pg_dump`). Sign-in
-sessions, pending invite and reset links, and sign-in attempts are not in the
-dump; everyone signs in once. Passwords carry over.
+Two steps:
 
-## 1. Install
+1. **Publish** (on a developer's machine): `npm run release` builds one
+   package, a zip, from the last commit. It holds a self-contained Node
+   server, its static files, the database migrations and the scripts that
+   apply them.
+2. **Deploy** (on the server): IIS holds the HTTPS certificate and forwards
+   every request to that Node server, which listens on `127.0.0.1:3000` and is
+   kept running by a Windows scheduled task.
 
-- **Node.js 24 LTS** (Next.js 16 needs 20.9 or later; built and tested on 24).
-  npm comes with it; nothing else is installed globally (Next.js is one of
-  the project's packages). `npm ci` downloads the packages, so the server
-  needs to reach `registry.npmjs.org` or an npm proxy
-  (`npm config set proxy http://…`).
-- **PostgreSQL 18**, or at least its client tools: a dump made by
-  `pg_dump` 18 restores only with `pg_restore` 18 or later. The server itself
-  may be 15 or later.
+The server needs **Node.js** and **IIS**. It does not need git, npm access or
+the source code.
 
-## 2. Database
+---
+
+## Part A: Publish (developer's machine)
+
+1. **Commit what is to be deployed.** The package is built from the last
+   commit only; uncommitted changes are never shipped (the script says so if
+   there are any).
+2. **Run the tests**, alone: `CI=true npx vitest run`, then `npm run lint`.
+3. **Build the package** for the environment's address. Sign-in needs HTTPS,
+   and the address is fixed into the build (links in emails, the ticket QR),
+   so each environment gets its own package:
+
+   ```powershell
+   $env:NEXT_PUBLIC_APP_URL = "https://cbt-uat.example.com"
+   npm run release -- uat
+   Remove-Item Env:NEXT_PUBLIC_APP_URL
+   ```
+
+   This takes a few minutes: it checks out the last commit in a temporary
+   folder, installs exactly what the lockfile says (`npm ci`), builds, and
+   assembles `publish\cbt-uat-<date>-<commit>\` plus a `.zip` of it. It
+   refuses to finish if the package would carry a `.env` file (secrets) or a
+   Windows link (the package would not move to another machine).
+   `VERSION.txt` inside says which commit it is and which address it is for.
+4. **Copy the zip to the server.** Build on Windows x64, the same as the
+   server: the password-hashing module is a native binary built for it.
+
+---
+
+## Part B: Deploy (the IIS server)
+
+### B1. Install once
+
+- **Node.js 24 LTS** (x64). Check: `node -v`.
+- **IIS** (the Web Server role), with these two Microsoft modules:
+  - **URL Rewrite 2.1**
+  - **Application Request Routing (ARR) 3.0**
+- **An HTTPS certificate** for the UAT address (from your internal CA or a
+  public one), imported into the machine's certificate store.
+- **PostgreSQL client tools 18**, only if a database dump is to be restored
+  here (`pg_restore`).
+
+Then, as Administrator, from the unzipped package:
 
 ```powershell
-# As the PostgreSQL superuser. The dump grants table access to cbt_app, the
-# restricted role the app is meant to run as (docs/database-roles.md);
-# create it first so those grants restore.
+powershell -ExecutionPolicy Bypass -File deploy\iis\configure-iis.ps1
+```
+
+This sets the server-wide ARR options the app needs:
+- the proxy on, keeping the browser's Host header;
+- a 3-minute timeout (airline booking calls can take 90 seconds);
+- no response buffering;
+- the client's IP in `X-Forwarded-For` without its port (the app throttles
+  sign-in attempts per IP);
+- the forwarded headers `web.config` sets.
+
+### B2. The database (first time)
+
+The app needs PostgreSQL 15 or later that the server can reach. Two ways in:
+
+**From a dump** (`cbt-database-YYYY-MM-DD.dump`, PostgreSQL custom format):
+
+```powershell
 psql -U postgres -c "create role cbt_app nologin"
 psql -U postgres -c "create database cbt"
 pg_restore -U postgres -d cbt --no-owner --exit-on-error cbt-database-YYYY-MM-DD.dump
 ```
 
-`--exit-on-error` makes any problem stop the restore instead of leaving a
-partial copy. To skip the role entirely, use `--no-privileges` instead (the
-app then has to connect as the owner).
+`cbt_app` is created first so the dump's grants restore. Sign-in sessions,
+pending invite and reset links, and sign-in attempts are not in a dump:
+everyone signs in once. Passwords carry over.
 
-**An empty database instead of a dump:** with `MIGRATE_DATABASE_URL` naming
-the owner and a database that does not exist yet, `npm run db:create` builds
-it from `schema/baseline.sql` (the schema, plus countries, regions, airports
-and airlines), creates `cbt_app` if needed, and applies any newer migration.
-No clients, people or bookings: those come only from a dump.
+**An empty database instead:** with `MIGRATE_DATABASE_URL` set (B4) and a
+database that does not exist yet, `node scripts\create-database.mjs` builds it
+from `schema\baseline.sql` (the schema plus countries, airports and
+airlines). No clients, people or bookings: those come only from a dump.
 
-## 3. Configuration
+### B3. Put the files in place
 
-Create `.env.local` in this folder (or set the same as system environment
-variables). Never commit it.
+Unzip the package to a folder of its own, for example `C:\apps\cbt\`. Do not
+unzip it inside the IIS site's folder. The site needs only `web.config`
+(next step); the app's files stay where only the service account reads them.
+
+### B4. Configuration: `.env.local`
+
+Create `.env.local` in the app folder, beside `server.js`. It holds the
+secrets. Never email it or commit it.
 
 | Variable | What |
 |---|---|
-| `DATABASE_URL` | `postgresql://user:password@host:5432/cbt` — what the app connects as |
-| `MIGRATE_DATABASE_URL` | the owner's URL, for `npm run migrate` and scripts (optional if the same) |
-| `DATABASE_CA_CERT` | the database's CA certificate itself (PEM text, on one line with `\n` for the line breaks), when the database is on another machine: the server is then verified. A server with no TLS at all: end both database URLs with `?sslmode=disable` instead |
-| `NEXT_PUBLIC_APP_URL` | the site's address, e.g. `https://cbt.example.amadeus.com` (links in emails) |
-| `AMADEUS_API_BASE_URL`, `AMADEUS_USERNAME`, `AMADEUS_PASSWORD`, `AMADEUS_CLIENT_CODE` | the flight API account |
-| `INTERNAL_API_SECRET` | a long random string; protects `/api/internal/*` (approval escalation) |
-| `MAIL_TRANSPORT`, `SMTP_URL`, `MAIL_FROM` | email. `smtp` with `SMTP_URL=smtp://user:pass@host:587` and `MAIL_FROM`; or `log` until SMTP exists (invite and reset links are then printed to the server log) |
+| `MIGRATE_DATABASE_URL` | the database owner, `postgresql://owner:password@host:5432/cbt`: for migrations and setup only |
+| `DATABASE_URL` | what the app connects as. Written by `node scripts\create-app-login.mjs` (B5): leave it out at first |
+| `DATABASE_CA_CERT` | the database's CA certificate (PEM text on one line, `\n` for line breaks) when the database is on another machine, so it is verified. A database with no TLS: end both URLs with `?sslmode=disable` instead |
+| `NEXT_PUBLIC_APP_URL` | the same HTTPS address the package was built for, e.g. `https://cbt-uat.example.com` |
+| `AMADEUS_API_BASE_URL`, `AMADEUS_USERNAME`, `AMADEUS_PASSWORD`, `AMADEUS_CLIENT_CODE` | the flight API account (the provider's test system for UAT) |
+| `INTERNAL_API_SECRET` | a long random string; protects `/api/internal/*` |
+| `MAIL_TRANSPORT`, `SMTP_URL`, `MAIL_FROM` | email: `smtp` with `SMTP_URL=smtp://user:pass@host:587` and `MAIL_FROM`; or `log` until SMTP exists (invite and reset links are then written to the server log) |
+| `TRUSTED_PROXY_HOPS` | how many proxies stand in front of the app; default 1 (IIS). Set 2 only if another proxy or load balancer adds its own entry in front of IIS |
+| `ESCALATION_SWEEP_MINUTES` / `ESCALATION_SWEEP=off` | approval escalation runs inside the server every 5 minutes; change or switch off |
 
-Start with `MIGRATE_DATABASE_URL` (the owner) and no `DATABASE_URL`:
-`npm run db:app-login` (step 4) creates the app's restricted login and writes
-`DATABASE_URL` itself (docs/database-roles.md). Special characters in a
-password (`? # / @ : %` and spaces) must be percent-encoded in the URL: `?` is
-`%3F`.
+Special characters in a password inside a URL (`? # / @ : %` and spaces)
+must be percent-encoded: `?` is `%3F`, `@` is `%40`.
 
-## 4. Build and run
+### B5. Database migrations and the app's own login
+
+From the app folder:
 
 ```powershell
-npm ci
-npm run migrate        # applies anything newer than the dump
-npm run db:app-login   # once per database: the app's own login, written into DATABASE_URL
-npm run build
-npm run start -- -p 3000
+node scripts\migrate.mjs            # applies every migration newer than the database
+node scripts\create-app-login.mjs   # once per database: the app's restricted login, written into DATABASE_URL
 ```
 
-`npm run db:app-login` sets a new password each time it runs. When more than
-one machine runs the app against the same database, run it on one and copy
-the resulting `DATABASE_URL` to the others; running it again elsewhere locks
-out the first.
+`create-app-login.mjs` sets a new password each time it runs. With more than
+one app server on one database, run it on one and copy the resulting
+`DATABASE_URL` to the others.
 
-**Once, after the first start:**
-- The dump includes the demo TMC. Its people seeded before 2026-11-05 have
-  numbers in their names, which airlines refuse. Run
-  `node scripts/demo-tmc.mjs names` once to give them letters-only names.
-- Refunds for cancelled tickets are processed under Configurations → Queues
-  → Cancellation queues. TMC admins can do it already; give a travel
-  counsellor the **Process refunds** permission under Users (TCs).
+Every release: run `node scripts\migrate.mjs` again **before** starting the
+new version. It applies only what is new and refuses an edited migration.
 
-**Serve it over HTTPS.** The sign-in cookie is `Secure` (the `__Host-`
-prefix requires it), so on plain HTTP sign-in works only on `localhost`. Put
-IIS (URL Rewrite + Application Request Routing) or another reverse proxy in
-front, terminating TLS and forwarding to `http://localhost:3000`, keeping the
-`Host` header.
+### B6. Start the app and keep it running
 
-To keep it running after sign-out and across reboots, run `npm run start` as
-a Windows service (for example with NSSM, or pm2 with pm2-windows-service).
+As Administrator, from the app folder:
 
-`GET /api/health` answers when the app and its database are up.
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy\windows\register-task.ps1
+```
 
-## 5. Nothing to schedule
+This registers a scheduled task, **CBT**, that:
+- starts the app at boot, before anyone signs in;
+- restarts it within a minute if it ever stops;
+- runs as NETWORK SERVICE, which may read the app folder, write only
+  `logs\`, and read `.env.local` (no other user can).
 
-Approval escalation (a step that waited too long passes to the approver's
-manager) runs inside the server: every 5 minutes while it is up, and once
-30 seconds after it starts, which catches up on anything that fell due while
-it was down. Several servers side by side are safe; each approval is claimed
-once.
+The app listens on `http://127.0.0.1:3000` only, so IIS is the one way in.
+Its log is `logs\server.log`.
 
-| Variable | What |
-|---|---|
-| `ESCALATION_SWEEP_MINUTES` | how often, default 5 |
-| `ESCALATION_SWEEP=off` | switch it off, for example when an external scheduler calls `npm run escalate` instead |
+Check it is up, on the server itself:
 
-## 6. Security headers
+```powershell
+Invoke-RestMethod http://127.0.0.1:3000/api/health
+```
 
-Every response carries framing, sniffing, referrer and permissions rules,
-and in production `Strict-Transport-Security` for this host (not its
-subdomains). Once a browser has seen that header it refuses plain HTTP to
-the host for a year, so turn HTTPS on before the first production visit.
+### B7. The IIS site
 
-## 7. Who can sign in
+1. In IIS Manager, add a website, for example **CBT-UAT**:
+   - **Physical path:** an empty folder such as `C:\inetpub\cbt-uat\`
+     (not the app folder).
+   - **Binding:** `https`, port 443, the UAT host name, and the certificate
+     from B1. Add an `http` port 80 binding too: `web.config` redirects it to
+     HTTPS.
+2. Copy `deploy\iis\web.config` from the package into that folder.
+3. Set the site's application pool to **No Managed Code**. IIS only forwards
+   here; it runs no .NET.
 
-Real users keep their passwords. The dump also holds the **Demo Scale TMC**
-(2,000 fake clients for trying the product at size); its sign-ins and
-password are in `demo-logins.txt`, sent separately, never in the code.
-`npm run demo:remove` deletes the whole demo TMC when it is no longer wanted.
+`web.config` sends every request to the app, keeping encoded characters in
+addresses intact (flight keys carry them), lets the app's own error
+responses through, and redirects plain HTTP to HTTPS.
+
+### B8. Check it end to end
+
+From a browser on the network:
+
+1. `https://<uat-address>/api/health` answers `ok`.
+2. `https://<uat-address>/login` shows the sign-in page, on HTTPS with no
+   certificate warning.
+3. Sign in. Sign-in works only on HTTPS: the browser seals the password before
+   sending it, and browsers allow that only on secure pages. A certificate
+   warning or plain `http://` means sign-in will say it needs a secure
+   connection.
+4. Run a search, price a fare and open a booking.
+
+Once, after the first start with a dump that includes the demo TMC:
+`node scripts\demo-tmc.mjs names` gives its seeded people letters-only names
+(airlines refuse numbers in names). `node scripts\demo-tmc.mjs remove`
+deletes the whole demo TMC when it is no longer wanted.
+
+---
+
+## Releasing a new version
+
+1. Publish a new package (Part A).
+2. On the server, unzip it to a **new** folder beside the old one, for example
+   `C:\apps\cbt-2026-11-25\`, and copy `.env.local` across.
+3. `node scripts\migrate.mjs` from the new folder.
+4. Point the task at the new folder: run `deploy\windows\register-task.ps1`
+   from it (it replaces the task and starts it).
+5. Check `/api/health`. To roll back, run the old folder's
+   `register-task.ps1`. Migrations only add, so the previous version still
+   runs on the newer database.
+
+## Good to know
+
+- **Nothing else to schedule.** Approval escalation runs inside the server
+  (every 5 minutes, and 30 seconds after start). Several app servers on one
+  database are safe; each approval is claimed once.
+- **Security headers.** Every response carries framing, sniffing, referrer and
+  permissions rules, and `Strict-Transport-Security` for this host. A browser
+  that has seen it refuses plain HTTP to the host for a year, so the site must
+  be on HTTPS before its first visit.
+- **Sessions.** Signed out after 10 minutes without activity (with a warning a
+  minute before), and after 14 days whatever happens.
+- **Logs** never carry passwords or passengers' personal details (airline
+  requests and failures are redacted). `logs\server.log` grows; archive it from
+  time to time.
