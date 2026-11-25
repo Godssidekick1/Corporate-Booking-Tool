@@ -5,7 +5,7 @@ import * as throttle from '@/app/lib/auth/throttle'
 import { setSessionCookie } from '@/app/lib/auth/session'
 import { requestMeta } from '@/app/lib/auth/request'
 import { db } from '@/app/lib/db'
-import { openSealed } from '@/app/lib/auth/sealed'
+import { openSealed, sealRefusal } from '@/app/lib/auth/sealed'
 
 // ── POST /api/auth/signin ────────────────────────────────────────────────────
 // Password sign-in. The rules live in app/lib/auth/flows.ts signIn():
@@ -38,17 +38,18 @@ export const POST = route(async (req: NextRequest) => {
   if (await throttle.limited([{ key: ipKey, limit: throttle.LIMITS.signinPerIp }])) {
     return Response.json({ error: MESSAGES.tooMany }, { status: 429 })
   }
-  const opened = await openSealed(db, body.sealed)
+  const opened = await openSealed(db, body.sealed, 'signin')
   if (!opened.ok) {
+    // Every refusal counts, an out-of-date page's too: anything exempt would be
+    // a free way to probe. One attempt for a tab left open across a release is
+    // nothing; the message tells them to refresh.
     await throttle.note(ipKey)
     return Response.json({
-      error: opened.reason === 'expired'
-        ? 'The sign-in form expired. Please try again.'
-        : 'Could not read the sign-in details. Please try again.',
-      code: 'SIGNIN_EXPIRED',
+      error: sealRefusal(opened.reason, 'sign-in'),
+      code: opened.reason === 'outdated' ? 'SIGNIN_OUTDATED' : 'SIGNIN_EXPIRED',
     }, { status: 400 })
   }
-  const result = await signIn(opened.credentials.email, opened.credentials.password, meta)
+  const result = await signIn(opened.fields.email, opened.fields.password, meta)
 
   if (!result.ok) {
     return Response.json({ error: result.error }, { status: result.status })

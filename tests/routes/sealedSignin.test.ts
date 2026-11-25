@@ -92,7 +92,8 @@ d('sealed sign-in', () => {
     const short = await seal('a1b2c3d4e5', 'a@b.co')
     const long = await seal('ॐ'.repeat(256), `${'x'.repeat(240)}@example.test`)   // the longest allowed, 3 bytes a character
     expect(short.data.length).toBe(long.data.length)
-    expect(fromBase64(short.data)).toHaveLength(1280 + 16)
+    // One size for every form since v3 (2026-11-25): room for two longest passwords.
+    expect(fromBase64(short.data)).toHaveLength(2048 + 16)
   })
 
   it('a captured request cannot be replayed, and its key is gone from the database once used', async () => {

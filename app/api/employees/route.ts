@@ -6,6 +6,7 @@ import { db, transaction, isConstraint } from '@/app/lib/db'
 import * as employees from '@/app/lib/repositories/employees'
 import * as clients from '@/app/lib/repositories/clients'
 import { route } from '@/app/lib/http/handler'
+import { openSealed, sealRefusal } from '@/app/lib/auth/sealed'
 
 // ── POST /api/employees ───────────────────────────────────────────────────────
 // Adds an employee to the admin's client. Behavior depends on the client's
@@ -35,7 +36,9 @@ interface CreateEmployeeBody {
   // 'direct'  — the admin sets a starting password here and passes it on
   //             out-of-band. No email is sent.
   method?: 'invite' | 'direct'
-  password?: string
+  // The starting password, sealed (app/lib/auth/sealed.ts, purpose
+  // 'starting-password'). A plain `password` is refused.
+  sealed?: unknown
 }
 
 // Short enough to be readable over a phone call, long enough not to be
@@ -65,14 +68,29 @@ export const POST = route(async (req: NextRequest) => {
   }
 
   const body: CreateEmployeeBody = await req.json()
-  const { email, full_name, role, band, department, cost_centre, password } = body
+  const { email, full_name, role, band, department, cost_centre } = body
   const method = body.method === 'direct' ? 'direct' : 'invite'
+
+  // Passwords travel sealed, never as text (2026-11-25), even one the admin
+  // passes on: a body logged on the way would otherwise hold it.
+  if ((body as { password?: unknown }).password !== undefined) {
+    return Response.json({ error: 'Please refresh the page and try again.', code: 'NOT_SEALED' }, { status: 400 })
+  }
 
   if (!email || !full_name || !role || !band) {
     return Response.json(
       { error: 'email, full_name, role, and band are required' },
       { status: 400 }
     )
+  }
+
+  let password: string | null = null
+  if (method === 'direct' && body.sealed) {
+    const opened = await openSealed(db, body.sealed, 'starting-password')
+    if (!opened.ok) {
+      return Response.json({ error: sealRefusal(opened.reason, 'starting password'), code: 'SEAL_REFUSED' }, { status: 400 })
+    }
+    password = opened.fields.password
   }
 
   if (method === 'direct' && (!password || password.length < MIN_INITIAL_PASSWORD)) {
@@ -124,7 +142,7 @@ export const POST = route(async (req: NextRequest) => {
       role: normalizedRole,
       department,
       costCentre: cost_centre,
-      setup: method === 'direct' ? { password: password! } : 'invite',
+      setup: method === 'direct' && password ? { password } : 'invite',
       createdBy: user.id,
     }))
 

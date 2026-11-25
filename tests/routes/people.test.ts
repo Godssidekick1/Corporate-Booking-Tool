@@ -11,6 +11,7 @@ import { call } from '../harness/call'
 import { actors, type Actors } from '../harness/actors'
 import { resetDatabase } from '../harness/db'
 import { outbox, linkIn } from '../harness/mail'
+import { sealedFor } from '../harness/seal'
 import { db } from '@/app/lib/db'
 import { sql, many, maybeOne, exec } from '@/app/lib/db/sql'
 
@@ -152,8 +153,27 @@ d('people screens', () => {
   })
 
   it('employees POST: a direct add needs a long enough starting password', async () => {
-    const res = await call(createEmployee, { as: a.corpAdmin, method: 'POST', url: '/api/employees', body: newEmployee({ method: 'direct', password: 'short' }) })
+    const res = await call(createEmployee, {
+      as: a.corpAdmin, method: 'POST', url: '/api/employees',
+      body: newEmployee({ method: 'direct', sealed: await sealedFor('starting-password', { password: 'short' }) }),
+    })
     expect(res.status).toBe(400)
+    const none = await call(createEmployee, { as: a.corpAdmin, method: 'POST', url: '/api/employees', body: newEmployee({ method: 'direct' }) })
+    expect(none.status).toBe(400)
+  })
+
+  it('employees POST: a starting password is sealed; plain text or a seal for another form is refused, and nobody is created', async () => {
+    const plain = await call(createEmployee, {
+      as: a.corpAdmin, method: 'POST', url: '/api/employees',
+      body: newEmployee({ email: 'plain@example.test', method: 'direct', password: 'long-enough-1' }),
+    })
+    expect(plain).toMatchObject({ status: 400, json: { code: 'NOT_SEALED' } })
+    const wrongForm = await call(createEmployee, {
+      as: a.corpAdmin, method: 'POST', url: '/api/employees',
+      body: newEmployee({ email: 'plain@example.test', method: 'direct', sealed: await sealedFor('signin', { email: 'x', password: 'long-enough-1' }) }),
+    })
+    expect(wrongForm).toEqual({ status: 400, json: { error: 'Could not read the starting password details. Please try again.', code: 'SEAL_REFUSED' } })
+    expect(await maybeOne(db, sql`select id from employees where email = 'plain@example.test'`)).toBeNull()
   })
 
   it('employees POST: an invite creates an INVITED employee with the band denormalised', async () => {
@@ -179,7 +199,7 @@ d('people screens', () => {
   it('employees POST: a direct add creates an ACTIVE employee', async () => {
     const res = await call(createEmployee, {
       as: a.corpAdmin, method: 'POST', url: '/api/employees',
-      body: newEmployee({ email: 'direct@example.test', method: 'direct', password: 'long-enough-1' }),
+      body: newEmployee({ email: 'direct@example.test', method: 'direct', sealed: await sealedFor('starting-password', { password: 'long-enough-1' }) }),
     })
     expect(res.status).toBe(201)
     const row = await employee((res.json as { employeeId: string }).employeeId)

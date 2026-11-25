@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import Pagination from '@/app/components/Pagination'
 import SlideOver from '@/app/components/SlideOver'
+import { sealForm, SealUnavailable } from '@/app/lib/auth/sealClient'
 import BookingHistory from '@/app/components/BookingHistory'
 import { SkeletonTable } from '@/app/components/Skeleton'
 import { usePagedList } from '@/app/hooks/usePagedList'
@@ -301,15 +302,19 @@ function AddForm({ mode, bands, onDone }: { mode: 'invite' | 'direct'; bands: Ba
     }
     setBusy(true)
     try {
+      // The starting password is sealed, never sent as text
+      // (app/lib/auth/sealClient.ts). It stays visible on this form so the
+      // admin can pass it on.
+      const { password, ...details } = form
       const body = mode === 'invite'
         ? { email: form.email, full_name: form.full_name, role: form.role, band }
-        : { ...form, band, method: 'direct' }
+        : { ...details, band, method: 'direct', sealed: await sealForm('starting-password', { password }) }
       const res = await fetch('/api/employees', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       const d = await res.json().catch(() => ({}))
       if (!res.ok) { setError(d.error || (mode === 'invite' ? 'Could not send the invite.' : 'Could not add them.')); return }
       onDone(mode === 'invite' ? `Invite sent to ${form.email}.` : `${form.full_name} added.`)
-    } catch {
-      setError('Could not reach the server. Check your connection and try again.')
+    } catch (err) {
+      setError(err instanceof SealUnavailable ? err.message : 'Could not reach the server. Check your connection and try again.')
     } finally {
       setBusy(false)
     }

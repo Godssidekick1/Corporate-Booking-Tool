@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import AuthShell, { authStyles as s } from '@/app/components/AuthShell'
 import PasswordInput from '@/app/components/PasswordInput'
+import { sealForm } from '@/app/lib/auth/sealClient'
 
 // ── /auth/set-password ───────────────────────────────────────────────────────
 // Replacing a starting password an admin chose. proxy.ts sends anyone whose
@@ -37,10 +38,19 @@ export default function SetPasswordPage() {
     setLoading(true)
     let navigating = false
     try {
+      // Both passwords leave the page sealed together, never as text
+      // (app/lib/auth/sealClient.ts).
+      let sealed
+      try {
+        sealed = await sealForm('change-password', { current, next: password })
+      } catch (sealError) {
+        setError(sealError instanceof Error ? sealError.message : 'Could not secure your password before sending it. Please try again.')
+        return
+      }
       const res = await fetch('/api/auth/password/change', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ currentPassword: current, newPassword: password }),
+        body: JSON.stringify({ sealed }),
       })
       if (res.status === 401) { navigating = true; router.replace('/login'); return }
       const data = await res.json()

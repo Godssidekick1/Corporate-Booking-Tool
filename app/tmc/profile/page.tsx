@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { PERMISSIONS } from '@/app/lib/permissions/permissionKeys'
 import PasswordInput from '@/app/components/PasswordInput'
+import { sealForm } from '@/app/lib/auth/sealClient'
 
 // ── /tmc/profile ─────────────────────────────────────────────────────────────
 // The account page for TMC-side users.
@@ -102,15 +103,21 @@ export default function TmcProfilePage() {
       // The current password is required: an open session alone must not be
       // enough to take over the account. Every other session ends; this one
       // is replaced by a fresh one, so this device stays signed in.
+      // Both passwords are sealed together, never sent as text
+      // (app/lib/auth/sealClient.ts).
+      const sealed = await sealForm('change-password', { current: currentPassword, next: password })
       const res = await fetch('/api/auth/password/change', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ currentPassword, newPassword: password }),
+        body: JSON.stringify({ sealed }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) { setError(data.error || 'Could not change your password.'); return }
       setCurrentPassword(''); setPassword(''); setConfirmPassword('')
       setSuccess('Password changed. You have been signed out everywhere else.')
+    } catch (err) {
+      // A seal that could not be made (no secure connection) or no network.
+      setError(err instanceof Error && err.message ? err.message : 'Could not change your password. Check your connection and try again.')
     } finally { setSavingPassword(false) }
   }
 

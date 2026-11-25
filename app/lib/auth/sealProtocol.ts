@@ -1,15 +1,21 @@
-// ── The sealed sign-in: what the browser and the server agree on ─────────────
+// ── Sealed passwords: what the browser and the server agree on ───────────────
 // One-time ECDH P-256 keys on both sides; the shared secret goes through HKDF
 // (SHA-256, the challenge id as salt) to an AES-256-GCM key.
 //
-// Version 2 (2026-11-20), as tight as the design allows:
-//   - BOTH the email and the password are sealed: the request shows nothing
-//     readable (emails are personal data, and a proxy logging bodies would
-//     otherwise collect them).
-//   - they are padded to one fixed size before sealing, so every sign-in is
-//     the same length and nothing about the password's length leaks;
-//   - the challenge id and version are the AES-GCM associated data: a seal
-//     opens only with its own challenge, unaltered.
+// Every form that carries a password sends it sealed, never as text (user,
+// 2026-11-19..25; PCI DSS 8.3.2): sign-in, setting a password from an invite
+// or reset link, changing a password, and an admin's starting password.
+//
+// Version 3 (2026-11-25):
+//   - each form's secrets are sealed together (sign-in: the email too; a link:
+//     its token too, since a token whose new password was refused is still
+//     usable, and a logged body must not hand it to whoever reads the log);
+//   - they are padded to one fixed size before sealing, so every seal is the
+//     same length and nothing about a password's length leaks;
+//   - the version, the PURPOSE and the challenge id are the AES-GCM associated
+//     data: a seal opens only at the form it was made for, with its own
+//     challenge, unaltered. The purpose is never sent; the server takes it
+//     from the route, so a sign-in seal presented to "change password" fails.
 // The server holds the other private key for two minutes and deletes it on
 // use (app/lib/auth/sealed.ts), so a captured request opens once, never again.
 //
@@ -18,13 +24,25 @@
 // platform's own Web Crypto.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const SEAL_VERSION = 2
-const INFO = new TextEncoder().encode('cbt-signin-seal-v2')
+export const SEAL_VERSION = 3
+const INFO = new TextEncoder().encode('cbt-seal-v3')
 export const CURVE = { name: 'ECDH', namedCurve: 'P-256' } as const
 
-// The padded size: room for the longest allowed email (254) and password
-// (256 characters, up to 3 UTF-8 bytes each) with their framing.
-export const SEALED_BYTES = 1280
+// Each form, and the fields sealed in it.
+export const SEAL_PURPOSES = {
+  signin: ['email', 'password'],
+  'set-password': ['token', 'password'],
+  'change-password': ['current', 'next'],
+  'starting-password': ['password'],
+} as const
+export type SealPurpose = keyof typeof SEAL_PURPOSES
+export type SealFields<P extends SealPurpose> = Record<(typeof SEAL_PURPOSES)[P][number], string>
+export type Credentials = SealFields<'signin'>
+
+// The padded size, one for every form: room for the largest, two passwords of
+// 256 characters (the most passwordProblem allows) at up to 3 UTF-8 bytes
+// each, with their framing.
+export const SEALED_BYTES = 2048
 
 // What the browser sends: this, and nothing else.
 export interface SealedSecret {
@@ -42,11 +60,6 @@ export interface SealChallenge {
   expiresIn: number   // seconds
 }
 
-export interface Credentials {
-  email: string
-  password: string
-}
-
 export function toBase64(bytes: ArrayBuffer | Uint8Array): string {
   const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
   let s = ''
@@ -61,16 +74,16 @@ export function fromBase64(text: string): Uint8Array<ArrayBuffer> {
   return out
 }
 
-// Bound into every seal: which challenge, which version.
-export function sealAad(challengeId: string): Uint8Array<ArrayBuffer> {
-  return new TextEncoder().encode(`v${SEAL_VERSION}:${challengeId}`)
+// Bound into every seal: which version, which form, which challenge.
+export function sealAad(purpose: SealPurpose, challengeId: string): Uint8Array<ArrayBuffer> {
+  return new TextEncoder().encode(`v${SEAL_VERSION}:${purpose}:${challengeId}`)
 }
 
-// Credentials -> exactly SEALED_BYTES: a 2-byte length, the JSON, zeros.
-// Throws when they cannot fit (only past the length limits sign-in enforces).
-export function padCredentials(c: Credentials): Uint8Array<ArrayBuffer> {
-  const json = new TextEncoder().encode(JSON.stringify({ e: c.email, p: c.password }))
-  if (json.length > SEALED_BYTES - 2) throw new Error('The email or password is too long.')
+// A form's fields -> exactly SEALED_BYTES: a 2-byte length, the JSON, zeros.
+// Throws when they cannot fit (only past the length limits the forms enforce).
+export function padFields(fields: Record<string, string>): Uint8Array<ArrayBuffer> {
+  const json = new TextEncoder().encode(JSON.stringify(fields))
+  if (json.length > SEALED_BYTES - 2) throw new Error('The details entered are too long.')
   const out = new Uint8Array(SEALED_BYTES)
   out[0] = json.length >> 8
   out[1] = json.length & 0xff
@@ -78,16 +91,22 @@ export function padCredentials(c: Credentials): Uint8Array<ArrayBuffer> {
   return out
 }
 
-// The reverse; null for anything that is not exactly what padCredentials makes.
-export function unpadCredentials(bytes: Uint8Array): Credentials | null {
+// The reverse, for one form: null for anything that is not exactly what
+// padFields makes from that form's fields (none missing, none extra, every
+// one a string).
+export function unpadFields<P extends SealPurpose>(purpose: P, bytes: Uint8Array): SealFields<P> | null {
   if (bytes.length !== SEALED_BYTES) return null
   const length = (bytes[0] << 8) | bytes[1]
   if (length < 2 || length > SEALED_BYTES - 2) return null
   for (let i = 2 + length; i < SEALED_BYTES; i++) if (bytes[i] !== 0) return null
   try {
-    const parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(2, 2 + length))) as { e?: unknown; p?: unknown }
-    if (typeof parsed.e !== 'string' || typeof parsed.p !== 'string') return null
-    return { email: parsed.e, password: parsed.p }
+    const parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(2, 2 + length))) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    const record = parsed as Record<string, unknown>
+    const keys: readonly string[] = SEAL_PURPOSES[purpose]
+    if (Object.keys(record).length !== keys.length) return null
+    if (!keys.every(k => typeof record[k] === 'string')) return null
+    return record as SealFields<P>
   } catch {
     return null
   }

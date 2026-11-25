@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach } from 'vitest'
 import { NextRequest } from 'next/server'
 import { POST as signin } from '@/app/api/auth/signin/route'
 import { POST as challenge } from '@/app/api/auth/signin/challenge/route'
-import { sealCredentials } from '@/app/lib/auth/sealClient'
+import { sealCredentials, sealFields } from '@/app/lib/auth/sealClient'
 import { POST as signout } from '@/app/api/auth/signout/route'
 import { POST as keepalive } from '@/app/api/auth/keepalive/route'
 import { tokenId } from '@/app/lib/auth/tokens'
@@ -22,6 +22,7 @@ import { actAs } from '../harness/session'
 import { actors, type Actors, type Actor } from '../harness/actors'
 import { resetDatabase } from '../harness/db'
 import { outbox, linkIn } from '../harness/mail'
+import { sealedFor, freshChallenge } from '../harness/seal'
 
 // ── The auth endpoints and the page gate, over HTTP shapes ───────────────────
 // tests/auth/flows.test.ts proves the rules. This proves what a browser sees:
@@ -247,10 +248,10 @@ d('/api/auth and the page gate', () => {
     // Still good after being looked at, as many times as a scanner likes.
     expect((await post(verify, '/api/auth/verify', { token })).status).toBe(200)
 
-    const weak = await post(setPassword, '/api/auth/password/set', { token, password: 'password1' })
+    const weak = await post(setPassword, '/api/auth/password/set', { sealed: await sealedFor('set-password', { token, password: 'password1' }) })
     expect(weak.status).toBe(400)
 
-    const done = await post(setPassword, '/api/auth/password/set', { token, password: 'a brand new passphrase' })
+    const done = await post(setPassword, '/api/auth/password/set', { sealed: await sealedFor('set-password', { token, password: 'a brand new passphrase' }) })
     expect(done.status).toBe(200)
     expect(await done.json()).toEqual({ ok: true, destination: '/dashboard' })
     expect(await principalForToken(cookieFrom(done)!.value)).toMatchObject({ id: person.id })
@@ -273,15 +274,67 @@ d('/api/auth and the page gate', () => {
     expect((await call(changePassword, { method: 'POST', url: '/api/auth/password/change', body: {} })).status).toBe(401)
     expect(await call(changePassword, {
       as: person, method: 'POST', url: '/api/auth/password/change',
-      body: { currentPassword: 'wrong', newPassword: 'a whole new passphrase' },
+      body: { sealed: await sealedFor('change-password', { current: 'wrong', next: 'a whole new passphrase' }) },
     })).toEqual({ status: 403, json: { error: MESSAGES.wrongCurrent } })
 
     actAs(person)
     const res = await post(changePassword, '/api/auth/password/change',
-      { currentPassword: PASSWORD, newPassword: 'a whole new passphrase' })
+      { sealed: await sealedFor('change-password', { current: PASSWORD, next: 'a whole new passphrase' }) })
     expect(res.status).toBe(200)
     expect(cookieFrom(res)!.value).toMatch(/^[A-Za-z0-9_-]{43}$/)
     await withPassword(person)
+  })
+
+  // ── Every password form is sealed (2026-11-25; PCI DSS 8.3.2) ──────────────
+
+  it('set: plain text is refused, the body shows neither token nor password, and the link survives a bad attempt', async () => {
+    await post(forgot, '/api/auth/password/forgot', { email: person.email })
+    const { token } = linkIn(outbox.at(-1)!)
+    const NEW = 'a brand new passphrase'
+
+    const plain = await post(setPassword, '/api/auth/password/set', { token, password: NEW })
+    expect(plain.status).toBe(400)
+    expect(await plain.json()).toMatchObject({ ok: false, code: 'NOT_SEALED' })
+
+    // A sign-in seal at this form does not open (the form is bound into the seal).
+    const wrongForm = await post(setPassword, '/api/auth/password/set',
+      { sealed: await sealedFor('signin', { email: token, password: NEW }) })
+    expect(wrongForm.status).toBe(400)
+    expect(await wrongForm.json()).toMatchObject({ ok: false, code: 'SEAL_REFUSED', error: 'Could not read the password details. Please try again.' })
+    // Even with exactly this form's fields: sealed as another form, it does not
+    // open. (The form's name is in the seal's associated data, not only its fields.)
+    const relabelled = await sealFields('signin', { token, password: NEW } as never, await freshChallenge())
+    expect((await post(setPassword, '/api/auth/password/set', { sealed: relabelled })).status).toBe(400)
+    expect((await post(verify, '/api/auth/verify', { token })).status).toBe(200)   // not spent by any of them
+
+    const sealed = await sealedFor('set-password', { token, password: NEW })
+    const body = JSON.stringify({ sealed })
+    for (const secret of [token, NEW]) {
+      expect(body).not.toContain(secret)
+      expect(body).not.toContain(Buffer.from(secret).toString('base64'))
+    }
+    expect((await post(setPassword, '/api/auth/password/set', { sealed })).status).toBe(200)
+    // Captured and sent again: its key is gone.
+    const replay = await post(setPassword, '/api/auth/password/set', { sealed })
+    expect(await replay.json()).toMatchObject({ ok: false, error: 'The password form expired. Please try again.' })
+    await withPassword(person)
+  })
+
+  it('change: plain text is refused, a seal for another form does not open, and a page from an older release is told to refresh', async () => {
+    const asPerson = (body: unknown) => call(changePassword, { as: person, method: 'POST', url: '/api/auth/password/change', body })
+
+    const plain = await asPerson({ currentPassword: PASSWORD, newPassword: 'a whole new passphrase' })
+    expect(plain).toMatchObject({ status: 400, json: { code: 'NOT_SEALED' } })
+
+    const wrongForm = await asPerson({ sealed: await sealedFor('set-password', { token: PASSWORD, password: 'a whole new passphrase' }) })
+    expect(wrongForm).toMatchObject({ status: 400, json: { code: 'SEAL_REFUSED' } })
+
+    const sealed = await sealedFor('change-password', { current: PASSWORD, next: 'a whole new passphrase' })
+    const old = await asPerson({ sealed: { ...sealed, v: 2 } })
+    expect(old).toEqual({ status: 400, json: { error: 'This page is out of date. Please refresh it and try again.', code: 'SEAL_REFUSED' } })
+
+    // The password is unchanged by all of that.
+    expect((await post(signin, '/api/auth/signin', await creds(person.email, PASSWORD))).status).toBe(200)
   })
 
   // ── Any route, deactivated mid-session (finding 1) ─────────────────────────

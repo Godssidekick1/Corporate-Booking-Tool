@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import AuthShell, { authStyles as s } from '@/app/components/AuthShell'
 import PasswordInput from '@/app/components/PasswordInput'
+import { sealForm } from '@/app/lib/auth/sealClient'
 
 // ── /auth/confirm ────────────────────────────────────────────────────────────
 // Where invite and password-reset links land:
@@ -85,10 +86,19 @@ export default function AuthConfirmPage() {
     setSaving(true)
     let navigating = false
     try {
+      // The link's token and the new password leave the page sealed together,
+      // never as text (app/lib/auth/sealClient.ts).
+      let sealed
+      try {
+        sealed = await sealForm('set-password', { token: state.token, password })
+      } catch (sealError) {
+        setError(sealError instanceof Error ? sealError.message : 'Could not secure your password before sending it. Please try again.')
+        return
+      }
       const res = await fetch('/api/auth/password/set', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: state.token, password }),
+        body: JSON.stringify({ sealed }),
       })
       const data = await res.json()
       if (!data.ok) { setError(data.error || 'Something went wrong. Please try again.'); return }
