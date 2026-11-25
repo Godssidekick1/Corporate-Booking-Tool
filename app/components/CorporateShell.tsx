@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
+import { loadMe } from '@/app/hooks/useMe'
 import AppShell from '@/app/components/AppShell'
 import { corporateNav } from '@/app/lib/navigation/corporateNav'
 
@@ -32,8 +33,10 @@ export default function CorporateShell({ children }: { children: React.ReactNode
 
   useEffect(() => {
     let cancelled = false
-    fetch('/api/me').then(r => r.json()).then(d => {
-      if (cancelled || !d.ok) return
+    // The page's one shared /api/me answer (app/hooks/useMe.ts).
+    loadMe().then(answer => {
+      const d = answer as (Me & { ok?: boolean; isApprover?: boolean }) | null
+      if (cancelled || !d?.ok) return
       setMe(d)
       if (d.isApprover) {
         fetch('/api/approvals?summary=1').then(r => r.json())

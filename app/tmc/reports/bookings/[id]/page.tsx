@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import type React from 'react'
+import { SkeletonHeader, SkeletonRecord } from '@/app/components/Skeleton'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import AirlineMark from '@/app/components/AirlineMark'
@@ -133,7 +134,7 @@ export default function DeskBookingPage() {
 
   const back = <Link href="/tmc/reports?report=bookings" style={s.linkBtn}>← Bookings report</Link>
   if (error) return <main className="page-frame">{back}<p style={{ ...s.errorBanner, marginTop: 12 }}>{error}</p></main>
-  if (!booking) return <main className="page-frame">{back}<p style={s.hint}>Loading the booking…</p></main>
+  if (!booking) return <main className="page-frame">{back}<div style={{ marginTop: 16 }}><SkeletonHeader /><SkeletonRecord /></div></main>
 
   const it = booking.itinerary
   const journeys: Journey[] = it?.journeys?.length ? it.journeys : it ? [it] : []

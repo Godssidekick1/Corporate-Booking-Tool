@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useMe } from './useMe'
 
 // ── useCanSelfBook ───────────────────────────────────────────────────────────
 // Whether the signed-in person may book travel for themselves: false at a
@@ -8,20 +8,13 @@ import { useEffect, useState } from 'react'
 // rule clientGates.selfBooking enforces on every booking route).
 //
 // null until known. Callers render booking actions only on `true`, so a CBT
-// user never sees a button flash up that the server would then refuse.
+// user never sees a button flash up that the server would then refuse. Reads
+// the page's one shared /api/me answer (./useMe).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function useCanSelfBook(): boolean | null {
-  const [canSelfBook, setCanSelfBook] = useState<boolean | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    fetch('/api/me')
-      .then(r => r.json())
-      .then(d => { if (!cancelled) setCanSelfBook(d.canSelfBook !== false) })
-      .catch(() => { if (!cancelled) setCanSelfBook(true) })
-    return () => { cancelled = true }
-  }, [])
-
-  return canSelfBook
+  const me = useMe()
+  if (me === undefined) return null
+  // Unreadable: allow, as before; the server still refuses a booking it should.
+  return me?.canSelfBook !== false
 }

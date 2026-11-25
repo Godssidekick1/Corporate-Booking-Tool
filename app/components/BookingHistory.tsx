@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import Pagination from '@/app/components/Pagination'
+import { SkeletonTable } from '@/app/components/Skeleton'
 import { usePagedList } from '@/app/hooks/usePagedList'
 
 // ── Booking history (GET /api/book/history) ──────────────────────────────────
@@ -46,7 +47,7 @@ export default function BookingHistory({ params, columns, empty, rowHref }: {
         {list.error ? (
           <p style={s.error}>{list.error}</p>
         ) : list.loading ? (
-          <p style={s.muted}>Loading…</p>
+          <SkeletonTable rows={4} cols={5} />
         ) : list.items.length === 0 ? (
           <p style={s.muted}>{empty}</p>
         ) : (

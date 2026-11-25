@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { SkeletonForm, SkeletonLines } from '@/app/components/Skeleton'
 import SearchableSelect from '@/app/components/SearchableSelect'
 import { useLookup, clientOption } from '@/app/hooks/useLookup'
 import Tabs, { useUrlTab } from '@/app/components/Tabs'
@@ -553,7 +554,7 @@ export default function TmcPolicyPage() {
             />
 
             {loadingGroups ? (
-              <p style={s.muted}>Loading groups…</p>
+              <SkeletonLines lines={5} />
             ) : groups.length === 0 ? (
               <div style={s.emptyGroups}>
                 <p style={s.emptyTitle}>{search ? 'No groups match that search' : 'No policy groups yet'}</p>
@@ -670,10 +671,7 @@ export default function TmcPolicyPage() {
               )}
 
               {loadingRules ? (
-                <div style={s.loadingRules}>
-                  <div style={s.spinner} />
-                  <p style={s.muted}>Loading rules…</p>
-                </div>
+                <SkeletonForm fields={6} columns={2} />
               ) : (
                 <PolicyAccordion
                   grid={grid}
@@ -750,7 +748,7 @@ export default function TmcPolicyPage() {
               </div>
 
               {loadingLinks ? (
-                <p style={s.muted}>Loading linked groups…</p>
+                <SkeletonLines lines={3} />
               ) : links.length === 0 ? (
                 <div style={s.emptyGroups}>
                   <p style={s.emptyTitle}>No policy groups linked</p>

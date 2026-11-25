@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { SkeletonHeader, SkeletonTabs, SkeletonRecord } from '@/app/components/Skeleton'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import CountryDropdown from '@/app/components/CountryDropdown'
@@ -183,7 +184,7 @@ export default function CorporateSettingsPage() {
     setResetNote(d.message)
   }
 
-  if (loading) return <div className="page-frame medium" style={s.root}><p style={s.muted}>Loading…</p></div>
+  if (loading) return <div className="page-frame medium" style={s.root}><SkeletonHeader /><SkeletonTabs count={6} /><SkeletonRecord /></div>
   if (!client) return <div className="page-frame medium" style={s.root}><p style={s.error}>{error || 'Client not found.'}</p></div>
 
   const offCount = [

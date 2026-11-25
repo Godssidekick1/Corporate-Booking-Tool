@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useCanSelfBook } from '@/app/hooks/useCanSelfBook'
+import { useMe } from '@/app/hooks/useMe'
+import { Skeleton, SkeletonCards } from '@/app/components/Skeleton'
 import TripList from '@/app/components/trips/TripList'
 import TripForm from '@/app/components/trips/TripForm'
 
@@ -27,13 +28,27 @@ import TripForm from '@/app/components/trips/TripForm'
 
 export default function MyTripsPage() {
   const router = useRouter()
-  const canSelfBook = useCanSelfBook()
-  const [isAdmin, setIsAdmin] = useState(false)
+  // Who is signed in decides the subtitle, the buttons and the admin tabs.
+  // Until that one answer is in, the page shows its placeholder rather than
+  // putting itself together piece by piece (item 6, 2026-11-25).
+  const me = useMe()
+  const known = me !== undefined
+  const canSelfBook = known ? me?.canSelfBook !== false : null
+  const isAdmin = me?.employee?.role === 'admin'
   const [tab, setTab] = useState<'mine' | 'others'>('mine')
   const [formOpen, setFormOpen] = useState(false)
-  useEffect(() => {
-    fetch('/api/me').then(r => r.json()).then(d => setIsAdmin(d.employee?.role === 'admin')).catch(() => {})
-  }, [])
+
+  if (!known) {
+    return (
+      <div style={s.page}>
+        <div className="page-frame narrow" style={s.root}>
+          <h1 style={s.heading}>My trips</h1>
+          <Skeleton className="mb-5 mt-2 h-3 w-80 max-w-full" />
+          <SkeletonCards count={4} />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div style={s.page}>

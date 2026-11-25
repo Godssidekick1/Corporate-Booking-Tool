@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import { SkeletonTable } from '@/app/components/Skeleton'
 import CountryDropdown from '@/app/components/CountryDropdown'
 import StateDropdown from '@/app/components/StateDropdown'
 import CityDropdown from '@/app/components/CityDropdown'
@@ -136,7 +137,7 @@ export default function GstTab({ clientId, onCount }: {
       {error && <div style={s.errorBanner}>{error}</div>}
 
       {loading ? (
-        <p style={s.hint}>Loading…</p>
+        <SkeletonTable rows={3} cols={4} />
       ) : rows.length === 0 ? (
         <p style={s.hint}>No registrations on file. Invoices will have no GSTIN to quote.</p>
       ) : (

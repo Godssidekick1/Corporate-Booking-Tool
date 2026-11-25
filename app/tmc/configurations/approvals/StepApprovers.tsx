@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { SkeletonLines } from '@/app/components/Skeleton'
 import { PersonPicker } from './DirectChain'
 import { STEP_CONDITION_LABEL } from '@/app/lib/policy/verdictLabels'
 
@@ -149,7 +150,7 @@ export default function StepApprovers({ clientId, templateId, steps }: Props) {
   // owner of a client was counted as a misconfiguration.
   const usesManagerStep = steps.some(s => byTier.get(s.tier)?.approver_type === 'manager')
 
-  if (loading) return <p style={s.muted}>Loading approvers…</p>
+  if (loading) return <SkeletonLines lines={3} />
 
   return (
     <div style={s.wrap}>

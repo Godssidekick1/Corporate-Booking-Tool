@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { SkeletonTable } from '@/app/components/Skeleton'
 import SearchableSelect from '@/app/components/SearchableSelect'
 import { useLookup, clientOption } from '@/app/hooks/useLookup'
 import Tabs, { useUrlTab } from '@/app/components/Tabs'
@@ -139,7 +140,7 @@ export default function TmcApprovalsPage() {
       {success && <div style={s.successBanner}><span style={s.icon}>✓</span> {success}</div>}
 
       {loading ? (
-        <p style={s.muted}>Loading…</p>
+        <SkeletonTable rows={5} cols={4} />
       ) : mode === 'direct' ? (
         <DirectChain />
       ) : mode === 'template' ? (
@@ -637,7 +638,7 @@ function AppliesTo({ clientId, category, templateId, onError, onSuccess }: {
       )}
 
       {loading ? (
-        <p style={s.muted}>Loading roster…</p>
+        <SkeletonTable rows={6} cols={4} />
       ) : (
         <div style={s.tableWrap}>
           <table style={s.table}>

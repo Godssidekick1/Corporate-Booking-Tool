@@ -117,6 +117,12 @@ html { background: var(--color-canvas); --full-height: 100vh; }
   to { transform: rotate(360deg); }
 }
 
+/* The status screens' flight path (app/components/StatusScreen.tsx): the
+   dashes march along the route, slowly. */
+@keyframes route-dash {
+  to { stroke-dashoffset: -28; }
+}
+
 /* Skeleton shimmer. A moving highlight reads as "loading" where a flat grey
    block reads as "broken layout". */
 @keyframes shimmer {

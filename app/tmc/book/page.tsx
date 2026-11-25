@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { SkeletonForm } from '@/app/components/Skeleton'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import SearchableSelect from '@/app/components/SearchableSelect'
@@ -240,7 +241,7 @@ export default function TmcBookPage() {
             <button type="button" onClick={() => { setDetailError(''); setDetailKey(k => k + 1) }} style={s.retryBtn}>Try again</button>
           </p>
         )}
-        {!detailError && travellerId && !shown && <p style={s.muted}>Loading their profile…</p>}
+        {!detailError && travellerId && !shown && <SkeletonForm fields={4} columns={2} />}
 
         {shown && (
           <div style={s.person}>

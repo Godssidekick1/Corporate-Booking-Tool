@@ -5,6 +5,22 @@ import type React from 'react'
 import { usePagedList } from '@/app/hooks/usePagedList'
 import Pagination from '@/app/components/Pagination'
 import { ListHeader, list } from '@/app/components/config/ListPage'
+import { Skeleton } from '@/app/components/Skeleton'
+
+// The chart's shape while it loads: the chain above, the person, their reports.
+function OrgChartSkeleton() {
+  return (
+    <div role="status" aria-label="Loading the organization">
+      <div style={{ maxWidth: 560, margin: '8px auto 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+        <Skeleton style={{ height: 48, width: 256, borderRadius: 10 }} />
+        <Skeleton style={{ height: 112, width: '100%', borderRadius: 14 }} />
+      </div>
+      <div style={{ marginTop: 24, display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))' }}>
+        {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} style={{ height: 80, borderRadius: 12 }} />)}
+      </div>
+    </div>
+  )
+}
 
 // ── /organization ────────────────────────────────────────────────────────────
 // Who reports to whom, for everyone at the company, after Microsoft Teams'
@@ -155,7 +171,7 @@ export default function OrganizationPage() {
       {showUnassigned && view?.unassigned !== undefined && <Unassigned onPick={goTo} />}
 
       {error && <p style={list.errorBanner}>{error}</p>}
-      {!view && loading && <p style={list.muted}>Loading…</p>}
+      {!view && loading && <OrgChartSkeleton />}
 
       {view && (
         <div style={{ ...stage, opacity: loading ? 0.55 : 1 }}>

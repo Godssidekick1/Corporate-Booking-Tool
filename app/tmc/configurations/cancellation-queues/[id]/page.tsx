@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type React from 'react'
+import { SkeletonHeader, SkeletonRecord } from '@/app/components/Skeleton'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import {
@@ -173,7 +174,7 @@ export default function RefundPanelPage() {
   }
 
   if (loadError) return <div style={s.root}><p style={s.errorBanner}>{loadError}</p><Back /></div>
-  if (!data || !live.c) return <div style={s.root}><p style={s.hint}>Loading…</p></div>
+  if (!data || !live.c) return <div style={s.root}><SkeletonHeader /><SkeletonRecord /></div>
 
   const { refund, ticket } = data
   const c = live.c

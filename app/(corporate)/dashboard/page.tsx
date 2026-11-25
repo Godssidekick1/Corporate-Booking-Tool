@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import DashboardLoading from './loading'
 import { useRouter } from 'next/navigation'
 import { BarSeries } from '@/app/components/charts/Bars'
 
@@ -472,17 +473,9 @@ function EmptyState({ icon, title, desc, cta, ctaHref }: {
   )
 }
 
-function LoadingScreen() {
-  return (
-    <div style={{
-      minHeight: '100vh', display: 'flex',
-      alignItems: 'center', justifyContent: 'center',
-      background: '#F7F8FC', fontFamily: "'Inter', sans-serif",
-    }}>
-      <p style={{ fontSize: '13px', color: '#9CA3AF' }}>Loading…</p>
-    </div>
-  )
-}
+// The same placeholder Next shows while navigating here (./loading.tsx), so
+// the screen does not go skeleton -> "Loading…" -> dashboard.
+const LoadingScreen = DashboardLoading
 
 function getGreeting() {
   const h = new Date().getHours()

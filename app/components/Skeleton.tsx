@@ -68,3 +68,82 @@ export function SkeletonHeader() {
     </div>
   )
 }
+
+// A row of tab pills, for pages that open on tabs (reports, trips).
+export function SkeletonTabs({ count = 4 }: { count?: number }) {
+  return (
+    <div className="mb-5 flex gap-2">
+      {Array.from({ length: count }).map((_, i) => (
+        <Skeleton key={i} className="h-8 rounded-full" style={{ width: 84 + ((i * 23) % 40) }} />
+      ))}
+    </div>
+  )
+}
+
+// A card of labelled fields: a form or a profile.
+export function SkeletonForm({ fields = 4, columns = 1 }: { fields?: number; columns?: 1 | 2 }) {
+  return (
+    <div className="rounded-[12px] border border-line bg-surface p-5">
+      <Skeleton className="h-3.5 w-40" />
+      <div className="mt-5 grid gap-4" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
+        {Array.from({ length: fields }).map((_, i) => (
+          <div key={i}>
+            <Skeleton className="h-2.5" style={{ width: 70 + ((i * 17) % 50) }} />
+            <Skeleton className="mt-2 h-9 w-full" style={{ borderRadius: 8 }} />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// Stacked cards: trips, flights, people.
+export function SkeletonCards({ count = 3 }: { count?: number }) {
+  return (
+    <div className="flex flex-col gap-3">
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className="rounded-[12px] border border-line bg-surface p-4">
+          <div className="flex items-center justify-between gap-4">
+            <Skeleton className="h-3.5" style={{ width: `${34 + ((i * 11) % 18)}%` }} />
+            <Skeleton className="h-5 w-16 rounded-full" />
+          </div>
+          <Skeleton className="mt-3 h-2.5" style={{ width: `${52 + ((i * 7) % 20)}%` }} />
+          <Skeleton className="mt-2 h-2.5 w-1/3" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// One record: a main column of sections and a narrow side column.
+export function SkeletonRecord() {
+  return (
+    // Side by side when there is room; stacked on a phone.
+    <div className="flex flex-wrap items-start gap-4">
+      <div className="flex flex-col gap-4" style={{ flex: '2 1 480px', minWidth: 0 }}>
+        <SkeletonForm fields={4} columns={2} />
+        <SkeletonForm fields={2} />
+      </div>
+      <div className="rounded-[12px] border border-line bg-surface p-5" style={{ flex: '1 1 240px', minWidth: 0 }}>
+        <Skeleton className="h-3.5 w-28" />
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} className="mt-4 flex justify-between gap-4">
+            <Skeleton className="h-2.5 w-20" />
+            <Skeleton className="h-2.5" style={{ width: 40 + ((i * 13) % 30) }} />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// A few short lines in place, for a small panel inside a page.
+export function SkeletonLines({ lines = 3 }: { lines?: number }) {
+  return (
+    <div className="flex flex-col gap-2.5 py-1" aria-label="Loading" role="status">
+      {Array.from({ length: lines }).map((_, i) => (
+        <Skeleton key={i} className="h-3" style={{ width: `${60 + ((i * 17) % 35)}%` }} />
+      ))}
+    </div>
+  )
+}

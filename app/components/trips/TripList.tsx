@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import Pagination from '@/app/components/Pagination'
+import { SkeletonCards } from '@/app/components/Skeleton'
 import TripCard, { FlightRow, type TripCardTrip, type TripCardFlight } from './TripCard'
 
 // ── TripList ─────────────────────────────────────────────────────────────────
@@ -95,7 +96,8 @@ export default function TripList({
   }
 
   if (error) return <div style={s.errorCard}>⚠ {error}</div>
-  if (!groups) return <div style={s.loading}><div style={s.spinner} /></div>
+  // The same cards the page shows before this list mounts: no spinner between.
+  if (!groups) return <SkeletonCards count={4} />
 
   if (groups.length === 0 && ungrouped.length === 0) {
     return (
