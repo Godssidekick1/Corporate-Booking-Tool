@@ -12,8 +12,10 @@ import { randomBytes } from 'node:crypto'
 //   SCALE_CLIENTS=50000 npm run scale   any size from tests/scale/seed.ts
 // ─────────────────────────────────────────────────────────────────────────────
 
-const envPath = fileURLToPath(new URL('./.env.local', import.meta.url))
-if (existsSync(envPath)) {
+// .env.test.local (tests-only settings) first, then .env.local; see vitest.config.mts.
+for (const name of ['./.env.test.local', './.env.local']) {
+  const envPath = fileURLToPath(new URL(name, import.meta.url))
+  if (!existsSync(envPath)) continue
   for (const line of readFileSync(envPath, 'utf8').split(/\r?\n/)) {
     const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/i)
     if (!match || process.env[match[1]] !== undefined) continue
@@ -36,7 +38,7 @@ if (!process.env.ALLOW_REMOTE_TEST_DATABASE) {
   let host = ''
   try { host = new URL(devUrl).hostname } catch { /* reported by the pool */ }
   if (host && !['localhost', '127.0.0.1', '::1', '[::1]'].includes(host)) {
-    throw new Error(`[scale] refusing to create cbt_scale on ${host}. Set TEST_OWNER_DATABASE_URL to a local owner.`)
+    throw new Error(`[scale] refusing to create cbt_scale on ${host}. Set TEST_OWNER_DATABASE_URL in .env.test.local to a local owner.`)
   }
 }
 

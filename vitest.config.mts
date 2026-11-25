@@ -11,8 +11,13 @@ import { randomBytes } from 'node:crypto'
 // Parsed rather than pulled in via dotenv: it is fifteen lines of KEY=value and
 // a dependency for that is not worth it. Existing values win, so a variable set
 // on the command line still overrides the file.
-const envPath = fileURLToPath(new URL('./.env.local', import.meta.url))
-if (existsSync(envPath)) {
+//
+// .env.test.local first (2026-11-25): settings for the tests alone, such as
+// TEST_OWNER_DATABASE_URL, kept out of .env.local, which is the file a
+// deployment uses. Read first, so its values win over .env.local's.
+for (const name of ['./.env.test.local', './.env.local']) {
+  const envPath = fileURLToPath(new URL(name, import.meta.url))
+  if (!existsSync(envPath)) continue
   for (const line of readFileSync(envPath, 'utf8').split(/\r?\n/)) {
     const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/i)
     if (!match) continue
@@ -55,7 +60,7 @@ if (devUrl && !process.env.ALLOW_REMOTE_TEST_DATABASE) {
   try { host = new URL(devUrl).hostname } catch { /* reported by the pool */ }
   if (host && !['localhost', '127.0.0.1', '::1', '[::1]'].includes(host)) {
     throw new Error(`[tests] refusing to create test databases on ${host}. ` +
-      'Set TEST_OWNER_DATABASE_URL in .env.local to the owner of a local PostgreSQL ' +
+      'Set TEST_OWNER_DATABASE_URL in .env.test.local to the owner of a local PostgreSQL ' +
       '(or ALLOW_REMOTE_TEST_DATABASE=1 if that server is meant for tests).')
   }
 }

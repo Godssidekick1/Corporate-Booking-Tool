@@ -33,18 +33,21 @@ const MIGRATIONS = join(process.cwd(), 'db', 'migrations')
 
 function envValue(name) {
   if (process.env[name]) return process.env[name]
-  const envPath = join(process.cwd(), '.env.local')
-  if (!existsSync(envPath)) return undefined
-  for (const line of readFileSync(envPath, 'utf8').split(/\r?\n/)) {
-    const m = line.match(new RegExp(`^\\s*${name}\\s*=\\s*(.*)\\s*$`))
-    if (m) return m[1].replace(/^["']|["']$/g, '')
+  // .env.test.local (tests-only settings) first, then .env.local.
+  for (const file of ['.env.test.local', '.env.local']) {
+    const envPath = join(process.cwd(), file)
+    if (!existsSync(envPath)) continue
+    for (const line of readFileSync(envPath, 'utf8').split(/\r?\n/)) {
+      const m = line.match(new RegExp(`^\\s*${name}\\s*=\\s*(.*)\\s*$`))
+      if (m) return m[1].replace(/^["']|["']$/g, '')
+    }
   }
   return undefined
 }
 
 const url = process.argv[2] ?? envValue('TEST_OWNER_DATABASE_URL') ?? envValue('MIGRATE_DATABASE_URL') ?? envValue('DATABASE_URL')
 if (!url) {
-  console.error('[baseline] no database: pass a URL or set TEST_OWNER_DATABASE_URL in .env.local')
+  console.error('[baseline] no database: pass a URL or set TEST_OWNER_DATABASE_URL in .env.test.local')
   process.exit(1)
 }
 let target

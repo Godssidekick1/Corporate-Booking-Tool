@@ -31,9 +31,11 @@ function baseUrl() {
   // The owner's URL when the app itself runs as a restricted login
   // (MIGRATE_DATABASE_URL, docs/database-roles.md); otherwise DATABASE_URL.
   // TEST_OWNER_DATABASE_URL first: the template is for the local test suite.
+  // .env.local, then .env.test.local (tests-only settings), which wins.
   const fromFile = {}
-  const envPath = join(process.cwd(), '.env.local')
-  if (existsSync(envPath)) {
+  for (const name of ['.env.local', '.env.test.local']) {
+    const envPath = join(process.cwd(), name)
+    if (!existsSync(envPath)) continue
     for (const line of readFileSync(envPath, 'utf8').split(/\r?\n/)) {
       const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/i)
       if (m) fromFile[m[1]] = m[2].replace(/^["']|["']$/g, '')
