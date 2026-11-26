@@ -107,7 +107,7 @@ secrets. Never email it or commit it.
 | `DATABASE_URL` | what the app connects as. Written by `node scripts\create-app-login.mjs` (B5): leave it out at first |
 | `DATABASE_CA_CERT` | the database's CA certificate (PEM text on one line, `\n` for line breaks) when the database is on another machine, so it is verified. A database with no TLS: end both URLs with `?sslmode=disable` instead |
 | `NEXT_PUBLIC_APP_URL` | the same HTTPS address the package was built for, e.g. `https://cbt-uat.example.com` |
-| `AMADEUS_API_BASE_URL`, `AMADEUS_USERNAME`, `AMADEUS_PASSWORD`, `AMADEUS_CLIENT_CODE` | the flight API account (the provider's test system for UAT) |
+| `PROVIDER_CREDENTIALS_KEY` | 32 random bytes in base64: encrypts the flight provider's password, which is kept in the database. Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`. Keep it safe with the server: without it the saved password cannot be read and must be entered again |
 | `INTERNAL_API_SECRET` | a long random string; protects `/api/internal/*` |
 | `MAIL_TRANSPORT`, `SMTP_URL`, `MAIL_FROM` | email: `smtp` with `SMTP_URL=smtp://user:pass@host:587` and `MAIL_FROM`; or `log` until SMTP exists (invite and reset links are then written to the server log) |
 | `TRUSTED_PROXY_HOPS` | how many proxies stand in front of the app; default 1 (IIS). Set 2 only if another proxy or load balancer adds its own entry in front of IIS |
@@ -115,6 +115,15 @@ secrets. Never email it or commit it.
 
 Special characters in a password inside a URL (`? # / @ : %` and spaces)
 must be percent-encoded: `?` is `%3F`, `@` is `%40`.
+
+**The flight API account (Amadeus) is not in this file.** A platform admin
+enters its base URL, client code, user name and password in the platform
+console (`/platform`, "Flight provider"), with "Test the connection" before
+saving. The password is stored encrypted with `PROVIDER_CREDENTIALS_KEY` and is
+never shown again. Until it is saved there, the app still reads the old
+`AMADEUS_API_BASE_URL`, `AMADEUS_CLIENT_CODE`, `AMADEUS_USERNAME` and
+`AMADEUS_PASSWORD` lines if present (and logs a warning); delete them once the
+console shows "Saved in the database".
 
 ### B5. Database migrations and the app's own login
 

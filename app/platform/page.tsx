@@ -5,6 +5,7 @@ import Pagination from '@/app/components/Pagination'
 import { SkeletonTable } from '@/app/components/Skeleton'
 import { usePagedList } from '@/app/hooks/usePagedList'
 import { useConfirm } from '@/app/components/confirm/ConfirmProvider'
+import ProviderCard from './ProviderCard'
 
 // ── /platform ────────────────────────────────────────────────────────────────
 // Onboarding TMCs without Postman.
@@ -187,6 +188,9 @@ export default function PlatformPage() {
 
   return (
     <div>
+      {/* The flight provider account, kept in the database (ProviderCard). */}
+      <ProviderCard />
+
       <div style={s.header}>
         <div>
           <h1 style={s.title}>Travel management companies</h1>

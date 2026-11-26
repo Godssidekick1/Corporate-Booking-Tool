@@ -157,7 +157,7 @@ d('row-level security', () => {
 
   // 20261102000000_sign_in_tables_system_only: password hashes and live
   // sessions are invisible to every tenant query, however it is written.
-  const SIGN_IN = ['accounts', 'sessions', 'auth_tokens', 'auth_attempts', 'platform_admins', 'rate_limits', 'signin_challenges']
+  const SIGN_IN = ['accounts', 'sessions', 'auth_tokens', 'auth_attempts', 'platform_admins', 'rate_limits', 'signin_challenges', 'provider_credentials']
 
   it('the sign-in tables answer to the system only; no tenant query sees them', async () => {
     expect(await count('select count(*) n from accounts')).toBeGreaterThan(0)

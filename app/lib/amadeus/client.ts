@@ -17,11 +17,18 @@
 //
 // ─────────────────────────────────────────────────────────────────────────────
 import { getCachedSession, setCachedSession, clearCachedSession } from './sessionStore'
+import { providerCredentials, type ProviderCredentials } from './credentials'
 
-const BASE_URL = (process.env.AMADEUS_API_BASE_URL ?? '').trim().replace(/\/$/, '')
-const CLIENT_CODE = (process.env.AMADEUS_CLIENT_CODE ?? '').trim()
-const USERNAME = (process.env.AMADEUS_USERNAME ?? '').trim()
-const PASSWORD = (process.env.AMADEUS_PASSWORD ?? '').trim()
+// The provider account comes from the database (provider_credentials, set in
+// the platform console), no longer from AMADEUS_* in the environment; see
+// ./credentials.ts. Loaded at the start of every call (held a minute there).
+let active: ProviderCredentials | null = null
+async function loadCredentials(): Promise<ProviderCredentials> {
+  active = await providerCredentials()
+  return active
+}
+// For request bodies, which withSession builds after loadCredentials().
+const clientCode = () => active?.clientCode ?? ''
 
 // ── Response key normalization ──────────────────────────────────────────────
 // As of Aug 2026, the provider switched its response serialization from
@@ -678,7 +685,7 @@ async function post<T extends AmadeusEnvelope>(
 ): Promise<T> {
  
 
-const url = `${BASE_URL}/${endpoint}`
+  const url = `${(await loadCredentials()).baseUrl}/${endpoint}`
 
 console.info('[amadeus] request', { requestId, endpoint, body: sanitizeAmadeusDiagnostic(body) })
 
@@ -730,9 +737,10 @@ console.info('[amadeus] request', { requestId, endpoint, body: sanitizeAmadeusDi
 
 async function login(): Promise<string> {
   const requestId = crypto.randomUUID()
+  const creds = await loadCredentials()
   const body = {
-    UserName: USERNAME,
-    Password: PASSWORD,
+    UserName: creds.username,
+    Password: creds.password,
   }
   const json = await post<LoginResponse>('flight/Authenticate', body, requestId)
 
@@ -744,6 +752,36 @@ async function login(): Promise<string> {
   return json.SessionID
 }
 
+
+// "Test the connection" in the platform console: signs in with credentials
+// that are not saved yet, and touches neither the saved credentials nor the
+// live session. The answer is in plain words for the admin; the password
+// never appears in it or in the log.
+export async function tryProviderSignIn(c: { baseUrl: string; username: string; password: string }): Promise<{ ok: true } | { ok: false; message: string }> {
+  const url = `${c.baseUrl.replace(/\/$/, '')}/flight/Authenticate`
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), TIME_LIMIT_MS['flight/Authenticate'])
+  try {
+    const res = await fetch(url, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ UserName: c.username, Password: c.password }), signal: ctrl.signal,
+    })
+    if (!res.ok) return { ok: false, message: `The provider answered HTTP ${res.status}. Check the base URL.` }
+    const json = normalizeKeysToPascalCase<LoginResponse>(await res.json().catch(() => ({})))
+    if (json.Status === 'Success' && json.SessionID) return { ok: true }
+    const why = json.Error?.Description
+    return { ok: false, message: why ? `The provider refused the sign-in: ${why}` : 'The provider refused the sign-in. Check the user name and password.' }
+  } catch (error) {
+    return {
+      ok: false,
+      message: ctrl.signal.aborted
+        ? 'No answer from the provider within 20 seconds. Check the base URL and that this server can reach it.'
+        : `Could not reach the provider: ${error instanceof Error ? error.message : String(error)}`,
+    }
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 async function getSessionId(): Promise<string> {
   const cached = await getCachedSession()
@@ -783,6 +821,7 @@ async function withSession<T extends AmadeusEnvelope>(
     }
   }
 
+  await loadCredentials()
   const sessionId = await getSessionId()
   const body = buildBody(sessionId)
   const json = await post<T>(endpoint, body, requestId)
@@ -815,7 +854,7 @@ export const amadeus = {
         Adult: params.adult ?? 1,
         Child: params.child ?? 0,
         Infant: params.infant ?? 0,
-        ClientCode: CLIENT_CODE,
+        ClientCode: clientCode(),
         RTF: params.rtf ?? false,
         NonStop: params.nonStop ?? false,
         PreferredClass: params.preferredClass ?? '',
@@ -844,7 +883,7 @@ export const amadeus = {
     const json = await withSession<AmadeusEnvelope & PricingResponse>(
       'flight/Pricing',
       (sessionId) => ({
-        ClientCode: CLIENT_CODE,
+        ClientCode: clientCode(),
         SessionID: sessionId,
         Key: resultKey,
         Pricingkey: pricingKey,
@@ -870,7 +909,7 @@ export const amadeus = {
     const json = await withSession<AmadeusEnvelope & AddPassengerResponse>(
       'Flight/AddPassengerDetails',
       (sessionId) => ({
-        ClientCode: CLIENT_CODE,
+        ClientCode: clientCode(),
         SessionID: sessionId,
         Key: resultKey,
         ReferenceNo: referenceNo,
@@ -905,7 +944,7 @@ export const amadeus = {
     const json = await withSession<AmadeusEnvelope & BookingResponse>(
       'Flight/Booking',
       (sessionId) => ({
-        ClientCode: CLIENT_CODE,
+        ClientCode: clientCode(),
         SessionID: sessionId,
         Key: resultKey,
         ReferenceNo: referenceNo,
@@ -930,13 +969,13 @@ export const amadeus = {
     const json = await withSession<AmadeusEnvelope & TicketResponse>(
       'Flight/Ticket',
       (sessionId) => ({
-        ClientCode: CLIENT_CODE,
+        ClientCode: clientCode(),
         SessionID: sessionId,
         Key: resultKey,
         Pricingkey: pricingKey,
         ReferenceNo: referenceNo,
         ResultIndex: '1',
-        UserID: CLIENT_CODE,
+        UserID: clientCode(),
         Provider: provider,
         PNRNO: pnrNo,
         TicketNo: ticketNo,
@@ -961,7 +1000,7 @@ export const amadeus = {
       const json = await withSession<AmadeusEnvelope & BookingResponse>(
         'Flight/GetBookingDetails',
         (sessionId) => ({
-          SessionID: sessionId, ReferenceNo: referenceNo, ClientCode: CLIENT_CODE, Provider: provider,
+          SessionID: sessionId, ReferenceNo: referenceNo, ClientCode: clientCode(), Provider: provider,
           Key: '', PnrNo: '', FirstName: '', LastName: '', From: '', To: '',
         }),
         'GetBookingDetails',
@@ -997,7 +1036,7 @@ export const amadeus = {
       (sessionId) => ({
         SessionID: sessionId,
         ReferenceNo: referenceNo,
-        ClientCode: CLIENT_CODE,
+        ClientCode: clientCode(),
         Provider: provider,
         Key: options.resultKey ?? '',
         PnrNo: options.pnrNo ?? '',
@@ -1022,7 +1061,7 @@ export const amadeus = {
     const json = await withSession<AmadeusEnvelope & CancellationResponse>(
       'Flight/CancelBooking',
       (sessionId) => ({
-        ClientCode: CLIENT_CODE,
+        ClientCode: clientCode(),
         SessionID: sessionId,
         ReferenceNo: referenceNo,
         CancellationRemarks: remarks,
@@ -1041,12 +1080,12 @@ export const amadeus = {
     const json = await withSession<AmadeusEnvelope & FareRuleResponse>(
       'flight/Non-LccFareRule',
       (sessionId) => ({
-        ClientCode: CLIENT_CODE,
+        ClientCode: clientCode(),
         SessionID: sessionId,
         Key: req.key,
         Pricingkey: req.pricingKey,
         ResultIndex: req.resultIndex,
-        UserID: CLIENT_CODE,
+        UserID: clientCode(),
         Provider: req.provider,
         PNRNO: req.pnr ?? '',
         TicketNo: req.ticketNo ?? '',
@@ -1068,11 +1107,11 @@ export const amadeus = {
     const json = await withSession<AmadeusEnvelope & SeatMapResponse>(
       'flight/SeatMap',
       (sessionId) => ({
-        ClientCode: CLIENT_CODE,
+        ClientCode: clientCode(),
         SessionID: sessionId,
         Key: resultKey,
         ReferenceNo: referenceNo,
-        UserID: CLIENT_CODE,
+        UserID: clientCode(),
         Destination: destination,
         Origin: origin,
         Provider: provider,
