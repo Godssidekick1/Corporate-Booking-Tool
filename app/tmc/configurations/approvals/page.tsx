@@ -9,6 +9,7 @@ import StepApprovers, { type TemplateStep } from './StepApprovers'
 import DirectChain from './DirectChain'
 import { APPROVAL_CATEGORY_OPTIONS } from '@/app/lib/approval-engine/categories'
 import { STEP_CONDITIONS } from '@/app/lib/policy/verdictLabels'
+import { useConfirm } from '@/app/components/confirm/ConfirmProvider'
 
 // NOTE: no TmcShell here. app/tmc/configurations/layout.tsx supplies the
 // Settings sidebar and page chrome for everything under /tmc/configurations —
@@ -197,8 +198,9 @@ function TemplateBuilder({ chains, onChanged, onError, onSuccess }: {
     } finally { setCreating(false) }
   }
 
+  const ask = useConfirm()
   async function handleDelete(id: string, name: string) {
-    if (!confirm(`Delete "${name}"?`)) return
+    if (!(await ask({ title: `Delete ${name}?`, message: 'This approval template is removed for good.', tone: 'danger', confirmLabel: 'Delete' }))) return
     const d = await fetch(`/api/tmc/approval-templates/${id}`, { method: 'DELETE' }).then(r => r.json())
     if (!d.ok) { onError(d.error || 'Could not delete.'); return }
     if (selectedId === id) setSelectedId('')

@@ -12,6 +12,7 @@ import { useLookup, clientOption } from '@/app/hooks/useLookup'
 import Link from 'next/link'
 import { CountrySelect, RegionSelect, CitySelect, DateField } from '@/app/components/places/PlacePickers'
 import { genderForTitle, todayInput } from '@/app/lib/places/profileFormat'
+import { useConfirm } from '@/app/components/confirm/ConfirmProvider'
 
 // ── /tmc/configurations/traveller-profiles ─────────────────────────────────────────
 // One screen for everything a travel desk maintains about a client's people:
@@ -201,8 +202,10 @@ export default function TravellerProfilesPage() {
     setImportReport(null)
   }, [clientId, roster.page, roster.search])
 
-  function select(emp: Employee) {
-    if (dirty && !confirm('You have unsaved changes. Discard them?')) return
+  const ask = useConfirm()
+  const discard = () => ask({ title: 'Discard your changes?', message: 'Your edits to this profile are not saved.', confirmLabel: 'Discard', cancelLabel: 'Keep editing' })
+  async function select(emp: Employee) {
+    if (dirty && !(await discard())) return
     setSelectedId(emp.id)
     setDraft(structuredClone(emp))
     // The person's client's bands and cost centres, for the panel's pickers.
@@ -225,8 +228,8 @@ export default function TravellerProfilesPage() {
 
   // Shared by the backdrop, the close button and Escape, so all three honour
   // the unsaved-changes guard rather than only the one that remembered to.
-  function closePanel() {
-    if (dirty && !confirm('You have unsaved changes. Discard them?')) return
+  async function closePanel() {
+    if (dirty && !(await discard())) return
     setSelectedId('')
     setDraft(null)
     setDirty(false)

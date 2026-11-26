@@ -11,6 +11,7 @@ import { SkeletonTable } from '@/app/components/Skeleton'
 import { usePagedList } from '@/app/hooks/usePagedList'
 import { useLookup } from '@/app/hooks/useLookup'
 import { s, STATE_META, money, dateOnly, dateTime, type QueueState } from './ui'
+import { useConfirm } from '@/app/components/confirm/ConfirmProvider'
 
 // ── Configurations → Queues → Cancellation queues ────────────────────────────
 // Every cancelled ticket waiting on the desk, and each client's refund rule.
@@ -94,8 +95,14 @@ export default function CancellationQueuesPage() {
     toOption: row => ({ id: String(row.id), label: String(row.name), sublabel: row.client_code ? String(row.client_code) : undefined }),
   })
 
+  const ask = useConfirm()
   async function markCancelled(row: QueueRow) {
-    if (!confirm(`Has the airline confirmed the cancellation of ${row.pnr ?? 'this booking'}?\n\nIts tickets' refunds can be processed once it is marked cancelled.`)) return
+    if (!(await ask({
+      title: 'Has the airline confirmed the cancellation?',
+      message: "Its tickets' refunds can be processed once it is marked cancelled.",
+      details: [{ label: 'PNR', value: row.pnr ?? '—' }],
+      confirmLabel: 'Mark cancelled',
+    }))) return
     setError(''); setSuccess('')
     const res = await fetch(`/api/tmc/queues/cancellations/${row.booking_id}/mark-cancelled`, { method: 'POST' })
     const d = await res.json().catch(() => ({}))

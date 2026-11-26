@@ -7,6 +7,7 @@ import Pagination from '@/app/components/Pagination'
 import { SkeletonTable } from '@/app/components/Skeleton'
 import { usePagedList } from '@/app/hooks/usePagedList'
 import { useLookup } from '@/app/hooks/useLookup'
+import { useConfirm } from '@/app/components/confirm/ConfirmProvider'
 
 // ── /tmc/configurations/buckets ──────────────────────────────────────────────
 // A bucket is a curated set of CLIENTS that deal codes, forms of payment and
@@ -124,10 +125,11 @@ export default function BucketsPage() {
     setOriginal(snapshot(EMPTY_FIELDS, []))
   }
 
-  const close = useCallback(() => {
-    if (dirty && !confirm('Discard your changes to this bucket?')) return
+  const ask = useConfirm()
+  const close = useCallback(async () => {
+    if (dirty && !(await ask({ title: 'Discard your changes?', message: 'Your edits to this bucket are not saved.', confirmLabel: 'Discard', cancelLabel: 'Keep editing' }))) return
     setEditing(null)
-  }, [dirty])
+  }, [dirty, ask])
 
   function addMember(id: string) {
     const picked = clientLookup.options.find(o => o.id === id)
@@ -171,7 +173,7 @@ export default function BucketsPage() {
   }
 
   async function remove() {
-    if (!editing?.id || !confirm(`Delete the bucket "${fields.name}"?`)) return
+    if (!editing?.id || !(await ask({ title: `Delete the bucket ${fields.name}?`, tone: 'danger', confirmLabel: 'Delete bucket' }))) return
     setBusy(true); setPanelError('')
     try {
       const d = await fetch(`/api/tmc/buckets/${editing.id}`, { method: 'DELETE' }).then(r => r.json())

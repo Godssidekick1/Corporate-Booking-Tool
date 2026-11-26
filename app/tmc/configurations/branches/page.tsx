@@ -9,6 +9,7 @@ import StateDropdown from '@/app/components/StateDropdown'
 import CityDropdown from '@/app/components/CityDropdown'
 import { usePagedList } from '@/app/hooks/usePagedList'
 import { gstinFinding, readGstin } from '@/app/lib/data/gstin'
+import { useConfirm } from '@/app/components/confirm/ConfirmProvider'
 
 // ── /tmc/configurations/branches ─────────────────────────────────────────────
 // The TMC's own offices.
@@ -139,10 +140,11 @@ export default function BranchesPage() {
     setStaff([])
   }
 
-  const close = useCallback(() => {
-    if (dirty && !confirm('Discard your changes to this branch?')) return
+  const ask = useConfirm()
+  const close = useCallback(async () => {
+    if (dirty && !(await ask({ title: 'Discard your changes?', message: 'Your edits to this branch are not saved.', confirmLabel: 'Discard', cancelLabel: 'Keep editing' }))) return
     setEditing(null)
-  }, [dirty])
+  }, [dirty, ask])
 
   async function save() {
     if (!editing) return
@@ -169,7 +171,7 @@ export default function BranchesPage() {
   }
 
   async function remove() {
-    if (!editing?.id || !confirm(`Delete the branch "${form.name}"?`)) return
+    if (!editing?.id || !(await ask({ title: `Delete the branch ${form.name}?`, tone: 'danger', confirmLabel: 'Delete branch' }))) return
     setBusy(true); setPanelError('')
     try {
       const d = await fetch(`/api/tmc/branches/${editing.id}`, { method: 'DELETE' }).then(r => r.json())

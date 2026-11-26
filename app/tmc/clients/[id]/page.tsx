@@ -15,6 +15,7 @@ import GstTab from './GstTab'
 import AllocationsTab from './AllocationsTab'
 import { Field, s, type Client } from './shared'
 import { APPROVAL_CATEGORIES, APPROVAL_CATEGORY_LABELS } from '@/app/lib/approval-engine/categories'
+import { useConfirm } from '@/app/components/confirm/ConfirmProvider'
 
 // ── Corporate Settings ───────────────────────────────────────────────────────
 // Everything the TMC configures about one client, in one place.
@@ -168,11 +169,14 @@ export default function CorporateSettingsPage() {
     } finally { setSaving(false) }
   }
 
+  const ask = useConfirm()
   async function sendReset(admin: AdminUser) {
-    if (!confirm(
-      `Send a password reset to ${admin.email}?\n\nThey will get a link to choose a new password. ` +
-      `You will not see it — nobody but them ever does.`
-    )) return
+    if (!(await ask({
+      title: 'Send a password reset?',
+      message: 'They will get a link to choose a new password. You will not see it: nobody but them ever does.',
+      details: [{ label: 'To', value: admin.email }],
+      confirmLabel: 'Send reset link',
+    }))) return
 
     setResetNote('')
     const d = await fetch(`/api/tmc/clients/${clientId}/admin-access`, {

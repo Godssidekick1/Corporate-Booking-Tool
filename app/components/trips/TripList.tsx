@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import Pagination from '@/app/components/Pagination'
 import { SkeletonCards } from '@/app/components/Skeleton'
 import TripCard, { FlightRow, type TripCardTrip, type TripCardFlight } from './TripCard'
+import { useConfirm } from '@/app/components/confirm/ConfirmProvider'
 
 // ── TripList ─────────────────────────────────────────────────────────────────
 // A page of trips as TripCards, each with its flights, from GET /api/bookings
@@ -75,8 +76,12 @@ export default function TripList({
   const goTo = useCallback((p: number) => { setLoading(true); setPage(p) }, [])
   const reload = () => { setLoading(true); setReloadKey(k => k + 1) }
 
+  const ask = useConfirm()
   async function act(id: string, what: 'submit' | 'complete' | 'delete') {
-    if (what === 'delete' && !window.confirm('Delete this trip? Its bookings stay, outside any trip.')) return
+    if (what === 'delete' && !(await ask({
+      title: 'Delete this trip?', message: 'Its bookings are kept; they move out of the trip.',
+      tone: 'danger', confirmLabel: 'Delete trip',
+    }))) return
     setBusy({ id, what })
     setTripErrors(e => ({ ...e, [id]: '' }))
     try {

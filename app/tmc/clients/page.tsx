@@ -5,6 +5,7 @@ import Link from 'next/link'
 import Pagination from '@/app/components/Pagination'
 import { SkeletonTable } from '@/app/components/Skeleton'
 import { usePagedList } from '@/app/hooks/usePagedList'
+import { useConfirm } from '@/app/components/confirm/ConfirmProvider'
 
 // ── /tmc/clients ─────────────────────────────────────────────────────────────
 // Every client, as a table.
@@ -85,14 +86,15 @@ export default function TmcClientsPage() {
   // names the headcount because that is the consequence a TC has to weigh: the
   // client's row survives and their bookings survive, but every one of these
   // people is locked out on their next sign-in.
+  const ask = useConfirm()
   async function deactivate(c: Client) {
     const people = c.employeeCount === 1 ? '1 person' : `${c.employeeCount} people`
-    if (!window.confirm(
-      `Deactivate ${c.name}?\n\n` +
-      `${people} will no longer be able to sign in, and no new bookings can be ` +
-      `made for them.\n\nTheir existing bookings, tickets and history are kept, ` +
-      `and you can reactivate them at any time.`
-    )) return
+    if (!(await ask({
+      title: `Deactivate ${c.name}?`,
+      message: `${people} will no longer be able to sign in, and no new bookings can be made for them.\n\n` +
+        'Their existing bookings, tickets and history are kept, and you can reactivate them at any time.',
+      tone: 'danger', confirmLabel: 'Deactivate',
+    }))) return
 
     setBusyId(c.id)
     setActionError('')

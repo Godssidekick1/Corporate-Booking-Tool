@@ -7,6 +7,7 @@ import { canAccess } from '@/app/lib/permissions/canAccess'
 import Pagination from '@/app/components/Pagination'
 import SearchableSelect from '@/app/components/SearchableSelect'
 import { useLookup } from '@/app/hooks/useLookup'
+import { useConfirm } from '@/app/components/confirm/ConfirmProvider'
 
 interface Employee {
   full_name: string
@@ -240,6 +241,7 @@ export default function TmcDashboardPage() {
     setRosterRows(prev => prev.filter((_, i) => i !== index))
   }
 
+  const ask = useConfirm()
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setFormError('')
@@ -289,18 +291,20 @@ export default function TmcDashboardPage() {
       // with the confirmation attached. Declining leaves the form as typed,
       // which is what someone who just realised they were duplicating wants.
       if (res.status === 409 && Array.isArray(data.duplicates)) {
-        const listed = (data.duplicates as Array<{ name: string; client_code: string | null; city: string | null; created_at: string }>)
-          .map(d => `  • ${d.name}${d.client_code ? ` (${d.client_code})` : ''}` +
-                    `${d.city ? ` — ${d.city}` : ''}` +
-                    ` — added ${new Date(d.created_at).toLocaleDateString()}`)
-          .join('\n')
+        // Each existing client on the stub, with what tells them apart.
+        const details = (data.duplicates as Array<{ name: string; client_code: string | null; city: string | null; created_at: string }>)
+          .map(d => ({
+            label: `${d.name}${d.client_code ? ` (${d.client_code})` : ''}`,
+            value: `${d.city ? `${d.city} · ` : ''}added ${new Date(d.created_at).toLocaleDateString('en-IN')}`,
+          }))
 
-        const proceed = window.confirm(
-          `${data.error}\n\n${listed}\n\n` +
-          `Create a second client with this name anyway?\n\n` +
-          `They will look identical in every picker, so give the new one a ` +
-          `client code if you continue.`
-        )
+        const proceed = await ask({
+          title: 'Create a second client with this name?',
+          message: `${data.error}\n\nThey will look identical in every picker, so give the new one a client code if you continue.`,
+          details,
+          confirmLabel: 'Create anyway',
+          cancelLabel: 'Go back',
+        })
 
         if (!proceed) {
           setFormError('Not created — a client with this name already exists.')
@@ -880,4 +884,4 @@ const s: Record<string, React.CSSProperties> = {
   emptyState: { padding: '48px 20px', textAlign: 'center' as const },
   emptyTitle: { fontSize: '14px', fontWeight: 600, color: '#374151', margin: '0 0 6px' },
   emptyDesc: { fontSize: '13px', color: '#9CA3AF', margin: 0 },
-}
+}

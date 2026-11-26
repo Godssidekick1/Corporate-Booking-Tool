@@ -8,6 +8,7 @@ import { SkeletonTable } from '@/app/components/Skeleton'
 import { usePagedList } from '@/app/hooks/usePagedList'
 import { useLookup, clientOption } from '@/app/hooks/useLookup'
 import { ListHeader, ListFilters, ListEmpty, list } from '@/app/components/config/ListPage'
+import { useConfirm } from '@/app/components/confirm/ConfirmProvider'
 
 // ── /tmc/configurations/cost-centres ─────────────────────────────────────────
 // Every client's cost centres, with how many people sit on each, in the one
@@ -82,9 +83,13 @@ export default function CostCentresPage() {
     }
   }
 
+  const ask = useConfirm()
   async function remove(c: Centre) {
     if (c.employees > 0) return
-    if (!confirm(`Delete cost centre "${c.code}" of ${c.client_name ?? 'this client'}?`)) return
+    if (!(await ask({
+      title: `Delete the cost centre ${c.code}?`, details: [{ label: 'Client', value: c.client_name ?? '—' }],
+      tone: 'danger', confirmLabel: 'Delete cost centre',
+    }))) return
     setBusy(true); setFormError('')
     try {
       const res = await fetch(`/api/tmc/cost-centres?clientId=${c.client_id}&code=${encodeURIComponent(c.code)}`, { method: 'DELETE' })

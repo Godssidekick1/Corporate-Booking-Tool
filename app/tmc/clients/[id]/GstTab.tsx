@@ -11,6 +11,7 @@ import SearchableSelect from '@/app/components/SearchableSelect'
 import { useLookup } from '@/app/hooks/useLookup'
 import { readGstin, gstinFinding } from '@/app/lib/data/gstin'
 import { Field, s } from './shared'
+import { useConfirm } from '@/app/components/confirm/ConfirmProvider'
 
 // ── GST registrations ────────────────────────────────────────────────────────
 // Every registration a client bills under, not one number on the client row.
@@ -114,9 +115,13 @@ export default function GstTab({ clientId, onCount }: {
     } finally { setBusy(false) }
   }
 
+  const ask = useConfirm()
   async function remove(row: Registration) {
     const name = row.gstin || row.gst_holder || 'this registration'
-    if (!confirm(`Remove ${name}? Bookings already invoiced under it are not affected.`)) return
+    if (!(await ask({
+      title: `Remove ${name}?`, message: 'Bookings already invoiced under it are not affected.',
+      tone: 'danger', confirmLabel: 'Remove',
+    }))) return
     await fetch(`/api/tmc/clients/${clientId}/gst?entryId=${row.id}`, { method: 'DELETE' })
     load()
   }

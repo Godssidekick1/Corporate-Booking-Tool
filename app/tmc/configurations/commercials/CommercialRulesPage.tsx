@@ -17,6 +17,7 @@ import {
   type CommercialKind, type CalcOn,
 } from '@/app/lib/commercials/calcOnByKind'
 import { COMMERCIAL_STATUS_LABELS, type CommercialStatus } from '@/app/lib/commercials/commercialStatus'
+import { useConfirm } from '@/app/components/confirm/ConfirmProvider'
 
 // ── Markup · Discounts · Processing fees ─────────────────────────────────────
 // ONE SCREEN, three routes. The nav lists them separately because they are three
@@ -260,9 +261,13 @@ export default function CommercialRulesPage({ kind }: { kind: CommercialKind }) 
     } finally { setBusy(false) }
   }
 
+  const ask = useConfirm()
   async function remove() {
     if (!selected) return
-    if (!confirm(`Delete this ${KIND_LABELS[kind].toLowerCase()}? Everything it reaches stops being charged it.`)) return
+    if (!(await ask({
+      title: `Delete this ${KIND_LABELS[kind].toLowerCase()}?`, message: 'Everything it reaches stops being charged it.',
+      tone: 'danger', confirmLabel: 'Delete',
+    }))) return
     await fetch(`/api/tmc/commercial-rules/${selected.id}`, { method: 'DELETE' })
     closePanel()
     rules.refetch()

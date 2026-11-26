@@ -10,6 +10,7 @@ import { usePagedList } from '@/app/hooks/usePagedList'
 import { useLookup } from '@/app/hooks/useLookup'
 import { formatRbdSpec } from '@/app/lib/fop/rbdSpec'
 import { FOP_STATUS_LABELS, CARD_TYPE_LABELS, type FopStatus } from '@/app/lib/fop/fopStatus'
+import { useConfirm } from '@/app/components/confirm/ConfirmProvider'
 
 const FOP_TABS = ['master', 'mapping'] as const
 type FopTab = typeof FOP_TABS[number]
@@ -275,9 +276,13 @@ export default function FormsOfPaymentPage() {
     } finally { setBusy(false) }
   }
 
+  const ask = useConfirm()
   async function remove() {
     if (!selected) return
-    if (!confirm(`Delete "${selected.label}"?`)) return
+    if (!(await ask({
+      title: `Delete ${selected.label}?`, message: 'This payment method stops being offered for new bookings.',
+      tone: 'danger', confirmLabel: 'Delete',
+    }))) return
     setBusy(true); setError('')
     try {
       const d = await fetch(`/api/tmc/forms-of-payment/${selected.id}`, { method: 'DELETE' }).then(r => r.json())
@@ -880,8 +885,9 @@ function MappingTab({ list, onError, onOpenFop }: {
     } finally { setBusy(false) }
   }
 
+  const ask = useConfirm()
   async function remove(row: Mapping) {
-    if (!confirm(`Remove "${row.fop_label}" from ${row.target_name}?`)) return
+    if (!(await ask({ title: `Remove ${row.fop_label} from ${row.target_name}?`, tone: 'danger', confirmLabel: 'Remove' }))) return
     setBusy(true)
     try {
       await fetch(`/api/tmc/fop-assignments?id=${row.id}`, { method: 'DELETE' })

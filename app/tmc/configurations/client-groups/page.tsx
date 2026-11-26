@@ -8,6 +8,7 @@ import StateDropdown from '@/app/components/StateDropdown'
 import Pagination from '@/app/components/Pagination'
 import { SkeletonTable } from '@/app/components/Skeleton'
 import { usePagedList } from '@/app/hooks/usePagedList'
+import { useConfirm } from '@/app/components/confirm/ConfirmProvider'
 
 interface ClientGroup {
   id: string
@@ -106,8 +107,12 @@ export default function TmcClientGroupsPage() {
     }
   }
 
+  const ask = useConfirm()
   async function handleDelete(id: string) {
-    if (!confirm('Delete this client group? Clients assigned to it will become unassigned, not deleted.')) return
+    if (!(await ask({
+      title: 'Delete this client group?', message: 'Clients assigned to it become unassigned. They are not deleted.',
+      tone: 'danger', confirmLabel: 'Delete group',
+    }))) return
     setError(''); setSuccess('')
     const res = await fetch(`/api/tmc/client-groups/${id}`, { method: 'DELETE' })
     const data = await res.json()

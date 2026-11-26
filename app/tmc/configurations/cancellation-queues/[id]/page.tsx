@@ -15,6 +15,7 @@ import CreditNote, { type Parties } from './CreditNote'
 import FareRulesPanel from '@/app/components/book/FareRulesPanel'
 import type { FareRules } from '@/app/lib/book/fareRules'
 import type { PenaltyFromRules } from '@/app/lib/refunds/penaltyFromRules'
+import { useConfirm } from '@/app/components/confirm/ConfirmProvider'
 
 // ── The refund panel ─────────────────────────────────────────────────────────
 // One cancelled ticket: what it cost, what is kept back, what goes back.
@@ -140,9 +141,18 @@ export default function RefundPanelPage() {
     } finally { setBusy(false) }
   }
 
+  const ask = useConfirm()
   async function processRefund() {
     if (!data || !live.c) return
-    if (!confirm(`Issue a credit note for ${money(live.c.result.refundAmount)} to ${data.refund.clientName}?\n\nThe refund is final once processed.`)) return
+    if (!(await ask({
+      title: 'Issue the credit note?',
+      message: 'The refund is final once processed.',
+      details: [
+        { label: 'Client', value: data.refund.clientName },
+        { label: 'Refund', value: money(live.c.result.refundAmount) },
+      ],
+      confirmLabel: 'Issue credit note',
+    }))) return
     const d = await post(`refunds/${id}/process`, { overrides, refundDate, mode, remark: remark.trim() || undefined })
     if (d) { setNotice(`Processed: credit note ${d.creditNoteNo} for ${money(d.refundAmount)}.`); await load() }
   }
@@ -153,7 +163,11 @@ export default function RefundPanelPage() {
   }
 
   async function markCancelled() {
-    if (!data || !confirm('Has the airline confirmed this cancellation?')) return
+    if (!data || !(await ask({
+      title: 'Has the airline confirmed this cancellation?',
+      message: 'The refund can be processed once it is marked cancelled.',
+      confirmLabel: 'Mark cancelled',
+    }))) return
     const d = await post(`cancellations/${data.refund.bookingId}/mark-cancelled`)
     if (d) { setNotice('Marked cancelled: the refund can be processed now.'); await load() }
   }
@@ -171,7 +185,7 @@ export default function RefundPanelPage() {
   }
 
   async function removeAttachment(aid: string) {
-    if (!confirm('Remove this document?')) return
+    if (!(await ask({ title: 'Remove this document?', tone: 'danger', confirmLabel: 'Remove' }))) return
     const res = await fetch(`/api/tmc/queues/refunds/${id}/attachments/${aid}`, { method: 'DELETE' })
     if (!res.ok) { const d = await res.json().catch(() => ({})); setError(d.error || 'Could not remove it.'); return }
     await load()

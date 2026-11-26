@@ -4,6 +4,7 @@ import { useState } from 'react'
 import Pagination from '@/app/components/Pagination'
 import { SkeletonTable } from '@/app/components/Skeleton'
 import { usePagedList } from '@/app/hooks/usePagedList'
+import { useConfirm } from '@/app/components/confirm/ConfirmProvider'
 
 // ── /platform ────────────────────────────────────────────────────────────────
 // Onboarding TMCs without Postman.
@@ -143,11 +144,14 @@ export default function PlatformPage() {
     } finally { setBusy(false) }
   }
 
+  const ask = useConfirm()
   async function toggleStatus(tmc: Tmc) {
     const next = tmc.status === 'active' ? 'inactive' : 'active'
-    if (next === 'inactive' && !confirm(
-      `Mark "${tmc.name}" inactive? Their data is kept — this is how a TMC is retired, since deleting one would take its clients and bookings with it.`
-    )) return
+    if (next === 'inactive' && !(await ask({
+      title: `Mark ${tmc.name} inactive?`,
+      message: 'Their data is kept. This is how a TMC is retired: deleting one would take its clients and bookings with it.',
+      tone: 'danger', confirmLabel: 'Mark inactive',
+    }))) return
 
     setBusy(true); setError('')
     try {

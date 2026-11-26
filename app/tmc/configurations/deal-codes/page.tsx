@@ -11,6 +11,7 @@ import { usePagedList } from '@/app/hooks/usePagedList'
 import { useLookup } from '@/app/hooks/useLookup'
 import { formatFlightSpec } from '@/app/lib/deal-codes/flightSpec'
 import { STATUS_LABELS, type DealCodeStatus } from '@/app/lib/deal-codes/dealCodeStatus'
+import { useConfirm } from '@/app/components/confirm/ConfirmProvider'
 
 const DEAL_TABS = ['codes', 'coverage'] as const
 type DealTab = typeof DEAL_TABS[number]
@@ -216,9 +217,13 @@ export default function DealCodesPage() {
     } finally { setBusy(false) }
   }
 
+  const ask = useConfirm()
   async function remove() {
     if (!selected) return
-    if (!confirm(`Delete "${selected.code}"?`)) return
+    if (!(await ask({
+      title: `Delete the deal code ${selected.code}?`, message: 'It stops applying to new bookings straight away.',
+      tone: 'danger', confirmLabel: 'Delete deal code',
+    }))) return
     setBusy(true); setError('')
     try {
       const d = await fetch(`/api/tmc/deal-codes/${selected.id}`, { method: 'DELETE' }).then(r => r.json())

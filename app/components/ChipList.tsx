@@ -1,6 +1,7 @@
 'use client'
 
 import SearchableSelect from '@/app/components/SearchableSelect'
+import { useConfirm } from '@/app/components/confirm/ConfirmProvider'
 
 // ── ChipList ─────────────────────────────────────────────────────────────────
 // A set of things, shown as chips, with a search box to add another.
@@ -55,9 +56,10 @@ export default function ChipList({
   placeholder = 'Search…', emptyMessage = 'No matches',
   emptyHint, disabled = false,
 }: ChipListProps) {
-  function remove(item: ChipItem) {
+  const ask = useConfirm()
+  async function remove(item: ChipItem) {
     if (!onRemove) return
-    if (item.confirm && !window.confirm(item.confirm)) return
+    if (item.confirm && !(await ask({ title: `Remove ${item.label}?`, message: item.confirm, tone: 'danger', confirmLabel: 'Remove' }))) return
     onRemove(item.id)
   }
 

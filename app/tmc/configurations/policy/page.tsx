@@ -7,6 +7,7 @@ import { useLookup, clientOption } from '@/app/hooks/useLookup'
 import Tabs, { useUrlTab } from '@/app/components/Tabs'
 import { ALL_FIELDS, type FieldDef } from '@/app/lib/policy/fields'
 import PolicyAccordion, { type CellVal, type Grid } from '@/app/components/policy/PolicyAccordion'
+import { useConfirm } from '@/app/components/confirm/ConfirmProvider'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -338,8 +339,12 @@ export default function TmcPolicyPage() {
     } finally { setGroupSubmitting(false) }
   }
 
+  const ask = useConfirm()
   async function handleDeleteGroup(id: string, name: string) {
-    if (!confirm(`Delete "${name}"? This only works if no clients are using it.`)) return
+    if (!(await ask({
+      title: `Delete the policy group ${name}?`, message: 'This only works if no clients are using it.',
+      tone: 'danger', confirmLabel: 'Delete group',
+    }))) return
     setError('')
     const d = await fetch(`/api/tmc/policy-groups/${id}`, { method: 'DELETE' }).then(r => r.json())
     if (!d.ok) { setError(d.error || 'Could not delete group.'); return }
@@ -360,10 +365,11 @@ export default function TmcPolicyPage() {
     }
 
     const dropped = selectedGroup.bandRanks.filter(r => !desired.includes(r))
-    if (dropped.length > 0 && !confirm(
-      `Removing rank${dropped.length > 1 ? 's' : ''} ${dropped.join(', ')} will retire any rules saved at ` +
-      `${dropped.length > 1 ? 'those ranks' : 'that rank'}. Continue?`
-    )) return
+    if (dropped.length > 0 && !(await ask({
+      title: `Remove rank${dropped.length > 1 ? 's' : ''} ${dropped.join(', ')}?`,
+      message: `Any rules saved at ${dropped.length > 1 ? 'those ranks' : 'that rank'} are retired.`,
+      tone: 'danger', confirmLabel: 'Remove and save',
+    }))) return
 
     setSavingRanks(true); setError('')
     try {
@@ -433,7 +439,11 @@ export default function TmcPolicyPage() {
   }
 
   async function handleUnlinkGroup(policyGroupId: string, name: string) {
-    if (!confirm(`Unlink "${name}" from this client? Employees in its rank range will have no policy until another group covers them.`)) return
+    if (!(await ask({
+      title: `Unlink ${name} from this client?`,
+      message: 'Employees in its rank range have no policy until another group covers them.',
+      tone: 'danger', confirmLabel: 'Unlink',
+    }))) return
     setError('')
     const d = await fetch(
       `/api/tmc/client-policy-groups?clientId=${selectedClientId}&policyGroupId=${policyGroupId}`,
@@ -567,8 +577,11 @@ export default function TmcPolicyPage() {
                 {groups.map(g => (
                   <div
                     key={g.id}
-                    onClick={() => {
-                      if (dirty && g.id !== selectedGroupId && !confirm('You have unsaved policy changes. Switch groups and discard them?')) return
+                    onClick={async () => {
+                      if (dirty && g.id !== selectedGroupId && !(await ask({
+                        title: 'Discard your policy changes?', message: 'Switching groups loses the changes you have not saved.',
+                        confirmLabel: 'Discard and switch', cancelLabel: 'Keep editing',
+                      }))) return
                       setSelectedGroupId(g.id === selectedGroupId ? '' : g.id)
                     }}
                     style={{

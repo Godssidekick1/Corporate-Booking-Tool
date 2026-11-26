@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import IdleSignOut from "./components/IdleSignOut";
+import { ConfirmProvider } from "./components/confirm/ConfirmProvider";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -31,7 +32,8 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col">
         {/* Signed-in pages only: 10 minutes without input signs out. */}
         <IdleSignOut />
-        {children}
+        {/* Our own confirm box (useConfirm), in place of window.confirm(). */}
+        <ConfirmProvider>{children}</ConfirmProvider>
       </body>
     </html>
   );

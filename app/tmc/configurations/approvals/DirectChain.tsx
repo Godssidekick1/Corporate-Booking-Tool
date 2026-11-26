@@ -5,6 +5,7 @@ import SearchableSelect from '@/app/components/SearchableSelect'
 import { useLookup, clientOption } from '@/app/hooks/useLookup'
 import { APPROVAL_CATEGORY_OPTIONS } from '@/app/lib/approval-engine/categories'
 import { STEP_CONDITIONS } from '@/app/lib/policy/verdictLabels'
+import { useConfirm } from '@/app/components/confirm/ConfirmProvider'
 
 // ── DirectChain ──────────────────────────────────────────────────────────────
 // The whole direct-mapping flow: client, who it covers, the approvers in
@@ -157,8 +158,13 @@ export default function DirectChain() {
     } finally { setSaving(false) }
   }
 
+  const ask = useConfirm()
   async function removeChain() {
-    if (!confirm('Remove this approval chain? Bookings it covered will go through with no approval.')) return
+    if (!(await ask({
+      title: 'Remove this approval chain?',
+      message: 'Bookings it covered will go through with no approval.',
+      tone: 'danger', confirmLabel: 'Remove chain',
+    }))) return
     setSaving(true); setError('')
     try {
       const qs = new URLSearchParams({ clientId, category })
