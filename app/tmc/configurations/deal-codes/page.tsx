@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import SearchableSelect from '@/app/components/SearchableSelect'
+import DateInput from '@/app/components/date/DateInput'
 import Tabs, { useUrlTab } from '@/app/components/Tabs'
 import AirlineDropdown from '@/app/components/AirlineDropdown'
 import Pagination from '@/app/components/Pagination'
@@ -605,25 +606,25 @@ export default function DealCodesPage() {
               <div style={s.row}>
                 <div style={{ ...s.field, flex: 1 }}>
                   <label style={s.label}>Sales from</label>
-                  <input type="date" value={form.sales_from}
-                    onChange={e => setForm(f => ({ ...f, sales_from: e.target.value }))} style={s.input} />
+                  <DateRangeEnd role="start" label="Sales from" placeholder="Any time" start={form.sales_from} end={form.sales_to}
+                    onChange={v => setForm(f => ({ ...f, sales_from: v }))} />
                 </div>
                 <div style={{ ...s.field, flex: 1 }}>
                   <label style={s.label}>Sales to</label>
-                  <input type="date" value={form.sales_to}
-                    onChange={e => setForm(f => ({ ...f, sales_to: e.target.value }))} style={s.input} />
+                  <DateRangeEnd role="end" label="Sales to" placeholder="Open-ended" start={form.sales_from} end={form.sales_to}
+                    onChange={v => setForm(f => ({ ...f, sales_to: v }))} />
                 </div>
               </div>
               <div style={s.row}>
                 <div style={{ ...s.field, flex: 1 }}>
                   <label style={s.label}>Travel from</label>
-                  <input type="date" value={form.travel_from}
-                    onChange={e => setForm(f => ({ ...f, travel_from: e.target.value }))} style={s.input} />
+                  <DateRangeEnd role="start" label="Travel from" placeholder="Any time" start={form.travel_from} end={form.travel_to}
+                    onChange={v => setForm(f => ({ ...f, travel_from: v }))} />
                 </div>
                 <div style={{ ...s.field, flex: 1 }}>
                   <label style={s.label}>Travel to</label>
-                  <input type="date" value={form.travel_to}
-                    onChange={e => setForm(f => ({ ...f, travel_to: e.target.value }))} style={s.input} />
+                  <DateRangeEnd role="end" label="Travel to" placeholder="Open-ended" start={form.travel_from} end={form.travel_to}
+                    onChange={v => setForm(f => ({ ...f, travel_to: v }))} />
                 </div>
               </div>
 
@@ -781,6 +782,21 @@ function window_(from: string | null, to: string | null): string {
   if (!from && !to) return 'Any'
   const fmt = (d: string | null) => (d ? d.slice(0, 10) : '—')
   return `${fmt(from)} → ${fmt(to)}`
+}
+
+// One end of a date window (sales or travel): our own calendar, with the
+// window drawn in and "to" not allowed before "from" (the old fields allowed it).
+function DateRangeEnd({ role, label, placeholder, start, end, onChange }: {
+  role: 'start' | 'end'; label: string; placeholder: string
+  start: string; end: string; onChange: (iso: string) => void
+}) {
+  return (
+    <DateInput value={role === 'start' ? start : end} label={label} placeholder={placeholder} year="always"
+      min={role === 'end' ? start || undefined : undefined} max={role === 'start' ? end || undefined : undefined}
+      range={{ start, end, role }} rangeLabels={{ start: 'From', end: 'To' }}
+      clearLabel={role === 'end' ? 'Open-ended' : 'Clear'}
+      onChange={onChange} onClear={() => onChange('')} style={s.input} />
+  )
 }
 
 const s: Record<string, React.CSSProperties> = {

@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
+import DateInput from '@/app/components/date/DateInput'
+import { todayIso } from '@/app/lib/dates/calendar'
 import { useFlowExits } from '@/app/hooks/useFlowExits'
 import { flowStorage, PricedFare, type OnBehalf } from '@/app/lib/book/flowStorage'
 import { POLICY_REASONS } from '@/app/lib/book/policyReasons'
@@ -43,11 +45,11 @@ interface PassengerForm {
   firstName: string
   middleName: string
   lastName: string
-  dateOfBirth: string   // <input type="date"> value, YYYY-MM-DD — converted on submit
+  dateOfBirth: string   // YYYY-MM-DD (the date picker's value), converted on submit
   passportNumber: string
   issuingCountry: string
   nationality: string
-  expiryDate: string    // <input type="date"> value, YYYY-MM-DD — converted on submit
+  expiryDate: string    // YYYY-MM-DD (the date picker's value), converted on submit
   // IATA special-meal code, or '' for the standard tray. Sent as
   // PassengerDetail.MealCode, which was hardcoded to '' for every booking until
   // this existed. See app/lib/book/mealCodes.ts.
@@ -79,13 +81,13 @@ function emptyPassenger(paxType: PassengerForm['paxType']): PassengerForm {
 }
 
 function toAmadeusDate(value: string): string {
-  // <input type="date"> gives YYYY-MM-DD — Amadeus wants DD/MM/YYYY.
+  // The date picker gives YYYY-MM-DD; Amadeus wants DD/MM/YYYY.
   const [y, m, d] = value.split('-')
   return `${d}/${m}/${y}`
 }
 
 // Inverse of toAmadeusDate — TravelerProfile stores DD/MM/YYYY (matching
-// AddPassengerDetails' own format), but <input type="date"> needs YYYY-MM-DD.
+// AddPassengerDetails' own format), but the date picker works in YYYY-MM-DD.
 function fromAmadeusDate(value: string | undefined): string {
   if (!value) return ''
   const [d, m, y] = value.split('/')
@@ -1242,9 +1244,10 @@ export default function BookingDetailsPage() {
                 </div>
                 <div style={s.field}>
                   <label style={s.label}>Date of birth</label>
-                  <input
-                    type="date" required disabled={locked} value={passenger.dateOfBirth}
-                    onChange={e => updatePassenger(i, 'dateOfBirth', e.target.value)}
+                  <DateInput
+                    disabled={locked} value={passenger.dateOfBirth} max={todayIso()} label="Date of birth"
+                    yearNav year="always" placeholder="Choose the date of birth"
+                    onChange={iso => updatePassenger(i, 'dateOfBirth', iso)}
                     style={{ ...s.input, ...(locked ? s.inputLocked : {}), ...(fieldErrors[`passenger-${i}-dob`] ? s.inputError : {}) }}
                   />
                   {fieldErrors[`passenger-${i}-dob`] && (
@@ -1294,7 +1297,10 @@ export default function BookingDetailsPage() {
 
                   <div style={s.field}>
                     <label style={s.label}>Passport expiry</label>
-                    <input type="date" required disabled={locked} value={passenger.expiryDate} onChange={e => updatePassenger(i, 'expiryDate', e.target.value)} style={{ ...s.input, ...(locked ? s.inputLocked : {}), ...(fieldErrors[`passenger-${i}-expiryDate`] ? s.inputError : {}) }} />
+                    <DateInput disabled={locked} value={passenger.expiryDate} min={todayIso()} label="Passport expiry"
+                      yearNav year="always" placeholder="Choose the expiry date"
+                      onChange={iso => updatePassenger(i, 'expiryDate', iso)}
+                      style={{ ...s.input, ...(locked ? s.inputLocked : {}), ...(fieldErrors[`passenger-${i}-expiryDate`] ? s.inputError : {}) }} />
                     {fieldErrors[`passenger-${i}-expiryDate`] && <p style={s.fieldError}>{fieldErrors[`passenger-${i}-expiryDate`]}</p>}
                   </div>
                 </>

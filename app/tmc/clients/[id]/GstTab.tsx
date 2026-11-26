@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { SkeletonTable } from '@/app/components/Skeleton'
+import DateInput from '@/app/components/date/DateInput'
+import { todayIso } from '@/app/lib/dates/calendar'
 import CountryDropdown from '@/app/components/CountryDropdown'
 import StateDropdown from '@/app/components/StateDropdown'
 import CityDropdown from '@/app/components/CityDropdown'
@@ -254,7 +256,8 @@ export default function GstTab({ clientId, onCount }: {
               <input value={draft.zip ?? ''} onChange={e => setField('zip', e.target.value)} style={s.input} />
             </Field>
             <Field label="Registration date">
-              <input type="date" value={draft.registration_date ?? ''} onChange={e => setField('registration_date', e.target.value)} style={s.input} />
+              <DateInput value={draft.registration_date} max={todayIso()} label="Registration date" yearNav year="always"
+                onChange={v => setField('registration_date', v)} onClear={() => setField('registration_date', '')} style={s.input} />
             </Field>
             <Field label="Primary" hint="The fallback when no cost centre matches. Only one per client.">
               <label style={{ ...s.checkRow, height: 36 }}>
@@ -268,10 +271,16 @@ export default function GstTab({ clientId, onCount }: {
             </Field>
 
             <Field label="Valid from">
-              <input type="date" value={draft.valid_from ?? ''} onChange={e => setField('valid_from', e.target.value)} style={s.input} />
+              <DateInput value={draft.valid_from} max={draft.valid_to || undefined} label="Valid from" year="always"
+                range={{ start: draft.valid_from, end: draft.valid_to, role: 'start' }} rangeLabels={{ start: 'From', end: 'To' }}
+                onChange={v => setField('valid_from', v)} onClear={() => setField('valid_from', '')} style={s.input} />
             </Field>
             <Field label="Valid to" hint="Leave blank for open-ended.">
-              <input type="date" value={draft.valid_to ?? ''} onChange={e => setField('valid_to', e.target.value)} style={s.input} />
+              {/* Not before "valid from": the old field let it be. */}
+              <DateInput value={draft.valid_to} min={draft.valid_from || undefined} label="Valid to" year="always"
+                placeholder="Open-ended"
+                range={{ start: draft.valid_from, end: draft.valid_to, role: 'end' }} rangeLabels={{ start: 'From', end: 'To' }}
+                onChange={v => setField('valid_to', v)} onClear={() => setField('valid_to', '')} clearLabel="Open-ended" style={s.input} />
             </Field>
           </div>
 

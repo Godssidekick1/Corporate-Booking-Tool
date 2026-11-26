@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type React from 'react'
 import { SkeletonHeader, SkeletonRecord } from '@/app/components/Skeleton'
+import DateInput from '@/app/components/date/DateInput'
+import { todayIso } from '@/app/lib/dates/calendar'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import {
@@ -61,7 +63,9 @@ const SOURCE_TAG: Record<LineSource, string> = {
   booking: 'booking', airline: 'from airline', fare_rules: 'from fare rules', rule: 'client rule', computed: 'computed', edited: 'edited',
 }
 
-const today = () => new Date().toISOString().slice(0, 10)
+// The local date. It was toISOString(), the UTC date: before 05:30 in India
+// that is still yesterday, so today could not be chosen as the refund date.
+const today = () => todayIso()
 
 export default function RefundPanelPage() {
   const { id } = useParams() as { id: string }
@@ -311,7 +315,8 @@ export default function RefundPanelPage() {
 
             <div style={{ ...s.field, marginTop: 14 }}>
               <span style={s.label}>Refund date</span>
-              <input type="date" value={refundDate} max={today()} disabled={!editable} onChange={e => setRefundDate(e.target.value)} style={s.input} />
+              <DateInput value={refundDate} max={today()} disabled={!editable} label="Refund date" year="always"
+                onChange={setRefundDate} style={s.input} />
             </div>
             <div style={s.field}>
               <span style={s.label}>Paid back by</span>

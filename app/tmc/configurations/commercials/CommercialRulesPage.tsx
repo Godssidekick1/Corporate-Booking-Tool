@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import SearchableSelect from '@/app/components/SearchableSelect'
+import DateInput from '@/app/components/date/DateInput'
 import AirlineDropdown from '@/app/components/AirlineDropdown'
 import Pagination from '@/app/components/Pagination'
 import Tabs, { useUrlTab } from '@/app/components/Tabs'
@@ -644,13 +645,18 @@ export default function CommercialRulesPage({ kind }: { kind: CommercialKind }) 
               <div style={s.row2}>
                 <div style={s.field}>
                   <label style={s.label}>Valid from</label>
-                  <input type="date" value={form.valid_from}
-                    onChange={e => setForm({ ...form, valid_from: e.target.value })} style={s.input} />
+                  <DateInput value={form.valid_from} max={form.valid_to || undefined} label="Valid from" year="always"
+                    placeholder="From the start" range={{ start: form.valid_from, end: form.valid_to, role: 'start' }}
+                    rangeLabels={{ start: 'From', end: 'To' }}
+                    onChange={v => setForm({ ...form, valid_from: v })} onClear={() => setForm({ ...form, valid_from: '' })} style={s.input} />
                 </div>
                 <div style={s.field}>
                   <label style={s.label}>Valid to</label>
-                  <input type="date" value={form.valid_to}
-                    onChange={e => setForm({ ...form, valid_to: e.target.value })} style={s.input} />
+                  {/* Not before "valid from": the old field let it be. */}
+                  <DateInput value={form.valid_to} min={form.valid_from || undefined} label="Valid to" year="always"
+                    placeholder="Open-ended" range={{ start: form.valid_from, end: form.valid_to, role: 'end' }}
+                    rangeLabels={{ start: 'From', end: 'To' }} clearLabel="Open-ended"
+                    onChange={v => setForm({ ...form, valid_to: v })} onClear={() => setForm({ ...form, valid_to: '' })} style={s.input} />
                 </div>
               </div>
 

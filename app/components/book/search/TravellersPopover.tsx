@@ -1,6 +1,5 @@
 'use client'
 
-import { useEffect, type RefObject } from 'react'
 import { CABINS, type Cabin } from '@/app/lib/book/searchQuery'
 import css from './SearchBar.module.css'
 
@@ -19,19 +18,8 @@ const ROWS = [
   { key: 'infant', label: 'Infants', sub: 'Under 2 years', min: 0 },
 ] as const
 
-// Closes on a press outside the box, or Escape. On mousedown, not click: the
-// box is gone before the click lands, so the press reaches what was under it
-// (an open box over the Search button used to swallow the first click).
-export function useDismiss(ref: RefObject<HTMLElement | null>, open: boolean, close: () => void) {
-  useEffect(() => {
-    if (!open) return
-    const down = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) close() }
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }
-    document.addEventListener('mousedown', down)
-    document.addEventListener('keydown', key)
-    return () => { document.removeEventListener('mousedown', down); document.removeEventListener('keydown', key) }
-  }, [ref, open, close])
-}
+// Closes on a press outside the box, or Escape (now shared: app/hooks/useDismiss.ts).
+export { useDismiss } from '@/app/hooks/useDismiss'
 
 export default function TravellersPopover({ value, onChange, cabin, onCabin, onDone }: {
   value: Travellers

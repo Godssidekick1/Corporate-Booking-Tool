@@ -6,6 +6,7 @@ import Tabs, { useUrlTab } from '@/app/components/Tabs'
 import Pagination from '@/app/components/Pagination'
 import SearchableSelect from '@/app/components/SearchableSelect'
 import SlideOver from '@/app/components/SlideOver'
+import DateInput from '@/app/components/date/DateInput'
 import { SkeletonTable } from '@/app/components/Skeleton'
 import { usePagedList } from '@/app/hooks/usePagedList'
 import { useLookup } from '@/app/hooks/useLookup'
@@ -174,15 +175,31 @@ export default function CancellationQueuesPage() {
                 selectedLabel={clientLookup.selectedLabel} placeholder="Client: All" emptyMessage="No clients match" allowClear
               />
             </div>
-            <input type="date" value={from} onChange={e => setFrom(e.target.value)} style={s.input} aria-label="Cancelled from" title="Cancelled from" />
-            <input type="date" value={to} onChange={e => setTo(e.target.value)} style={s.input} aria-label="Cancelled to" title="Cancelled to" />
+            <div style={{ width: 168 }}>
+              <DateInput value={from} max={to || undefined} label="Cancelled from" placeholder="Cancelled from" months={2}
+                range={{ start: from, end: to, role: 'start' }} rangeLabels={{ start: 'From', end: 'To' }}
+                onChange={setFrom} onClear={() => setFrom('')} style={s.input} />
+            </div>
+            <div style={{ width: 168 }}>
+              <DateInput value={to} min={from || undefined} label="Cancelled to" placeholder="Cancelled to" months={2}
+                range={{ start: from, end: to, role: 'end' }} rangeLabels={{ start: 'From', end: 'To' }}
+                onChange={setTo} onClear={() => setTo('')} style={s.input} />
+            </div>
             <button type="button" onClick={() => setMore(m => !m)} style={s.ghostBtn}>{more ? 'Fewer filters' : 'More filters'}</button>
           </div>
           {more && (
             <div style={s.filters}>
               <label style={{ ...s.hint, margin: 0 }}>Departing</label>
-              <input type="date" value={depFrom} onChange={e => setDepFrom(e.target.value)} style={s.input} aria-label="Departing from" />
-              <input type="date" value={depTo} onChange={e => setDepTo(e.target.value)} style={s.input} aria-label="Departing to" />
+              <div style={{ width: 168 }}>
+                <DateInput value={depFrom} max={depTo || undefined} label="Departing from" placeholder="From" months={2}
+                  range={{ start: depFrom, end: depTo, role: 'start' }} rangeLabels={{ start: 'From', end: 'To' }}
+                  onChange={setDepFrom} onClear={() => setDepFrom('')} style={s.input} />
+              </div>
+              <div style={{ width: 168 }}>
+                <DateInput value={depTo} min={depFrom || undefined} label="Departing to" placeholder="To" months={2}
+                  range={{ start: depFrom, end: depTo, role: 'end' }} rangeLabels={{ start: 'From', end: 'To' }}
+                  onChange={setDepTo} onClear={() => setDepTo('')} style={s.input} />
+              </div>
               <input
                 value={airline} onChange={e => setAirline(e.target.value.toUpperCase().slice(0, 2))}
                 placeholder="Airline (e.g. AI)" style={{ ...s.input, width: 130 }}

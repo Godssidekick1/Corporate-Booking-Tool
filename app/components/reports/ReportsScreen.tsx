@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import Tabs, { useUrlTab } from '@/app/components/Tabs'
 import SearchableSelect from '@/app/components/SearchableSelect'
+import DateInput from '@/app/components/date/DateInput'
 import Pagination from '@/app/components/Pagination'
 import { SkeletonTiles, SkeletonTable } from '@/app/components/Skeleton'
 import { BarSeries, BarList, StackedSeries } from '@/app/components/charts/Bars'
@@ -256,13 +257,15 @@ function FilterBar({ preset, onPreset, range, onRange, keys, options, values, on
       </label>
       <label style={s.field}>
         <span style={s.fieldLabel}>From</span>
-        <input type="date" style={s.input} value={range.from} max={range.to}
-          onChange={e => e.target.value && onRange({ ...range, from: e.target.value })} />
+        <DateInput style={s.input} value={range.from} max={range.to} label="From" year="always" months={2}
+          range={{ start: range.from, end: range.to, role: 'start' }} rangeLabels={{ start: 'From', end: 'To' }}
+          onChange={from => onRange({ ...range, from })} />
       </label>
       <label style={s.field}>
         <span style={s.fieldLabel}>To</span>
-        <input type="date" style={s.input} value={range.to} min={range.from}
-          onChange={e => e.target.value && onRange({ ...range, to: e.target.value })} />
+        <DateInput style={s.input} value={range.to} min={range.from} label="To" year="always" months={2}
+          range={{ start: range.from, end: range.to, role: 'end' }} rangeLabels={{ start: 'From', end: 'To' }}
+          onChange={to => onRange({ ...range, to })} />
       </label>
 
       {keys.map(k => k === 'search' ? (

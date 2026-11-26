@@ -1,0 +1,124 @@
+/* ── Our date picker ─────────────────────────────────────────────────────────
+   Simple, in the app's tokens, with two touches of its own: a range is drawn
+   as a dashed route under the days between departure and return, and the
+   footer is a boarding-pass stub (dashed tear line, punched notches) showing
+   what is picked. Replaces the browser's date input, which looked different in
+   every browser and could show neither.
+   ────────────────────────────────────────────────────────────────────────── */
+
+.wrap { position: relative; display: block; min-width: 0; }
+
+/* The default trigger: looks like the app's inputs. */
+.trigger {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; height: 38px; padding: 0 10px 0 12px; box-sizing: border-box;
+  background: var(--color-surface); border: 1px solid var(--color-line-strong); border-radius: 8px;
+  font: inherit; font-size: 13px; color: var(--color-ink); text-align: left; cursor: pointer;
+}
+.trigger:hover:not(:disabled) { border-color: var(--color-secondary); }
+.trigger:focus-visible, .trigger[aria-expanded="true"] { outline: none; border-color: var(--color-rail); box-shadow: 0 0 0 1px var(--color-rail); }
+.trigger:disabled { background: var(--color-canvas); color: var(--color-muted); cursor: not-allowed; }
+.placeholder { color: var(--color-muted); }
+.icon { flex: none; width: 16px; height: 16px; color: var(--color-secondary); }
+
+/* The popover. */
+.pop {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 35;
+  background: var(--color-surface); border: 1px solid var(--color-line); border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(10, 10, 20, 0.04), 0 18px 40px -14px rgba(0, 8, 53, 0.28);
+  padding: 14px 14px 0; width: max-content; max-width: calc(100vw - 32px);
+}
+
+.months { display: flex; gap: 22px; }
+.month { width: 280px; }
+
+.head { display: flex; align-items: center; justify-content: space-between; gap: 6px; height: 32px; margin-bottom: 6px; }
+.title { font-size: 14px; font-weight: 700; color: var(--color-ink); letter-spacing: -0.2px; }
+.nav {
+  width: 30px; height: 30px; border-radius: 999px; border: 1px solid var(--color-line);
+  background: var(--color-surface); color: var(--color-body); cursor: pointer; display: grid; place-items: center;
+  font-size: 15px; line-height: 1;
+}
+.nav:hover:not(:disabled) { background: var(--color-canvas); border-color: var(--color-line-strong); }
+.nav:disabled { opacity: 0.35; cursor: default; }
+.navHidden { visibility: hidden; }
+.selects { display: flex; gap: 6px; }
+.select {
+  height: 30px; border: 1px solid var(--color-line-strong); border-radius: 7px; background: var(--color-surface);
+  font: inherit; font-size: 13px; font-weight: 600; color: var(--color-ink); padding: 0 6px; cursor: pointer;
+}
+
+.grid { display: grid; grid-template-columns: repeat(7, 40px); }
+.dow { height: 24px; display: grid; place-items: center; font-size: 10.5px; font-weight: 700; letter-spacing: 0.4px; color: var(--color-muted); text-transform: uppercase; }
+
+.cell { height: 42px; display: grid; place-items: center; position: relative; }
+/* The route: a dashed line along the foot of every day in the range, on a pale band. */
+.inRange { background-color: #f1f3fb; }
+.inRange::after, .rangeStart::after, .rangeEnd::after {
+  content: ''; position: absolute; bottom: 5px; height: 1.5px;
+  background: repeating-linear-gradient(90deg, var(--color-rail) 0 4px, transparent 4px 8px);
+  opacity: 0.55; pointer-events: none;
+}
+.inRange::after { left: 0; right: 0; }
+.rangeStart { background: linear-gradient(90deg, transparent 50%, #f1f3fb 50%); }
+.rangeStart::after { left: 50%; right: 0; }
+.rangeEnd { background: linear-gradient(90deg, #f1f3fb 50%, transparent 50%); }
+.rangeEnd::after { left: 0; right: 50%; }
+.rangeStart.rangeEnd { background: none; }
+.rangeStart.rangeEnd::after { display: none; }
+
+.day {
+  position: relative; z-index: 1; width: 38px; height: 38px; border-radius: 10px; border: 0;
+  background: transparent; color: var(--color-ink); font: inherit; font-size: 13px; font-weight: 500;
+  cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0;
+  font-variant-numeric: tabular-nums;
+}
+.day:hover:not(:disabled):not(.selected) { background: var(--color-canvas); box-shadow: inset 0 0 0 1px var(--color-line-strong); }
+.day:focus-visible { outline: 2px solid var(--color-rail); outline-offset: 1px; }
+.day:disabled { color: #c7cbd3; cursor: default; }
+.today:not(.selected)::before {
+  content: ''; position: absolute; bottom: 5px; left: 50%; width: 4px; height: 4px; margin-left: -2px;
+  border-radius: 999px; background: var(--color-rail);
+}
+.selected { background: var(--color-rail); color: #fff; font-weight: 700; box-shadow: 0 4px 10px -4px rgba(0, 8, 53, 0.55); }
+.cap { font-size: 7.5px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; line-height: 1; margin-top: 2px; opacity: 0.85; }
+
+/* The boarding-pass stub. */
+.stub {
+  position: relative; display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  margin: 12px -14px 0; padding: 11px 14px 12px; border-top: 1px dashed var(--color-line-strong);
+}
+.stub::before, .stub::after {
+  content: ''; position: absolute; top: -7px; width: 14px; height: 14px; border-radius: 999px;
+  background: var(--color-canvas); border: 1px solid var(--color-line);
+}
+.stub::before { left: -8px; clip-path: inset(0 0 0 50%); }
+.stub::after { right: -8px; clip-path: inset(0 50% 0 0); }
+.stubItem { display: flex; flex-direction: column; min-width: 0; }
+.stubLabel { font-size: 9.5px; font-weight: 700; letter-spacing: 0.7px; text-transform: uppercase; color: var(--color-muted); }
+.stubValue { font-size: 13px; font-weight: 700; color: var(--color-ink); white-space: nowrap; }
+.stubMuted { color: var(--color-muted); font-weight: 500; }
+.stubArrow { color: var(--color-muted); font-size: 13px; }
+.stubActions { margin-left: auto; display: flex; gap: 6px; }
+.ghost, .done {
+  height: 30px; padding: 0 12px; border-radius: 7px; font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+}
+.ghost { background: var(--color-surface); color: var(--color-body); border: 1px solid var(--color-line-strong); }
+.ghost:hover { background: var(--color-canvas); }
+.done { background: var(--color-rail); color: #fff; border: 0; }
+.done:hover { background: var(--color-rail-hover); }
+
+/* Phones: a sheet from the bottom, one month. */
+.backdrop { display: none; }
+@media (max-width: 640px) {
+  .backdrop { display: block; position: fixed; inset: 0; z-index: 34; background: rgba(0, 8, 53, 0.35); }
+  .pop {
+    position: fixed; top: auto; bottom: 0; left: 0; right: 0; width: auto; max-width: none;
+    border-radius: 18px 18px 0 0; padding: 16px 16px 0;
+  }
+  .months { justify-content: center; }
+  .month + .month { display: none; }
+  .month { width: min(300px, 100%); }
+  .grid { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+  .stub { margin: 12px -16px 0; padding-bottom: calc(14px + env(safe-area-inset-bottom)); }
+}

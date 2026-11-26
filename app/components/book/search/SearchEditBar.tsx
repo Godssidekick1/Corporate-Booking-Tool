@@ -7,6 +7,7 @@ import {
   displayDate, isoDay, queryProblem, travellersText, type SearchQuery,
 } from '@/app/lib/book/searchQuery'
 import css from './SearchBar.module.css'
+import DateInput, { type DateInputHandle } from '@/app/components/date/DateInput'
 
 // ── The results page's edit bar ──────────────────────────────────────────────
 // The search, editable where it stands: trip type, from, swap, to, depart,
@@ -25,23 +26,32 @@ const airportInput: React.CSSProperties = {
   fontSize: '15px', fontWeight: 600, color: 'var(--color-ink)', textOverflow: 'ellipsis', fontFamily: 'inherit',
 }
 
-function DateField({ label, value, min, onChange, onClear }: {
+// A date in the bar: our own calendar (app/components/date), two months, with
+// the trip's other date and the route between them drawn in.
+function DateField({ label, value, min, onChange, onClear, range, handleRef, onPicked }: {
   label: string
   value: string
   min: string
   onChange: (iso: string) => void
   onClear?: () => void
+  range: { start: string; end: string | null; role: 'start' | 'end' }
+  handleRef?: React.Ref<DateInputHandle>
+  onPicked?: (iso: string) => void
 }) {
   return (
-    <div className={`${css.field} ${onClear ? css.withClear : ''}`}>
-      <span className={css.label}>{label}</span>
-      <span className={css.value}>{displayDate(value)}</span>
-      {/* Clicking anywhere on the field opens the calendar; typing works too. */}
-      <input type="date" className={css.overlay} aria-label={label} value={value} min={min} required
-        onClick={e => { try { e.currentTarget.showPicker?.() } catch { /* not allowed here: typing still works */ } }}
-        onChange={e => { if (e.target.value) onChange(e.target.value) }} />
-      {onClear && <button type="button" className={css.clear} onClick={onClear} aria-label={`Remove the ${label.toLowerCase()} date (one way)`} title="Make it one way">×</button>}
-    </div>
+    <DateInput value={value} min={min} onChange={onChange} label={label} months={2}
+      range={range} rangeLabels={{ start: 'Depart', end: 'Return' }}
+      onClear={onClear} clearLabel="Make it one way" handleRef={handleRef} onPicked={onPicked}
+      renderTrigger={({ open, toggle }) => (
+        <div className={`${css.field} ${onClear ? css.withClear : ''}`}>
+          <span className={css.label}>{label}</span>
+          <span className={css.value}>{displayDate(value)}</span>
+          {/* The whole field opens the calendar. */}
+          <button type="button" className={css.overlay} onClick={toggle} aria-haspopup="dialog" aria-expanded={open}
+            aria-label={`${label}: ${displayDate(value)}. Change`} />
+          {onClear && <button type="button" className={css.clear} onClick={onClear} aria-label={`Remove the ${label.toLowerCase()} date (one way)`} title="Make it one way">×</button>}
+        </div>
+      )} />
   )
 }
 
@@ -54,6 +64,7 @@ export default function SearchEditBar({ query, busy, onSearch }: {
   const [problem, setProblem] = useState('')
   const [paxOpen, setPaxOpen] = useState(false)
   const paxRef = useRef<HTMLDivElement>(null)
+  const returnRef = useRef<DateInputHandle>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
   const closePax = useCallback(() => setPaxOpen(false), [])
   useDismiss(paxRef, paxOpen, closePax)
@@ -135,13 +146,17 @@ export default function SearchEditBar({ query, busy, onSearch }: {
         </div>
 
         <DateField label="Depart" value={draft.departDate} min={today}
+          range={{ start: draft.departDate, end: draft.returnDate, role: 'start' }}
           onChange={departDate => set({
             departDate,
             // A return before the new departure moves with it.
             returnDate: draft.returnDate && draft.returnDate < departDate ? departDate : draft.returnDate,
-          })} />
+          })}
+          // A round trip: the return's calendar opens next, as on booking sites.
+          onPicked={() => { if (draft.returnDate) returnRef.current?.open() }} />
         {draft.returnDate ? (
-          <DateField label="Return" value={draft.returnDate} min={draft.departDate}
+          <DateField label="Return" value={draft.returnDate} min={draft.departDate} handleRef={returnRef}
+            range={{ start: draft.departDate, end: draft.returnDate, role: 'end' }}
             onChange={returnDate => set({ returnDate })} onClear={() => set({ returnDate: null })} />
         ) : (
           <button type="button" className={css.field} onClick={() => set({ returnDate: plusDays(draft.departDate, 2) })}>

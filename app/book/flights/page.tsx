@@ -9,7 +9,11 @@ import { useLookup } from '@/app/hooks/useLookup'
 import TripPicker, { resolveTrip, type TripChoice } from '@/app/components/TripPicker'
 import TravellersPopover, { useDismiss } from '@/app/components/book/search/TravellersPopover'
 import { searchPreferences } from '@/app/lib/book/searchPreferences'
-import { displayDate, isoDay, queryProblem, resultsHrefFor, type Cabin, type SearchQuery } from '@/app/lib/book/searchQuery'
+import { isoDay, queryProblem, resultsHrefFor, type Cabin, type SearchQuery } from '@/app/lib/book/searchQuery'
+import DateInput, { type DateInputHandle } from '@/app/components/date/DateInput'
+
+// The date fields keep this form's input look.
+const dateTrigger: React.CSSProperties = { height: 42, borderRadius: 9, background: '#F9FAFB', borderColor: '#E5E7EB', fontWeight: 500 }
 
 // ── /book/flights: the search ────────────────────────────────────────────────
 // Who is travelling, why, and where to. Searching opens the results page
@@ -35,6 +39,7 @@ export default function BookFlightsSearchPage() {
   const [origin, setOrigin] = useState('')
   const [destination, setDestination] = useState('')
   const [departDate, setDepartDate] = useState(() => isoDay())
+  const returnPicker = useRef<DateInputHandle>(null)
   // The provider has no returnDate field — a round trip is a second segment
   // flying the route back, plus RTF: true. The API route builds that; this
   // form only has to collect the date.
@@ -400,27 +405,29 @@ export default function BookFlightsSearchPage() {
             <div style={s.secondaryFields}>
               <div style={s.field}>
                 <label style={s.label}>Departure</label>
-                <input
-                  type="date" required value={departDate}
-                  onChange={e => setDepartDate(e.target.value)}
-                  min={isoDay()}
-                  style={s.input}
-                />
-                {departDate && <span style={s.airportHint}>{displayDate(departDate)}</span>}
+                {/* Our own calendar (app/components/date): two months, the
+                    return drawn in on a round trip, which opens next. */}
+                <DateInput value={departDate} min={isoDay()} label="Departure" months={2} style={dateTrigger}
+                  range={tripType === 'return' ? { start: departDate, end: returnDate, role: 'start' } : undefined}
+                  rangeLabels={tripType === 'return' ? { start: 'Depart', end: 'Return' } : undefined}
+                  onChange={d => {
+                    setDepartDate(d)
+                    // A return before the new departure moves with it.
+                    if (returnDate && returnDate < d) setReturnDate(d)
+                  }}
+                  onPicked={() => { if (tripType === 'return') returnPicker.current?.open() }} />
               </div>
 
               {tripType === 'return' && (
                 <div style={s.field}>
                   <label style={s.label}>Return</label>
-                  <input
-                    type="date" required value={returnDate}
-                    onChange={e => setReturnDate(e.target.value)}
-                    // Can't return before you leave. Same-day is allowed — a
-                    // day trip out and back is an ordinary corporate booking.
-                    min={departDate}
-                    style={s.input}
-                  />
-                  {returnDate && <span style={s.airportHint}>{displayDate(returnDate)}</span>}
+                  {/* Can't return before you leave. Same day is allowed: a day
+                      trip out and back is an ordinary corporate booking. */}
+                  <DateInput value={returnDate} min={departDate} label="Return" months={2} style={dateTrigger}
+                    placeholder="Choose a return date" handleRef={returnPicker}
+                    range={{ start: departDate, end: returnDate, role: 'end' }}
+                    rangeLabels={{ start: 'Depart', end: 'Return' }}
+                    onChange={setReturnDate} />
                 </div>
               )}
 

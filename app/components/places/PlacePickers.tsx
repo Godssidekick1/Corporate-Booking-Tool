@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import SearchableSelect from '@/app/components/SearchableSelect'
+import DateInput from '@/app/components/date/DateInput'
 import { toDateInput, fromDateInput, countryForDemonym } from '@/app/lib/places/profileFormat'
 
 // ── Place pickers ────────────────────────────────────────────────────────────
@@ -241,10 +242,12 @@ export function DateField({ value, onChange, min, max, disabled, style }: {
   disabled?: boolean
   style?: React.CSSProperties
 }) {
+  // Our own calendar, with month and year selects: these dates are years away.
   return (
-    <input
-      type="date" value={toDateInput(value)} min={min} max={max} disabled={disabled}
-      onChange={e => onChange(fromDateInput(e.target.value))}
+    <DateInput
+      value={toDateInput(value)} min={min} max={max} disabled={disabled} yearNav year="always"
+      placeholder="Choose a date"
+      onChange={iso => onChange(fromDateInput(iso))}
       style={style}
     />
   )
